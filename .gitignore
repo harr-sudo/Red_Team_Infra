@@ -35,6 +35,11 @@ ENV/
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Web Application
+webapp/__pycache__/
+webapp/*.pyc
+webapp/.flaskenv
+
 # IDE
 .vscode/
 .idea/

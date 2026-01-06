@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Red Team Infrastructure Manager</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔴 Red Team Infrastructure Manager</h1>
+            <p class="subtitle">Local Management Interface</p>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-button active" data-tab="dashboard">Dashboard</button>
+            <button class="tab-button" data-tab="config">Configuration</button>
+            <button class="tab-button" data-tab="deploy">Deploy</button>
+            <button class="tab-button" data-tab="status">Status</button>
+            <button class="tab-button" data-tab="health">Health</button>
+        </nav>
+
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content active">
+            <div class="card">
+                <h2>Infrastructure Overview</h2>
+                <div id="dashboard-status" class="status-display">
+                    <p>Loading...</p>
+                </div>
+                <div class="quick-actions">
+                    <button class="btn btn-primary" onclick="loadConfigTab()">Configure</button>
+                    <button class="btn btn-success" onclick="loadDeployTab()">Deploy</button>
+                    <button class="btn btn-info" onclick="checkStatus()">Check Status</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuration Tab -->
+        <div id="config" class="tab-content">
+            <div class="card">
+                <h2>Configuration Editor</h2>
+                <div class="form-group">
+                    <label for="engagement-type">Engagement Type:</label>
+                    <select id="engagement-type" onchange="updateEngagementType()">
+                        <option value="">Manual Configuration</option>
+                        <option value="adhoc">Adhoc (One-off tests)</option>
+                        <option value="purple-team">Purple Team Exercises</option>
+                        <option value="full-red-team">Full Red Team Engagement</option>
+                    </select>
+                    <small>Select engagement type to auto-configure deployment mode</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="project-name">Project Name:</label>
+                    <input type="text" id="project-name" placeholder="red-team-infra">
+                </div>
+
+                <div class="form-group">
+                    <label for="environment">Environment:</label>
+                    <select id="environment">
+                        <option value="dev">dev</option>
+                        <option value="staging">staging</option>
+                        <option value="prod">prod</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="aws-region">AWS Region:</label>
+                    <input type="text" id="aws-region" placeholder="us-east-1">
+                </div>
+
+                <div class="form-group">
+                    <label for="key-pair-name">Key Pair Name:</label>
+                    <input type="text" id="key-pair-name" placeholder="red-team-keypair">
+                </div>
+
+                <div class="form-group">
+                    <label for="management-cidr">Management CIDR Blocks:</label>
+                    <input type="text" id="management-cidr" placeholder='["YOUR.IP.ADDRESS/32"]'>
+                    <small>⚠️ Restrict to your IP address!</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="c2-server-count">C2 Server Count:</label>
+                    <input type="number" id="c2-server-count" value="2" min="1">
+                </div>
+
+                <div class="form-group">
+                    <label for="c2-instance-type">C2 Instance Type:</label>
+                    <select id="c2-instance-type">
+                        <option value="t3.small">t3.small</option>
+                        <option value="t3.medium" selected>t3.medium</option>
+                        <option value="t3.large">t3.large</option>
+                    </select>
+                </div>
+
+                <div class="form-actions">
+                    <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
+                    <button class="btn btn-secondary" onclick="validateConfig()">Validate</button>
+                    <button class="btn btn-secondary" onclick="loadConfig()">Load Current</button>
+                </div>
+
+                <div id="config-message" class="message"></div>
+            </div>
+        </div>
+
+        <!-- Deploy Tab -->
+        <div id="deploy" class="tab-content">
+            <div class="card">
+                <h2>Deployment Control</h2>
+                
+                <div id="deployment-status" class="status-display">
+                    <p>Ready to deploy</p>
+                </div>
+
+                <div class="deployment-actions">
+                    <button class="btn btn-success" onclick="startDeployment()">Deploy Infrastructure</button>
+                    <button class="btn btn-warning" onclick="runPlan()">Run Plan (Preview)</button>
+                    <button class="btn btn-danger" onclick="destroyInfrastructure()">Destroy Infrastructure</button>
+                </div>
+
+                <div id="deployment-output" class="output-display"></div>
+            </div>
+        </div>
+
+        <!-- Status Tab -->
+        <div id="status" class="tab-content">
+            <div class="card">
+                <h2>Infrastructure Status</h2>
+                <button class="btn btn-info" onclick="refreshStatus()">Refresh</button>
+                
+                <div id="status-info" class="status-display">
+                    <p>Loading...</p>
+                </div>
+
+                <h3>Outputs</h3>
+                <div id="status-outputs" class="output-display">
+                    <p>No outputs available</p>
+                </div>
+
+                <h3>Resources</h3>
+                <div id="status-resources" class="output-display">
+                    <p>No resources found</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Health Tab -->
+        <div id="health" class="tab-content">
+            <div class="card">
+                <h2>Health Checks</h2>
+                
+                <h3>Prerequisites</h3>
+                <button class="btn btn-info" onclick="checkPrerequisites()">Check Prerequisites</button>
+                <div id="prerequisites-status" class="status-display">
+                    <p>Click button to check</p>
+                </div>
+
+                <h3>AWS Connectivity</h3>
+                <button class="btn btn-info" onclick="checkAWS()">Check AWS</button>
+                <div id="aws-status" class="status-display">
+                    <p>Click button to check</p>
+                </div>
+
+                <h3>Infrastructure Health</h3>
+                <button class="btn btn-info" onclick="runHealthCheck()">Run Health Check</button>
+                <div id="health-status" class="status-display">
+                    <p>Click button to check</p>
+                </div>
+
+                <h3>AWS Permissions</h3>
+                <button class="btn btn-info" onclick="checkPermissions()">Check Required Permissions</button>
+                <div id="permissions-status" class="status-display">
+                    <p>Click button to check if your AWS account has required permissions for deployment</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
+

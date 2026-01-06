@@ -25,14 +25,49 @@ The infrastructure is built using:
 
 > **New to this project?** Start with the [Getting Started Guide](./docs/GETTING_STARTED.md) for detailed step-by-step instructions.
 
+### Web Application (Recommended)
+
+For a user-friendly interface, use the web application:
+
+```bash
+# Start web application
+./webapp/start.sh
+
+# Then open browser to: http://127.0.0.1:5000
+```
+
+The web application provides:
+- Configuration editor
+- One-click deployment
+- Status dashboard
+- Health checks
+
+See [Web Application README](./webapp/README.md) for details.
+
+### Command Line
+
+Alternatively, use the command-line scripts:
+
+```bash
+# Deploy infrastructure
+./scripts/deployment/deploy.sh
+
+# Check infrastructure status
+./scripts/utilities/health-check.sh
+
+# Destroy infrastructure
+./scripts/deployment/destroy.sh
+```
+
 ### Prerequisites
 
-- AWS Account with appropriate permissions
-- AWS CLI installed and configured
-- Terraform >= 1.0
-- Ansible >= 2.9
-- Python 3.x
-- jq (for JSON processing)
+- **AWS Account** with appropriate permissions
+- **Domain Registrations** ⚠️ **REQUIRED** - Primary domain + 2-3 backup domains (see [Domain Requirements](./docs/DOMAIN_REQUIREMENTS.md))
+- **AWS CLI** installed and configured
+- **Terraform** >= 1.0
+- **Ansible** >= 2.9
+- **Python 3.x**
+- **jq** (for JSON processing)
 
 ### Quick Setup
 
@@ -89,6 +124,9 @@ See [PLAN.md](./PLAN.md) for detailed architecture and planning information.
 ### Essential Guides (Start Here)
 
 - **[Getting Started Guide](./docs/GETTING_STARTED.md)** ⭐ - **Complete step-by-step setup guide for new users**
+- **[Web Application Guide](./webapp/README.md)** 🌐 - **User-friendly web interface** for infrastructure management
+- **[AWS Authentication Guide](./docs/AWS_AUTHENTICATION.md)** 🔐 - **How deployment connects to AWS** - Credential setup and authentication
+- **[Domain Requirements](./docs/DOMAIN_REQUIREMENTS.md)** ⚠️ - **REQUIRED PREREQUISITE** - Domain registration guide
 - **[Quick Reference](./docs/QUICK_REFERENCE.md)** - Quick commands and checklists
 - **[GitHub Setup Guide](./docs/GITHUB_SETUP.md)** - Setting up GitHub integration (recommended for team collaboration)
 

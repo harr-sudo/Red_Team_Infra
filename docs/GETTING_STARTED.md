@@ -114,11 +114,42 @@ sudo apt-get install git
    - Billing enabled
    - Access to AWS Console
 
-2. **GitHub Account** (optional, for version control)
+2. **Domain Registrations** ⚠️ **REQUIRED PREREQUISITE**
+   - **Primary domain** for C2 infrastructure
+   - **2-3 backup domains** for redundancy and OpSec
+   - See [Domain Requirements Guide](./DOMAIN_REQUIREMENTS.md) for details
+   - **Estimated Cost**: $30-60/year for 2-3 domains
+
+3. **GitHub Account** (optional, for version control)
    - For private repository hosting
    - For collaboration
 
 ## Initial Setup
+
+### Step 0: Register Domains (REQUIRED PREREQUISITE) ⚠️
+
+**Before proceeding with infrastructure setup, you MUST register domains:**
+
+1. **Register Primary Domain**
+   - Choose a legitimate-sounding domain name
+   - Enable privacy protection
+   - Set up auto-renewal
+   - Document registrar and credentials
+
+2. **Register Backup Domains** (2-3 minimum)
+   - Use different registrars if possible
+   - Different TLDs recommended (.com, .net, .org)
+   - Enable privacy protection on all
+
+3. **Set Up DNS Management**
+   - Create Route53 hosted zones (if using Route53)
+   - Update nameservers at registrar
+   - Verify DNS propagation
+
+**Time Required**: 1-2 hours  
+**Cost**: $30-60/year for 2-3 domains
+
+**📖 See [Domain Requirements Guide](./DOMAIN_REQUIREMENTS.md) for complete details**
 
 ### Step 1: Clone or Download the Project
 
@@ -282,6 +313,8 @@ cp configs/terraform.tfvars.example configs/terraform.tfvars
 
 Open `configs/terraform.tfvars` in your preferred editor and update the following:
 
+**⚠️ IMPORTANT**: You must have registered your domains before configuring this section!
+
 ```hcl
 # Required: AWS Configuration
 aws_region = "us-east-1"  # Change to your preferred region
@@ -314,9 +347,26 @@ terraform_backend_bucket = "red-team-terraform-state-1234567890"
 terraform_backend_region = "us-east-1"
 terraform_backend_key = "terraform.tfstate"
 
-# Optional: Domain Configuration (if you have a domain)
-domain_name = ""  # e.g., "example.com"
-subdomain = ""    # e.g., "c2"
+# Domain Configuration (REQUIRED - see DOMAIN_REQUIREMENTS.md)
+primary_domain_name = "your-domain.com"  # Your registered primary domain
+primary_domain_hosted_zone_id = ""  # Route53 hosted zone ID (if using Route53)
+
+# Backup Domains (REQUIRED - minimum 2-3)
+backup_domains = [
+  {
+    domain_name = "backup-domain-1.com"
+    hosted_zone_id = ""
+  },
+  {
+    domain_name = "backup-domain-2.net"
+    hosted_zone_id = ""
+  }
+]
+
+# Subdomain Configuration
+c2_subdomain = "c2"
+www_subdomain = "www"
+cdn_subdomain = "cdn"
 ```
 
 ### Step 3: Find Your Public IP Address

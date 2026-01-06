@@ -19,3 +19,7 @@ rich>=13.0.0
 # Security
 cryptography>=39.0.0
 
+# Web Application
+flask>=3.0.0
+flask-cors>=4.0.0
+

@@ -1,45 +1,172 @@
+# Red Team Infrastructure - Terraform Variables Configuration
+# Copy this file to terraform.tfvars and customize with your values
+
+# =============================================================================
 # AWS Configuration
+# =============================================================================
 aws_region = "us-east-1"
-aws_profile = "default"
+aws_profile = "default"  # Optional: AWS CLI profile name
 
+# =============================================================================
 # Project Configuration
+# =============================================================================
 project_name = "red-team-infra"
-environment = "dev"  # dev, staging, prod
+environment = "dev"  # Options: dev, staging, prod
 
+# Engagement Type (auto-configures deployment mode)
+# Options: "adhoc", "purple-team", "full-red-team"
+#   - "adhoc": One-off tests → deploys single C2 server
+#   - "purple-team": Purple team exercises → deploys redundancy mode (2+ servers)
+#   - "full-red-team": Full red team engagement → deploys phases mode (one per phase)
+# Leave empty to manually configure c2_deployment_mode
+engagement_type = ""  # Options: adhoc, purple-team, full-red-team
+
+# =============================================================================
 # VPC Configuration
+# =============================================================================
 vpc_cidr = "10.0.0.0/16"
 availability_zones = ["us-east-1a", "us-east-1b"]
+
+# Public Subnets (for proxy/redirector servers)
 public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
+
+# Private Subnets (for C2 team servers)
 private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
 
-# EC2 Configuration
-instance_type = "t3.medium"
-ami_id = ""  # Leave empty to use latest Amazon Linux 2
-key_pair_name = "red-team-keypair"
-instance_count = 2
+# NAT Gateway (optional - for private subnet internet access)
+enable_nat_gateway = false  # Set to true if C2 servers need outbound internet
 
+# =============================================================================
 # Security Configuration
-allowed_cidr_blocks = ["0.0.0.0/0"]  # Restrict to your IP
-enable_ssh_access = true
-ssh_port = 22
+# =============================================================================
+# Management CIDR blocks - RESTRICT TO YOUR IP ADDRESSES!
+# Example: ["YOUR.IP.ADDRESS/32", "OFFICE.IP.RANGE/24"]
+management_cidr_blocks = ["0.0.0.0/0"]  # ⚠️ CHANGE THIS to your IP!
 
-# Tags
-tags = {
-  Project     = "RedTeamInfra"
-  Environment = "dev"
-  ManagedBy   = "Terraform"
-  Owner       = "RedTeam"
+ssh_port = 22
+c2_server_port = 50050  # Port used by C2 team servers
+
+# =============================================================================
+# Key Pair Configuration
+# =============================================================================
+key_pair_name = "red-team-keypair"  # Must exist in AWS
+
+# =============================================================================
+# C2 Team Server Configuration
+# =============================================================================
+# Deployment Mode: "single", "redundancy", or "phases"
+#   - "single": Deploy 1 C2 server (simple setup)
+#   - "redundancy": Deploy multiple C2 servers (default: 2, configurable)
+#   - "phases": Deploy one server per engagement phase (staging, post-ex, long-haul)
+# 
+# NOTE: If engagement_type is set above, this will be auto-configured.
+# Leave empty ("") to use engagement_type, or set explicitly to override.
+c2_deployment_mode = ""  # Options: single, redundancy, phases, or "" (auto from engagement_type)
+
+# Configuration for Single/Redundancy Modes
+c2_server_count = 2  # Number of C2 team servers (used for redundancy mode, ignored for single/phases)
+c2_server_instance_type = "t3.medium"  # Options: t3.small, t3.medium, t3.large, etc.
+c2_server_ami_id = ""  # Leave empty to use latest Amazon Linux 2
+c2_server_root_volume_size = 20  # GB
+c2_server_enable_elastic_ips = false  # Typically not needed in private subnets
+c2_server_iam_instance_profile_name = ""  # Optional: IAM role for C2 servers
+c2_server_user_data = ""  # Optional: User data script for C2 server setup
+
+# Phase-Based Configuration (used when c2_deployment_mode = "phases")
+# Each phase can have its own instance type, volume size, and user data
+c2_phases = {
+  staging = {
+    enabled          = true   # Set to false to disable this phase
+    instance_type    = "t3.medium"
+    root_volume_size = 20
+    user_data        = ""      # Optional: Phase-specific setup script
+    iam_instance_profile_name = ""  # Optional: Phase-specific IAM role
+  }
+  post-ex = {
+    enabled          = true
+    instance_type    = "t3.medium"
+    root_volume_size = 20
+    user_data        = ""
+    iam_instance_profile_name = ""
+  }
+  long-haul = {
+    enabled          = true
+    instance_type    = "t3.medium"
+    root_volume_size = 20
+    user_data        = ""
+    iam_instance_profile_name = ""
+  }
 }
 
-# Terraform Backend Configuration (S3)
-terraform_backend_bucket = "red-team-terraform-state"
-terraform_backend_region = "us-east-1"
-terraform_backend_key = "terraform.tfstate"
+# =============================================================================
+# Proxy/Redirector Configuration
+# =============================================================================
+proxy_redirector_count = 2  # Number of proxy/redirector instances
+proxy_redirector_instance_type = "t3.small"  # Smaller instances for pass-through
+proxy_redirector_ami_id = ""  # Leave empty to use latest Amazon Linux 2
+proxy_redirector_root_volume_size = 8  # GB (minimal - pass-through only, no data storage)
+proxy_redirector_iam_instance_profile_name = ""  # Optional: IAM role for proxies
+proxy_redirector_user_data = ""  # Optional: User data script for proxy configuration
 
-# Ansible Configuration
-ansible_user = "ec2-user"  # ec2-user for Amazon Linux, ubuntu for Ubuntu
+# =============================================================================
+# Monitoring Configuration
+# =============================================================================
+enable_detailed_monitoring = false  # Enable detailed CloudWatch monitoring (costs extra)
 
-# Optional: Domain Configuration
-domain_name = ""  # Your domain for C2 infrastructure
-subdomain = ""    # Subdomain for C2
+# =============================================================================
+# Terraform Backend Configuration (Optional but Recommended)
+# =============================================================================
+# Uncomment and configure if using S3 backend for state storage
+# terraform_backend_bucket = "red-team-terraform-state"
+# terraform_backend_region = "us-east-1"
+# terraform_backend_key = "terraform.tfstate"
+# terraform_backend_dynamodb_table = "terraform-state-lock"
 
+# =============================================================================
+# Tags
+# =============================================================================
+tags = {
+  Project        = "RedTeamInfra"
+  Environment    = "dev"
+  ManagedBy      = "Terraform"
+  Owner          = "RedTeam"
+  Purpose        = "C2Infrastructure"
+  EngagementType = ""  # Will be set from engagement_type variable if provided
+}
+
+# =============================================================================
+# Ansible Configuration (for reference - not used by Terraform)
+# =============================================================================
+# ansible_user = "ec2-user"  # ec2-user for Amazon Linux, ubuntu for Ubuntu
+
+# =============================================================================
+# Domain Configuration (REQUIRED for CDN/Domain Fronting)
+# =============================================================================
+# ⚠️ IMPORTANT: Register domains BEFORE infrastructure deployment!
+# See docs/DOMAIN_REQUIREMENTS.md for detailed domain setup guide
+
+# Primary Domain
+primary_domain_name = ""  # e.g., "example-business-services.com"
+primary_domain_hosted_zone_id = ""  # Route53 hosted zone ID (leave empty if not using Route53)
+
+# Backup Domains (REQUIRED - minimum 2-3 for redundancy)
+# Format: List of objects with domain_name and hosted_zone_id
+backup_domains = [
+  # {
+  #   domain_name = "backup-domain-1.com"
+  #   hosted_zone_id = ""
+  # },
+  # {
+  #   domain_name = "backup-domain-2.net"
+  #   hosted_zone_id = ""
+  # }
+]
+
+# Subdomain Configuration
+c2_subdomain = "c2"  # Subdomain for C2 team servers
+www_subdomain = "www"  # Subdomain for public-facing (domain fronting)
+cdn_subdomain = "cdn"  # Subdomain for CDN endpoint
+
+# DNS Configuration
+dns_provider = "route53"  # Options: route53, cloudflare, external
+enable_dns_validation = true  # Enable DNS validation for ACM certificates
