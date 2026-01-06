@@ -1,0 +1,88 @@
+# Main Terraform Configuration
+# This is an example - customize based on your needs
+
+terraform {
+  required_version = ">= 1.0"
+  
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+  
+  # Backend configuration - uncomment and configure
+  # backend "s3" {
+  #   bucket         = "red-team-terraform-state"
+  #   key            = "terraform.tfstate"
+  #   region         = "us-east-1"
+  #   encrypt        = true
+  #   dynamodb_table = "terraform-state-lock"
+  # }
+}
+
+provider "aws" {
+  region = var.aws_region
+  
+  default_tags {
+    tags = var.tags
+  }
+}
+
+# Data sources
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+  owners      = ["amazon"]
+  
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+}
+
+# VPC Module
+module "vpc" {
+  source = "./modules/vpc"
+  
+  vpc_cidr             = var.vpc_cidr
+  availability_zones   = var.availability_zones
+  public_subnet_cidrs  = var.public_subnet_cidrs
+  private_subnet_cidrs = var.private_subnet_cidrs
+  project_name         = var.project_name
+  environment          = var.environment
+}
+
+# EC2 Instances Module
+module "ec2" {
+  source = "./modules/ec2"
+  
+  instance_type     = var.instance_type
+  ami_id            = var.ami_id != "" ? var.ami_id : data.aws_ami.amazon_linux.id
+  key_pair_name     = var.key_pair_name
+  instance_count    = var.instance_count
+  subnet_id         = module.vpc.public_subnet_ids[0]
+  security_group_id = module.vpc.security_group_id
+  project_name      = var.project_name
+  environment       = var.environment
+}
+
+# Outputs
+output "vpc_id" {
+  description = "VPC ID"
+  value       = module.vpc.vpc_id
+}
+
+output "instance_ids" {
+  description = "EC2 Instance IDs"
+  value       = module.ec2.instance_ids
+}
+
+output "instance_public_ips" {
+  description = "EC2 Instance Public IPs"
+  value       = module.ec2.instance_public_ips
+}
+

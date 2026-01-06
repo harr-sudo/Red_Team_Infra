@@ -1,0 +1,45 @@
+# AWS Configuration
+aws_region = "us-east-1"
+aws_profile = "default"
+
+# Project Configuration
+project_name = "red-team-infra"
+environment = "dev"  # dev, staging, prod
+
+# VPC Configuration
+vpc_cidr = "10.0.0.0/16"
+availability_zones = ["us-east-1a", "us-east-1b"]
+public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
+
+# EC2 Configuration
+instance_type = "t3.medium"
+ami_id = ""  # Leave empty to use latest Amazon Linux 2
+key_pair_name = "red-team-keypair"
+instance_count = 2
+
+# Security Configuration
+allowed_cidr_blocks = ["0.0.0.0/0"]  # Restrict to your IP
+enable_ssh_access = true
+ssh_port = 22
+
+# Tags
+tags = {
+  Project     = "RedTeamInfra"
+  Environment = "dev"
+  ManagedBy   = "Terraform"
+  Owner       = "RedTeam"
+}
+
+# Terraform Backend Configuration (S3)
+terraform_backend_bucket = "red-team-terraform-state"
+terraform_backend_region = "us-east-1"
+terraform_backend_key = "terraform.tfstate"
+
+# Ansible Configuration
+ansible_user = "ec2-user"  # ec2-user for Amazon Linux, ubuntu for Ubuntu
+
+# Optional: Domain Configuration
+domain_name = ""  # Your domain for C2 infrastructure
+subdomain = ""    # Subdomain for C2
+

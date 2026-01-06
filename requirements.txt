@@ -1,0 +1,21 @@
+# Python dependencies for Red Team Infrastructure automation
+
+# AWS SDK
+boto3>=1.26.0
+botocore>=1.29.0
+
+# Ansible (if using Python Ansible API)
+ansible>=6.0.0
+
+# Utilities
+requests>=2.28.0
+pyyaml>=6.0
+jinja2>=3.1.0
+
+# CLI tools
+click>=8.1.0
+rich>=13.0.0
+
+# Security
+cryptography>=39.0.0
+
