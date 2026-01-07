@@ -166,11 +166,11 @@
                         </small>
                     </div>
 
-                    <!-- Domain Configuration Section -->
-                    <div style="margin: 25px 0; padding: 20px; border: 2px solid #2196F3; border-radius: 8px; background-color: #e3f2fd;">
+                    <!-- Domain Configuration Section (C2 deployments only) -->
+                    <div id="domain-config-section" style="margin: 25px 0; padding: 20px; border: 2px solid #2196F3; border-radius: 8px; background-color: #e3f2fd;">
                         <h3 style="margin: 0 0 15px 0; color: #1565c0;">🌐 Domain Configuration</h3>
                         <p style="color: #666; margin-bottom: 15px; font-size: 0.9em;">
-                            Domains are required for CDN/domain fronting. Register domains before deployment.
+                            Domains are required for CDN/domain fronting in C2 deployments.
                             <a href="#" onclick="window.open('docs/DOMAIN_REQUIREMENTS.md')" style="color: #1565c0;">Learn more</a>
                         </p>
                         
@@ -242,9 +242,20 @@
                     <div style="margin-bottom: 30px;">
                         <h3 style="margin-bottom: 20px;">📋 Deployment Prerequisites</h3>
                         
-                        <!-- Domain Configuration Check -->
-                        <div class="upload-section" style="margin-bottom: 20px; padding: 20px; border: 2px solid #2196F3; border-radius: 8px; background-color: #e3f2fd;">
-                            <h4>🌐 Domain Configuration (Required)</h4>
+                        <!-- Deployment Type Info -->
+                        <div id="deploy-type-info" style="margin-bottom: 20px; padding: 15px; border-radius: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; display: none;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span style="font-size: 1.5em;" id="deploy-type-icon">📦</span>
+                                <div>
+                                    <strong id="deploy-type-name">Deployment Type</strong>
+                                    <div style="font-size: 0.85em; opacity: 0.9;" id="deploy-type-arch">Architecture info</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Domain Configuration Check (C2 deployments only) -->
+                        <div id="domain-prereq-section" class="upload-section" style="margin-bottom: 20px; padding: 20px; border: 2px solid #2196F3; border-radius: 8px; background-color: #e3f2fd;">
+                            <h4>🌐 Domain Configuration (Required for C2)</h4>
                             <p style="color: #666; margin-bottom: 15px;">
                                 Configure your primary domain and backup domains in the Configuration tab before deployment.
                             </p>

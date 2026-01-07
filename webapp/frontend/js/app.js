@@ -266,7 +266,7 @@ function parseCidrInput(input) {
 
 // Deployment type configurations (combines C2 and GOAD)
 const DEPLOYMENT_CONFIGS = {
-    // C2 Infrastructure options
+    // C2 Infrastructure options (Full C2 with redirectors, bastion, etc.)
     'c2-adhoc': {
         title: 'C2: Ad-Hoc Deployment',
         color: 'linear-gradient(135deg, #0d7377 0%, #14a085 100%)',
@@ -274,6 +274,9 @@ const DEPLOYMENT_CONFIGS = {
         c2Mode: 'adhoc',
         goadLab: null,
         serverCount: 1,
+        requiresDomain: true,
+        requiresCS: true,
+        architecture: 'full-c2',
         components: [
             { icon: '🎯', label: 'C2 Server', value: '1' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
@@ -281,7 +284,8 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '💰', label: 'Est. Cost', value: '~$105/mo' }
         ],
         details: 'Quick, minimal setup for one-off tests. Single C2 server with standard proxy infrastructure.',
-        bestFor: 'Quick security tests, POCs, training'
+        bestFor: 'Quick security tests, POCs, training',
+        architectureNote: 'Full C2 infrastructure with redirectors for internet-facing operations.'
     },
     'c2-purple': {
         title: 'C2: Purple Team Deployment',
@@ -291,6 +295,9 @@ const DEPLOYMENT_CONFIGS = {
         goadLab: null,
         serverCount: 2,
         serverCountEditable: true,
+        requiresDomain: true,
+        requiresCS: true,
+        architecture: 'full-c2',
         components: [
             { icon: '🎯', label: 'C2 Servers', value: '2+' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
@@ -298,7 +305,8 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '💰', label: 'Est. Cost', value: '~$135/mo' }
         ],
         details: 'Redundant C2 infrastructure for collaborative exercises. High availability.',
-        bestFor: 'Purple team exercises, collaborative testing'
+        bestFor: 'Purple team exercises, collaborative testing',
+        architectureNote: 'Full C2 infrastructure with redirectors for internet-facing operations.'
     },
     'c2-full': {
         title: 'C2: Full Red Team Deployment',
@@ -307,6 +315,9 @@ const DEPLOYMENT_CONFIGS = {
         c2Mode: 'full-red-team',
         goadLab: null,
         serverCount: 3,
+        requiresDomain: true,
+        requiresCS: true,
+        architecture: 'full-c2',
         components: [
             { icon: '🎯', label: 'C2 Servers', value: '3' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
@@ -315,24 +326,29 @@ const DEPLOYMENT_CONFIGS = {
         ],
         details: 'Phase-based C2: Staging → Post-Ex → Long-Haul. Full operational capability.',
         bestFor: 'Full red team engagements, long-term campaigns',
-        phases: ['🚀 Staging', '⚡ Post-Ex', '🔒 Long-Haul']
+        phases: ['🚀 Staging', '⚡ Post-Ex', '🔒 Long-Haul'],
+        architectureNote: 'Full C2 infrastructure with redirectors for internet-facing operations.'
     },
-    // GOAD Lab options
+    // GOAD Lab options (Simplified: Jumpbox + CS combined, no redirectors)
     'goad-mini': {
         title: 'GOAD: Mini Lab',
         color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
         type: 'goad',
         c2Mode: null,
         goadLab: 'GOAD-Mini',
+        requiresDomain: false,
+        requiresCS: true,
+        architecture: 'goad-only',
         components: [
-            { icon: '🖥️', label: 'VMs', value: '1' },
-            { icon: '🏰', label: 'Domains', value: '1' },
+            { icon: '🏰', label: 'AD VMs', value: '1' },
+            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
             { icon: '🌲', label: 'Forests', value: '1' },
             { icon: '💰', label: 'Est. Cost', value: '~$75/mo' }
         ],
-        details: 'Minimalist lab with single DC. Perfect for learning AD attack basics.',
+        details: 'Minimalist lab with single DC. Cobalt Strike runs on jumpbox for direct access.',
         bestFor: 'Learning, quick testing',
-        attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Pass-the-Hash']
+        attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Pass-the-Hash'],
+        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
     },
     'goad-minilab': {
         title: 'GOAD: MiniLab',
@@ -340,15 +356,19 @@ const DEPLOYMENT_CONFIGS = {
         type: 'goad',
         c2Mode: null,
         goadLab: 'MINILAB',
+        requiresDomain: false,
+        requiresCS: true,
+        architecture: 'goad-only',
         components: [
-            { icon: '🖥️', label: 'VMs', value: '2' },
-            { icon: '🏰', label: 'Domains', value: '1' },
+            { icon: '🏰', label: 'AD VMs', value: '2' },
+            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
             { icon: '🌲', label: 'Forests', value: '1' },
             { icon: '💰', label: 'Est. Cost', value: '~$150/mo' }
         ],
-        details: 'Basic lab with DC + Workstation. Good for practicing attack chains.',
+        details: 'Basic lab with DC + Workstation. Cobalt Strike runs on jumpbox.',
         bestFor: 'Basic attack chains, lateral movement',
-        attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Lateral Movement']
+        attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Lateral Movement'],
+        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
     },
     'goad-light': {
         title: 'GOAD: Light Lab',
@@ -356,15 +376,19 @@ const DEPLOYMENT_CONFIGS = {
         type: 'goad',
         c2Mode: null,
         goadLab: 'GOAD-Light',
+        requiresDomain: false,
+        requiresCS: true,
+        architecture: 'goad-only',
         components: [
-            { icon: '🖥️', label: 'VMs', value: '3' },
-            { icon: '🏰', label: 'Domains', value: '2' },
+            { icon: '🏰', label: 'AD VMs', value: '3' },
+            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
             { icon: '🌲', label: 'Forests', value: '1' },
             { icon: '💰', label: 'Est. Cost', value: '~$200/mo' }
         ],
-        details: 'Smaller multi-domain lab. Covers most common AD attack scenarios.',
+        details: 'Smaller multi-domain lab. Cobalt Strike runs on jumpbox.',
         bestFor: 'Trust attacks, delegation, multi-domain',
-        attacks: ['Trust Attacks', 'Constrained Delegation', 'Cross-domain attacks']
+        attacks: ['Trust Attacks', 'Constrained Delegation', 'Cross-domain attacks'],
+        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
     },
     'goad-sccm': {
         title: 'GOAD: SCCM Lab',
@@ -372,15 +396,19 @@ const DEPLOYMENT_CONFIGS = {
         type: 'goad',
         c2Mode: null,
         goadLab: 'SCCM',
+        requiresDomain: false,
+        requiresCS: true,
+        architecture: 'goad-only',
         components: [
-            { icon: '🖥️', label: 'VMs', value: '4' },
-            { icon: '🏰', label: 'Domains', value: '1' },
+            { icon: '🏰', label: 'AD VMs', value: '4' },
+            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
             { icon: '⚙️', label: 'SCCM', value: '✓' },
             { icon: '💰', label: 'Est. Cost', value: '~$300/mo' }
         ],
-        details: 'Lab with Microsoft Configuration Manager for SCCM-specific attacks.',
+        details: 'Lab with Microsoft Configuration Manager. Cobalt Strike runs on jumpbox.',
         bestFor: 'SCCM attacks, enterprise environments',
-        attacks: ['NAA Credentials', 'PXE Boot Attacks', 'Task Sequence Attacks']
+        attacks: ['NAA Credentials', 'PXE Boot Attacks', 'Task Sequence Attacks'],
+        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
     },
     'goad-full': {
         title: 'GOAD: Full Lab',
@@ -388,15 +416,19 @@ const DEPLOYMENT_CONFIGS = {
         type: 'goad',
         c2Mode: null,
         goadLab: 'GOAD',
+        requiresDomain: false,
+        requiresCS: true,
+        architecture: 'goad-only',
         components: [
-            { icon: '🖥️', label: 'VMs', value: '5' },
-            { icon: '🏰', label: 'Domains', value: '3' },
+            { icon: '🏰', label: 'AD VMs', value: '5' },
+            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
             { icon: '🌲', label: 'Forests', value: '2' },
             { icon: '💰', label: 'Est. Cost', value: '~$350/mo' }
         ],
-        details: 'Complete AD environment with 3 domains across 2 forests. Full training capability.',
+        details: 'Complete AD environment with 3 domains across 2 forests. CS on jumpbox.',
         bestFor: 'Comprehensive AD training, forest attacks',
-        attacks: ['Forest Attacks', 'Golden/Silver Tickets', 'DCShadow', 'ACL Abuse']
+        attacks: ['Forest Attacks', 'Golden/Silver Tickets', 'DCShadow', 'ACL Abuse'],
+        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
     },
     'goad-nha': {
         title: 'GOAD: NHA Challenge',
@@ -404,17 +436,21 @@ const DEPLOYMENT_CONFIGS = {
         type: 'goad',
         c2Mode: null,
         goadLab: 'NHA',
+        requiresDomain: false,
+        requiresCS: true,
+        architecture: 'goad-only',
         components: [
-            { icon: '🖥️', label: 'VMs', value: '5' },
-            { icon: '🏰', label: 'Domains', value: '2' },
+            { icon: '🏰', label: 'AD VMs', value: '5' },
+            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
             { icon: '🎯', label: 'CTF', value: '✓' },
             { icon: '💰', label: 'Est. Cost', value: '~$350/mo' }
         ],
-        details: 'Challenge lab with no hints. CTF-style for advanced practitioners.',
+        details: 'Challenge lab with no hints. CTF-style. CS on jumpbox.',
         bestFor: 'CTF practice, skill testing',
-        attacks: ['Unknown - Challenge Mode!']
+        attacks: ['Unknown - Challenge Mode!'],
+        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
     },
-    // Combined options
+    // Combined options (Full C2 infrastructure + GOAD lab with VPC peering)
     'combined-adhoc-mini': {
         title: 'C2 Ad-Hoc + GOAD Mini',
         color: 'linear-gradient(135deg, #d32f2f 0%, #ff9800 100%)',
@@ -422,14 +458,18 @@ const DEPLOYMENT_CONFIGS = {
         c2Mode: 'adhoc',
         goadLab: 'GOAD-Mini',
         serverCount: 1,
+        requiresDomain: true,
+        requiresCS: true,
+        architecture: 'full-combined',
         components: [
-            { icon: '🎯', label: 'C2', value: '1' },
+            { icon: '🎯', label: 'C2 Server', value: '1' },
             { icon: '🏰', label: 'GOAD VMs', value: '1' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '💰', label: 'Est. Cost', value: '~$180/mo' }
         ],
-        details: 'C2 infrastructure with GOAD Mini lab for testing attacks end-to-end.',
-        bestFor: 'Testing C2 against AD targets'
+        details: 'Full C2 infrastructure with GOAD Mini lab. VPC peered for realistic traffic flow.',
+        bestFor: 'Testing C2 against AD targets',
+        architectureNote: '🔥 Full setup: C2 with redirectors + GOAD lab. Beacons route through redirectors.'
     },
     'combined-adhoc-light': {
         title: 'C2 Ad-Hoc + GOAD Light',
@@ -438,14 +478,18 @@ const DEPLOYMENT_CONFIGS = {
         c2Mode: 'adhoc',
         goadLab: 'GOAD-Light',
         serverCount: 1,
+        requiresDomain: true,
+        requiresCS: true,
+        architecture: 'full-combined',
         components: [
-            { icon: '🎯', label: 'C2', value: '1' },
+            { icon: '🎯', label: 'C2 Server', value: '1' },
             { icon: '🏰', label: 'GOAD VMs', value: '3' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '💰', label: 'Est. Cost', value: '~$305/mo' }
         ],
-        details: 'C2 infrastructure with multi-domain GOAD lab.',
-        bestFor: 'Realistic red team training'
+        details: 'Full C2 infrastructure with multi-domain GOAD lab.',
+        bestFor: 'Realistic red team training',
+        architectureNote: '🔥 Full setup: C2 with redirectors + GOAD lab. Beacons route through redirectors.'
     },
     'combined-full-full': {
         title: 'C2 Full + GOAD Full',
@@ -454,14 +498,19 @@ const DEPLOYMENT_CONFIGS = {
         c2Mode: 'full-red-team',
         goadLab: 'GOAD',
         serverCount: 3,
+        requiresDomain: true,
+        requiresCS: true,
+        architecture: 'full-combined',
         components: [
-            { icon: '🎯', label: 'C2', value: '3' },
+            { icon: '🎯', label: 'C2 Servers', value: '3' },
             { icon: '🏰', label: 'GOAD VMs', value: '5' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '💰', label: 'Est. Cost', value: '~$515/mo' }
         ],
         details: 'Complete red team setup with full C2 phases and complete AD lab.',
-        bestFor: 'Full-scale red team exercises'
+        bestFor: 'Full-scale red team exercises',
+        phases: ['🚀 Staging', '⚡ Post-Ex', '🔒 Long-Haul'],
+        architectureNote: '🔥 Full setup: C2 with redirectors + GOAD lab. Beacons route through redirectors.'
     }
 };
 
@@ -477,6 +526,9 @@ function updateDeploymentType() {
     const overviewTitle = document.getElementById('overview-title');
     const overviewContent = document.getElementById('overview-content');
     const overviewDetails = document.getElementById('overview-details');
+    
+    // Get domain config section (we'll show/hide based on deployment type)
+    const domainConfigSection = document.getElementById('domain-config-section');
     
     const config = DEPLOYMENT_CONFIGS[deploymentType];
     
@@ -504,6 +556,15 @@ function updateDeploymentType() {
             instanceTypeGroup.style.display = config.type === 'goad' ? 'none' : 'block';
         }
         
+        // Show/hide domain config based on whether it's required
+        if (domainConfigSection) {
+            if (config.requiresDomain) {
+                domainConfigSection.style.display = 'block';
+            } else {
+                domainConfigSection.style.display = 'none';
+            }
+        }
+        
         // Show and populate overview
         overviewDiv.style.display = 'block';
         overviewDiv.style.background = config.color;
@@ -525,6 +586,15 @@ function updateDeploymentType() {
             </div>
             <div style="opacity: 0.9;">${config.details}</div>
         `;
+        
+        // Add architecture note
+        if (config.architectureNote) {
+            detailsHtml += `
+                <div style="margin-top: 12px; padding: 8px 12px; background: rgba(255,255,255,0.2); border-radius: 6px; font-size: 0.85em;">
+                    ${config.architectureNote}
+                </div>
+            `;
+        }
         
         // Add phases for full-red-team
         if (config.phases) {
@@ -566,6 +636,11 @@ function updateDeploymentType() {
         if (instanceTypeGroup) {
             instanceTypeGroup.style.opacity = '1';
             instanceTypeGroup.style.display = 'block';
+        }
+        
+        // Show domain config by default
+        if (domainConfigSection) {
+            domainConfigSection.style.display = 'block';
         }
     }
 }
@@ -695,7 +770,65 @@ async function validateConfig() {
 let deploymentPollInterval = null;
 
 async function checkDeploymentStatus() {
+    // First update the deploy page based on selected deployment type
+    updateDeployPageForType();
     pollDeploymentStatus();
+}
+
+/**
+ * Update deploy page UI based on selected deployment type
+ */
+function updateDeployPageForType() {
+    const deployTypeInfo = document.getElementById('deploy-type-info');
+    const deployTypeName = document.getElementById('deploy-type-name');
+    const deployTypeArch = document.getElementById('deploy-type-arch');
+    const deployTypeIcon = document.getElementById('deploy-type-icon');
+    const domainPrereqSection = document.getElementById('domain-prereq-section');
+    const warningDiv = document.getElementById('deployment-prereq-warning');
+    
+    // Get the selected deployment type from config
+    const deploymentTypeSelect = document.getElementById('deployment-type');
+    const deploymentType = deploymentTypeSelect?.value || '';
+    const config = DEPLOYMENT_CONFIGS[deploymentType];
+    
+    if (config && deployTypeInfo) {
+        // Show deployment type info
+        deployTypeInfo.style.display = 'block';
+        deployTypeInfo.style.background = config.color;
+        
+        if (deployTypeName) deployTypeName.textContent = config.title;
+        if (deployTypeArch) deployTypeArch.textContent = config.architectureNote || '';
+        
+        // Set icon based on type
+        if (deployTypeIcon) {
+            if (config.type === 'c2') deployTypeIcon.textContent = '🎯';
+            else if (config.type === 'goad') deployTypeIcon.textContent = '🏰';
+            else deployTypeIcon.textContent = '🔥';
+        }
+        
+        // Show/hide domain prereq based on whether it's required
+        if (domainPrereqSection) {
+            if (config.requiresDomain) {
+                domainPrereqSection.style.display = 'block';
+            } else {
+                domainPrereqSection.style.display = 'none';
+                // For GOAD-only, domain is not required so hide any domain warnings
+            }
+        }
+        
+        // Update warning message based on type
+        if (warningDiv) {
+            if (config.requiresDomain) {
+                warningDiv.innerHTML = '<p><strong>⚠️ Prerequisites Missing:</strong> Domain configuration and Cobalt Strike file are required before deployment.</p>';
+            } else {
+                warningDiv.innerHTML = '<p><strong>⚠️ Prerequisites Missing:</strong> Cobalt Strike file is required before deployment.</p>';
+            }
+        }
+    } else {
+        // No deployment type selected
+        if (deployTypeInfo) deployTypeInfo.style.display = 'none';
+        if (domainPrereqSection) domainPrereqSection.style.display = 'block';
+    }
 }
 
 function pollDeploymentStatus() {
@@ -751,8 +884,26 @@ async function checkDomainConfig() {
     const domainDetails = document.getElementById('domain-details');
     const deployBtn = document.getElementById('deploy-btn');
     const warningDiv = document.getElementById('deployment-prereq-warning');
+    const domainPrereqSection = document.getElementById('domain-prereq-section');
     
     if (!statusDiv) return;
+    
+    // Check if domain is required based on deployment type
+    const deploymentTypeSelect = document.getElementById('deployment-type');
+    const deploymentType = deploymentTypeSelect?.value || '';
+    const config = DEPLOYMENT_CONFIGS[deploymentType];
+    const domainRequired = config ? config.requiresDomain : true;
+    
+    // If domain not required (GOAD-only), show success and skip check
+    if (!domainRequired) {
+        statusDiv.innerHTML = `
+            <div class="status-display success">
+                <p><strong>✅ Not Required</strong> - GOAD labs don't need domain configuration</p>
+            </div>
+        `;
+        if (domainInfoDiv) domainInfoDiv.style.display = 'none';
+        return;
+    }
     
     try {
         const response = await fetch(`${API_BASE}/health/domain-config`);
