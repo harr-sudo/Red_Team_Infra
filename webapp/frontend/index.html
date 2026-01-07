@@ -52,23 +52,23 @@
                         <div class="form-group" style="margin-bottom: 0;">
                             <select id="deployment-type" onchange="updateDeploymentType()" style="font-size: 1.1em; padding: 12px; border: 2px solid #1976d2; border-radius: 8px; width: 100%;">
                                 <option value="" disabled selected>Select what to deploy...</option>
-                                <optgroup label="🎯 C2 Infrastructure (Cobalt Strike)">
-                                    <option value="c2-adhoc">C2: Ad-Hoc (1 server, quick tests) - ~$105/mo</option>
-                                    <option value="c2-purple">C2: Purple Team (2+ servers, redundancy) - ~$135/mo</option>
-                                    <option value="c2-full">C2: Full Red Team (3 servers, phased) - ~$165/mo</option>
+                                <optgroup label="🎯 Full C2 Infrastructure (Internet-Facing Ops)">
+                                    <option value="c2-adhoc">C2 Ad-Hoc: 1 Server + Redirectors + Bastion - ~$105/mo</option>
+                                    <option value="c2-purple">C2 Purple Team: 2+ Servers + Redirectors + Bastion - ~$135/mo</option>
+                                    <option value="c2-full">C2 Full Red Team: 3 Phased Servers + Redirectors + Bastion - ~$165/mo</option>
                                 </optgroup>
-                                <optgroup label="🏰 GOAD Labs (Vulnerable AD for Training)">
-                                    <option value="goad-mini">GOAD: Mini (1 VM, 1 domain) - ~$75/mo</option>
-                                    <option value="goad-minilab">GOAD: MiniLab (2 VMs, DC + WS) - ~$150/mo</option>
-                                    <option value="goad-light">GOAD: Light (3 VMs, 2 domains) - ~$200/mo</option>
-                                    <option value="goad-sccm">GOAD: SCCM (4 VMs, ConfigMgr) - ~$300/mo</option>
-                                    <option value="goad-full">GOAD: Full (5 VMs, 3 domains) - ~$350/mo</option>
-                                    <option value="goad-nha">GOAD: NHA Challenge (5 VMs) - ~$350/mo</option>
+                                <optgroup label="🏰 GOAD + Cobalt Strike (Training Labs)">
+                                    <option value="goad-mini">GOAD Mini + CS: 1 AD VM + Jumpbox w/CS - ~$100/mo</option>
+                                    <option value="goad-minilab">GOAD MiniLab + CS: 2 AD VMs + Jumpbox w/CS - ~$175/mo</option>
+                                    <option value="goad-light">GOAD Light + CS: 3 AD VMs + Jumpbox w/CS - ~$225/mo</option>
+                                    <option value="goad-sccm">GOAD SCCM + CS: 4 AD VMs + Jumpbox w/CS - ~$325/mo</option>
+                                    <option value="goad-full">GOAD Full + CS: 5 AD VMs + Jumpbox w/CS - ~$375/mo</option>
+                                    <option value="goad-nha">GOAD NHA + CS: 5 AD VMs + Jumpbox w/CS - ~$375/mo</option>
                                 </optgroup>
-                                <optgroup label="🔥 Combined (C2 + GOAD Lab)">
-                                    <option value="combined-adhoc-mini">C2 Ad-Hoc + GOAD Mini - ~$180/mo</option>
-                                    <option value="combined-adhoc-light">C2 Ad-Hoc + GOAD Light - ~$305/mo</option>
-                                    <option value="combined-full-full">C2 Full + GOAD Full - ~$515/mo</option>
+                                <optgroup label="🔥 Full C2 + GOAD Lab (Realistic Training)">
+                                    <option value="combined-adhoc-mini">Full C2 Ad-Hoc + GOAD Mini - ~$205/mo</option>
+                                    <option value="combined-adhoc-light">Full C2 Ad-Hoc + GOAD Light - ~$330/mo</option>
+                                    <option value="combined-full-full">Full C2 Red Team + GOAD Full - ~$540/mo</option>
                                 </optgroup>
                             </select>
                         </div>

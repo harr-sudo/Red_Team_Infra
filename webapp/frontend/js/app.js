@@ -331,7 +331,7 @@ const DEPLOYMENT_CONFIGS = {
     },
     // GOAD Lab options (Simplified: Jumpbox + CS combined, no redirectors)
     'goad-mini': {
-        title: 'GOAD: Mini Lab',
+        title: 'GOAD Mini + Cobalt Strike',
         color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
         type: 'goad',
         c2Mode: null,
@@ -341,17 +341,17 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '1' },
-            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🌲', label: 'Forests', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$75/mo' }
+            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
+            { icon: '🌲', label: 'Domains', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$100/mo' }
         ],
-        details: 'Minimalist lab with single DC. Cobalt Strike runs on jumpbox for direct access.',
-        bestFor: 'Learning, quick testing',
+        details: 'Single DC with Cobalt Strike on jumpbox. Direct internal access for training.',
+        bestFor: 'Learning AD attacks, quick testing',
         attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Pass-the-Hash'],
-        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
+        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
     },
     'goad-minilab': {
-        title: 'GOAD: MiniLab',
+        title: 'GOAD MiniLab + Cobalt Strike',
         color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
         type: 'goad',
         c2Mode: null,
@@ -361,17 +361,17 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '2' },
-            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🌲', label: 'Forests', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$150/mo' }
+            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
+            { icon: '🌲', label: 'Domains', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$175/mo' }
         ],
-        details: 'Basic lab with DC + Workstation. Cobalt Strike runs on jumpbox.',
-        bestFor: 'Basic attack chains, lateral movement',
+        details: 'DC + Workstation with Cobalt Strike on jumpbox.',
+        bestFor: 'Attack chains, lateral movement practice',
         attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Lateral Movement'],
-        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
+        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
     },
     'goad-light': {
-        title: 'GOAD: Light Lab',
+        title: 'GOAD Light + Cobalt Strike',
         color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
         type: 'goad',
         c2Mode: null,
@@ -381,17 +381,17 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '3' },
-            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🌲', label: 'Forests', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$200/mo' }
+            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
+            { icon: '🌲', label: 'Domains', value: '2' },
+            { icon: '💰', label: 'Est. Cost', value: '~$225/mo' }
         ],
-        details: 'Smaller multi-domain lab. Cobalt Strike runs on jumpbox.',
-        bestFor: 'Trust attacks, delegation, multi-domain',
+        details: 'Multi-domain lab with Cobalt Strike on jumpbox.',
+        bestFor: 'Trust attacks, cross-domain techniques',
         attacks: ['Trust Attacks', 'Constrained Delegation', 'Cross-domain attacks'],
-        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
+        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
     },
     'goad-sccm': {
-        title: 'GOAD: SCCM Lab',
+        title: 'GOAD SCCM + Cobalt Strike',
         color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
         type: 'goad',
         c2Mode: null,
@@ -401,17 +401,17 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '4' },
-            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
+            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
             { icon: '⚙️', label: 'SCCM', value: '✓' },
-            { icon: '💰', label: 'Est. Cost', value: '~$300/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$325/mo' }
         ],
-        details: 'Lab with Microsoft Configuration Manager. Cobalt Strike runs on jumpbox.',
+        details: 'SCCM environment with Cobalt Strike on jumpbox.',
         bestFor: 'SCCM attacks, enterprise environments',
         attacks: ['NAA Credentials', 'PXE Boot Attacks', 'Task Sequence Attacks'],
-        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
+        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
     },
     'goad-full': {
-        title: 'GOAD: Full Lab',
+        title: 'GOAD Full + Cobalt Strike',
         color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
         type: 'goad',
         c2Mode: null,
@@ -421,17 +421,17 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '5' },
-            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
+            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
             { icon: '🌲', label: 'Forests', value: '2' },
-            { icon: '💰', label: 'Est. Cost', value: '~$350/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$375/mo' }
         ],
-        details: 'Complete AD environment with 3 domains across 2 forests. CS on jumpbox.',
+        details: 'Complete 3-domain, 2-forest lab with Cobalt Strike on jumpbox.',
         bestFor: 'Comprehensive AD training, forest attacks',
         attacks: ['Forest Attacks', 'Golden/Silver Tickets', 'DCShadow', 'ACL Abuse'],
-        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
+        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
     },
     'goad-nha': {
-        title: 'GOAD: NHA Challenge',
+        title: 'GOAD NHA + Cobalt Strike',
         color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
         type: 'goad',
         c2Mode: null,
@@ -441,18 +441,18 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '5' },
-            { icon: '🖥️', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🎯', label: 'CTF', value: '✓' },
-            { icon: '💰', label: 'Est. Cost', value: '~$350/mo' }
+            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
+            { icon: '🏆', label: 'CTF', value: '✓' },
+            { icon: '💰', label: 'Est. Cost', value: '~$375/mo' }
         ],
-        details: 'Challenge lab with no hints. CTF-style. CS on jumpbox.',
-        bestFor: 'CTF practice, skill testing',
+        details: 'Challenge lab (no hints) with Cobalt Strike on jumpbox.',
+        bestFor: 'CTF practice, skill assessment',
         attacks: ['Unknown - Challenge Mode!'],
-        architectureNote: '🔒 Simplified: CS runs on jumpbox. No redirectors needed (isolated lab).'
+        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
     },
     // Combined options (Full C2 infrastructure + GOAD lab with VPC peering)
     'combined-adhoc-mini': {
-        title: 'C2 Ad-Hoc + GOAD Mini',
+        title: 'Full C2 Ad-Hoc + GOAD Mini',
         color: 'linear-gradient(135deg, #d32f2f 0%, #ff9800 100%)',
         type: 'combined',
         c2Mode: 'adhoc',
@@ -463,16 +463,16 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'full-combined',
         components: [
             { icon: '🎯', label: 'C2 Server', value: '1' },
-            { icon: '🏰', label: 'GOAD VMs', value: '1' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
-            { icon: '💰', label: 'Est. Cost', value: '~$180/mo' }
+            { icon: '🏰', label: 'GOAD VMs', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$205/mo' }
         ],
-        details: 'Full C2 infrastructure with GOAD Mini lab. VPC peered for realistic traffic flow.',
-        bestFor: 'Testing C2 against AD targets',
-        architectureNote: '🔥 Full setup: C2 with redirectors + GOAD lab. Beacons route through redirectors.'
+        details: 'Full C2 with redirectors + GOAD Mini. VPCs peered for realistic beacon traffic.',
+        bestFor: 'Testing C2 tradecraft against AD targets',
+        architectureNote: '🔥 Full Infrastructure: Beacons route through redirectors. Realistic C2 operations.'
     },
     'combined-adhoc-light': {
-        title: 'C2 Ad-Hoc + GOAD Light',
+        title: 'Full C2 Ad-Hoc + GOAD Light',
         color: 'linear-gradient(135deg, #d32f2f 0%, #ff9800 100%)',
         type: 'combined',
         c2Mode: 'adhoc',
@@ -483,16 +483,16 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'full-combined',
         components: [
             { icon: '🎯', label: 'C2 Server', value: '1' },
-            { icon: '🏰', label: 'GOAD VMs', value: '3' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
-            { icon: '💰', label: 'Est. Cost', value: '~$305/mo' }
+            { icon: '🏰', label: 'GOAD VMs', value: '3' },
+            { icon: '💰', label: 'Est. Cost', value: '~$330/mo' }
         ],
-        details: 'Full C2 infrastructure with multi-domain GOAD lab.',
-        bestFor: 'Realistic red team training',
-        architectureNote: '🔥 Full setup: C2 with redirectors + GOAD lab. Beacons route through redirectors.'
+        details: 'Full C2 with redirectors + GOAD Light (multi-domain).',
+        bestFor: 'Realistic red team training with trust attacks',
+        architectureNote: '🔥 Full Infrastructure: Beacons route through redirectors. Realistic C2 operations.'
     },
     'combined-full-full': {
-        title: 'C2 Full + GOAD Full',
+        title: 'Full C2 Red Team + GOAD Full',
         color: 'linear-gradient(135deg, #d32f2f 0%, #ff9800 100%)',
         type: 'combined',
         c2Mode: 'full-red-team',
@@ -503,14 +503,14 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'full-combined',
         components: [
             { icon: '🎯', label: 'C2 Servers', value: '3' },
-            { icon: '🏰', label: 'GOAD VMs', value: '5' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
-            { icon: '💰', label: 'Est. Cost', value: '~$515/mo' }
+            { icon: '🏰', label: 'GOAD VMs', value: '5' },
+            { icon: '💰', label: 'Est. Cost', value: '~$540/mo' }
         ],
-        details: 'Complete red team setup with full C2 phases and complete AD lab.',
-        bestFor: 'Full-scale red team exercises',
+        details: 'Complete phased C2 (Staging/Post-Ex/Long-Haul) + Full GOAD lab.',
+        bestFor: 'Full-scale red team exercises with realistic AD targets',
         phases: ['🚀 Staging', '⚡ Post-Ex', '🔒 Long-Haul'],
-        architectureNote: '🔥 Full setup: C2 with redirectors + GOAD lab. Beacons route through redirectors.'
+        architectureNote: '🔥 Full Infrastructure: Beacons route through redirectors. Realistic C2 operations.'
     }
 };
 
