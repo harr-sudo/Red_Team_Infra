@@ -35,3 +35,12 @@ output "private_route_table_id" {
   value       = var.enable_nat_gateway ? aws_route_table.private_rt[0].id : null
 }
 
+output "private_route_table_ids" {
+  description = "List of private route table IDs (for VPC peering)"
+  value       = var.enable_nat_gateway ? [aws_route_table.private_rt[0].id] : [aws_route_table.public_rt.id]
+}
+
+output "all_route_table_ids" {
+  description = "All route table IDs in the VPC"
+  value       = var.enable_nat_gateway ? [aws_route_table.public_rt.id, aws_route_table.private_rt[0].id] : [aws_route_table.public_rt.id]
+}

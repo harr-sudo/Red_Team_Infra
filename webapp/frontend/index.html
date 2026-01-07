@@ -53,24 +53,24 @@
                             <select id="deployment-type" onchange="updateDeploymentType()" style="font-size: 1.1em; padding: 12px; border: 2px solid #1976d2; border-radius: 8px; width: 100%;">
                                 <option value="" disabled selected>Select what to deploy...</option>
                                 <optgroup label="🎯 Full C2 Infrastructure (Internet-Facing Ops)">
-                                    <option value="c2-adhoc">C2 Ad-Hoc: 1 Server + Redirectors + Bastion - ~$105/mo</option>
-                                    <option value="c2-purple">C2 Purple Team: 2+ Servers + Redirectors + Bastion - ~$135/mo</option>
-                                    <option value="c2-full">C2 Full Red Team: 3 Phased Servers + Redirectors + Bastion - ~$165/mo</option>
+                                    <option value="c2-adhoc">C2 Ad-Hoc: 1 Server + Redirectors + Bastion - ~$125/mo</option>
+                                    <option value="c2-purple">C2 Purple Team: 2+ Servers + Redirectors + Bastion - ~$155/mo</option>
+                                    <option value="c2-full">C2 Full Red Team: 3 Phased Servers + Redirectors + Bastion - ~$185/mo</option>
                                 </optgroup>
                                 <optgroup label="🏰 GOAD + Cobalt Strike (Training Labs)">
-                                    <option value="goad-mini">GOAD Mini + CS: 1 VM, 1 domain + Jumpbox w/CS - ~$100/mo</option>
-                                    <option value="goad-minilab">GOAD MiniLab + CS: 2 VMs, 1 domain + Jumpbox w/CS - ~$175/mo</option>
-                                    <option value="goad-light">GOAD Light + CS: 3 VMs, 2 domains + Jumpbox w/CS - ~$225/mo</option>
-                                    <option value="goad-sccm">GOAD SCCM + CS: 4 VMs, 1 domain + SCCM + Jumpbox w/CS - ~$325/mo</option>
-                                    <option value="goad-full">GOAD Full + CS: 5 VMs, 3 domains, 2 forests + Jumpbox w/CS - ~$375/mo</option>
-                                    <option value="goad-nha">GOAD NHA + CS: 5 VMs, 2 domains (CTF) + Jumpbox w/CS - ~$375/mo</option>
+                                    <option value="goad-mini">GOAD Mini + CS: 1 VM, 1 domain + Jumpbox w/CS - ~$145/mo</option>
+                                    <option value="goad-minilab">GOAD MiniLab + CS: 2 VMs, 1 domain + Jumpbox w/CS - ~$225/mo</option>
+                                    <option value="goad-light">GOAD Light + CS: 3 VMs, 2 domains + Jumpbox w/CS - ~$310/mo</option>
+                                    <option value="goad-sccm">GOAD SCCM + CS: 4 VMs, 1 domain + SCCM + Jumpbox w/CS - ~$765/mo</option>
+                                    <option value="goad-full">GOAD Full + CS: 5 VMs, 3 domains, 2 forests + Jumpbox w/CS - ~$470/mo</option>
+                                    <option value="goad-nha">GOAD NHA + CS: 5 VMs, 2 domains (CTF) + Jumpbox w/CS - ~$470/mo</option>
                                 </optgroup>
                                 <optgroup label="🔥 Full C2 + GOAD Lab (Realistic Training)">
-                                    <option value="combined-adhoc-mini">Full C2 Ad-Hoc + GOAD Mini - ~$205/mo</option>
-                                    <option value="combined-adhoc-light">Full C2 Ad-Hoc + GOAD Light - ~$330/mo</option>
-                                    <option value="combined-full-full">Full C2 Red Team + GOAD Full - ~$540/mo</option>
+                                    <option value="combined-adhoc-mini">Full C2 Ad-Hoc + GOAD Mini - ~$240/mo</option>
+                                    <option value="combined-adhoc-light">Full C2 Ad-Hoc + GOAD Light - ~$400/mo</option>
+                                    <option value="combined-full-full">Full C2 Red Team + GOAD Full - ~$620/mo</option>
                                 </optgroup>
-                            </select>
+                        </select>
                         </div>
                     </div>
 
@@ -85,20 +85,34 @@
                         <div id="overview-details" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.3); font-size: 0.9em;">
                             <!-- Additional details -->
                         </div>
+                        <!-- Estimated Deployment Time -->
+                        <div id="deployment-time-estimate" style="margin-top: 15px; padding: 12px; background: rgba(255,255,255,0.15); border-radius: 8px; display: flex; align-items: center; gap: 12px;">
+                            <span style="font-size: 1.5em;">⏱️</span>
+                            <div>
+                                <div style="font-weight: bold;">Estimated Deployment Time</div>
+                                <div id="est-deploy-time" style="font-size: 1.2em;">~10-15 minutes</div>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="form-group">
-                        <label for="project-name">Project Name:</label>
-                        <input type="text" id="project-name" placeholder="red-team-infra">
-                    </div>
-
+                    <!-- Environment (moved above Project Name) -->
                     <div class="form-group">
                         <label for="environment">Environment:</label>
-                        <select id="environment">
+                        <select id="environment" onchange="updateProjectName()">
                             <option value="dev">dev</option>
                             <option value="staging">staging</option>
                             <option value="prod">prod</option>
                         </select>
+                        <small style="color: #666; display: block; margin-top: 5px;">Environment tag for resource organization</small>
+                    </div>
+
+                    <!-- Project Name (auto-populated based on deployment type + environment) -->
+                    <div class="form-group">
+                        <label for="project-name">Project Name:</label>
+                        <input type="text" id="project-name" placeholder="c2_adhoc_dev_XXX" onchange="validateProjectName()">
+                        <small style="color: #666; display: block; margin-top: 5px;">
+                            Auto-generated: <code style="background: #e0e0e0; padding: 2px 6px; border-radius: 3px;">[type]_[env]_XXX</code> — Replace <strong>XXX</strong> with your identifier (e.g., your name or project code)
+                        </small>
                     </div>
 
                     <div class="form-group">
@@ -435,6 +449,68 @@
                         </div>
                     </div>
 
+                    <!-- Lifecycle Management Section -->
+                    <div id="lifecycle-section" style="margin-bottom: 30px; display: none;">
+                        <h3>⚡ Lifecycle Management</h3>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 15px;">
+                            
+                            <!-- Stop Infrastructure (Keep Resources) -->
+                            <div style="padding: 20px; border: 2px solid #ff9800; border-radius: 8px; background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%);">
+                                <h4 style="margin: 0 0 10px 0; color: #e65100;">⏸️ Stop Infrastructure</h4>
+                                <p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">
+                                    <strong>Pause without deleting.</strong> EC2 instances will be stopped but all resources remain. 
+                                    You can restart anytime.
+                                </p>
+                                <div style="background: white; padding: 10px; border-radius: 6px; margin-bottom: 15px; font-size: 0.85em;">
+                                    <div style="color: #2e7d32;">✅ <strong>Stops:</strong> EC2 compute charges (~90% savings)</div>
+                                    <div style="color: #e65100;">⚠️ <strong>Still billed:</strong> EBS storage, Elastic IPs, NAT Gateway</div>
+                                    <div style="color: #1565c0;">💾 <strong>Preserved:</strong> All data, IPs, configuration</div>
+                                </div>
+                                <button class="btn" style="background: #ff9800; color: white; width: 100%;" onclick="stopInfrastructure()">
+                                    ⏸️ Stop All Instances
+                                </button>
+                            </div>
+                            
+                            <!-- Start Infrastructure -->
+                            <div style="padding: 20px; border: 2px solid #4CAF50; border-radius: 8px; background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);">
+                                <h4 style="margin: 0 0 10px 0; color: #2e7d32;">▶️ Start Infrastructure</h4>
+                                <p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">
+                                    <strong>Resume stopped instances.</strong> Bring your infrastructure back online. 
+                                    All configurations and data preserved.
+                                </p>
+                                <div style="background: white; padding: 10px; border-radius: 6px; margin-bottom: 15px; font-size: 0.85em;">
+                                    <div style="color: #1565c0;">🔄 <strong>Restores:</strong> All EC2 instances to running state</div>
+                                    <div style="color: #e65100;">⏱️ <strong>Time:</strong> ~2-5 minutes to fully boot</div>
+                                    <div style="color: #7b1fa2;">📝 <strong>Note:</strong> Public IPs may change (use Elastic IPs)</div>
+                                </div>
+                                <button class="btn btn-success" style="width: 100%;" onclick="startInfrastructure()">
+                                    ▶️ Start All Instances
+                                </button>
+                            </div>
+                            
+                        </div>
+                        
+                        <!-- AWS Resource Info -->
+                        <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #2196F3;">
+                            <h4 style="margin: 0 0 10px 0; color: #1565c0;">🏷️ Finding Resources in AWS Console</h4>
+                            <p style="color: #666; font-size: 0.9em; margin: 0;">
+                                All resources are tagged with your <strong>Project Name</strong> for easy identification. 
+                                In AWS Console, filter by tag: <code style="background: #bbdefb; padding: 2px 6px; border-radius: 3px;">Project = <span id="aws-project-tag">your-project-name</span></code>
+                            </p>
+                            <div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
+                                <a href="https://console.aws.amazon.com/ec2/home#Instances:" target="_blank" class="btn btn-secondary" style="font-size: 0.85em;">
+                                    🖥️ EC2 Instances
+                                </a>
+                                <a href="https://console.aws.amazon.com/vpc/home#vpcs:" target="_blank" class="btn btn-secondary" style="font-size: 0.85em;">
+                                    🌐 VPCs
+                                </a>
+                                <a href="https://console.aws.amazon.com/ec2/home#SecurityGroups:" target="_blank" class="btn btn-secondary" style="font-size: 0.85em;">
+                                    🔒 Security Groups
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Infrastructure Components -->
                     <div id="infrastructure-components">
                         
@@ -508,14 +584,25 @@
 
                     <!-- Danger Zone - Destroy Infrastructure -->
                     <div id="destroy-section" style="margin-top: 30px; display: none;">
-                        <h3>⚠️ Danger Zone</h3>
-                        <div style="background: #ffebee; padding: 20px; border-radius: 8px; margin-top: 15px; border: 2px solid #f44336;">
-                            <p style="color: #c62828; margin-bottom: 15px;">
-                                <strong>Destroy Infrastructure</strong> - This will permanently delete all deployed resources including EC2 instances, VPCs, security groups, and all associated data.
+                        <h3>⚠️ Danger Zone - Complete Deletion</h3>
+                        <div style="background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%); padding: 20px; border-radius: 8px; margin-top: 15px; border: 2px solid #f44336;">
+                            <h4 style="margin: 0 0 10px 0; color: #c62828;">🗑️ Destroy Infrastructure</h4>
+                            <p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">
+                                <strong>Permanently delete ALL resources.</strong> This cannot be undone. 
+                                All EC2 instances, VPCs, security groups, and data will be destroyed.
                             </p>
-                            <button class="btn btn-danger" onclick="destroyInfrastructure()" style="background: #c62828;">
+                            <div style="background: white; padding: 10px; border-radius: 6px; margin-bottom: 15px; font-size: 0.85em;">
+                                <div style="color: #c62828;">❌ <strong>Deleted:</strong> All EC2 instances, EBS volumes, VPCs</div>
+                                <div style="color: #c62828;">❌ <strong>Deleted:</strong> Security groups, subnets, route tables</div>
+                                <div style="color: #c62828;">❌ <strong>Deleted:</strong> NAT Gateways, Elastic IPs, S3 data</div>
+                                <div style="color: #2e7d32;">✅ <strong>Result:</strong> $0 ongoing AWS charges</div>
+                            </div>
+                            <button class="btn btn-danger" onclick="destroyInfrastructure()" style="background: #c62828; width: 100%;">
                                 🗑️ Destroy All Infrastructure
                             </button>
+                            <p style="color: #888; font-size: 0.8em; margin: 10px 0 0 0; text-align: center;">
+                                You will be asked to confirm by typing "DESTROY"
+                            </p>
                         </div>
                     </div>
 

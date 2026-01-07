@@ -165,3 +165,47 @@ resource "aws_security_group" "bastion_sg" {
   )
 }
 
+# =============================================================================
+# VPC PEERING RULES (for Combined Mode)
+# =============================================================================
+# These rules allow C2 servers to communicate with GOAD VMs when peered
+
+# Allow C2 servers to reach GOAD VMs
+resource "aws_security_group_rule" "c2_to_goad_all" {
+  count = var.enable_vpc_peering && var.goad_vpc_cidr != "" ? 1 : 0
+
+  type              = "egress"
+  from_port         = 0
+  to_port           = 65535
+  protocol          = "tcp"
+  cidr_blocks       = [var.goad_vpc_cidr]
+  security_group_id = aws_security_group.c2_team_server_sg.id
+  description       = "Allow C2 servers to reach GOAD VMs via VPC peering"
+}
+
+# Allow C2 servers to receive from GOAD VMs (beacon callbacks)
+resource "aws_security_group_rule" "c2_from_goad" {
+  count = var.enable_vpc_peering && var.goad_vpc_cidr != "" ? 1 : 0
+
+  type              = "ingress"
+  from_port         = 0
+  to_port           = 65535
+  protocol          = "tcp"
+  cidr_blocks       = [var.goad_vpc_cidr]
+  security_group_id = aws_security_group.c2_team_server_sg.id
+  description       = "Allow beacon callbacks from GOAD VMs"
+}
+
+# Allow bastion to reach GOAD VMs (for management)
+resource "aws_security_group_rule" "bastion_to_goad" {
+  count = var.enable_vpc_peering && var.goad_vpc_cidr != "" ? 1 : 0
+
+  type              = "egress"
+  from_port         = 0
+  to_port           = 65535
+  protocol          = "tcp"
+  cidr_blocks       = [var.goad_vpc_cidr]
+  security_group_id = aws_security_group.bastion_sg.id
+  description       = "Allow bastion to reach GOAD VMs via VPC peering"
+}
+

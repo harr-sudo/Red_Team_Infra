@@ -1,13 +1,19 @@
 # Terraform Variables for Red Team Infrastructure
 
+# =============================================================================
 # AWS Configuration
+# =============================================================================
+
 variable "aws_region" {
   description = "AWS region for resources"
   type        = string
   default     = "us-east-1"
 }
 
+# =============================================================================
 # Project Configuration
+# =============================================================================
+
 variable "project_name" {
   description = "Name of the project (used for resource naming)"
   type        = string
@@ -18,9 +24,95 @@ variable "environment" {
   type        = string
 }
 
-# Engagement Type Configuration
+# =============================================================================
+# DEPLOYMENT TYPE - PRIMARY CONTROL
+# =============================================================================
+# This is the main variable that controls what gets deployed.
+# Options:
+#   C2-Only:   c2-adhoc, c2-purple, c2-full
+#   GOAD-Only: goad-mini, goad-minilab, goad-light, goad-sccm, goad-full, goad-nha
+#   Combined:  combined-adhoc-mini, combined-adhoc-light, combined-full-full
+
+variable "deployment_type" {
+  description = "Primary deployment type controlling what infrastructure to deploy"
+  type        = string
+  default     = "c2-adhoc"
+  
+  validation {
+    condition = contains([
+      # C2-Only modes
+      "c2-adhoc", "c2-purple", "c2-full",
+      # GOAD-Only modes (with CS on jumpbox)
+      "goad-mini", "goad-minilab", "goad-light", "goad-sccm", "goad-full", "goad-nha",
+      # Combined modes (C2 + GOAD with VPC peering)
+      "combined-adhoc-mini", "combined-adhoc-light", "combined-full-full"
+    ], var.deployment_type)
+    error_message = "Invalid deployment_type. Must be one of: c2-adhoc, c2-purple, c2-full, goad-mini, goad-minilab, goad-light, goad-sccm, goad-full, goad-nha, combined-adhoc-mini, combined-adhoc-light, combined-full-full"
+  }
+}
+
+# =============================================================================
+# GOAD Configuration
+# =============================================================================
+
+variable "goad_lab_type" {
+  description = "GOAD lab type to deploy. Auto-configured from deployment_type if not set."
+  type        = string
+  default     = ""
+  
+  validation {
+    condition     = var.goad_lab_type == "" || contains(["GOAD-Mini", "MINILAB", "GOAD-Light", "SCCM", "GOAD", "NHA"], var.goad_lab_type)
+    error_message = "goad_lab_type must be one of: GOAD-Mini, MINILAB, GOAD-Light, SCCM, GOAD, NHA, or empty (auto-configure)"
+  }
+}
+
+variable "goad_vpc_cidr" {
+  description = "CIDR block for GOAD VPC (used in GOAD-only and combined modes)"
+  type        = string
+  default     = "192.168.56.0/24"
+}
+
+variable "goad_public_subnet_cidr" {
+  description = "CIDR block for GOAD public subnet"
+  type        = string
+  default     = "192.168.56.64/26"
+}
+
+variable "goad_private_subnet_cidr" {
+  description = "CIDR block for GOAD private subnet"
+  type        = string
+  default     = "192.168.56.0/26"
+}
+
+# =============================================================================
+# Cobalt Strike Configuration
+# =============================================================================
+
+variable "cobalt_strike_archive_s3_path" {
+  description = "S3 path to Cobalt Strike archive (e.g., s3://bucket/cobaltstrike.tar.gz)"
+  type        = string
+  default     = ""
+}
+
+variable "cs_teamserver_password" {
+  description = "Password for Cobalt Strike team server"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "cs_teamserver_port" {
+  description = "Port for Cobalt Strike team server"
+  type        = number
+  default     = 50050
+}
+
+# =============================================================================
+# Legacy Engagement Type (Deprecated - use deployment_type instead)
+# =============================================================================
+
 variable "engagement_type" {
-  description = "Type of engagement: 'adhoc', 'purple-team', or 'full-red-team'. This can auto-configure deployment mode."
+  description = "DEPRECATED: Use deployment_type instead. Kept for backward compatibility."
   type        = string
   default     = ""
   
@@ -30,25 +122,32 @@ variable "engagement_type" {
   }
 }
 
-# VPC Configuration
+# =============================================================================
+# VPC Configuration (C2 Infrastructure)
+# =============================================================================
+
 variable "vpc_cidr" {
-  description = "CIDR block for VPC"
+  description = "CIDR block for C2 VPC"
   type        = string
+  default     = "10.0.0.0/16"
 }
 
 variable "availability_zones" {
   description = "List of availability zones"
   type        = list(string)
+  default     = ["us-east-1a", "us-east-1b"]
 }
 
 variable "public_subnet_cidrs" {
   description = "CIDR blocks for public subnets"
   type        = list(string)
+  default     = ["10.0.1.0/24", "10.0.2.0/24"]
 }
 
 variable "private_subnet_cidrs" {
   description = "CIDR blocks for private subnets"
   type        = list(string)
+  default     = ["10.0.10.0/24", "10.0.11.0/24"]
 }
 
 variable "enable_nat_gateway" {
@@ -57,10 +156,14 @@ variable "enable_nat_gateway" {
   default     = false
 }
 
+# =============================================================================
 # Security Configuration
+# =============================================================================
+
 variable "management_cidr_blocks" {
-  description = "CIDR blocks allowed for SSH/management access"
+  description = "CIDR blocks allowed for SSH/management access (your IP)"
   type        = list(string)
+  default     = []
 }
 
 variable "ssh_port" {
@@ -70,21 +173,27 @@ variable "ssh_port" {
 }
 
 variable "c2_server_port" {
-  description = "Port used by C2 team servers"
+  description = "Port used by C2 team servers (Cobalt Strike default: 50050)"
   type        = number
   default     = 50050
 }
 
+# =============================================================================
 # Key Pair Configuration
+# =============================================================================
+
 variable "key_pair_name" {
   description = "Name of AWS key pair for SSH access"
   type        = string
+  default     = ""
 }
 
+# =============================================================================
 # C2 Deployment Mode Configuration
-# If engagement_type is set, it will auto-configure deployment_mode unless explicitly overridden
+# =============================================================================
+# Auto-configured from deployment_type, but can be overridden
 variable "c2_deployment_mode" {
-  description = "C2 server deployment mode: 'single', 'redundancy', or 'phases'. Leave empty to auto-configure based on engagement_type."
+  description = "C2 server deployment mode: 'single', 'redundancy', or 'phases'. Auto-configured from deployment_type if empty."
   type        = string
   default     = ""
   
@@ -94,9 +203,11 @@ variable "c2_deployment_mode" {
   }
 }
 
-# C2 Team Server Configuration (for single/redundancy modes)
+# =============================================================================
+# C2 Team Server Configuration
+# =============================================================================
 variable "c2_server_count" {
-  description = "Number of C2 team server instances (used for single/redundancy modes)"
+  description = "Number of C2 team server instances (for single/redundancy modes)"
   type        = number
   default     = 2
 }
@@ -108,7 +219,7 @@ variable "c2_server_instance_type" {
 }
 
 variable "c2_server_ami_id" {
-  description = "AMI ID for C2 team servers (leave empty to use latest Amazon Linux 2)"
+  description = "AMI ID for C2 team servers (leave empty to use latest Ubuntu 22.04)"
   type        = string
   default     = ""
 }
@@ -132,12 +243,14 @@ variable "c2_server_iam_instance_profile_name" {
 }
 
 variable "c2_server_user_data" {
-  description = "User data script for C2 team server initialization (used for single/redundancy modes)"
+  description = "Custom user data script for C2 servers (overrides centralized CS script if set)"
   type        = string
   default     = ""
 }
 
-# Phase-Based C2 Configuration (for phases mode)
+# =============================================================================
+# Phase-Based C2 Configuration (for c2-full / phases mode)
+# =============================================================================
 variable "c2_phases" {
   description = "Phase-based C2 server configuration. Each phase can have its own settings."
   type = map(object({
@@ -172,7 +285,9 @@ variable "c2_phases" {
   }
 }
 
+# =============================================================================
 # Proxy/Redirector Configuration
+# =============================================================================
 variable "proxy_redirector_count" {
   description = "Number of proxy/redirector instances"
   type        = number
@@ -186,7 +301,7 @@ variable "proxy_redirector_instance_type" {
 }
 
 variable "proxy_redirector_ami_id" {
-  description = "AMI ID for proxy/redirector servers (leave empty to use latest Amazon Linux 2)"
+  description = "AMI ID for proxy/redirector servers (leave empty to use latest Ubuntu 22.04)"
   type        = string
   default     = ""
 }
@@ -204,12 +319,14 @@ variable "proxy_redirector_iam_instance_profile_name" {
 }
 
 variable "proxy_redirector_user_data" {
-  description = "User data script for proxy/redirector configuration (pass-through setup)"
+  description = "User data script for proxy/redirector configuration"
   type        = string
   default     = ""
 }
 
+# =============================================================================
 # Bastion/Jump Box Configuration
+# =============================================================================
 variable "enable_bastion" {
   description = "Enable bastion/jump box for management access"
   type        = bool
@@ -241,17 +358,19 @@ variable "bastion_iam_instance_profile_name" {
 }
 
 variable "windows_admin_password" {
-  description = "Windows administrator password (leave empty to retrieve from AWS Systems Manager using key pair)"
+  description = "Windows administrator password (leave empty to auto-generate)"
   type        = string
   default     = ""
   sensitive   = true
 }
 
+# =============================================================================
 # Tools Repository Configuration
+# =============================================================================
 variable "tools_repo_url" {
-  description = "Git repository URL for tools (e.g., git@github.com:org/red-team-tools.git or https://github.com/org/red-team-tools.git)"
+  description = "Git repository URL for red team tools"
   type        = string
-  default     = ""
+  default     = "https://github.com/harr-sudo/red-team-tools.git"
 }
 
 variable "tools_repo_branch" {
@@ -268,20 +387,24 @@ variable "tools_repo_ssh_key" {
 }
 
 variable "tools_repo_https_token" {
-  description = "Personal access token for HTTPS Git access (stored in AWS SSM Parameter Store). Leave empty if using SSH."
+  description = "Personal access token for HTTPS Git access. Leave empty if using SSH."
   type        = string
   default     = ""
   sensitive   = true
 }
 
+# =============================================================================
 # Monitoring Configuration
+# =============================================================================
 variable "enable_detailed_monitoring" {
   description = "Enable detailed CloudWatch monitoring for all instances"
   type        = bool
   default     = false
 }
 
+# =============================================================================
 # Terraform Backend Configuration
+# =============================================================================
 variable "terraform_backend_bucket" {
   description = "S3 bucket name for Terraform state"
   type        = string
@@ -306,10 +429,12 @@ variable "terraform_backend_dynamodb_table" {
   default     = "terraform-state-lock"
 }
 
+# =============================================================================
 # Tags
+# =============================================================================
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
   default     = {}
 }
-

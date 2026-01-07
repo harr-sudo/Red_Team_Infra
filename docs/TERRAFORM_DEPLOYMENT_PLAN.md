@@ -148,6 +148,368 @@ Operator: Connects via bastion SSH tunnel
 
 ---
 
+## VPC Architecture Decision
+
+### Analysis: Our VPC vs GOAD's VPC
+
+| Feature | Our VPC (`modules/vpc/`) | GOAD VPC (`network.tf`) |
+|---------|--------------------------|-------------------------|
+| **CIDR** | Configurable (default 10.0.0.0/16) | /24 network (e.g., 192.168.56.0/24) |
+| **Subnets** | Multiple public + private | 1 public (/26) + 1 private (/26) |
+| **NAT Gateway** | Optional | Always created |
+| **Internet Gateway** | Yes | Yes |
+| **Security Groups** | Separate per component | Single shared SG |
+| **Key Pairs** | Uses existing key pair | Generates new TLS keys |
+
+### Decision: **Separate VPCs with Peering for Combined Mode**
+
+**Rationale:**
+1. **Isolation** - GOAD is intentionally vulnerable; keeping it separate protects C2 infra
+2. **Simplicity** - Don't need to modify GOAD's networking logic
+3. **Flexibility** - Can destroy GOAD without affecting C2
+4. **Realistic** - Mirrors real engagement where target network is separate
+
+### VPC CIDR Allocation
+
+| Mode | VPC | CIDR | Notes |
+|------|-----|------|-------|
+| **C2-Only** | C2 VPC | 10.0.0.0/16 | Standard |
+| **GOAD-Only** | GOAD VPC | 192.168.56.0/24 | GOAD default |
+| **Combined** | C2 VPC | 10.0.0.0/16 | C2 infrastructure |
+| **Combined** | GOAD VPC | 192.168.57.0/24 | Different from default to avoid conflicts |
+
+### Network Flow by Mode
+
+#### GOAD-Only Mode
+```
+Internet ──► Jumpbox (Public IP) ──► GOAD VMs (Private)
+                │
+                └── CS Team Server (port 50050)
+                
+Operator: Direct connection to jumpbox public IP
+```
+
+#### C2-Only Mode  
+```
+Internet ──► Redirectors (Public) ──► C2 Servers (Private)
+                                            │
+Operator ──► Bastion (Public) ─────────────┘
+             via SSH tunnel
+```
+
+#### Combined Mode
+```
+Internet ──► Redirectors (Public) ──► C2 Servers (Private)
+                                            │
+                                      VPC Peering
+                                            │
+                                      GOAD VMs (Private)
+                                            │
+Operator ──► Bastion (Public) ──► Jumpbox ──┘
+```
+
+---
+
+## GOAD Integration Strategy
+
+### Challenge: GOAD Uses Jinja Templates
+
+GOAD's Terraform files contain Jinja-style placeholders:
+- `{{lab_identifier}}` - Lab name (e.g., "goad-light")
+- `{{lab_name}}` - Display name (e.g., "GOAD-Light")
+- `{{ip_range}}` - Network prefix (e.g., "192.168.56")
+- `{{config.get_value(...)}}` - Config values
+
+**These must be processed BEFORE Terraform runs.**
+
+### Solution: Template Processing Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Deployment Flow                               │
+│                                                                      │
+│  1. User selects "GOAD Light + CS" in Web UI                        │
+│                    │                                                 │
+│                    ▼                                                 │
+│  2. Backend processes GOAD templates                                │
+│     - Reads tools/goad/ad/GOAD-Light/providers/aws/*.tf             │
+│     - Replaces {{placeholders}} with actual values                  │
+│     - Writes to terraform/modules/goad/generated/                   │
+│                    │                                                 │
+│                    ▼                                                 │
+│  3. Terraform runs with processed files                             │
+│     - Our main.tf calls module "goad" { source = "./modules/goad" } │
+│     - GOAD module uses the generated .tf files                      │
+│                    │                                                 │
+│                    ▼                                                 │
+│  4. Post-Terraform: Ansible provisioning (async)                    │
+│     - Runs on jumpbox                                               │
+│     - Configures AD domains                                         │
+│     - Takes 30-60 minutes                                           │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Template Processor
+
+**File: `webapp/backend/utils/goad_template_processor.py`**
+
+```python
+import os
+import glob
+import shutil
+
+# GOAD lab configurations
+GOAD_LABS = {
+    'GOAD-Mini': {
+        'source_dir': 'tools/goad/ad/GOAD-Mini/providers/aws',
+        'ip_range': '192.168.56',
+        'lab_identifier': 'goad-mini',
+    },
+    'MINILAB': {
+        'source_dir': 'tools/goad/ad/MINILAB/providers/aws',
+        'ip_range': '192.168.56',
+        'lab_identifier': 'minilab',
+    },
+    'GOAD-Light': {
+        'source_dir': 'tools/goad/ad/GOAD-Light/providers/aws',
+        'ip_range': '192.168.56',
+        'lab_identifier': 'goad-light',
+    },
+    'SCCM': {
+        'source_dir': 'tools/goad/ad/SCCM/providers/aws',
+        'ip_range': '192.168.56',
+        'lab_identifier': 'sccm',
+    },
+    'GOAD': {
+        'source_dir': 'tools/goad/ad/GOAD/providers/aws',
+        'ip_range': '192.168.56',
+        'lab_identifier': 'goad',
+    },
+    'NHA': {
+        'source_dir': 'tools/goad/ad/NHA/providers/aws',
+        'ip_range': '192.168.56',
+        'lab_identifier': 'nha',
+    },
+}
+
+def process_goad_templates(lab_type: str, aws_region: str, aws_zone: str, 
+                           ip_range: str = None, output_dir: str = None) -> str:
+    """
+    Process GOAD Jinja templates and output Terraform-ready files.
+    
+    Args:
+        lab_type: GOAD lab type (e.g., 'GOAD-Light')
+        aws_region: AWS region (e.g., 'us-east-1')
+        aws_zone: AWS availability zone (e.g., 'us-east-1a')
+        ip_range: Override IP range (default from GOAD_LABS)
+        output_dir: Output directory (default: terraform/modules/goad/generated)
+    
+    Returns:
+        Path to generated Terraform files
+    """
+    if lab_type not in GOAD_LABS:
+        raise ValueError(f"Unknown GOAD lab type: {lab_type}")
+    
+    config = GOAD_LABS[lab_type]
+    source_dir = config['source_dir']
+    ip_range = ip_range or config['ip_range']
+    lab_identifier = config['lab_identifier']
+    
+    output_dir = output_dir or 'terraform/modules/goad/generated'
+    
+    # Clear and recreate output directory
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Replacements
+    replacements = {
+        '{{lab_identifier}}': lab_identifier,
+        '{{lab_name}}': lab_type,
+        '{{ip_range}}': ip_range,
+        "{{config.get_value('aws', 'aws_region', 'eu-west-3')}}": aws_region,
+        "{{config.get_value('aws', 'aws_zone', 'eu-west-3c')}}": aws_zone,
+    }
+    
+    # Process all .tf and .tpl files
+    for pattern in ['*.tf', '*.tpl']:
+        for src_file in glob.glob(os.path.join(source_dir, pattern)):
+            filename = os.path.basename(src_file)
+            
+            with open(src_file, 'r') as f:
+                content = f.read()
+            
+            # Apply replacements
+            for placeholder, value in replacements.items():
+                content = content.replace(placeholder, value)
+            
+            # Write to output
+            dst_file = os.path.join(output_dir, filename)
+            with open(dst_file, 'w') as f:
+                f.write(content)
+    
+    return output_dir
+```
+
+---
+
+## Cobalt Strike File Handling
+
+### Challenge: Getting CS Archive to EC2 Instances
+
+The CS archive needs to be available to EC2 instances during boot (user_data).
+
+### Solution: S3 Upload with IAM Role
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     CS File Flow                                     │
+│                                                                      │
+│  1. User uploads cobaltstrike.tar.gz via Web UI                     │
+│                    │                                                 │
+│                    ▼                                                 │
+│  2. Backend uploads to S3 bucket                                    │
+│     s3://{project}-cs-files/cobaltstrike-{timestamp}.tar.gz         │
+│                    │                                                 │
+│                    ▼                                                 │
+│  3. Terraform creates EC2 with IAM role                             │
+│     - Role allows s3:GetObject from cs-files bucket                 │
+│                    │                                                 │
+│                    ▼                                                 │
+│  4. EC2 user_data downloads from S3                                 │
+│     aws s3 cp s3://bucket/cobaltstrike.tar.gz /tmp/                 │
+│                    │                                                 │
+│                    ▼                                                 │
+│  5. Install script extracts and configures CS                       │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Terraform Resources for S3
+
+**File: `terraform/modules/cs_storage/main.tf`**
+
+```hcl
+# S3 bucket for CS files
+resource "aws_s3_bucket" "cs_files" {
+  bucket = "${var.project_name}-cs-files-${random_id.bucket_suffix.hex}"
+  
+  tags = var.tags
+}
+
+resource "random_id" "bucket_suffix" {
+  byte_length = 4
+}
+
+# Encryption
+resource "aws_s3_bucket_server_side_encryption_configuration" "cs_files" {
+  bucket = aws_s3_bucket.cs_files.id
+  
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# Block public access
+resource "aws_s3_bucket_public_access_block" "cs_files" {
+  bucket = aws_s3_bucket.cs_files.id
+  
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Lifecycle - delete files after 7 days
+resource "aws_s3_bucket_lifecycle_configuration" "cs_files" {
+  bucket = aws_s3_bucket.cs_files.id
+  
+  rule {
+    id     = "delete-old-files"
+    status = "Enabled"
+    
+    expiration {
+      days = 7
+    }
+  }
+}
+
+# IAM role for EC2 to access S3
+resource "aws_iam_role" "cs_download" {
+  name = "${var.project_name}-cs-download-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "cs_download" {
+  name = "${var.project_name}-cs-download-policy"
+  role = aws_iam_role.cs_download.id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = ["s3:GetObject"]
+      Resource = "${aws_s3_bucket.cs_files.arn}/*"
+    }]
+  })
+}
+
+resource "aws_iam_instance_profile" "cs_download" {
+  name = "${var.project_name}-cs-download-profile"
+  role = aws_iam_role.cs_download.name
+}
+```
+
+### Backend Upload Function
+
+**File: `webapp/backend/utils/s3_upload.py`**
+
+```python
+import boto3
+import os
+from datetime import datetime
+
+def upload_cs_file(file_path: str, project_name: str, region: str) -> str:
+    """
+    Upload Cobalt Strike archive to S3.
+    
+    Returns:
+        S3 URI (s3://bucket/key)
+    """
+    s3 = boto3.client('s3', region_name=region)
+    
+    # Find the bucket (created by Terraform)
+    bucket_name = None
+    for bucket in s3.list_buckets()['Buckets']:
+        if bucket['Name'].startswith(f"{project_name}-cs-files-"):
+            bucket_name = bucket['Name']
+            break
+    
+    if not bucket_name:
+        raise ValueError(f"CS files bucket not found for project: {project_name}")
+    
+    # Upload with timestamp
+    timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    key = f"cobaltstrike-{timestamp}.tar.gz"
+    
+    s3.upload_file(file_path, bucket_name, key)
+    
+    return f"s3://{bucket_name}/{key}"
+```
+
+---
+
 ## Implementation Tasks
 
 ### Phase 1: Variable Updates
@@ -470,60 +832,6 @@ variable "tools_repo_branch" {
 
 ---
 
-```hcl
-resource "aws_instance" "jumpbox" {
-  ami           = data.aws_ami.ubuntu.id
-  instance_type = "t2.medium"
-  subnet_id     = aws_subnet.public.id
-  key_name      = var.key_pair_name
-  
-  vpc_security_group_ids = [aws_security_group.jumpbox.id]
-  
-  user_data = var.install_cobalt_strike ? templatefile("${path.module}/scripts/install_cs.sh", {
-    cs_archive_s3_path = var.cobalt_strike_archive
-    cs_password        = var.cs_teamserver_password
-  }) : file("${path.module}/scripts/jumpbox_init.sh")
-  
-  tags = merge(var.tags, {
-    Name = "${var.project_name}-goad-jumpbox"
-    Role = var.install_cobalt_strike ? "jumpbox-cs" : "jumpbox"
-  })
-}
-
-# Security group for jumpbox
-resource "aws_security_group" "jumpbox" {
-  name        = "${var.project_name}-goad-jumpbox-sg"
-  vpc_id      = aws_vpc.goad.id
-  
-  # SSH from management
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = var.management_cidr_blocks
-  }
-  
-  # Cobalt Strike team server (only if CS installed)
-  dynamic "ingress" {
-    for_each = var.install_cobalt_strike ? [1] : []
-    content {
-      from_port   = 50050
-      to_port     = 50050
-      protocol    = "tcp"
-      cidr_blocks = var.management_cidr_blocks
-    }
-  }
-  
-  # All outbound
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}
-```
-
 ### Phase 5: VPC Peering Module
 
 **Create: `terraform/modules/vpc_peering/`**
@@ -575,6 +883,191 @@ DEPLOYMENT_TYPE_MAP = {
 }
 ```
 
+### Phase 7: Security Group Updates for VPC Peering
+
+**File: `terraform/modules/security/main.tf`**
+
+Add rules to allow traffic between VPCs in combined mode:
+
+```hcl
+# Allow C2 servers to reach GOAD VMs (combined mode only)
+resource "aws_security_group_rule" "c2_to_goad_egress" {
+  count = var.enable_vpc_peering ? 1 : 0
+  
+  type              = "egress"
+  from_port         = 0
+  to_port           = 65535
+  protocol          = "tcp"
+  cidr_blocks       = [var.goad_vpc_cidr]
+  security_group_id = aws_security_group.c2_team_server.id
+  description       = "Allow C2 to reach GOAD VMs via VPC peering"
+}
+
+# Allow GOAD VMs to receive beacon callbacks from C2
+resource "aws_security_group_rule" "goad_from_c2_ingress" {
+  count = var.enable_vpc_peering ? 1 : 0
+  
+  type              = "ingress"
+  from_port         = 0
+  to_port           = 65535
+  protocol          = "tcp"
+  cidr_blocks       = [var.c2_vpc_cidr]
+  security_group_id = var.goad_security_group_id
+  description       = "Allow traffic from C2 VPC"
+}
+
+# Allow bastion to SSH to GOAD jumpbox
+resource "aws_security_group_rule" "bastion_to_goad_jumpbox" {
+  count = var.enable_vpc_peering ? 1 : 0
+  
+  type              = "egress"
+  from_port         = 22
+  to_port           = 22
+  protocol          = "tcp"
+  cidr_blocks       = [var.goad_vpc_cidr]
+  security_group_id = aws_security_group.bastion.id
+  description       = "Allow bastion SSH to GOAD jumpbox"
+}
+```
+
+### Phase 8: GOAD Ansible Provisioning
+
+After Terraform deploys the GOAD VMs, Ansible configures Active Directory. This is a **critical step** that takes 30-60 minutes.
+
+#### Provisioning Strategy
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                  GOAD Ansible Provisioning Flow                      │
+│                                                                      │
+│  1. Terraform deploys VMs (5-10 minutes)                            │
+│                    │                                                 │
+│                    ▼                                                 │
+│  2. Terraform outputs VM IPs                                        │
+│                    │                                                 │
+│                    ▼                                                 │
+│  3. Backend generates Ansible inventory from outputs                │
+│                    │                                                 │
+│                    ▼                                                 │
+│  4. Backend triggers Ansible on jumpbox (async)                     │
+│     - SSH to jumpbox                                                │
+│     - Run: ansible-playbook -i inventory main.yml                   │
+│                    │                                                 │
+│                    ▼                                                 │
+│  5. UI shows "Provisioning in progress..." (30-60 mins)             │
+│     - Poll /api/deploy/goad-status for progress                     │
+│                    │                                                 │
+│                    ▼                                                 │
+│  6. Ansible completes - AD domains configured                       │
+│     - UI shows "Ready" with credentials                             │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### Terraform Provisioner (Optional - Run Ansible Automatically)
+
+**File: `terraform/modules/goad/provisioner.tf`**
+
+```hcl
+# Wait for jumpbox to be ready
+resource "null_resource" "wait_for_jumpbox" {
+  depends_on = [aws_instance.jumpbox, aws_eip.jumpbox]
+  
+  provisioner "remote-exec" {
+    connection {
+      type        = "ssh"
+      host        = aws_eip.jumpbox.public_ip
+      user        = "ubuntu"
+      private_key = tls_private_key.ssh.private_key_pem
+      timeout     = "5m"
+    }
+    
+    inline = ["echo 'Jumpbox is ready'"]
+  }
+}
+
+# Run GOAD Ansible provisioning (async - runs in background)
+resource "null_resource" "goad_ansible" {
+  count      = var.auto_provision ? 1 : 0
+  depends_on = [null_resource.wait_for_jumpbox, aws_instance.goad_vms]
+  
+  connection {
+    type        = "ssh"
+    host        = aws_eip.jumpbox.public_ip
+    user        = "ubuntu"
+    private_key = tls_private_key.ssh.private_key_pem
+  }
+  
+  # Copy GOAD ansible files to jumpbox
+  provisioner "file" {
+    source      = "${path.module}/ansible/"
+    destination = "/home/ubuntu/goad-ansible"
+  }
+  
+  # Run ansible in background with nohup
+  provisioner "remote-exec" {
+    inline = [
+      "cd /home/ubuntu/goad-ansible",
+      "chmod +x run_provisioning.sh",
+      "nohup ./run_provisioning.sh > /var/log/goad-provision.log 2>&1 &",
+      "echo 'Ansible provisioning started in background'",
+      "echo 'Check /var/log/goad-provision.log for progress'"
+    ]
+  }
+}
+```
+
+#### Backend Status Endpoint
+
+**File: `webapp/backend/routes/deploy.py`**
+
+```python
+@deploy_bp.route('/goad-status', methods=['GET'])
+def get_goad_provisioning_status():
+    """Check GOAD Ansible provisioning status."""
+    try:
+        # Get jumpbox IP from Terraform outputs
+        result = subprocess.run(
+            ['terraform', 'output', '-json', 'goad_jumpbox_public_ip'],
+            cwd=TERRAFORM_DIR,
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            return jsonify({'status': 'unknown', 'error': 'No GOAD deployment found'})
+        
+        jumpbox_ip = json.loads(result.stdout).get('value')
+        if not jumpbox_ip:
+            return jsonify({'status': 'not_deployed'})
+        
+        # SSH to jumpbox and check provisioning status
+        ssh_key_path = get_ssh_key_path()  # Get from config
+        
+        check_cmd = f"ssh -i {ssh_key_path} -o StrictHostKeyChecking=no ubuntu@{jumpbox_ip} 'cat /var/log/goad-provision.log | tail -20'"
+        check_result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
+        
+        log_output = check_result.stdout
+        
+        # Parse status from log
+        if 'PLAY RECAP' in log_output and 'failed=0' in log_output:
+            status = 'completed'
+        elif 'PLAY RECAP' in log_output:
+            status = 'failed'
+        elif 'TASK' in log_output:
+            status = 'in_progress'
+        else:
+            status = 'pending'
+        
+        return jsonify({
+            'status': status,
+            'jumpbox_ip': jumpbox_ip,
+            'log_tail': log_output
+        })
+        
+    except Exception as e:
+        return jsonify({'status': 'error', 'error': str(e)})
+```
+
 ---
 
 ## Deployment Manager UI - Access Details Display
@@ -586,6 +1079,15 @@ The Deployment Manager page must clearly display all connection information, IP 
 **File: `terraform/outputs.tf`**
 
 ```hcl
+# =============================================================================
+# Deployment Type Output (CRITICAL - needed by UI)
+# =============================================================================
+
+output "deployment_type" {
+  description = "The deployment type that was used"
+  value       = var.deployment_type
+}
+
 # =============================================================================
 # C2 Infrastructure Outputs (for C2-only and Combined modes)
 # =============================================================================
@@ -1124,20 +1626,40 @@ function togglePassword(elementOrId) {
 
 ## File Changes Summary
 
+### Terraform Files
+
 | File | Action | Description |
 |------|--------|-------------|
-| `terraform/variables.tf` | Modify | Add deployment_type, goad_lab_type, enable_goad |
+| `terraform/variables.tf` | Modify | Add deployment_type, goad_lab_type, goad_vpc_cidr, cs vars |
 | `terraform/main.tf` | Modify | Add locals for mode detection, conditional modules |
-| `terraform/outputs.tf` | Modify | Add all outputs for IPs, credentials, access instructions |
+| `terraform/outputs.tf` | Modify | Add deployment_type, all IPs, credentials, access instructions |
 | `terraform/scripts/install_cobalt_strike.sh` | Create | **Centralized CS setup script (shared by all)** |
 | `terraform/modules/goad/` | Create | New GOAD deployment module |
-| `terraform/modules/goad/jumpbox.tf` | Create | Uses centralized CS script |
-| `terraform/modules/vpc_peering/` | Create | New VPC peering module |
-| `terraform/modules/c2_team_server/main.tf` | Modify | Use centralized CS script |
+| `terraform/modules/goad/main.tf` | Create | Main GOAD orchestration |
+| `terraform/modules/goad/jumpbox.tf` | Create | Jumpbox with optional CS |
+| `terraform/modules/goad/network.tf` | Create | GOAD VPC (from processed templates) |
+| `terraform/modules/goad/provisioner.tf` | Create | Ansible provisioning trigger |
+| `terraform/modules/goad/generated/` | Generated | Processed GOAD templates (runtime) |
+| `terraform/modules/vpc_peering/` | Create | VPC peering for combined mode |
+| `terraform/modules/cs_storage/` | Create | S3 bucket for CS files + IAM role |
+| `terraform/modules/security/main.tf` | Modify | Add VPC peering security rules |
+| `terraform/modules/c2_team_server/main.tf` | Modify | Use centralized CS script, IAM profile |
+
+### Backend Files
+
+| File | Action | Description |
+|------|--------|-------------|
 | `webapp/backend/utils/config_parser.py` | Modify | Handle deployment_type mapping |
-| `webapp/backend/routes/deploy.py` | Modify | Pass deployment_type to Terraform, add `/deployment-details` endpoint |
-| `webapp/frontend/index.html` | Modify | Add deployment details panel with IPs, credentials, copy buttons |
-| `webapp/frontend/js/app.js` | Modify | Add `loadDeploymentDetails()`, copy/toggle password functions |
+| `webapp/backend/utils/goad_template_processor.py` | Create | Process GOAD Jinja templates |
+| `webapp/backend/utils/s3_upload.py` | Create | Upload CS file to S3 |
+| `webapp/backend/routes/deploy.py` | Modify | Add `/deployment-details`, `/goad-status` endpoints |
+
+### Frontend Files
+
+| File | Action | Description |
+|------|--------|-------------|
+| `webapp/frontend/index.html` | Modify | Add deployment details panel |
+| `webapp/frontend/js/app.js` | Modify | Add `loadDeploymentDetails()`, status polling |
 
 ---
 
@@ -1188,48 +1710,272 @@ function togglePassword(elementOrId) {
 
 ---
 
-## Cost Estimates (Updated)
+## Cost Estimates (Verified January 2026 from AWS Pricing Page)
 
-| Deployment Type | Components | Est. Monthly Cost |
-|-----------------|------------|-------------------|
-| **C2 Ad-Hoc** | 1 C2 + 2 Redirectors + Bastion | ~$105 |
-| **C2 Purple** | 2 C2 + 2 Redirectors + Bastion | ~$135 |
-| **C2 Full** | 3 C2 + 2 Redirectors + Bastion | ~$165 |
-| **GOAD Mini + CS** | 1 AD VM + Jumpbox w/CS | ~$100 |
-| **GOAD MiniLab + CS** | 2 AD VMs + Jumpbox w/CS | ~$175 |
-| **GOAD Light + CS** | 3 AD VMs + Jumpbox w/CS | ~$225 |
-| **GOAD SCCM + CS** | 4 AD VMs + Jumpbox w/CS | ~$325 |
-| **GOAD Full + CS** | 5 AD VMs + Jumpbox w/CS | ~$375 |
-| **Full C2 + GOAD Mini** | C2 Ad-Hoc + GOAD Mini | ~$205 |
-| **Full C2 + GOAD Light** | C2 Ad-Hoc + GOAD Light | ~$330 |
-| **Full C2 + GOAD Full** | C2 Full + GOAD Full | ~$540 |
+### AWS EC2 Instance Pricing (US East Ohio, On-Demand)
+
+**Linux Instances:**
+
+| Instance Type | vCPU | Memory | Hourly | Monthly (730 hrs) |
+|---------------|------|--------|--------|-------------------|
+| t3.micro | 2 | 1 GB | $0.0104 | ~$8 |
+| t3.small | 2 | 2 GB | $0.0208 | ~$15 |
+| t3.medium | 2 | 4 GB | $0.0416 | ~$30 |
+| t3.large | 2 | 8 GB | $0.0832 | ~$61 |
+| t3.xlarge | 4 | 16 GB | $0.1664 | ~$121 |
+| t3.2xlarge | 8 | 32 GB | $0.3328 | ~$243 |
+
+**Windows Server Instances (GOAD VMs):**
+
+| Instance Type | vCPU | Memory | Hourly | Monthly (730 hrs) |
+|---------------|------|--------|--------|-------------------|
+| t3.micro | 2 | 1 GB | $0.0196 | ~$14 |
+| t3.small | 2 | 2 GB | $0.0392 | ~$29 |
+| t3.medium | 2 | 4 GB | $0.0600 | ~$44 |
+| t3.large | 2 | 8 GB | $0.1108 | ~$81 |
+| t3.xlarge | 4 | 16 GB | $0.2400 | ~$175 |
+| t3.2xlarge | 8 | 32 GB | $0.4800 | ~$350 |
+
+### Additional AWS Costs
+
+| Service | Cost |
+|---------|------|
+| NAT Gateway | $0.045/hr + $0.045/GB = ~$33/mo base |
+| Elastic IP (unattached) | $0.005/hr = ~$3.60/mo |
+| S3 Storage | $0.023/GB/mo |
+| Data Transfer (out) | First 100GB free, then $0.09/GB |
+| VPC Peering | Free (data transfer charges apply) |
 
 ---
 
-## Implementation Order
+### Deployment Cost Breakdown
 
-1. **Phase 1-2**: Update variables.tf and main.tf locals (1-2 hours)
-2. **Phase 3**: Add conditional module loading (2-3 hours)
-3. **Phase 4**: Create GOAD module (4-6 hours)
-4. **Phase 5**: Create VPC peering module (1-2 hours)
-5. **Phase 6**: Backend updates (2-3 hours)
-6. **Testing**: Test all deployment modes (4-6 hours)
+#### C2 Infrastructure Only
 
-**Total Estimated Time**: 14-22 hours
+| Deployment | Components | Instance Types | Est. Monthly |
+|------------|------------|----------------|--------------|
+| **C2 Ad-Hoc** | 1 C2 Server (t3.medium) | t3.medium | |
+| | 2 Redirectors (t3.micro) | t3.micro x2 | |
+| | 1 Bastion (t3.medium Windows) | t3.medium Win | |
+| | NAT Gateway | | |
+| | **Total** | | **~$125** |
+| **C2 Purple** | 2 C2 Servers (t3.medium) | t3.medium x2 | |
+| | 2 Redirectors (t3.micro) | t3.micro x2 | |
+| | 1 Bastion (t3.medium Windows) | t3.medium Win | |
+| | NAT Gateway | | |
+| | **Total** | | **~$155** |
+| **C2 Full** | 3 C2 Servers (t3.medium) | t3.medium x3 | |
+| | 2 Redirectors (t3.micro) | t3.micro x2 | |
+| | 1 Bastion (t3.medium Windows) | t3.medium Win | |
+| | NAT Gateway | | |
+| | **Total** | | **~$185** |
+
+#### GOAD Labs Only (with Jumpbox + CS)
+
+| Lab Type | VMs | Windows Instances | Jumpbox | Est. Monthly |
+|----------|-----|-------------------|---------|--------------|
+| **GOAD Mini** | 1 DC | t3.large x1 (~$81) | t3.medium (~$30) | **~$145** |
+| **MINILAB** | 2 VMs | t3.large x2 (~$162) | t3.medium (~$30) | **~$225** |
+| **GOAD Light** | 3 VMs | t3.large x3 (~$243) | t3.medium (~$30) | **~$310** |
+| **SCCM** | 4 VMs | t3.xlarge x4 (~$700) | t3.medium (~$30) | **~$765** |
+| **GOAD Full** | 5 VMs | t3.large x5 (~$405) | t3.medium (~$30) | **~$470** |
+| **NHA** | 5 VMs | t3.large x5 (~$405) | t3.medium (~$30) | **~$470** |
+
+*Note: GOAD labs include NAT Gateway (~$33) in estimates. SCCM requires larger instances (t3.xlarge).*
+
+#### Combined (C2 + GOAD)
+
+| Combination | Components | Est. Monthly |
+|-------------|------------|--------------|
+| **C2 Ad-Hoc + GOAD Mini** | C2 (~$125) + GOAD Mini (~$145) - shared NAT | **~$240** |
+| **C2 Ad-Hoc + GOAD Light** | C2 (~$125) + GOAD Light (~$310) - shared NAT | **~$400** |
+| **C2 Full + GOAD Full** | C2 (~$185) + GOAD Full (~$470) - shared NAT | **~$620** |
 
 ---
 
-## Testing Checklist
+### Cost Optimization Tips
 
-- [ ] C2 Ad-Hoc deploys correctly
-- [ ] C2 Purple deploys correctly
-- [ ] C2 Full deploys correctly
-- [ ] GOAD Mini + CS deploys correctly
-- [ ] GOAD Full + CS deploys correctly
-- [ ] Combined Ad-Hoc + Mini deploys correctly
-- [ ] Combined Full + Full deploys correctly
-- [ ] VPC peering works in combined mode
-- [ ] CS client can connect in all modes
-- [ ] Beacons work in combined mode
-- [ ] Destroy works for all modes
+1. **Use Spot Instances**: Up to 90% savings for interruptible workloads (redirectors)
+2. **Stop When Not in Use**: EC2 charges only when running
+3. **Right-size Instances**: Start small, scale up if needed
+4. **Reserved Instances**: 30-60% savings for 1-3 year commitments
+5. **NAT Gateway Alternatives**: NAT instances (~$8/mo) or IPv6 egress-only
+
+### Hourly Burn Rate
+
+| Deployment | Hourly Cost | Daily (8 hrs) | Weekly |
+|------------|-------------|---------------|--------|
+| C2 Ad-Hoc | ~$0.17 | ~$1.36 | ~$9.50 |
+| GOAD Light | ~$0.42 | ~$3.36 | ~$23.50 |
+| Full C2 + GOAD Full | ~$0.85 | ~$6.80 | ~$47.60 |
+
+*Tip: Destroy infrastructure when not actively testing to minimize costs.*
+
+*Source: [AWS EC2 On-Demand Pricing](https://aws.amazon.com/ec2/pricing/on-demand/) - Verified January 2026*
+
+---
+
+## Implementation Phases
+
+### Phase 1: Terraform Core Updates (8-10 hours)
+
+**Goal:** Update existing Terraform to support deployment type selection and conditional module loading.
+
+| Task | Files | Est. Time |
+|------|-------|-----------|
+| Add new variables (deployment_type, goad_lab_type, etc.) | `terraform/variables.tf` | 1 hr |
+| Add locals for mode detection | `terraform/main.tf` | 1 hr |
+| Add conditional module loading (count/for_each) | `terraform/main.tf` | 2 hrs |
+| Create centralized CS install script | `terraform/scripts/install_cobalt_strike.sh` | 1 hr |
+| Create S3 storage module for CS files | `terraform/modules/cs_storage/` | 1 hr |
+| Update C2 team server to use centralized script | `terraform/modules/c2_team_server/main.tf` | 1 hr |
+| Add all outputs (IPs, credentials, instructions) | `terraform/outputs.tf` | 1 hr |
+
+**Deliverable:** Existing C2 deployments work with new `deployment_type` variable.
+
+---
+
+### Phase 2: GOAD Module & VPC Peering (8-10 hours)
+
+**Goal:** Create GOAD module, template processor, and VPC peering for combined mode.
+
+| Task | Files | Est. Time |
+|------|-------|-----------|
+| Create GOAD template processor | `webapp/backend/utils/goad_template_processor.py` | 2 hrs |
+| Create GOAD Terraform module | `terraform/modules/goad/` | 3 hrs |
+| Create VPC peering module | `terraform/modules/vpc_peering/` | 1.5 hrs |
+| Add security group rules for peering | `terraform/modules/security/main.tf` | 1 hr |
+| Add Ansible provisioning trigger | `terraform/modules/goad/provisioner.tf` | 1.5 hrs |
+
+**Deliverable:** GOAD-only and Combined deployments work via Terraform.
+
+---
+
+### Phase 3: Backend & Frontend Integration (4-6 hours)
+
+**Goal:** Connect web UI to new Terraform capabilities.
+
+| Task | Files | Est. Time |
+|------|-------|-----------|
+| Update config parser for deployment_type | `webapp/backend/utils/config_parser.py` | 1 hr |
+| Add S3 upload utility | `webapp/backend/utils/s3_upload.py` | 1 hr |
+| Add /deployment-details endpoint | `webapp/backend/routes/deploy.py` | 1 hr |
+| Add /goad-status endpoint | `webapp/backend/routes/deploy.py` | 1 hr |
+| Update frontend deployment details panel | `webapp/frontend/index.html`, `app.js` | 1.5 hrs |
+
+**Deliverable:** Full end-to-end deployment via web UI.
+
+---
+
+## Total Estimated Time
+
+| Phase | Time |
+|-------|------|
+| Phase 1: Terraform Core | 8-10 hours |
+| Phase 2: GOAD Module & Peering | 8-10 hours |
+| Phase 3: Backend & Frontend | 4-6 hours |
+| **Total** | **20-26 hours** |
+
+### Challenge: GOAD Generates Its Own Keys
+
+GOAD creates TLS keys at deploy time:
+- `tls_private_key.ssh` - For jumpbox and Linux VMs
+- `tls_private_key.windows` - For Windows VMs
+
+### Solution: Use Our Key Pair + Store GOAD Keys
+
+1. **Jumpbox**: Use our existing AWS key pair (configurable)
+2. **GOAD VMs**: Let GOAD generate keys, but expose them via outputs
+
+**Terraform Output:**
+
+```hcl
+output "goad_ssh_private_key" {
+  description = "SSH private key for GOAD jumpbox (generated)"
+  value       = local.deploy_goad ? module.goad[0].ssh_private_key : null
+  sensitive   = true
+}
+
+output "goad_windows_private_key" {
+  description = "SSH private key for GOAD Windows VMs"
+  value       = local.deploy_goad ? module.goad[0].windows_private_key : null
+  sensitive   = true
+}
+```
+
+**Backend: Save Keys to File**
+
+```python
+def save_goad_keys(outputs: dict, project_name: str):
+    """Save GOAD SSH keys to files for user download."""
+    keys_dir = f"data/deployments/{project_name}/ssh_keys"
+    os.makedirs(keys_dir, exist_ok=True)
+    
+    if outputs.get('goad_ssh_private_key'):
+        with open(f"{keys_dir}/goad-jumpbox.pem", 'w') as f:
+            f.write(outputs['goad_ssh_private_key'])
+        os.chmod(f"{keys_dir}/goad-jumpbox.pem", 0o600)
+    
+    if outputs.get('goad_windows_private_key'):
+        with open(f"{keys_dir}/goad-windows.pem", 'w') as f:
+            f.write(outputs['goad_windows_private_key'])
+        os.chmod(f"{keys_dir}/goad-windows.pem", 0o600)
+```
+
+---
+
+## Destroy Behavior
+
+### Important: Different Modes Have Different Destroy Behavior
+
+| Mode | Destroy Time | Notes |
+|------|--------------|-------|
+| **C2-Only** | ~5 minutes | Standard Linux instances |
+| **GOAD-Only** | ~10-15 minutes | Windows VMs take longer |
+| **Combined** | ~15-20 minutes | Must destroy peering first |
+
+### Terraform Destroy Order (Combined Mode)
+
+Terraform handles dependencies automatically, but the order is:
+
+1. VPC Peering connection
+2. GOAD VMs and jumpbox
+3. GOAD VPC resources
+4. C2 servers and redirectors
+5. C2 VPC resources
+6. S3 bucket (if empty)
+
+### Backend Destroy Endpoint
+
+```python
+@deploy_bp.route('/destroy', methods=['POST'])
+def destroy_infrastructure():
+    """Destroy all deployed infrastructure."""
+    try:
+        # Run terraform destroy with auto-approve
+        result = subprocess.run(
+            ['terraform', 'destroy', '-auto-approve'],
+            cwd=TERRAFORM_DIR,
+            capture_output=True,
+            text=True,
+            timeout=1800  # 30 minute timeout
+        )
+        
+        if result.returncode != 0:
+            return jsonify({
+                'success': False, 
+                'error': result.stderr
+            }), 500
+        
+        return jsonify({
+            'success': True,
+            'message': 'Infrastructure destroyed successfully'
+        })
+        
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'success': False,
+            'error': 'Destroy timed out after 30 minutes'
+        }), 500
+```
 

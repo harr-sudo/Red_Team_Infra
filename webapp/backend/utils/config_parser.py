@@ -7,6 +7,126 @@ import re
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+# =============================================================================
+# DEPLOYMENT TYPE MAPPINGS
+# =============================================================================
+
+DEPLOYMENT_TYPE_MAP = {
+    # C2-Only modes
+    'c2-adhoc': {
+        'type': 'c2-only',
+        'c2_mode': 'single',
+        'c2_server_count': 1,
+        'requires_domain': True,
+        'requires_cs': True,
+        'description': 'Ad-Hoc C2 (1 server, redirectors, bastion)',
+    },
+    'c2-purple': {
+        'type': 'c2-only',
+        'c2_mode': 'redundancy',
+        'c2_server_count': 2,
+        'requires_domain': True,
+        'requires_cs': True,
+        'description': 'Purple Team C2 (2+ servers, redirectors, bastion)',
+    },
+    'c2-full': {
+        'type': 'c2-only',
+        'c2_mode': 'phases',
+        'c2_server_count': 3,
+        'requires_domain': True,
+        'requires_cs': True,
+        'description': 'Full Red Team C2 (3 phase servers, redirectors, bastion)',
+    },
+    
+    # GOAD-Only modes (CS on jumpbox)
+    'goad-mini': {
+        'type': 'goad-only',
+        'goad_lab': 'GOAD-Mini',
+        'requires_domain': False,
+        'requires_cs': True,
+        'description': 'GOAD Mini (1 VM, 1 Forest, 1 Domain, Jumpbox+CS)',
+    },
+    'goad-minilab': {
+        'type': 'goad-only',
+        'goad_lab': 'MINILAB',
+        'requires_domain': False,
+        'requires_cs': True,
+        'description': 'GOAD MiniLab (2 VMs, 1 Forest, 1 Domain, Jumpbox+CS)',
+    },
+    'goad-light': {
+        'type': 'goad-only',
+        'goad_lab': 'GOAD-Light',
+        'requires_domain': False,
+        'requires_cs': True,
+        'description': 'GOAD Light (3 VMs, 1 Forest, 2 Domains, Jumpbox+CS)',
+    },
+    'goad-sccm': {
+        'type': 'goad-only',
+        'goad_lab': 'SCCM',
+        'requires_domain': False,
+        'requires_cs': True,
+        'description': 'GOAD SCCM (4 VMs, 1 Forest, 1 Domain, Jumpbox+CS)',
+    },
+    'goad-full': {
+        'type': 'goad-only',
+        'goad_lab': 'GOAD',
+        'requires_domain': False,
+        'requires_cs': True,
+        'description': 'GOAD Full (5 VMs, 2 Forests, 3 Domains, Jumpbox+CS)',
+    },
+    'goad-nha': {
+        'type': 'goad-only',
+        'goad_lab': 'NHA',
+        'requires_domain': False,
+        'requires_cs': True,
+        'description': 'GOAD NHA Challenge (5 VMs, 2 Domains, Jumpbox+CS)',
+    },
+    
+    # Combined modes (C2 + GOAD with VPC peering)
+    'combined-adhoc-mini': {
+        'type': 'combined',
+        'c2_mode': 'single',
+        'goad_lab': 'GOAD-Mini',
+        'requires_domain': True,
+        'requires_cs': True,
+        'description': 'C2 Ad-Hoc + GOAD Mini (Full C2 + GOAD Lab)',
+    },
+    'combined-adhoc-light': {
+        'type': 'combined',
+        'c2_mode': 'single',
+        'goad_lab': 'GOAD-Light',
+        'requires_domain': True,
+        'requires_cs': True,
+        'description': 'C2 Ad-Hoc + GOAD Light (Full C2 + GOAD Lab)',
+    },
+    'combined-full-full': {
+        'type': 'combined',
+        'c2_mode': 'phases',
+        'goad_lab': 'GOAD',
+        'requires_domain': True,
+        'requires_cs': True,
+        'description': 'C2 Full + GOAD Full (Full C2 + GOAD Lab)',
+    },
+}
+
+
+def get_deployment_type_info(deployment_type: str) -> Optional[Dict]:
+    """Get information about a deployment type."""
+    return DEPLOYMENT_TYPE_MAP.get(deployment_type)
+
+
+def is_domain_required(deployment_type: str) -> bool:
+    """Check if domain configuration is required for a deployment type."""
+    info = DEPLOYMENT_TYPE_MAP.get(deployment_type, {})
+    return info.get('requires_domain', True)
+
+
+def get_goad_lab_type(deployment_type: str) -> Optional[str]:
+    """Get the GOAD lab type for a deployment type."""
+    info = DEPLOYMENT_TYPE_MAP.get(deployment_type, {})
+    return info.get('goad_lab')
+
+
 class ConfigParser:
     """Parser for Terraform variable files"""
     
@@ -53,13 +173,16 @@ class ConfigParser:
         # Group by sections
         sections = {
             'AWS Configuration': ['aws_region', 'aws_profile'],
-            'Project Configuration': ['project_name', 'environment', 'engagement_type'],
+            'Project Configuration': ['project_name', 'environment', 'deployment_type', 'engagement_type'],
+            'GOAD Configuration': ['goad_lab_type', 'goad_vpc_cidr', 'goad_public_subnet_cidr', 'goad_private_subnet_cidr'],
+            'Cobalt Strike Configuration': ['cobalt_strike_archive_s3_path', 'cs_teamserver_password', 'cs_teamserver_port'],
             'VPC Configuration': ['vpc_cidr', 'availability_zones', 'public_subnet_cidrs', 'private_subnet_cidrs', 'enable_nat_gateway'],
             'Security Configuration': ['management_cidr_blocks', 'ssh_port', 'c2_server_port'],
             'Key Pair Configuration': ['key_pair_name'],
             'Domain Configuration': ['primary_domain_name', 'primary_domain_hosted_zone_id', 'backup_domains', 'c2_subdomain', 'www_subdomain', 'cdn_subdomain', 'dns_provider', 'enable_dns_validation'],
             'C2 Team Server Configuration': ['c2_deployment_mode', 'c2_server_count', 'c2_server_instance_type', 'c2_server_ami_id', 'c2_server_root_volume_size', 'c2_server_enable_elastic_ips', 'c2_server_iam_instance_profile_name', 'c2_server_user_data'],
             'Proxy/Redirector Configuration': ['proxy_redirector_count', 'proxy_redirector_instance_type', 'proxy_redirector_ami_id', 'proxy_redirector_root_volume_size', 'proxy_redirector_iam_instance_profile_name', 'proxy_redirector_user_data'],
+            'Tools Configuration': ['tools_repo_url', 'tools_repo_branch', 'tools_repo_ssh_key', 'tools_repo_https_token'],
             'Monitoring Configuration': ['enable_detailed_monitoring'],
             'Tags': ['tags'],
         }
@@ -108,7 +231,7 @@ class ConfigParser:
                 return f'{key} = [{items}]'
             else:
                 items = ', '.join(str(item) for item in value)
-                return f'{key} = [{items}]'
+            return f'{key} = [{items}]'
         elif isinstance(value, dict):
             # Format as HCL object
             items = []

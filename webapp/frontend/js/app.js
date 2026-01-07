@@ -116,6 +116,7 @@ const APP = {
                     break;
                 case 'deployments':
                     loadDeploymentsPage();
+                    loadDeploymentDetails();  // Load comprehensive details
                     break;
                 case 'aws-check':
                     // AWS page is interactive, no auto-load
@@ -213,7 +214,6 @@ async function loadConfig() {
             // Populate form fields
             const fields = {
                 'deployment-type': config.deployment_type || config.engagement_type || '',
-                'project-name': config.project_name || '',
                 'environment': config.environment || 'dev',
                 'aws-region': config.aws_region || 'us-east-1',
                 'key-pair-name': config.key_pair_name || '',
@@ -227,12 +227,18 @@ async function loadConfig() {
                 'c2-instance-type': config.c2_server_instance_type || 't3.medium'
             };
             
+            // Don't auto-load project name if it's the old default - let updateProjectName() generate it
+            const savedProjectName = config.project_name || '';
+            if (savedProjectName && savedProjectName !== 'red-team-infra') {
+                fields['project-name'] = savedProjectName;
+            }
+            
             Object.entries(fields).forEach(([id, value]) => {
                 const element = document.getElementById(id);
                 if (element) element.value = value;
             });
             
-            // Update the deployment overview based on loaded type
+            // Update the deployment overview based on loaded type (this also updates project name)
             updateDeploymentType();
             
             showMessage('Configuration loaded', 'success');
@@ -281,7 +287,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🎯', label: 'C2 Server', value: '1' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '🖥️', label: 'Bastion', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$105/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$125/mo' }
         ],
         details: 'Quick, minimal setup for one-off tests. Single C2 server with standard proxy infrastructure.',
         bestFor: 'Quick security tests, POCs, training',
@@ -302,7 +308,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🎯', label: 'C2 Servers', value: '2+' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '🖥️', label: 'Bastion', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$135/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$155/mo' }
         ],
         details: 'Redundant C2 infrastructure for collaborative exercises. High availability.',
         bestFor: 'Purple team exercises, collaborative testing',
@@ -322,7 +328,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🎯', label: 'C2 Servers', value: '3' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '🖥️', label: 'Bastion', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$165/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$185/mo' }
         ],
         details: 'Phase-based C2: Staging → Post-Ex → Long-Haul. Full operational capability.',
         bestFor: 'Full red team engagements, long-term campaigns',
@@ -343,7 +349,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🏰', label: 'AD VMs', value: '1' },
             { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
             { icon: '🌲', label: 'Domain', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$100/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$145/mo' }
         ],
         details: 'Single DC (sevenkingdoms.local) with Cobalt Strike on jumpbox.',
         bestFor: 'Learning AD attacks, quick testing',
@@ -363,7 +369,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🏰', label: 'AD VMs', value: '2' },
             { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
             { icon: '🌲', label: 'Domain', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$175/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$225/mo' }
         ],
         details: 'DC (Win2019) + Workstation (Win10). 1 forest, 1 domain.',
         bestFor: 'Attack chains, lateral movement practice',
@@ -383,7 +389,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🏰', label: 'AD VMs', value: '3' },
             { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
             { icon: '🌲', label: 'Domains', value: '2' },
-            { icon: '💰', label: 'Est. Cost', value: '~$225/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$310/mo' }
         ],
         details: '3 VMs, 1 forest, 2 domains. Smaller version of full GOAD.',
         bestFor: 'Trust attacks, cross-domain techniques',
@@ -403,9 +409,9 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🏰', label: 'AD VMs', value: '4' },
             { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
             { icon: '⚙️', label: 'SCCM', value: '✓' },
-            { icon: '💰', label: 'Est. Cost', value: '~$325/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$765/mo' }
         ],
-        details: '4 VMs, 1 forest, 1 domain with Microsoft Configuration Manager.',
+        details: '4 VMs (t3.xlarge), 1 forest, 1 domain with Microsoft Configuration Manager.',
         bestFor: 'SCCM attacks, enterprise environments',
         attacks: ['NAA Credentials', 'PXE Boot Attacks', 'Task Sequence Attacks', 'SCCM Client Attacks'],
         architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
@@ -423,7 +429,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🏰', label: 'AD VMs', value: '5' },
             { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
             { icon: '🌲', label: 'Domains', value: '3' },
-            { icon: '💰', label: 'Est. Cost', value: '~$375/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$470/mo' }
         ],
         details: '5 VMs, 2 forests, 3 domains. Complete AD training environment.',
         bestFor: 'Comprehensive AD training, forest attacks',
@@ -443,7 +449,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🏰', label: 'AD VMs', value: '5' },
             { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
             { icon: '🌲', label: 'Domains', value: '2' },
-            { icon: '💰', label: 'Est. Cost', value: '~$375/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$470/mo' }
         ],
         details: '5 VMs, 2 domains. Challenge lab - no schema provided!',
         bestFor: 'CTF practice, skill assessment',
@@ -465,7 +471,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🎯', label: 'C2 Server', value: '1' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '🏰', label: 'GOAD VMs', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$205/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$240/mo' }
         ],
         details: 'Full C2 with redirectors + GOAD Mini. VPCs peered for realistic beacon traffic.',
         bestFor: 'Testing C2 tradecraft against AD targets',
@@ -485,7 +491,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🎯', label: 'C2 Server', value: '1' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '🏰', label: 'GOAD VMs', value: '3' },
-            { icon: '💰', label: 'Est. Cost', value: '~$330/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$400/mo' }
         ],
         details: 'Full C2 with redirectors + GOAD Light (multi-domain).',
         bestFor: 'Realistic red team training with trust attacks',
@@ -505,7 +511,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🎯', label: 'C2 Servers', value: '3' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '🏰', label: 'GOAD VMs', value: '5' },
-            { icon: '💰', label: 'Est. Cost', value: '~$540/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$620/mo' }
         ],
         details: 'Complete phased C2 (Staging/Post-Ex/Long-Haul) + Full GOAD lab.',
         bestFor: 'Full-scale red team exercises with realistic AD targets',
@@ -513,6 +519,106 @@ const DEPLOYMENT_CONFIGS = {
         architectureNote: '🔥 Full Infrastructure: Beacons route through redirectors. Realistic C2 operations.'
     }
 };
+
+/**
+ * Project name prefixes for each deployment type (without environment)
+ */
+const PROJECT_NAME_PREFIXES = {
+    // C2 Infrastructure
+    'c2-adhoc': 'c2_adhoc',
+    'c2-purple': 'c2_purple',
+    'c2-full': 'c2_redteam',
+    // GOAD Labs
+    'goad-mini': 'goad_mini',
+    'goad-minilab': 'goad_minilab',
+    'goad-light': 'goad_light',
+    'goad-sccm': 'goad_sccm',
+    'goad-full': 'goad_full',
+    'goad-nha': 'goad_nha',
+    // Combined
+    'combined-adhoc-mini': 'c2_goad_mini',
+    'combined-adhoc-light': 'c2_goad_light',
+    'combined-full-full': 'c2_goad_full'
+};
+
+/**
+ * Estimated deployment times (in minutes) for each deployment type
+ */
+const DEPLOYMENT_TIMES = {
+    // C2 Infrastructure
+    'c2-adhoc': { min: 8, max: 12 },
+    'c2-purple': { min: 10, max: 15 },
+    'c2-full': { min: 12, max: 18 },
+    // GOAD Labs (longer due to Windows + AD setup)
+    'goad-mini': { min: 15, max: 20 },
+    'goad-minilab': { min: 18, max: 25 },
+    'goad-light': { min: 20, max: 30 },
+    'goad-sccm': { min: 25, max: 40 },
+    'goad-full': { min: 25, max: 35 },
+    'goad-nha': { min: 25, max: 35 },
+    // Combined (C2 + GOAD)
+    'combined-adhoc-mini': { min: 20, max: 30 },
+    'combined-adhoc-light': { min: 25, max: 40 },
+    'combined-full-full': { min: 30, max: 45 }
+};
+
+/**
+ * Update project name based on deployment type and environment
+ */
+function updateProjectName() {
+    const deploymentType = document.getElementById('deployment-type')?.value || '';
+    const environment = document.getElementById('environment')?.value || 'dev';
+    const projectNameInput = document.getElementById('project-name');
+    
+    if (!projectNameInput || !deploymentType) return;
+    
+    const prefix = PROJECT_NAME_PREFIXES[deploymentType] || 'project';
+    const newName = `${prefix}_${environment}_XXX`;
+    
+    // Get current value
+    const currentName = projectNameInput.value;
+    
+    // Check if current name should be replaced:
+    // 1. Empty
+    // 2. Contains XXX placeholder
+    // 3. Is the default "red-team-infra"
+    // 4. Matches the auto-generated pattern (starts with known prefix)
+    const knownPrefixes = Object.values(PROJECT_NAME_PREFIXES);
+    const isAutoGenerated = !currentName || 
+                           currentName === 'red-team-infra' ||
+                           currentName.includes('XXX') || 
+                           knownPrefixes.some(p => currentName.startsWith(p + '_'));
+    
+    if (isAutoGenerated) {
+        projectNameInput.value = newName;
+        projectNameInput.placeholder = newName.replace('XXX', 'yourname');
+    }
+}
+
+/**
+ * Validate project name format
+ */
+function validateProjectName() {
+    const projectNameInput = document.getElementById('project-name');
+    if (!projectNameInput) return;
+    
+    const name = projectNameInput.value;
+    
+    // Check if still contains XXX placeholder
+    if (name.includes('XXX')) {
+        projectNameInput.style.borderColor = '#ff9800';
+        return false;
+    }
+    
+    // Check for valid characters (lowercase, numbers, underscores, hyphens)
+    if (!/^[a-z0-9_-]+$/.test(name)) {
+        projectNameInput.style.borderColor = '#f44336';
+        return false;
+    }
+    
+    projectNameInput.style.borderColor = '#4CAF50';
+    return true;
+}
 
 /**
  * Update deployment overview when type changes
@@ -526,6 +632,7 @@ function updateDeploymentType() {
     const overviewTitle = document.getElementById('overview-title');
     const overviewContent = document.getElementById('overview-content');
     const overviewDetails = document.getElementById('overview-details');
+    const estDeployTimeDiv = document.getElementById('est-deploy-time');
     
     // Get domain config section (we'll show/hide based on deployment type)
     const domainConfigSection = document.getElementById('domain-config-section');
@@ -533,6 +640,15 @@ function updateDeploymentType() {
     const config = DEPLOYMENT_CONFIGS[deploymentType];
     
     if (config) {
+        // Update project name with deployment type + environment
+        updateProjectName();
+        
+        // Update estimated deployment time
+        const timeEstimate = DEPLOYMENT_TIMES[deploymentType];
+        if (estDeployTimeDiv && timeEstimate) {
+            estDeployTimeDiv.textContent = `~${timeEstimate.min}-${timeEstimate.max} minutes`;
+        }
+        
         // Update server count if applicable
         if (config.serverCount) {
             serverCountInput.value = config.serverCount;
@@ -851,15 +967,85 @@ function pollDeploymentStatus() {
             if (data.success && data.status) {
                 const status = data.status;
                 
-                statusDiv.innerHTML = `
-                    <p><strong>Status:</strong> ${status.status}</p>
-                    <p><strong>Step:</strong> ${status.step || 'N/A'}</p>
+                // Build enhanced status display
+                let statusHtml = `
+                    <div style="margin-bottom: 15px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <strong style="font-size: 1.1em;">${status.current_phase || status.step || 'Initializing...'}</strong>
+                            <span style="color: #666;">${status.progress_percent || 0}%</span>
+                        </div>
+                        
+                        <!-- Progress Bar -->
+                        <div style="background: #e0e0e0; border-radius: 10px; height: 20px; overflow: hidden;">
+                            <div style="background: linear-gradient(90deg, #4CAF50, #8BC34A); height: 100%; width: ${status.progress_percent || 0}%; transition: width 0.5s ease; display: flex; align-items: center; justify-content: center;">
+                                ${status.progress_percent > 10 ? `<span style="color: white; font-size: 0.8em; font-weight: bold;">${status.progress_percent}%</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Time Info -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                        <div style="background: #f5f5f5; padding: 10px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 1.5em; font-weight: bold; color: #1976D2;">⏱️ ${status.elapsed_formatted || '0m 0s'}</div>
+                            <div style="color: #666; font-size: 0.85em;">Elapsed</div>
+                        </div>
+                        <div style="background: #f5f5f5; padding: 10px; border-radius: 6px; text-align: center;">
+                            <div style="font-size: 1.5em; font-weight: bold; color: #FF9800;">⏳ ${status.est_remaining_formatted || 'Calculating...'}</div>
+                            <div style="color: #666; font-size: 0.85em;">Est. Remaining</div>
+                        </div>
+                    </div>
                 `;
+                
+                // Completed phases checklist
+                if (status.phases_completed && status.phases_completed.length > 0) {
+                    statusHtml += `
+                        <div style="margin-bottom: 15px;">
+                            <strong style="font-size: 0.9em; color: #666;">Completed Steps:</strong>
+                            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;">
+                                ${status.phases_completed.map(p => `
+                                    <span style="background: #e8f5e9; color: #2e7d32; padding: 4px 10px; border-radius: 15px; font-size: 0.8em;">
+                                        ✅ ${p.replace(/_/g, ' ')}
+                                    </span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                // Recent logs
+                if (status.logs && status.logs.length > 0) {
+                    const recentLogs = status.logs.slice(-5);
+                    statusHtml += `
+                        <div style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.85em; max-height: 150px; overflow-y: auto;">
+                            ${recentLogs.map(log => {
+                                const time = new Date(log.timestamp * 1000).toLocaleTimeString();
+                                const color = log.type === 'error' ? '#f44336' : 
+                                              log.type === 'success' ? '#4CAF50' : 
+                                              log.type === 'warning' ? '#ff9800' : '#4ec9b0';
+                                return `<div style="margin-bottom: 4px;"><span style="color: #888;">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
+                            }).join('')}
+                        </div>
+                    `;
+                }
+                
+                statusDiv.innerHTML = statusHtml;
                 
                 if (status.status === 'running') {
                     statusDiv.className = 'status-display info';
                 } else if (status.status === 'success') {
                     statusDiv.className = 'status-display success';
+                    statusDiv.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <div style="font-size: 3em; margin-bottom: 10px;">🎉</div>
+                            <h3 style="color: #2e7d32; margin: 0 0 10px 0;">Deployment Complete!</h3>
+                            <p style="color: #666;">Total time: ${status.elapsed_formatted}</p>
+                            <p style="margin-top: 15px;">
+                                <a href="#" onclick="showTab('deployments'); return false;" class="btn btn-success">
+                                    View Deployment Details →
+                                </a>
+                            </p>
+                        </div>
+                    `;
                     clearInterval(deploymentPollInterval);
                     deploymentPollInterval = null;
                     if (status.output && outputDiv) {
@@ -867,7 +1053,22 @@ function pollDeploymentStatus() {
                     }
                 } else if (status.status === 'error') {
                     statusDiv.className = 'status-display error';
-                    statusDiv.innerHTML += '<p>Error: ' + (status.error || 'Unknown error') + '</p>';
+                    statusDiv.innerHTML = `
+                        <div style="padding: 15px;">
+                            <h3 style="color: #c62828; margin: 0 0 15px 0;">❌ Deployment Failed</h3>
+                            <p style="margin-bottom: 10px;"><strong>Error:</strong> ${status.error || 'Unknown error'}</p>
+                            <p style="color: #666;">Elapsed time: ${status.elapsed_formatted}</p>
+                            ${status.logs && status.logs.length > 0 ? `
+                                <div style="margin-top: 15px; background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.85em; max-height: 200px; overflow-y: auto;">
+                                    ${status.logs.slice(-10).map(log => {
+                                        const time = new Date(log.timestamp * 1000).toLocaleTimeString();
+                                        const color = log.type === 'error' ? '#f44336' : '#4ec9b0';
+                                        return `<div style="margin-bottom: 4px;"><span style="color: #888;">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
+                                    }).join('')}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
                     clearInterval(deploymentPollInterval);
                     deploymentPollInterval = null;
                 }
@@ -1217,6 +1418,123 @@ async function destroyInfrastructure() {
     }
 }
 
+/**
+ * Stop all EC2 instances (keep resources, stop compute charges)
+ */
+async function stopInfrastructure() {
+    const confirmStop = confirm(
+        '⏸️ Stop Infrastructure?\n\n' +
+        'This will STOP all EC2 instances but keep all resources.\n\n' +
+        '✅ Saves ~90% on compute costs\n' +
+        '⚠️ Storage, Elastic IPs, NAT Gateway still billed\n' +
+        '💾 All data and configuration preserved\n\n' +
+        'You can restart anytime.'
+    );
+    
+    if (!confirmStop) return;
+    
+    const overviewDiv = document.getElementById('deployments-overview');
+    overviewDiv.innerHTML = `
+        <div class="status-display warning">
+            <div class="spinner"></div>
+            <p>Stopping all EC2 instances...</p>
+        </div>
+    `;
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/stop`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            overviewDiv.innerHTML = `
+                <div class="status-display success">
+                    <p><strong>✅ Infrastructure Stopped</strong></p>
+                    <p>${data.stopped_count || 'All'} instances have been stopped.</p>
+                    <p style="font-size: 0.9em; color: #666; margin-top: 10px;">
+                        Storage and network resources are still active. Click "Start All Instances" to resume.
+                    </p>
+                </div>
+            `;
+            // Refresh to show updated status
+            setTimeout(() => refreshDeployments(), 2000);
+        } else {
+            overviewDiv.innerHTML = `
+                <div class="status-display error">
+                    <p><strong>Error stopping instances:</strong> ${data.error || 'Unknown error'}</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        overviewDiv.innerHTML = `
+            <div class="status-display error">
+                <p><strong>Error:</strong> ${error.message}</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Start all stopped EC2 instances
+ */
+async function startInfrastructure() {
+    const confirmStart = confirm(
+        '▶️ Start Infrastructure?\n\n' +
+        'This will START all stopped EC2 instances.\n\n' +
+        '🔄 All instances will be brought online\n' +
+        '⏱️ Takes ~2-5 minutes to fully boot\n' +
+        '💰 Compute charges will resume'
+    );
+    
+    if (!confirmStart) return;
+    
+    const overviewDiv = document.getElementById('deployments-overview');
+    overviewDiv.innerHTML = `
+        <div class="status-display info">
+            <div class="spinner"></div>
+            <p>Starting all EC2 instances...</p>
+        </div>
+    `;
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            overviewDiv.innerHTML = `
+                <div class="status-display success">
+                    <p><strong>✅ Infrastructure Starting</strong></p>
+                    <p>${data.started_count || 'All'} instances are starting up.</p>
+                    <p style="font-size: 0.9em; color: #666; margin-top: 10px;">
+                        Instances will be fully available in 2-5 minutes. Refreshing status...
+                    </p>
+                </div>
+            `;
+            // Refresh to show updated status
+            setTimeout(() => refreshDeployments(), 5000);
+        } else {
+            overviewDiv.innerHTML = `
+                <div class="status-display error">
+                    <p><strong>Error starting instances:</strong> ${data.error || 'Unknown error'}</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        overviewDiv.innerHTML = `
+            <div class="status-display error">
+                <p><strong>Error:</strong> ${error.message}</p>
+            </div>
+        `;
+    }
+}
+
 // ============================================================================
 // AWS CHECK FUNCTIONS
 // ============================================================================
@@ -1470,25 +1788,29 @@ function updateGoadLabInfo() {
 }
 
 /**
- * Load GOAD status for deployment manager
+ * Populate GOAD section with data (used by refreshDeployments)
  */
-async function loadGoadStatus() {
+function populateGoadSection(data) {
     const section = document.getElementById('goad-lab-section');
     const details = document.getElementById('goad-lab-details');
     const actions = document.getElementById('goad-lab-actions');
     
     if (!section) return;
     
-    try {
-        const response = await fetch(`${API_BASE}/goad/status`);
-        const data = await response.json();
+    // If no data or request failed, hide the section
+    if (!data || !data.success) {
+        section.style.display = 'none';
+        return;
+    }
+    
+    // If GOAD tools not available, only show warning if there's supposed to be a GOAD deployment
+    // Don't show warning for C2-only deployments
+    if (!data.goad_available) {
+        // Only show warning if user has selected a GOAD deployment type
+        const deploymentType = document.getElementById('deployment-type')?.value || '';
+        const isGoadDeployment = deploymentType.includes('goad') || deploymentType.includes('combined');
         
-        if (!data.success) {
-            section.style.display = 'none';
-            return;
-        }
-        
-        if (!data.goad_available) {
+        if (isGoadDeployment) {
             section.style.display = 'block';
             details.innerHTML = `
                 <div class="status-display warning">
@@ -1497,52 +1819,66 @@ async function loadGoadStatus() {
                 </div>
             `;
             actions.innerHTML = '';
-            return;
-        }
-        
-        if (!data.has_deployment) {
+        } else {
             section.style.display = 'none';
-            return;
         }
-        
-        // Has GOAD deployment
-        section.style.display = 'block';
-        const labInfo = data.deployment_info?.lab_info || {};
-        const labName = data.deployed_lab;
-        
-        details.innerHTML = `
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 15px;">
-                <div style="background: white; padding: 15px; border-radius: 5px; text-align: center;">
-                    <div style="font-size: 2em; font-weight: bold; color: #e65100;">${labInfo.vms || '?'}</div>
-                    <div style="color: #666; font-size: 0.9em;">VMs</div>
-                </div>
-                <div style="background: white; padding: 15px; border-radius: 5px; text-align: center;">
-                    <div style="font-size: 2em; font-weight: bold; color: #e65100;">${labInfo.domains || '?'}</div>
-                    <div style="color: #666; font-size: 0.9em;">Domains</div>
-                </div>
-                <div style="background: white; padding: 15px; border-radius: 5px; text-align: center;">
-                    <div style="font-size: 2em; font-weight: bold; color: #e65100;">${labInfo.forests || '?'}</div>
-                    <div style="color: #666; font-size: 0.9em;">Forests</div>
-                </div>
+        return;
+    }
+    
+    // No GOAD deployment active
+    if (!data.has_deployment) {
+        section.style.display = 'none';
+        return;
+    }
+    
+    // Has GOAD deployment - show details
+    section.style.display = 'block';
+    const labInfo = data.deployment_info?.lab_info || {};
+    const labName = data.deployed_lab;
+    
+    details.innerHTML = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 15px;">
+            <div style="background: white; padding: 15px; border-radius: 5px; text-align: center;">
+                <div style="font-size: 2em; font-weight: bold; color: #e65100;">${labInfo.vms || '?'}</div>
+                <div style="color: #666; font-size: 0.9em;">VMs</div>
             </div>
-            <div style="background: white; padding: 15px; border-radius: 5px;">
-                <p><strong>Lab Type:</strong> ${labInfo.display_name || labName}</p>
-                <p style="color: #666; margin-top: 10px;">${labInfo.description || ''}</p>
-                ${labInfo.domain_names ? `<p style="margin-top: 10px;"><strong>Domains:</strong> ${labInfo.domain_names.join(', ')}</p>` : ''}
+            <div style="background: white; padding: 15px; border-radius: 5px; text-align: center;">
+                <div style="font-size: 2em; font-weight: bold; color: #e65100;">${labInfo.domains || '?'}</div>
+                <div style="color: #666; font-size: 0.9em;">Domains</div>
             </div>
-        `;
-        
-        actions.innerHTML = `
-            <button class="btn btn-success" onclick="startGoadLab()">▶️ Start Lab</button>
-            <button class="btn btn-warning" onclick="stopGoadLab()">⏸️ Stop Lab</button>
-            <button class="btn btn-info" onclick="showGoadCredentials()">🔑 Credentials</button>
-            <button class="btn btn-info" onclick="showGoadJumpbox()">🖥️ Jumpbox Info</button>
-            <button class="btn btn-danger" onclick="destroyGoadLab()">🗑️ Destroy Lab</button>
-        `;
-        
+            <div style="background: white; padding: 15px; border-radius: 5px; text-align: center;">
+                <div style="font-size: 2em; font-weight: bold; color: #e65100;">${labInfo.forests || '?'}</div>
+                <div style="color: #666; font-size: 0.9em;">Forests</div>
+            </div>
+        </div>
+        <div style="background: white; padding: 15px; border-radius: 5px;">
+            <p><strong>Lab Type:</strong> ${labInfo.display_name || labName}</p>
+            <p style="color: #666; margin-top: 10px;">${labInfo.description || ''}</p>
+            ${labInfo.domain_names ? `<p style="margin-top: 10px;"><strong>Domains:</strong> ${labInfo.domain_names.join(', ')}</p>` : ''}
+        </div>
+    `;
+    
+    actions.innerHTML = `
+        <button class="btn btn-success" onclick="startGoadLab()">▶️ Start Lab</button>
+        <button class="btn btn-warning" onclick="stopGoadLab()">⏸️ Stop Lab</button>
+        <button class="btn btn-info" onclick="showGoadCredentials()">🔑 Credentials</button>
+        <button class="btn btn-info" onclick="showGoadJumpbox()">🖥️ Jumpbox Info</button>
+        <button class="btn btn-danger" onclick="destroyGoadLab()">🗑️ Destroy Lab</button>
+    `;
+}
+
+/**
+ * Load GOAD status for deployment manager (fetches data and populates)
+ */
+async function loadGoadStatus() {
+    try {
+        const response = await fetch(`${API_BASE}/goad/status`);
+        const data = await response.json();
+        populateGoadSection(data);
     } catch (error) {
         console.error('Error loading GOAD status:', error);
-        section.style.display = 'none';
+        const section = document.getElementById('goad-lab-section');
+        if (section) section.style.display = 'none';
     }
 }
 
@@ -1710,7 +2046,7 @@ async function showGoadJumpbox() {
 async function loadDeploymentsPage() {
     console.log('Loading Deployments page...');
     await refreshDeployments();
-    await loadGoadStatus();  // Also load GOAD lab status
+    // Note: GOAD status is already loaded by refreshDeployments()
 }
 
 /**
@@ -1768,11 +2104,29 @@ async function refreshDeployments() {
             document.getElementById('connection-info-section').style.display = 'none';
             document.getElementById('destroy-section').style.display = 'none';
             document.getElementById('goad-lab-section').style.display = 'none';
+            // Hide lifecycle section when no deployment
+            const lifecycleSection = document.getElementById('lifecycle-section');
+            if (lifecycleSection) lifecycleSection.style.display = 'none';
             return;
         }
         
         // Has deployment - show infrastructure
         if (noDeploymentDiv) noDeploymentDiv.style.display = 'none';
+        
+        // Show lifecycle section and update project tag
+        const lifecycleSection = document.getElementById('lifecycle-section');
+        if (lifecycleSection) {
+            lifecycleSection.style.display = 'block';
+            // Update the project tag display
+            const projectTagSpan = document.getElementById('aws-project-tag');
+            if (projectTagSpan && data.success) {
+                // Try to get project name from config or use a default
+                projectTagSpan.textContent = data.project_name || 'your-project-name';
+            }
+        }
+        
+        // Show destroy section
+        document.getElementById('destroy-section').style.display = 'block';
         
         // Build overview summary including GOAD
         const summary = data.success && data.has_deployment ? (data.summary || {}) : {};
@@ -1835,8 +2189,8 @@ async function refreshDeployments() {
             hideAllInfrastructureSections();
         }
         
-        // Load GOAD status separately (it has its own section)
-        await loadGoadStatus();
+        // Populate GOAD section with already-fetched data (don't call loadGoadStatus again)
+        populateGoadSection(goadData);
         
         // Show destroy section when there's an active deployment
         const destroySection = document.getElementById('destroy-section');
@@ -2163,6 +2517,313 @@ function showMessage(message, type) {
     setTimeout(() => {
         messageDiv.classList.remove('show');
     }, 5000);
+}
+
+// ============================================================================
+// DEPLOYMENT DETAILS FUNCTIONS
+// ============================================================================
+
+/**
+ * Load comprehensive deployment details for the Deployment Manager UI
+ */
+async function loadDeploymentDetails() {
+    const detailsPanel = document.getElementById('deployment-details');
+    
+    if (!detailsPanel) {
+        console.log('Deployment details panel not found');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/deployment-details`);
+        const data = await response.json();
+        
+        if (!data.success || !data.has_deployment) {
+            detailsPanel.style.display = 'none';
+            return;
+        }
+        
+        // Show the panel
+        detailsPanel.style.display = 'block';
+        
+        // Populate Quick Connect
+        updateQuickConnect(data);
+        
+        // Populate Cobalt Strike connection
+        populateCobaltStrikeInfo(data);
+        
+        // Populate infrastructure IPs
+        populateInfrastructureIPs(data);
+        
+        // Populate GOAD info if deployed
+        if (data.goad && data.goad.deployed) {
+            populateGoadDetails(data.goad);
+        }
+        
+        // Populate access instructions
+        populateAccessInstructions(data);
+        
+    } catch (error) {
+        console.error('Error loading deployment details:', error);
+        detailsPanel.style.display = 'none';
+    }
+}
+
+/**
+ * Update Quick Connect summary section
+ */
+function updateQuickConnect(data) {
+    const quickConnectDiv = document.getElementById('quick-connect-info');
+    if (!quickConnectDiv) return;
+    
+    const arch = data.architecture;
+    let html = '';
+    
+    if (arch === 'goad-only') {
+        html = `
+            <div style="display: flex; align-items: center; gap: 15px; padding: 15px; background: #e8f5e9; border-radius: 8px;">
+                <span style="font-size: 2em;">🎯</span>
+                <div>
+                    <strong>Direct Connection</strong>
+                    <p style="margin: 5px 0 0 0; color: #2e7d32;">
+                        Connect CS client directly to <code>${data.cobalt_strike.host || 'jumpbox_ip'}:${data.cobalt_strike.port}</code>
+                    </p>
+                </div>
+            </div>
+        `;
+    } else if (arch === 'combined') {
+        html = `
+            <div style="display: flex; align-items: center; gap: 15px; padding: 15px; background: #fff3e0; border-radius: 8px;">
+                <span style="font-size: 2em;">🔗</span>
+                <div>
+                    <strong>SSH Tunnel Required</strong>
+                    <p style="margin: 5px 0 0 0; color: #e65100;">
+                        RDP to bastion, then SSH tunnel to C2 server. GOAD accessible via VPC peering.
+                    </p>
+                </div>
+            </div>
+        `;
+    } else {
+        html = `
+            <div style="display: flex; align-items: center; gap: 15px; padding: 15px; background: #e3f2fd; border-radius: 8px;">
+                <span style="font-size: 2em;">🔒</span>
+                <div>
+                    <strong>SSH Tunnel Required</strong>
+                    <p style="margin: 5px 0 0 0; color: #1565c0;">
+                        RDP to bastion at <code>${data.infrastructure?.bastion?.ip || 'bastion_ip'}</code>, then create SSH tunnel to C2 server.
+                    </p>
+                </div>
+            </div>
+        `;
+    }
+    
+    quickConnectDiv.innerHTML = html;
+}
+
+/**
+ * Populate Cobalt Strike connection info
+ */
+function populateCobaltStrikeInfo(data) {
+    const csHost = document.getElementById('cs-host');
+    const csPort = document.getElementById('cs-port');
+    const csMethod = document.getElementById('cs-method');
+    
+    if (csHost) csHost.textContent = data.cobalt_strike?.host || '-';
+    if (csPort) csPort.textContent = data.cobalt_strike?.port || '50050';
+    if (csMethod) {
+        csMethod.textContent = data.cobalt_strike?.method === 'direct' 
+            ? '🔗 Direct Connection' 
+            : '🔒 SSH Tunnel Required';
+    }
+}
+
+/**
+ * Populate infrastructure IP sections
+ */
+function populateInfrastructureIPs(data) {
+    const isGoadOnly = data.architecture === 'goad-only';
+    const isCombined = data.architecture === 'combined';
+    const isC2Only = data.architecture === 'c2-only';
+    
+    // C2 Server info
+    const c2ServerInfo = document.getElementById('c2-server-info');
+    if (c2ServerInfo) {
+        if (isC2Only || isCombined) {
+            c2ServerInfo.style.display = 'block';
+            const c2PrivateIp = document.getElementById('c2-private-ip');
+            const c2PublicIp = document.getElementById('c2-public-ip');
+            if (c2PrivateIp) c2PrivateIp.textContent = data.infrastructure?.c2_server?.private_ip || '-';
+            if (c2PublicIp) c2PublicIp.textContent = data.infrastructure?.c2_server?.public_ip || 'N/A (private)';
+        } else {
+            c2ServerInfo.style.display = 'none';
+        }
+    }
+    
+    // Redirectors
+    const redirectorsInfo = document.getElementById('redirectors-info');
+    if (redirectorsInfo) {
+        const redirectors = data.infrastructure?.redirectors || [];
+        if ((isC2Only || isCombined) && redirectors.length > 0) {
+            redirectorsInfo.style.display = 'block';
+            const redirectorList = document.getElementById('redirector-list');
+            if (redirectorList) {
+                redirectorList.innerHTML = redirectors.map((ip, i) => `
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
+                        <span>Redirector ${i + 1}:</span>
+                        <code id="redirector-${i}">${ip}</code>
+                        <button onclick="copyToClipboard('redirector-${i}')" style="padding: 2px 8px;">📋</button>
+                    </div>
+                `).join('');
+            }
+        } else {
+            redirectorsInfo.style.display = 'none';
+        }
+    }
+    
+    // Bastion
+    const bastionInfo = document.getElementById('bastion-info');
+    if (bastionInfo) {
+        if ((isC2Only || isCombined) && data.infrastructure?.bastion?.ip) {
+            bastionInfo.style.display = 'block';
+            const bastionIp = document.getElementById('bastion-ip');
+            if (bastionIp) bastionIp.textContent = data.infrastructure.bastion.ip;
+        } else {
+            bastionInfo.style.display = 'none';
+        }
+    }
+    
+    // GOAD Jumpbox
+    const goadJumpboxInfo = document.getElementById('goad-jumpbox-info');
+    if (goadJumpboxInfo) {
+        if ((isGoadOnly || isCombined) && data.goad?.jumpbox?.public_ip) {
+            goadJumpboxInfo.style.display = 'block';
+            const jumpboxPublicIp = document.getElementById('jumpbox-public-ip');
+            const jumpboxSshCmd = document.getElementById('jumpbox-ssh-cmd');
+            if (jumpboxPublicIp) jumpboxPublicIp.textContent = data.goad.jumpbox.public_ip;
+            if (jumpboxSshCmd) jumpboxSshCmd.textContent = `ssh -i goad-jumpbox.pem goad@${data.goad.jumpbox.public_ip}`;
+        } else {
+            goadJumpboxInfo.style.display = 'none';
+        }
+    }
+}
+
+/**
+ * Populate GOAD lab details
+ */
+function populateGoadDetails(goadData) {
+    // GOAD VMs section
+    const goadVmsSection = document.getElementById('goad-vms-section');
+    if (goadVmsSection && goadData.vms && goadData.vms.length > 0) {
+        goadVmsSection.style.display = 'block';
+        const vmList = document.getElementById('goad-vm-list');
+        if (vmList) {
+            vmList.innerHTML = goadData.vms.map(vm => `
+                <tr>
+                    <td><strong>${vm.hostname || vm.id}</strong></td>
+                    <td>${vm.role || '-'}</td>
+                    <td><code>${vm.private_ip || '-'}</code></td>
+                    <td>${vm.domain || '-'}</td>
+                </tr>
+            `).join('');
+        }
+    } else if (goadVmsSection) {
+        goadVmsSection.style.display = 'none';
+    }
+    
+    // GOAD Credentials section
+    const goadCredsSection = document.getElementById('goad-creds-section');
+    if (goadCredsSection && goadData.credentials) {
+        goadCredsSection.style.display = 'block';
+        const credsList = document.getElementById('goad-creds-list');
+        if (credsList) {
+            // Show a note about default credentials
+            credsList.innerHTML = `
+                <tr>
+                    <td colspan="4" style="text-align: center; color: #666;">
+                        See <a href="https://orange-cyberdefense.github.io/GOAD/" target="_blank">GOAD Documentation</a> for full credential list
+                    </td>
+                </tr>
+            `;
+        }
+    } else if (goadCredsSection) {
+        goadCredsSection.style.display = 'none';
+    }
+}
+
+/**
+ * Populate access instructions
+ */
+function populateAccessInstructions(data) {
+    const stepsList = document.getElementById('access-steps');
+    if (!stepsList) return;
+    
+    const instructions = data.access_instructions;
+    if (instructions && instructions.steps) {
+        stepsList.innerHTML = instructions.steps.map(step => `<li>${step}</li>`).join('');
+    } else {
+        stepsList.innerHTML = '<li>No access instructions available</li>';
+    }
+}
+
+/**
+ * Copy text to clipboard
+ */
+function copyToClipboard(elementId) {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+    
+    const text = element.textContent || element.innerText;
+    navigator.clipboard.writeText(text).then(() => {
+        // Show brief feedback
+        const originalText = element.textContent;
+        element.style.background = '#c8e6c9';
+        setTimeout(() => {
+            element.style.background = '';
+        }, 500);
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+    });
+}
+
+/**
+ * Toggle password visibility
+ */
+function togglePassword(elementIdOrElement) {
+    let element;
+    if (typeof elementIdOrElement === 'string') {
+        element = document.getElementById(elementIdOrElement);
+    } else {
+        element = elementIdOrElement;
+    }
+    
+    if (!element) return;
+    
+    const isHidden = element.textContent === '••••••••';
+    const actualValue = element.dataset.value || '';
+    
+    if (isHidden) {
+        element.textContent = actualValue;
+    } else {
+        element.textContent = '••••••••';
+    }
+}
+
+/**
+ * Download SSH key
+ */
+async function downloadSshKey(keyType) {
+    try {
+        const response = await fetch(`${API_BASE}/deploy/ssh-key/${keyType}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            alert(`SSH key saved to: ${data.path}\n\nRun: ${data.chmod_command}`);
+        } else {
+            alert(`Error: ${data.error}`);
+        }
+    } catch (error) {
+        alert(`Error downloading key: ${error.message}`);
+    }
 }
 
 // ============================================================================

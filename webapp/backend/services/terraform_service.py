@@ -145,6 +145,29 @@ class TerraformService:
             "stderr": stderr
         }
     
+    def destroy_target(self, target: str) -> Dict:
+        """Destroy a specific Terraform resource or module"""
+        if not self.tfvars_file.exists():
+            return {
+                "success": False,
+                "error": "terraform.tfvars file not found"
+            }
+        
+        exit_code, stdout, stderr = self._run_command([
+            "terraform", "destroy",
+            "-var-file", str(self.tfvars_file.relative_to(self.terraform_dir)),
+            "-target", target,
+            "-auto-approve"
+        ])
+        
+        return {
+            "success": exit_code == 0,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "target": target
+        }
+    
     def output(self) -> Dict:
         """Get Terraform outputs"""
         exit_code, stdout, stderr = self._run_command([

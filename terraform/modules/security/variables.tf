@@ -33,6 +33,22 @@ variable "c2_server_port" {
   default     = 50050
 }
 
+# =============================================================================
+# VPC Peering Configuration (for Combined Mode)
+# =============================================================================
+
+variable "enable_vpc_peering" {
+  description = "Enable VPC peering rules (for combined C2 + GOAD mode)"
+  type        = bool
+  default     = false
+}
+
+variable "goad_vpc_cidr" {
+  description = "CIDR block of the GOAD VPC (for peering rules)"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
