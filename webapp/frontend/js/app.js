@@ -212,7 +212,7 @@ async function loadConfig() {
             
             // Populate form fields
             const fields = {
-                'engagement-type': config.engagement_type || '',
+                'deployment-type': config.deployment_type || config.engagement_type || '',
                 'project-name': config.project_name || '',
                 'environment': config.environment || 'dev',
                 'aws-region': config.aws_region || 'us-east-1',
@@ -224,8 +224,7 @@ async function loadConfig() {
                 'www-subdomain': config.www_subdomain || 'www',
                 'cdn-subdomain': config.cdn_subdomain || 'cdn',
                 'c2-server-count': config.c2_server_count || 2,
-                'c2-instance-type': config.c2_server_instance_type || 't3.medium',
-                'goad-lab-type': config.goad_lab_type || ''
+                'c2-instance-type': config.c2_server_instance_type || 't3.medium'
             };
             
             Object.entries(fields).forEach(([id, value]) => {
@@ -233,11 +232,8 @@ async function loadConfig() {
                 if (element) element.value = value;
             });
             
-            // Update the deployment overview based on loaded engagement type
-            updateEngagementType();
-            
-            // Update GOAD lab info if selected
-            updateGoadLabInfo();
+            // Update the deployment overview based on loaded type
+            updateDeploymentType();
             
             showMessage('Configuration loaded', 'success');
         }
@@ -268,8 +264,212 @@ function parseCidrInput(input) {
         .filter(cidr => cidr.length > 0);
 }
 
-function updateEngagementType() {
-    const engagementType = document.getElementById('engagement-type').value;
+// Deployment type configurations (combines C2 and GOAD)
+const DEPLOYMENT_CONFIGS = {
+    // C2 Infrastructure options
+    'c2-adhoc': {
+        title: 'C2: Ad-Hoc Deployment',
+        color: 'linear-gradient(135deg, #0d7377 0%, #14a085 100%)',
+        type: 'c2',
+        c2Mode: 'adhoc',
+        goadLab: null,
+        serverCount: 1,
+        components: [
+            { icon: '🎯', label: 'C2 Server', value: '1' },
+            { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '🖥️', label: 'Bastion', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$105/mo' }
+        ],
+        details: 'Quick, minimal setup for one-off tests. Single C2 server with standard proxy infrastructure.',
+        bestFor: 'Quick security tests, POCs, training'
+    },
+    'c2-purple': {
+        title: 'C2: Purple Team Deployment',
+        color: 'linear-gradient(135deg, #4a4e8c 0%, #6b5b95 100%)',
+        type: 'c2',
+        c2Mode: 'purple-team',
+        goadLab: null,
+        serverCount: 2,
+        serverCountEditable: true,
+        components: [
+            { icon: '🎯', label: 'C2 Servers', value: '2+' },
+            { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '🖥️', label: 'Bastion', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$135/mo' }
+        ],
+        details: 'Redundant C2 infrastructure for collaborative exercises. High availability.',
+        bestFor: 'Purple team exercises, collaborative testing'
+    },
+    'c2-full': {
+        title: 'C2: Full Red Team Deployment',
+        color: 'linear-gradient(135deg, #b91c1c 0%, #991b1b 100%)',
+        type: 'c2',
+        c2Mode: 'full-red-team',
+        goadLab: null,
+        serverCount: 3,
+        components: [
+            { icon: '🎯', label: 'C2 Servers', value: '3' },
+            { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '🖥️', label: 'Bastion', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$165/mo' }
+        ],
+        details: 'Phase-based C2: Staging → Post-Ex → Long-Haul. Full operational capability.',
+        bestFor: 'Full red team engagements, long-term campaigns',
+        phases: ['🚀 Staging', '⚡ Post-Ex', '🔒 Long-Haul']
+    },
+    // GOAD Lab options
+    'goad-mini': {
+        title: 'GOAD: Mini Lab',
+        color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
+        type: 'goad',
+        c2Mode: null,
+        goadLab: 'GOAD-Mini',
+        components: [
+            { icon: '🖥️', label: 'VMs', value: '1' },
+            { icon: '🏰', label: 'Domains', value: '1' },
+            { icon: '🌲', label: 'Forests', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$75/mo' }
+        ],
+        details: 'Minimalist lab with single DC. Perfect for learning AD attack basics.',
+        bestFor: 'Learning, quick testing',
+        attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Pass-the-Hash']
+    },
+    'goad-minilab': {
+        title: 'GOAD: MiniLab',
+        color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
+        type: 'goad',
+        c2Mode: null,
+        goadLab: 'MINILAB',
+        components: [
+            { icon: '🖥️', label: 'VMs', value: '2' },
+            { icon: '🏰', label: 'Domains', value: '1' },
+            { icon: '🌲', label: 'Forests', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$150/mo' }
+        ],
+        details: 'Basic lab with DC + Workstation. Good for practicing attack chains.',
+        bestFor: 'Basic attack chains, lateral movement',
+        attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Lateral Movement']
+    },
+    'goad-light': {
+        title: 'GOAD: Light Lab',
+        color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
+        type: 'goad',
+        c2Mode: null,
+        goadLab: 'GOAD-Light',
+        components: [
+            { icon: '🖥️', label: 'VMs', value: '3' },
+            { icon: '🏰', label: 'Domains', value: '2' },
+            { icon: '🌲', label: 'Forests', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$200/mo' }
+        ],
+        details: 'Smaller multi-domain lab. Covers most common AD attack scenarios.',
+        bestFor: 'Trust attacks, delegation, multi-domain',
+        attacks: ['Trust Attacks', 'Constrained Delegation', 'Cross-domain attacks']
+    },
+    'goad-sccm': {
+        title: 'GOAD: SCCM Lab',
+        color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
+        type: 'goad',
+        c2Mode: null,
+        goadLab: 'SCCM',
+        components: [
+            { icon: '🖥️', label: 'VMs', value: '4' },
+            { icon: '🏰', label: 'Domains', value: '1' },
+            { icon: '⚙️', label: 'SCCM', value: '✓' },
+            { icon: '💰', label: 'Est. Cost', value: '~$300/mo' }
+        ],
+        details: 'Lab with Microsoft Configuration Manager for SCCM-specific attacks.',
+        bestFor: 'SCCM attacks, enterprise environments',
+        attacks: ['NAA Credentials', 'PXE Boot Attacks', 'Task Sequence Attacks']
+    },
+    'goad-full': {
+        title: 'GOAD: Full Lab',
+        color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
+        type: 'goad',
+        c2Mode: null,
+        goadLab: 'GOAD',
+        components: [
+            { icon: '🖥️', label: 'VMs', value: '5' },
+            { icon: '🏰', label: 'Domains', value: '3' },
+            { icon: '🌲', label: 'Forests', value: '2' },
+            { icon: '💰', label: 'Est. Cost', value: '~$350/mo' }
+        ],
+        details: 'Complete AD environment with 3 domains across 2 forests. Full training capability.',
+        bestFor: 'Comprehensive AD training, forest attacks',
+        attacks: ['Forest Attacks', 'Golden/Silver Tickets', 'DCShadow', 'ACL Abuse']
+    },
+    'goad-nha': {
+        title: 'GOAD: NHA Challenge',
+        color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
+        type: 'goad',
+        c2Mode: null,
+        goadLab: 'NHA',
+        components: [
+            { icon: '🖥️', label: 'VMs', value: '5' },
+            { icon: '🏰', label: 'Domains', value: '2' },
+            { icon: '🎯', label: 'CTF', value: '✓' },
+            { icon: '💰', label: 'Est. Cost', value: '~$350/mo' }
+        ],
+        details: 'Challenge lab with no hints. CTF-style for advanced practitioners.',
+        bestFor: 'CTF practice, skill testing',
+        attacks: ['Unknown - Challenge Mode!']
+    },
+    // Combined options
+    'combined-adhoc-mini': {
+        title: 'C2 Ad-Hoc + GOAD Mini',
+        color: 'linear-gradient(135deg, #d32f2f 0%, #ff9800 100%)',
+        type: 'combined',
+        c2Mode: 'adhoc',
+        goadLab: 'GOAD-Mini',
+        serverCount: 1,
+        components: [
+            { icon: '🎯', label: 'C2', value: '1' },
+            { icon: '🏰', label: 'GOAD VMs', value: '1' },
+            { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '💰', label: 'Est. Cost', value: '~$180/mo' }
+        ],
+        details: 'C2 infrastructure with GOAD Mini lab for testing attacks end-to-end.',
+        bestFor: 'Testing C2 against AD targets'
+    },
+    'combined-adhoc-light': {
+        title: 'C2 Ad-Hoc + GOAD Light',
+        color: 'linear-gradient(135deg, #d32f2f 0%, #ff9800 100%)',
+        type: 'combined',
+        c2Mode: 'adhoc',
+        goadLab: 'GOAD-Light',
+        serverCount: 1,
+        components: [
+            { icon: '🎯', label: 'C2', value: '1' },
+            { icon: '🏰', label: 'GOAD VMs', value: '3' },
+            { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '💰', label: 'Est. Cost', value: '~$305/mo' }
+        ],
+        details: 'C2 infrastructure with multi-domain GOAD lab.',
+        bestFor: 'Realistic red team training'
+    },
+    'combined-full-full': {
+        title: 'C2 Full + GOAD Full',
+        color: 'linear-gradient(135deg, #d32f2f 0%, #ff9800 100%)',
+        type: 'combined',
+        c2Mode: 'full-red-team',
+        goadLab: 'GOAD',
+        serverCount: 3,
+        components: [
+            { icon: '🎯', label: 'C2', value: '3' },
+            { icon: '🏰', label: 'GOAD VMs', value: '5' },
+            { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '💰', label: 'Est. Cost', value: '~$515/mo' }
+        ],
+        details: 'Complete red team setup with full C2 phases and complete AD lab.',
+        bestFor: 'Full-scale red team exercises'
+    }
+};
+
+/**
+ * Update deployment overview when type changes
+ */
+function updateDeploymentType() {
+    const deploymentType = document.getElementById('deployment-type').value;
     const serverCountInput = document.getElementById('c2-server-count');
     const serverCountGroup = document.getElementById('c2-server-count-group');
     const instanceTypeGroup = document.getElementById('c2-instance-type-group');
@@ -278,81 +478,30 @@ function updateEngagementType() {
     const overviewContent = document.getElementById('overview-content');
     const overviewDetails = document.getElementById('overview-details');
     
-    // Engagement type configurations
-    const engagementConfigs = {
-        'adhoc': {
-            title: 'Adhoc Deployment',
-            color: 'linear-gradient(135deg, #0d7377 0%, #14a085 100%)',
-            serverCount: 1,
-            serverCountEditable: false,
-            instanceTypeEditable: true,
-            mode: 'Single',
-            components: [
-                { icon: '🎯', label: 'C2 Server', value: '1' },
-                { icon: '🔀', label: 'Redirectors', value: '2' },
-                { icon: '🖥️', label: 'Bastion', value: '1' },
-                { icon: '💰', label: 'Est. Cost', value: '~$105/mo' }
-            ],
-            details: 'Quick, minimal setup for one-off tests and proof-of-concepts. Single C2 server with standard proxy infrastructure.',
-            bestFor: 'Quick security tests, POCs, training exercises',
-            costBreakdown: '1× C2 (t3.medium ~$30) + 2× Redirector (t3.small ~$30) + 1× Bastion Windows (~$45)'
-        },
-        'purple-team': {
-            title: 'Purple Team Deployment',
-            color: 'linear-gradient(135deg, #4a4e8c 0%, #6b5b95 100%)',
-            serverCount: 2,
-            serverCountEditable: true,
-            instanceTypeEditable: true,
-            mode: 'Redundancy',
-            components: [
-                { icon: '🎯', label: 'C2 Servers', value: '2+' },
-                { icon: '🔀', label: 'Redirectors', value: '2' },
-                { icon: '🖥️', label: 'Bastion', value: '1' },
-                { icon: '💰', label: 'Est. Cost', value: '~$135/mo' }
-            ],
-            details: 'Redundant C2 infrastructure for collaborative purple team exercises. High availability with multiple C2 servers.',
-            bestFor: 'Purple team exercises, collaborative testing, controlled scenarios',
-            costBreakdown: '2× C2 (t3.medium ~$60) + 2× Redirector (t3.small ~$30) + 1× Bastion Windows (~$45)'
-        },
-        'full-red-team': {
-            title: 'Full Red Team Deployment',
-            color: 'linear-gradient(135deg, #b91c1c 0%, #991b1b 100%)',
-            serverCount: 3,
-            serverCountEditable: false,
-            instanceTypeEditable: false,
-            mode: 'Phases',
-            components: [
-                { icon: '🎯', label: 'C2 Servers', value: '3' },
-                { icon: '🔀', label: 'Redirectors', value: '2' },
-                { icon: '🖥️', label: 'Bastion', value: '1' },
-                { icon: '💰', label: 'Est. Cost', value: '~$165/mo' }
-            ],
-            details: 'Phase-based distributed C2 infrastructure: Staging → Post-Exploitation → Long-Haul. Each phase has dedicated infrastructure.',
-            phases: ['🚀 Staging Server', '⚡ Post-Ex Server', '🔒 Long-Haul Server'],
-            bestFor: 'Full red team engagements, distributed operations, long-term campaigns',
-            costBreakdown: '3× C2 (t3.medium ~$90) + 2× Redirector (t3.small ~$30) + 1× Bastion Windows (~$45)'
-        }
-    };
-    
-    const config = engagementConfigs[engagementType];
+    const config = DEPLOYMENT_CONFIGS[deploymentType];
     
     if (config) {
-        // Update server count
-        serverCountInput.value = config.serverCount;
-        
-        // Enable/disable server count based on engagement type
-        serverCountInput.disabled = !config.serverCountEditable;
-        if (serverCountGroup) {
-            serverCountGroup.style.opacity = config.serverCountEditable ? '1' : '0.6';
+        // Update server count if applicable
+        if (config.serverCount) {
+            serverCountInput.value = config.serverCount;
         }
         
-        // Enable/disable instance type based on engagement type
+        // Enable/disable server count based on type
+        const editable = config.serverCountEditable || false;
+        serverCountInput.disabled = !editable;
+        if (serverCountGroup) {
+            serverCountGroup.style.opacity = editable ? '1' : '0.6';
+            serverCountGroup.style.display = config.type === 'goad' ? 'none' : 'block';
+        }
+        
+        // Show/hide C2-specific fields based on type
         const instanceTypeSelect = document.getElementById('c2-instance-type');
         if (instanceTypeSelect) {
-            instanceTypeSelect.disabled = !config.instanceTypeEditable;
+            instanceTypeSelect.disabled = config.type === 'goad';
         }
         if (instanceTypeGroup) {
-            instanceTypeGroup.style.opacity = config.instanceTypeEditable ? '1' : '0.6';
+            instanceTypeGroup.style.opacity = config.type === 'goad' ? '0.6' : '1';
+            instanceTypeGroup.style.display = config.type === 'goad' ? 'none' : 'block';
         }
         
         // Show and populate overview
@@ -372,14 +521,9 @@ function updateEngagementType() {
         // Build details section
         let detailsHtml = `
             <div style="margin-bottom: 10px;">
-                <strong>Mode:</strong> ${config.mode} &nbsp;|&nbsp; <strong>Best for:</strong> ${config.bestFor}
+                <strong>Best for:</strong> ${config.bestFor}
             </div>
             <div style="opacity: 0.9;">${config.details}</div>
-            ${config.costBreakdown ? `
-            <div style="margin-top: 10px; font-size: 0.85em; opacity: 0.8;">
-                <strong>💵 Cost breakdown (24/7 on-demand):</strong> ${config.costBreakdown}
-            </div>
-            ` : ''}
         `;
         
         // Add phases for full-red-team
@@ -395,20 +539,40 @@ function updateEngagementType() {
             `;
         }
         
+        // Add attacks for GOAD labs
+        if (config.attacks) {
+            detailsHtml += `
+                <div style="margin-top: 12px; font-size: 0.85em;">
+                    <strong>Available attacks:</strong> ${config.attacks.join(', ')}
+                </div>
+            `;
+        }
+        
         overviewDetails.innerHTML = detailsHtml;
         
     } else {
-        // No engagement type selected - hide overview and enable all fields
+        // No type selected - hide overview
         overviewDiv.style.display = 'none';
         
-        // Re-enable fields
+        // Re-enable all fields
         serverCountInput.disabled = false;
-        if (serverCountGroup) serverCountGroup.style.opacity = '1';
+        if (serverCountGroup) {
+            serverCountGroup.style.opacity = '1';
+            serverCountGroup.style.display = 'block';
+        }
         
         const instanceTypeSelect = document.getElementById('c2-instance-type');
         if (instanceTypeSelect) instanceTypeSelect.disabled = false;
-        if (instanceTypeGroup) instanceTypeGroup.style.opacity = '1';
+        if (instanceTypeGroup) {
+            instanceTypeGroup.style.opacity = '1';
+            instanceTypeGroup.style.display = 'block';
+        }
     }
+}
+
+// Keep old function name for backward compatibility
+function updateEngagementType() {
+    updateDeploymentType();
 }
 
 async function saveConfig() {
@@ -430,8 +594,14 @@ async function saveConfig() {
             .filter(d => d.length > 0)
             .map(d => ({ domain_name: d, hosted_zone_id: '' }));
         
+        // Get deployment type and extract c2Mode and goadLab
+        const deploymentType = document.getElementById('deployment-type')?.value || '';
+        const deployConfig = DEPLOYMENT_CONFIGS[deploymentType] || {};
+        
         const config = {
-            engagement_type: document.getElementById('engagement-type').value,
+            deployment_type: deploymentType,
+            engagement_type: deployConfig.c2Mode || '', // For backward compatibility
+            goad_lab_type: deployConfig.goadLab || '',
             project_name: document.getElementById('project-name').value,
             environment: document.getElementById('environment').value,
             aws_region: document.getElementById('aws-region').value,
@@ -443,8 +613,7 @@ async function saveConfig() {
             www_subdomain: document.getElementById('www-subdomain').value.trim() || 'www',
             cdn_subdomain: document.getElementById('cdn-subdomain').value.trim() || 'cdn',
             c2_server_count: parseInt(document.getElementById('c2-server-count').value),
-            c2_server_instance_type: document.getElementById('c2-instance-type').value,
-            goad_lab_type: document.getElementById('goad-lab-type')?.value || ''
+            c2_server_instance_type: document.getElementById('c2-instance-type').value
         };
         
         const response = await fetch(`${API_BASE}/config/`, {
@@ -1141,37 +1310,12 @@ const GOAD_LABS = {
 };
 
 /**
- * Update GOAD lab info panel when selection changes
+ * Update GOAD lab info (now handled by updateDeploymentType)
+ * Kept for backward compatibility
  */
 function updateGoadLabInfo() {
-    const labSelect = document.getElementById('goad-lab-type');
-    const infoPanel = document.getElementById('goad-lab-info');
-    
-    if (!labSelect || !infoPanel) return;
-    
-    const labName = labSelect.value;
-    
-    if (!labName || !GOAD_LABS[labName]) {
-        infoPanel.style.display = 'none';
-        return;
-    }
-    
-    const lab = GOAD_LABS[labName];
-    
-    // Update stats
-    document.getElementById('goad-vm-count').textContent = lab.vms;
-    document.getElementById('goad-domain-count').textContent = lab.domains;
-    document.getElementById('goad-forest-count').textContent = lab.forests;
-    document.getElementById('goad-cost').textContent = `~$${lab.estCost}`;
-    
-    // Update description
-    document.getElementById('goad-lab-description').textContent = lab.description;
-    
-    // Update attacks
-    const attacksDiv = document.getElementById('goad-lab-attacks');
-    attacksDiv.innerHTML = `<strong>Available Attacks:</strong> ${lab.attacks.slice(0, 5).join(', ')}${lab.attacks.length > 5 ? '...' : ''}`;
-    
-    infoPanel.style.display = 'block';
+    // Now handled by updateDeploymentType()
+    updateDeploymentType();
 }
 
 /**

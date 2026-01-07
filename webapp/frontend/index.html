@@ -45,15 +45,33 @@
             <div class="tab-page" data-page="configuration">
                 <div class="card">
                     <h2>Configuration Editor</h2>
-                    <div class="form-group">
-                        <label for="engagement-type">Engagement Type:</label>
-                        <select id="engagement-type" onchange="updateEngagementType()">
-                            <option value="" disabled selected>Select an engagement type...</option>
-                            <option value="adhoc">Adhoc (One-off tests)</option>
-                            <option value="purple-team">Purple Team Exercises</option>
-                            <option value="full-red-team">Full Red Team Engagement</option>
-                        </select>
-                        <small>Select engagement type to see deployment overview and auto-configure settings</small>
+                    
+                    <!-- What to Deploy Section -->
+                    <div style="margin-bottom: 25px; padding: 20px; border: 3px solid #1976d2; border-radius: 12px; background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);">
+                        <h3 style="margin: 0 0 10px 0; color: #1565c0;">🚀 What do you want to deploy?</h3>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <select id="deployment-type" onchange="updateDeploymentType()" style="font-size: 1.1em; padding: 12px; border: 2px solid #1976d2; border-radius: 8px; width: 100%;">
+                                <option value="" disabled selected>Select what to deploy...</option>
+                                <optgroup label="🎯 C2 Infrastructure (Cobalt Strike)">
+                                    <option value="c2-adhoc">C2: Ad-Hoc (1 server, quick tests) - ~$105/mo</option>
+                                    <option value="c2-purple">C2: Purple Team (2+ servers, redundancy) - ~$135/mo</option>
+                                    <option value="c2-full">C2: Full Red Team (3 servers, phased) - ~$165/mo</option>
+                                </optgroup>
+                                <optgroup label="🏰 GOAD Labs (Vulnerable AD for Training)">
+                                    <option value="goad-mini">GOAD: Mini (1 VM, 1 domain) - ~$75/mo</option>
+                                    <option value="goad-minilab">GOAD: MiniLab (2 VMs, DC + WS) - ~$150/mo</option>
+                                    <option value="goad-light">GOAD: Light (3 VMs, 2 domains) - ~$200/mo</option>
+                                    <option value="goad-sccm">GOAD: SCCM (4 VMs, ConfigMgr) - ~$300/mo</option>
+                                    <option value="goad-full">GOAD: Full (5 VMs, 3 domains) - ~$350/mo</option>
+                                    <option value="goad-nha">GOAD: NHA Challenge (5 VMs) - ~$350/mo</option>
+                                </optgroup>
+                                <optgroup label="🔥 Combined (C2 + GOAD Lab)">
+                                    <option value="combined-adhoc-mini">C2 Ad-Hoc + GOAD Mini - ~$180/mo</option>
+                                    <option value="combined-adhoc-light">C2 Ad-Hoc + GOAD Light - ~$305/mo</option>
+                                    <option value="combined-full-full">C2 Full + GOAD Full - ~$515/mo</option>
+                                </optgroup>
+                            </select>
+                        </div>
                     </div>
 
                     <!-- Deployment Overview Section -->
@@ -203,53 +221,6 @@
                         <small id="c2-instance-type-hint" style="display: block; margin-top: 5px; color: #666;">
                             Applies to Adhoc and Purple Team. Full Red Team uses per-phase instance types (default: t3.medium).
                         </small>
-                    </div>
-
-                    <!-- GOAD Lab Selection Section -->
-                    <div style="margin: 25px 0; padding: 20px; border: 2px solid #ff9800; border-radius: 8px; background-color: #fff8e1;">
-                        <h3 style="margin: 0 0 15px 0; color: #e65100;">🏰 Target Lab Environment (Optional)</h3>
-                        <p style="color: #666; margin-bottom: 15px; font-size: 0.9em;">
-                            Deploy a vulnerable Active Directory lab alongside your C2 infrastructure for testing.
-                            <a href="docs/GOAD_QUICK_START.md" target="_blank" style="color: #e65100;">Learn more about GOAD</a>
-                        </p>
-                        
-                        <div class="form-group" style="margin-bottom: 15px;">
-                            <label for="goad-lab-type">GOAD Lab Type:</label>
-                            <select id="goad-lab-type" onchange="updateGoadLabInfo()">
-                                <option value="">None (C2 Infrastructure Only)</option>
-                                <option value="GOAD-Mini">GOAD-Mini (1 VM, 1 domain) - ~$75/mo</option>
-                                <option value="MINILAB">MINILAB (2 VMs, DC + Workstation) - ~$150/mo</option>
-                                <option value="GOAD-Light">GOAD-Light (3 VMs, 2 domains) - ~$200/mo</option>
-                                <option value="SCCM">SCCM (4 VMs, ConfigMgr) - ~$300/mo</option>
-                                <option value="GOAD">GOAD Full (5 VMs, 3 domains) - ~$350/mo</option>
-                                <option value="NHA">NHA Challenge (5 VMs, no hints) - ~$350/mo</option>
-                            </select>
-                            <small style="color: #666;">Select a lab to deploy vulnerable AD environment for testing your C2</small>
-                        </div>
-                        
-                        <!-- GOAD Lab Info Panel -->
-                        <div id="goad-lab-info" style="display: none; margin-top: 15px; padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #ff9800;">
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; margin-bottom: 15px;">
-                                <div style="text-align: center; padding: 10px; background: #fff8e1; border-radius: 6px;">
-                                    <div style="font-size: 1.5em; font-weight: bold; color: #e65100;" id="goad-vm-count">0</div>
-                                    <div style="font-size: 0.85em; color: #666;">VMs</div>
-                                </div>
-                                <div style="text-align: center; padding: 10px; background: #fff8e1; border-radius: 6px;">
-                                    <div style="font-size: 1.5em; font-weight: bold; color: #e65100;" id="goad-domain-count">0</div>
-                                    <div style="font-size: 0.85em; color: #666;">Domains</div>
-                                </div>
-                                <div style="text-align: center; padding: 10px; background: #fff8e1; border-radius: 6px;">
-                                    <div style="font-size: 1.5em; font-weight: bold; color: #e65100;" id="goad-forest-count">0</div>
-                                    <div style="font-size: 0.85em; color: #666;">Forests</div>
-                                </div>
-                                <div style="text-align: center; padding: 10px; background: #fff8e1; border-radius: 6px;">
-                                    <div style="font-size: 1.5em; font-weight: bold; color: #e65100;" id="goad-cost">$0</div>
-                                    <div style="font-size: 0.85em; color: #666;">Est/mo</div>
-                                </div>
-                            </div>
-                            <div id="goad-lab-description" style="color: #666; font-size: 0.9em;"></div>
-                            <div id="goad-lab-attacks" style="margin-top: 10px; font-size: 0.85em; color: #888;"></div>
-                        </div>
                     </div>
 
                     <div class="form-actions">
