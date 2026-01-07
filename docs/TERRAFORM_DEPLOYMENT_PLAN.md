@@ -577,20 +577,567 @@ DEPLOYMENT_TYPE_MAP = {
 
 ---
 
+## Deployment Manager UI - Access Details Display
+
+The Deployment Manager page must clearly display all connection information, IP addresses, and credentials after deployment. This is **critical** for usability.
+
+### Required Terraform Outputs
+
+**File: `terraform/outputs.tf`**
+
+```hcl
+# =============================================================================
+# C2 Infrastructure Outputs (for C2-only and Combined modes)
+# =============================================================================
+
+output "c2_server_private_ip" {
+  description = "C2 team server private IP"
+  value       = local.deploy_c2_infra ? module.c2_team_server[0].private_ip : null
+}
+
+output "c2_server_public_ip" {
+  description = "C2 team server public IP (if direct access enabled)"
+  value       = local.deploy_c2_infra ? module.c2_team_server[0].public_ip : null
+}
+
+output "redirector_public_ips" {
+  description = "Public IPs of proxy redirectors"
+  value       = local.deploy_redirectors ? module.proxy_redirector[0].public_ips : []
+}
+
+output "bastion_public_ip" {
+  description = "Windows bastion public IP"
+  value       = local.deploy_bastion ? module.bastion[0].public_ip : null
+}
+
+output "bastion_password" {
+  description = "Windows bastion administrator password"
+  value       = local.deploy_bastion ? module.bastion[0].admin_password : null
+  sensitive   = true
+}
+
+# =============================================================================
+# GOAD Lab Outputs (for GOAD-only and Combined modes)
+# =============================================================================
+
+output "goad_jumpbox_public_ip" {
+  description = "GOAD jumpbox public IP (for SSH and CS client connection)"
+  value       = local.deploy_goad ? module.goad[0].jumpbox_public_ip : null
+}
+
+output "goad_jumpbox_private_ip" {
+  description = "GOAD jumpbox private IP"
+  value       = local.deploy_goad ? module.goad[0].jumpbox_private_ip : null
+}
+
+output "goad_lab_vms" {
+  description = "GOAD lab VM details (hostname, IP, role)"
+  value       = local.deploy_goad ? module.goad[0].lab_vms : []
+}
+
+output "goad_domain_info" {
+  description = "GOAD domain information"
+  value       = local.deploy_goad ? module.goad[0].domain_info : null
+}
+
+output "goad_credentials" {
+  description = "GOAD lab default credentials"
+  value       = local.deploy_goad ? module.goad[0].credentials : null
+  sensitive   = true
+}
+
+# =============================================================================
+# Cobalt Strike Connection Info
+# =============================================================================
+
+output "cs_connection_info" {
+  description = "How to connect Cobalt Strike client"
+  value = {
+    host     = local.is_goad_only ? module.goad[0].jumpbox_public_ip : (local.deploy_c2_infra ? module.c2_team_server[0].private_ip : null)
+    port     = 50050
+    method   = local.is_goad_only ? "direct" : "ssh_tunnel"
+    password = var.cs_teamserver_password
+  }
+  sensitive = true
+}
+
+# =============================================================================
+# Access Instructions (Human-readable)
+# =============================================================================
+
+output "access_instructions" {
+  description = "Step-by-step access instructions for the deployment"
+  value = local.is_goad_only ? {
+    type = "goad-only"
+    steps = [
+      "1. Connect Cobalt Strike client to ${module.goad[0].jumpbox_public_ip}:50050",
+      "2. Use password configured during deployment",
+      "3. SSH to jumpbox: ssh -i <key> ubuntu@${module.goad[0].jumpbox_public_ip}",
+      "4. From jumpbox, access GOAD VMs via internal IPs"
+    ]
+  } : local.is_combined ? {
+    type = "combined"
+    steps = [
+      "1. RDP to bastion: ${module.bastion[0].public_ip}",
+      "2. SSH tunnel through bastion to C2 server",
+      "3. Connect CS client through tunnel to ${module.c2_team_server[0].private_ip}:50050",
+      "4. SSH to GOAD jumpbox: ${module.goad[0].jumpbox_public_ip}",
+      "5. GOAD VMs accessible via VPC peering"
+    ]
+  } : {
+    type = "c2-only"
+    steps = [
+      "1. RDP to bastion: ${module.bastion[0].public_ip}",
+      "2. SSH tunnel: ssh -L 50050:${module.c2_team_server[0].private_ip}:50050 -i <key> ubuntu@bastion",
+      "3. Connect CS client to localhost:50050",
+      "4. Redirectors available at: ${join(", ", module.proxy_redirector[0].public_ips)}"
+    ]
+  }
+}
+```
+
+### Deployment Manager Page Updates
+
+**File: `webapp/frontend/index.html`** - Add deployment details section:
+
+```html
+<!-- Deployment Details Panel (shown after successful deployment) -->
+<div id="deployment-details" style="display: none;">
+    
+    <!-- Connection Quick Reference -->
+    <div class="card" style="margin-bottom: 20px; border: 2px solid #4caf50;">
+        <h3>🔗 Quick Connect</h3>
+        <div id="quick-connect-info">
+            <!-- Dynamically populated based on deployment type -->
+        </div>
+    </div>
+    
+    <!-- Cobalt Strike Connection -->
+    <div class="card" style="margin-bottom: 20px;">
+        <h3>🎯 Cobalt Strike Connection</h3>
+        <table class="info-table">
+            <tr>
+                <td><strong>Host:</strong></td>
+                <td id="cs-host">-</td>
+                <td><button onclick="copyToClipboard('cs-host')">📋 Copy</button></td>
+            </tr>
+            <tr>
+                <td><strong>Port:</strong></td>
+                <td id="cs-port">50050</td>
+                <td><button onclick="copyToClipboard('cs-port')">📋 Copy</button></td>
+            </tr>
+            <tr>
+                <td><strong>Password:</strong></td>
+                <td id="cs-password">••••••••</td>
+                <td>
+                    <button onclick="togglePassword('cs-password')">👁️ Show</button>
+                    <button onclick="copyToClipboard('cs-password')">📋 Copy</button>
+                </td>
+            </tr>
+            <tr>
+                <td><strong>Connection Method:</strong></td>
+                <td id="cs-method">-</td>
+                <td></td>
+            </tr>
+        </table>
+    </div>
+    
+    <!-- Infrastructure IPs -->
+    <div class="card" style="margin-bottom: 20px;">
+        <h3>🖥️ Infrastructure IPs</h3>
+        <div id="infra-ips-section">
+            <!-- C2 Server (if deployed) -->
+            <div id="c2-server-info" style="display: none;">
+                <h4>C2 Team Server</h4>
+                <table class="info-table">
+                    <tr>
+                        <td>Private IP:</td>
+                        <td id="c2-private-ip">-</td>
+                        <td><button onclick="copyToClipboard('c2-private-ip')">📋</button></td>
+                    </tr>
+                    <tr>
+                        <td>Public IP:</td>
+                        <td id="c2-public-ip">-</td>
+                        <td><button onclick="copyToClipboard('c2-public-ip')">📋</button></td>
+                    </tr>
+                </table>
+            </div>
+            
+            <!-- Redirectors (if deployed) -->
+            <div id="redirectors-info" style="display: none;">
+                <h4>Redirectors</h4>
+                <div id="redirector-list">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+            
+            <!-- Bastion (if deployed) -->
+            <div id="bastion-info" style="display: none;">
+                <h4>Windows Bastion</h4>
+                <table class="info-table">
+                    <tr>
+                        <td>Public IP:</td>
+                        <td id="bastion-ip">-</td>
+                        <td><button onclick="copyToClipboard('bastion-ip')">📋</button></td>
+                    </tr>
+                    <tr>
+                        <td>Username:</td>
+                        <td>Administrator</td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td>Password:</td>
+                        <td id="bastion-password">••••••••</td>
+                        <td>
+                            <button onclick="togglePassword('bastion-password')">👁️</button>
+                            <button onclick="copyToClipboard('bastion-password')">📋</button>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            
+            <!-- GOAD Jumpbox (if deployed) -->
+            <div id="goad-jumpbox-info" style="display: none;">
+                <h4>GOAD Jumpbox</h4>
+                <table class="info-table">
+                    <tr>
+                        <td>Public IP:</td>
+                        <td id="jumpbox-public-ip">-</td>
+                        <td><button onclick="copyToClipboard('jumpbox-public-ip')">📋</button></td>
+                    </tr>
+                    <tr>
+                        <td>SSH Command:</td>
+                        <td id="jumpbox-ssh-cmd">ssh -i key.pem ubuntu@IP</td>
+                        <td><button onclick="copyToClipboard('jumpbox-ssh-cmd')">📋</button></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <!-- GOAD Lab VMs (if deployed) -->
+    <div id="goad-vms-section" class="card" style="display: none; margin-bottom: 20px;">
+        <h3>🏰 GOAD Lab VMs</h3>
+        <table class="info-table" id="goad-vm-table">
+            <thead>
+                <tr>
+                    <th>Hostname</th>
+                    <th>Role</th>
+                    <th>Private IP</th>
+                    <th>Domain</th>
+                </tr>
+            </thead>
+            <tbody id="goad-vm-list">
+                <!-- Dynamically populated -->
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- GOAD Credentials (if deployed) -->
+    <div id="goad-creds-section" class="card" style="display: none; margin-bottom: 20px;">
+        <h3>🔐 GOAD Lab Credentials</h3>
+        <div style="background: #fff3e0; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+            <strong>⚠️ Default Lab Credentials</strong>
+            <p style="margin: 5px 0 0 0; font-size: 0.9em;">These are intentionally weak for training purposes.</p>
+        </div>
+        <table class="info-table" id="goad-creds-table">
+            <thead>
+                <tr>
+                    <th>Account</th>
+                    <th>Username</th>
+                    <th>Password</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="goad-creds-list">
+                <!-- Dynamically populated -->
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Step-by-Step Access Instructions -->
+    <div class="card" style="margin-bottom: 20px; background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);">
+        <h3>📋 Access Instructions</h3>
+        <ol id="access-steps" style="margin: 0; padding-left: 20px; line-height: 2;">
+            <!-- Dynamically populated based on deployment type -->
+        </ol>
+    </div>
+    
+</div>
+```
+
+### Backend API Endpoint
+
+**File: `webapp/backend/routes/deploy.py`**
+
+Add endpoint to fetch deployment details:
+
+```python
+@deploy_bp.route('/deployment-details', methods=['GET'])
+def get_deployment_details():
+    """Get all deployment details including IPs and credentials."""
+    try:
+        # Read Terraform outputs
+        result = subprocess.run(
+            ['terraform', 'output', '-json'],
+            cwd=TERRAFORM_DIR,
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            return jsonify({'error': 'Failed to get deployment details'}), 500
+        
+        outputs = json.loads(result.stdout)
+        
+        # Parse and structure the response
+        deployment_type = outputs.get('deployment_type', {}).get('value', '')
+        
+        response = {
+            'deployment_type': deployment_type,
+            'cobalt_strike': {
+                'host': outputs.get('cs_connection_info', {}).get('value', {}).get('host'),
+                'port': 50050,
+                'method': outputs.get('cs_connection_info', {}).get('value', {}).get('method'),
+                'password': outputs.get('cs_connection_info', {}).get('value', {}).get('password')
+            },
+            'infrastructure': {
+                'c2_server': {
+                    'private_ip': outputs.get('c2_server_private_ip', {}).get('value'),
+                    'public_ip': outputs.get('c2_server_public_ip', {}).get('value')
+                },
+                'redirectors': outputs.get('redirector_public_ips', {}).get('value', []),
+                'bastion': {
+                    'ip': outputs.get('bastion_public_ip', {}).get('value'),
+                    'password': outputs.get('bastion_password', {}).get('value')
+                }
+            },
+            'goad': {
+                'jumpbox': {
+                    'public_ip': outputs.get('goad_jumpbox_public_ip', {}).get('value'),
+                    'private_ip': outputs.get('goad_jumpbox_private_ip', {}).get('value')
+                },
+                'vms': outputs.get('goad_lab_vms', {}).get('value', []),
+                'domain_info': outputs.get('goad_domain_info', {}).get('value'),
+                'credentials': outputs.get('goad_credentials', {}).get('value')
+            },
+            'access_instructions': outputs.get('access_instructions', {}).get('value', {})
+        }
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+```
+
+### JavaScript to Populate UI
+
+**File: `webapp/frontend/js/app.js`**
+
+```javascript
+async function loadDeploymentDetails() {
+    try {
+        const response = await fetch('/api/deploy/deployment-details');
+        const data = await response.json();
+        
+        if (data.error) {
+            console.error('Failed to load deployment details:', data.error);
+            return;
+        }
+        
+        // Show the deployment details panel
+        document.getElementById('deployment-details').style.display = 'block';
+        
+        // Populate Cobalt Strike connection
+        document.getElementById('cs-host').textContent = data.cobalt_strike.host || '-';
+        document.getElementById('cs-port').textContent = data.cobalt_strike.port;
+        document.getElementById('cs-password').dataset.value = data.cobalt_strike.password || '';
+        document.getElementById('cs-method').textContent = 
+            data.cobalt_strike.method === 'direct' ? '🔗 Direct Connection' : '🔒 SSH Tunnel Required';
+        
+        // Populate infrastructure IPs based on what's deployed
+        const deploymentType = data.deployment_type;
+        const isGoadOnly = deploymentType.startsWith('goad-');
+        const isCombined = deploymentType.startsWith('combined-');
+        const isC2Only = deploymentType.startsWith('c2-');
+        
+        // C2 Server info
+        if (isC2Only || isCombined) {
+            document.getElementById('c2-server-info').style.display = 'block';
+            document.getElementById('c2-private-ip').textContent = data.infrastructure.c2_server.private_ip || '-';
+            document.getElementById('c2-public-ip').textContent = data.infrastructure.c2_server.public_ip || 'N/A (private only)';
+        }
+        
+        // Redirectors
+        if ((isC2Only || isCombined) && data.infrastructure.redirectors.length > 0) {
+            document.getElementById('redirectors-info').style.display = 'block';
+            const list = document.getElementById('redirector-list');
+            list.innerHTML = data.infrastructure.redirectors.map((ip, i) => `
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
+                    <span>Redirector ${i + 1}:</span>
+                    <code id="redirector-${i}">${ip}</code>
+                    <button onclick="copyToClipboard('redirector-${i}')">📋</button>
+                </div>
+            `).join('');
+        }
+        
+        // Bastion
+        if ((isC2Only || isCombined) && data.infrastructure.bastion.ip) {
+            document.getElementById('bastion-info').style.display = 'block';
+            document.getElementById('bastion-ip').textContent = data.infrastructure.bastion.ip;
+            document.getElementById('bastion-password').dataset.value = data.infrastructure.bastion.password || '';
+        }
+        
+        // GOAD Jumpbox
+        if ((isGoadOnly || isCombined) && data.goad.jumpbox.public_ip) {
+            document.getElementById('goad-jumpbox-info').style.display = 'block';
+            document.getElementById('jumpbox-public-ip').textContent = data.goad.jumpbox.public_ip;
+            document.getElementById('jumpbox-ssh-cmd').textContent = `ssh -i ~/.ssh/your-key.pem ubuntu@${data.goad.jumpbox.public_ip}`;
+        }
+        
+        // GOAD VMs
+        if ((isGoadOnly || isCombined) && data.goad.vms.length > 0) {
+            document.getElementById('goad-vms-section').style.display = 'block';
+            const vmList = document.getElementById('goad-vm-list');
+            vmList.innerHTML = data.goad.vms.map(vm => `
+                <tr>
+                    <td><strong>${vm.hostname}</strong></td>
+                    <td>${vm.role}</td>
+                    <td><code>${vm.private_ip}</code></td>
+                    <td>${vm.domain || '-'}</td>
+                </tr>
+            `).join('');
+        }
+        
+        // GOAD Credentials
+        if ((isGoadOnly || isCombined) && data.goad.credentials) {
+            document.getElementById('goad-creds-section').style.display = 'block';
+            const credsList = document.getElementById('goad-creds-list');
+            credsList.innerHTML = Object.entries(data.goad.credentials).map(([account, creds]) => `
+                <tr>
+                    <td>${account}</td>
+                    <td><code>${creds.username}</code></td>
+                    <td>
+                        <span class="password-field" data-value="${creds.password}">••••••••</span>
+                    </td>
+                    <td>
+                        <button onclick="togglePassword(this.parentElement.previousElementSibling.querySelector('.password-field'))">👁️</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        // Access Instructions
+        if (data.access_instructions && data.access_instructions.steps) {
+            const stepsList = document.getElementById('access-steps');
+            stepsList.innerHTML = data.access_instructions.steps.map(step => `<li>${step}</li>`).join('');
+        }
+        
+        // Quick Connect summary
+        updateQuickConnect(data);
+        
+    } catch (error) {
+        console.error('Error loading deployment details:', error);
+    }
+}
+
+function updateQuickConnect(data) {
+    const quickConnect = document.getElementById('quick-connect-info');
+    const deploymentType = data.deployment_type;
+    
+    let html = '';
+    
+    if (deploymentType.startsWith('goad-')) {
+        // GOAD-only: Direct connection
+        html = `
+            <div style="background: #e8f5e9; padding: 15px; border-radius: 8px;">
+                <h4 style="margin: 0 0 10px 0;">🎯 Connect Cobalt Strike Client</h4>
+                <code style="font-size: 1.2em; background: #fff; padding: 10px; display: block; border-radius: 4px;">
+                    ${data.cobalt_strike.host}:50050
+                </code>
+                <p style="margin: 10px 0 0 0; font-size: 0.9em;">Direct connection - no tunnel needed!</p>
+            </div>
+        `;
+    } else if (deploymentType.startsWith('c2-') || deploymentType.startsWith('combined-')) {
+        // C2 or Combined: SSH tunnel required
+        html = `
+            <div style="background: #fff3e0; padding: 15px; border-radius: 8px;">
+                <h4 style="margin: 0 0 10px 0;">🔒 SSH Tunnel Required</h4>
+                <p style="margin: 0 0 10px 0;">Step 1: Create tunnel through bastion</p>
+                <code style="font-size: 0.9em; background: #fff; padding: 10px; display: block; border-radius: 4px; word-break: break-all;">
+                    ssh -L 50050:${data.infrastructure.c2_server.private_ip}:50050 -i key.pem ubuntu@${data.infrastructure.bastion.ip}
+                </code>
+                <p style="margin: 10px 0 10px 0;">Step 2: Connect CS client to</p>
+                <code style="font-size: 1.2em; background: #fff; padding: 10px; display: block; border-radius: 4px;">
+                    localhost:50050
+                </code>
+            </div>
+        `;
+    }
+    
+    quickConnect.innerHTML = html;
+}
+
+// Utility functions
+function copyToClipboard(elementId) {
+    const element = document.getElementById(elementId);
+    const text = element.dataset?.value || element.textContent;
+    navigator.clipboard.writeText(text);
+    
+    // Visual feedback
+    const originalText = element.textContent;
+    element.textContent = '✓ Copied!';
+    setTimeout(() => element.textContent = originalText, 1000);
+}
+
+function togglePassword(elementOrId) {
+    const element = typeof elementOrId === 'string' 
+        ? document.getElementById(elementOrId) 
+        : elementOrId;
+    
+    if (element.textContent === '••••••••') {
+        element.textContent = element.dataset.value;
+    } else {
+        element.textContent = '••••••••';
+    }
+}
+```
+
+### Summary of Deployment Manager Outputs
+
+| Deployment Type | What's Displayed |
+|-----------------|------------------|
+| **GOAD-Only** | Jumpbox IP, CS direct connect, GOAD VMs, Lab credentials, SSH command |
+| **C2-Only** | C2 server IP, Redirector IPs, Bastion IP/password, SSH tunnel command |
+| **Combined** | All of the above + VPC peering info |
+
+### Key UX Features
+
+1. **Copy buttons** - One-click copy for IPs and commands
+2. **Password toggle** - Show/hide sensitive credentials
+3. **Quick Connect** - Prominent connection instructions
+4. **Step-by-step guide** - Clear numbered instructions
+5. **Visual grouping** - Organized by component type
+6. **Context-aware** - Only shows relevant info for deployment type
+
+---
+
 ## File Changes Summary
 
 | File | Action | Description |
 |------|--------|-------------|
 | `terraform/variables.tf` | Modify | Add deployment_type, goad_lab_type, enable_goad |
 | `terraform/main.tf` | Modify | Add locals for mode detection, conditional modules |
-| `terraform/outputs.tf` | Modify | Add GOAD outputs |
+| `terraform/outputs.tf` | Modify | Add all outputs for IPs, credentials, access instructions |
 | `terraform/scripts/install_cobalt_strike.sh` | Create | **Centralized CS setup script (shared by all)** |
 | `terraform/modules/goad/` | Create | New GOAD deployment module |
 | `terraform/modules/goad/jumpbox.tf` | Create | Uses centralized CS script |
 | `terraform/modules/vpc_peering/` | Create | New VPC peering module |
 | `terraform/modules/c2_team_server/main.tf` | Modify | Use centralized CS script |
 | `webapp/backend/utils/config_parser.py` | Modify | Handle deployment_type mapping |
-| `webapp/backend/routes/deploy.py` | Modify | Pass deployment_type to Terraform |
+| `webapp/backend/routes/deploy.py` | Modify | Pass deployment_type to Terraform, add `/deployment-details` endpoint |
+| `webapp/frontend/index.html` | Modify | Add deployment details panel with IPs, credentials, copy buttons |
+| `webapp/frontend/js/app.js` | Modify | Add `loadDeploymentDetails()`, copy/toggle password functions |
 
 ---
 
