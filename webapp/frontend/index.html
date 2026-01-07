@@ -205,6 +205,53 @@
                         </small>
                     </div>
 
+                    <!-- GOAD Lab Selection Section -->
+                    <div style="margin: 25px 0; padding: 20px; border: 2px solid #ff9800; border-radius: 8px; background-color: #fff8e1;">
+                        <h3 style="margin: 0 0 15px 0; color: #e65100;">🏰 Target Lab Environment (Optional)</h3>
+                        <p style="color: #666; margin-bottom: 15px; font-size: 0.9em;">
+                            Deploy a vulnerable Active Directory lab alongside your C2 infrastructure for testing.
+                            <a href="docs/GOAD_QUICK_START.md" target="_blank" style="color: #e65100;">Learn more about GOAD</a>
+                        </p>
+                        
+                        <div class="form-group" style="margin-bottom: 15px;">
+                            <label for="goad-lab-type">GOAD Lab Type:</label>
+                            <select id="goad-lab-type" onchange="updateGoadLabInfo()">
+                                <option value="">None (C2 Infrastructure Only)</option>
+                                <option value="GOAD-Mini">GOAD-Mini (1 VM, 1 domain) - ~$75/mo</option>
+                                <option value="MINILAB">MINILAB (2 VMs, DC + Workstation) - ~$150/mo</option>
+                                <option value="GOAD-Light">GOAD-Light (3 VMs, 2 domains) - ~$200/mo</option>
+                                <option value="SCCM">SCCM (4 VMs, ConfigMgr) - ~$300/mo</option>
+                                <option value="GOAD">GOAD Full (5 VMs, 3 domains) - ~$350/mo</option>
+                                <option value="NHA">NHA Challenge (5 VMs, no hints) - ~$350/mo</option>
+                            </select>
+                            <small style="color: #666;">Select a lab to deploy vulnerable AD environment for testing your C2</small>
+                        </div>
+                        
+                        <!-- GOAD Lab Info Panel -->
+                        <div id="goad-lab-info" style="display: none; margin-top: 15px; padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #ff9800;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; margin-bottom: 15px;">
+                                <div style="text-align: center; padding: 10px; background: #fff8e1; border-radius: 6px;">
+                                    <div style="font-size: 1.5em; font-weight: bold; color: #e65100;" id="goad-vm-count">0</div>
+                                    <div style="font-size: 0.85em; color: #666;">VMs</div>
+                                </div>
+                                <div style="text-align: center; padding: 10px; background: #fff8e1; border-radius: 6px;">
+                                    <div style="font-size: 1.5em; font-weight: bold; color: #e65100;" id="goad-domain-count">0</div>
+                                    <div style="font-size: 0.85em; color: #666;">Domains</div>
+                                </div>
+                                <div style="text-align: center; padding: 10px; background: #fff8e1; border-radius: 6px;">
+                                    <div style="font-size: 1.5em; font-weight: bold; color: #e65100;" id="goad-forest-count">0</div>
+                                    <div style="font-size: 0.85em; color: #666;">Forests</div>
+                                </div>
+                                <div style="text-align: center; padding: 10px; background: #fff8e1; border-radius: 6px;">
+                                    <div style="font-size: 1.5em; font-weight: bold; color: #e65100;" id="goad-cost">$0</div>
+                                    <div style="font-size: 0.85em; color: #666;">Est/mo</div>
+                                </div>
+                            </div>
+                            <div id="goad-lab-description" style="color: #666; font-size: 0.9em;"></div>
+                            <div id="goad-lab-attacks" style="margin-top: 10px; font-size: 0.85em; color: #888;"></div>
+                        </div>
+                    </div>
+
                     <div class="form-actions">
                         <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
                         <button class="btn btn-secondary" onclick="validateConfig()">Validate</button>
@@ -409,6 +456,18 @@
                     <!-- Infrastructure Components -->
                     <div id="infrastructure-components">
                         
+                        <!-- GOAD Lab Section -->
+                        <div id="goad-lab-section" style="margin-bottom: 25px; padding: 20px; border: 2px solid #ff9800; border-radius: 8px; background-color: #fff8e1; display: none;">
+                            <h3 style="margin-top: 0; color: #e65100;">🏰 GOAD Lab (Active Directory)</h3>
+                            <p style="color: #666; margin-bottom: 15px;">Vulnerable Active Directory environment for testing.</p>
+                            <div id="goad-lab-details" class="infrastructure-details">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                            <div id="goad-lab-actions" style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                        </div>
+
                         <!-- Bastion/Jump Box Section -->
                         <div id="bastion-section" style="margin-bottom: 25px; padding: 20px; border: 2px solid #2196F3; border-radius: 8px; background-color: #e3f2fd; display: none;">
                             <h3 style="margin-top: 0; color: #1565c0;">🖥️ Bastion Host (Jump Box)</h3>

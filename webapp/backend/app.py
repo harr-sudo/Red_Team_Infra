@@ -17,7 +17,7 @@ frontend_path = Path(__file__).parent.parent / 'frontend'
 
 from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_cors import CORS
-from webapp.backend.routes import config, deploy, aws_check, health
+from webapp.backend.routes import config, deploy, aws_check, health, goad
 
 # Initialize Flask app
 app = Flask(__name__, 
@@ -34,6 +34,7 @@ app.register_blueprint(config.bp, url_prefix='/api/config')
 app.register_blueprint(deploy.bp, url_prefix='/api/deploy')
 app.register_blueprint(aws_check.bp, url_prefix='/api/aws')
 app.register_blueprint(health.bp, url_prefix='/api/health')
+app.register_blueprint(goad.bp)  # GOAD routes at /api/goad
 
 # Serve frontend
 @app.route('/')
@@ -65,7 +66,8 @@ def api_info():
         'endpoints': {
             'config': '/api/config',
             'deploy': '/api/deploy',
-            'aws': '/api/aws'
+            'aws': '/api/aws',
+            'goad': '/api/goad'
         }
     })
 

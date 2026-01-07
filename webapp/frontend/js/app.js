@@ -224,7 +224,8 @@ async function loadConfig() {
                 'www-subdomain': config.www_subdomain || 'www',
                 'cdn-subdomain': config.cdn_subdomain || 'cdn',
                 'c2-server-count': config.c2_server_count || 2,
-                'c2-instance-type': config.c2_server_instance_type || 't3.medium'
+                'c2-instance-type': config.c2_server_instance_type || 't3.medium',
+                'goad-lab-type': config.goad_lab_type || ''
             };
             
             Object.entries(fields).forEach(([id, value]) => {
@@ -234,6 +235,9 @@ async function loadConfig() {
             
             // Update the deployment overview based on loaded engagement type
             updateEngagementType();
+            
+            // Update GOAD lab info if selected
+            updateGoadLabInfo();
             
             showMessage('Configuration loaded', 'success');
         }
@@ -439,7 +443,8 @@ async function saveConfig() {
             www_subdomain: document.getElementById('www-subdomain').value.trim() || 'www',
             cdn_subdomain: document.getElementById('cdn-subdomain').value.trim() || 'cdn',
             c2_server_count: parseInt(document.getElementById('c2-server-count').value),
-            c2_server_instance_type: document.getElementById('c2-instance-type').value
+            c2_server_instance_type: document.getElementById('c2-instance-type').value,
+            goad_lab_type: document.getElementById('goad-lab-type')?.value || ''
         };
         
         const response = await fetch(`${API_BASE}/config/`, {
@@ -1068,6 +1073,339 @@ async function checkAWSPermissions() {
 }
 
 // ============================================================================
+// GOAD LAB FUNCTIONS
+// ============================================================================
+
+// GOAD lab configurations (mirrors backend)
+const GOAD_LABS = {
+    'GOAD-Mini': {
+        name: 'GOAD-Mini',
+        displayName: 'GOAD Mini',
+        vms: 1,
+        domains: 1,
+        forests: 1,
+        description: 'Minimalist lab with single domain controller. Perfect for quick testing and learning basics.',
+        estCost: 75,
+        attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Pass-the-Hash']
+    },
+    'MINILAB': {
+        name: 'MINILAB',
+        displayName: 'Mini Lab',
+        vms: 2,
+        domains: 1,
+        forests: 1,
+        description: 'Basic lab with one DC and one Workstation. Good for practicing basic attack chains.',
+        estCost: 150,
+        attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Pass-the-Hash', 'Lateral Movement']
+    },
+    'GOAD-Light': {
+        name: 'GOAD-Light',
+        displayName: 'GOAD Light',
+        vms: 3,
+        domains: 2,
+        forests: 1,
+        description: 'Smaller lab with 2 domains. Covers most common AD attack scenarios.',
+        estCost: 200,
+        attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Pass-the-Hash', 'Trust Attacks', 'Constrained Delegation']
+    },
+    'SCCM': {
+        name: 'SCCM',
+        displayName: 'SCCM Lab',
+        vms: 4,
+        domains: 1,
+        forests: 1,
+        description: 'Lab with Microsoft Configuration Manager (SCCM/ConfigMgr). For SCCM-specific attacks.',
+        estCost: 300,
+        attacks: ['SCCM Attacks', 'NAA Credentials', 'PXE Boot Attacks', 'Task Sequence Attacks']
+    },
+    'GOAD': {
+        name: 'GOAD',
+        displayName: 'GOAD Full',
+        vms: 5,
+        domains: 3,
+        forests: 2,
+        description: 'Full lab with 3 domains across 2 forests. Complete AD environment for comprehensive testing.',
+        estCost: 350,
+        attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'DCShadow', 'Pass-the-Hash', 'Golden Ticket', 'Silver Ticket', 'Trust Attacks', 'Forest Attacks']
+    },
+    'NHA': {
+        name: 'NHA',
+        displayName: 'NHA Challenge',
+        vms: 5,
+        domains: 2,
+        forests: 1,
+        description: 'Challenge lab with no hints provided. CTF-style for advanced practice.',
+        estCost: 350,
+        attacks: ['Unknown - Challenge Mode']
+    }
+};
+
+/**
+ * Update GOAD lab info panel when selection changes
+ */
+function updateGoadLabInfo() {
+    const labSelect = document.getElementById('goad-lab-type');
+    const infoPanel = document.getElementById('goad-lab-info');
+    
+    if (!labSelect || !infoPanel) return;
+    
+    const labName = labSelect.value;
+    
+    if (!labName || !GOAD_LABS[labName]) {
+        infoPanel.style.display = 'none';
+        return;
+    }
+    
+    const lab = GOAD_LABS[labName];
+    
+    // Update stats
+    document.getElementById('goad-vm-count').textContent = lab.vms;
+    document.getElementById('goad-domain-count').textContent = lab.domains;
+    document.getElementById('goad-forest-count').textContent = lab.forests;
+    document.getElementById('goad-cost').textContent = `~$${lab.estCost}`;
+    
+    // Update description
+    document.getElementById('goad-lab-description').textContent = lab.description;
+    
+    // Update attacks
+    const attacksDiv = document.getElementById('goad-lab-attacks');
+    attacksDiv.innerHTML = `<strong>Available Attacks:</strong> ${lab.attacks.slice(0, 5).join(', ')}${lab.attacks.length > 5 ? '...' : ''}`;
+    
+    infoPanel.style.display = 'block';
+}
+
+/**
+ * Load GOAD status for deployment manager
+ */
+async function loadGoadStatus() {
+    const section = document.getElementById('goad-lab-section');
+    const details = document.getElementById('goad-lab-details');
+    const actions = document.getElementById('goad-lab-actions');
+    
+    if (!section) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/goad/status`);
+        const data = await response.json();
+        
+        if (!data.success) {
+            section.style.display = 'none';
+            return;
+        }
+        
+        if (!data.goad_available) {
+            section.style.display = 'block';
+            details.innerHTML = `
+                <div class="status-display warning">
+                    <p><strong>⚠️ GOAD Not Available</strong></p>
+                    <p>GOAD tools not found. Run: <code>git submodule update --init</code></p>
+                </div>
+            `;
+            actions.innerHTML = '';
+            return;
+        }
+        
+        if (!data.has_deployment) {
+            section.style.display = 'none';
+            return;
+        }
+        
+        // Has GOAD deployment
+        section.style.display = 'block';
+        const labInfo = data.deployment_info?.lab_info || {};
+        const labName = data.deployed_lab;
+        
+        details.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 15px;">
+                <div style="background: white; padding: 15px; border-radius: 5px; text-align: center;">
+                    <div style="font-size: 2em; font-weight: bold; color: #e65100;">${labInfo.vms || '?'}</div>
+                    <div style="color: #666; font-size: 0.9em;">VMs</div>
+                </div>
+                <div style="background: white; padding: 15px; border-radius: 5px; text-align: center;">
+                    <div style="font-size: 2em; font-weight: bold; color: #e65100;">${labInfo.domains || '?'}</div>
+                    <div style="color: #666; font-size: 0.9em;">Domains</div>
+                </div>
+                <div style="background: white; padding: 15px; border-radius: 5px; text-align: center;">
+                    <div style="font-size: 2em; font-weight: bold; color: #e65100;">${labInfo.forests || '?'}</div>
+                    <div style="color: #666; font-size: 0.9em;">Forests</div>
+                </div>
+            </div>
+            <div style="background: white; padding: 15px; border-radius: 5px;">
+                <p><strong>Lab Type:</strong> ${labInfo.display_name || labName}</p>
+                <p style="color: #666; margin-top: 10px;">${labInfo.description || ''}</p>
+                ${labInfo.domain_names ? `<p style="margin-top: 10px;"><strong>Domains:</strong> ${labInfo.domain_names.join(', ')}</p>` : ''}
+            </div>
+        `;
+        
+        actions.innerHTML = `
+            <button class="btn btn-success" onclick="startGoadLab()">▶️ Start Lab</button>
+            <button class="btn btn-warning" onclick="stopGoadLab()">⏸️ Stop Lab</button>
+            <button class="btn btn-info" onclick="showGoadCredentials()">🔑 Credentials</button>
+            <button class="btn btn-info" onclick="showGoadJumpbox()">🖥️ Jumpbox Info</button>
+            <button class="btn btn-danger" onclick="destroyGoadLab()">🗑️ Destroy Lab</button>
+        `;
+        
+    } catch (error) {
+        console.error('Error loading GOAD status:', error);
+        section.style.display = 'none';
+    }
+}
+
+/**
+ * Deploy a GOAD lab
+ */
+async function deployGoadLab(labName) {
+    if (!labName) {
+        const select = document.getElementById('goad-lab-type');
+        labName = select?.value;
+    }
+    
+    if (!labName) {
+        alert('Please select a GOAD lab type first');
+        return;
+    }
+    
+    if (!confirm(`Deploy ${labName} lab? This will create ${GOAD_LABS[labName]?.vms || '?'} VMs in AWS.`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/goad/deploy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lab_name: labName })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert(`GOAD ${labName} deployment initiated!\n\n${data.note || ''}\n\nNext steps:\n${data.next_steps?.join('\n') || ''}`);
+        } else {
+            alert(`Error: ${data.error}`);
+        }
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    }
+}
+
+/**
+ * Start GOAD lab VMs
+ */
+async function startGoadLab() {
+    if (!confirm('Start GOAD lab VMs?')) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/goad/start`, { method: 'POST' });
+        const data = await response.json();
+        
+        if (data.success) {
+            alert('GOAD lab start command sent. VMs may take a few minutes to fully boot.');
+            loadGoadStatus();
+        } else {
+            alert(`Error: ${data.error || data.stderr}`);
+        }
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    }
+}
+
+/**
+ * Stop GOAD lab VMs to save costs
+ */
+async function stopGoadLab() {
+    if (!confirm('Stop GOAD lab VMs? This will save costs but VMs will be unavailable.')) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/goad/stop`, { method: 'POST' });
+        const data = await response.json();
+        
+        if (data.success) {
+            alert('GOAD lab stop command sent. VMs are being stopped.');
+            loadGoadStatus();
+        } else {
+            alert(`Error: ${data.error || data.stderr}`);
+        }
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    }
+}
+
+/**
+ * Destroy GOAD lab
+ */
+async function destroyGoadLab() {
+    const confirmText = prompt('Type "DESTROY" to confirm GOAD lab destruction:');
+    if (confirmText !== 'DESTROY') return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/goad/destroy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: 'DESTROY' })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert('GOAD lab destroyed successfully.');
+            loadGoadStatus();
+        } else {
+            alert(`Error: ${data.error}`);
+        }
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    }
+}
+
+/**
+ * Show GOAD credentials
+ */
+async function showGoadCredentials() {
+    try {
+        const response = await fetch(`${API_BASE}/goad/credentials`);
+        const data = await response.json();
+        
+        if (data.success) {
+            const creds = data.credentials;
+            let message = `GOAD Lab: ${creds.lab_name}\n\n`;
+            message += `Domains: ${creds.domains?.join(', ') || 'N/A'}\n\n`;
+            message += `Inventory Path:\n${creds.inventory_path}\n\n`;
+            message += `Note: ${creds.note}`;
+            alert(message);
+        } else {
+            alert(`Error: ${data.error}`);
+        }
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    }
+}
+
+/**
+ * Show GOAD jumpbox info
+ */
+async function showGoadJumpbox() {
+    try {
+        const response = await fetch(`${API_BASE}/goad/jumpbox`);
+        const data = await response.json();
+        
+        if (data.success) {
+            const jb = data.jumpbox;
+            let message = `GOAD Jumpbox Info\n\n`;
+            message += `Lab: ${jb.lab_name}\n`;
+            if (jb.public_ip) message += `Public IP: ${jb.public_ip}\n`;
+            message += `\nSSH Command:\n${jb.commands?.ssh || 'N/A'}\n`;
+            message += `\nSOCKS Proxy Command:\n${jb.commands?.socks_proxy || 'N/A'}\n`;
+            message += `\nSSH Keys: ${jb.ssh_key_path}`;
+            alert(message);
+        } else {
+            alert(`Error: ${data.error}`);
+        }
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    }
+}
+
+// ============================================================================
 // DEPLOYMENTS PAGE FUNCTIONS
 // ============================================================================
 
@@ -1077,6 +1415,7 @@ async function checkAWSPermissions() {
 async function loadDeploymentsPage() {
     console.log('Loading Deployments page...');
     await refreshDeployments();
+    await loadGoadStatus();  // Also load GOAD lab status
 }
 
 /**
@@ -1098,15 +1437,26 @@ async function refreshDeployments() {
     }
     
     try {
-        const response = await fetch(`${API_BASE}/deploy/infrastructure`);
-        const data = await response.json();
+        // Fetch both C2 infrastructure and GOAD status
+        const [infraResponse, goadResponse] = await Promise.all([
+            fetch(`${API_BASE}/deploy/infrastructure`),
+            fetch(`${API_BASE}/goad/status`)
+        ]);
+        
+        const data = await infraResponse.json();
+        const goadData = await goadResponse.json();
         
         // Update last updated time
         if (lastUpdatedSpan) {
             lastUpdatedSpan.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
         }
         
-        if (!data.success) {
+        // Check if we have any deployment (C2 or GOAD)
+        const hasC2Deployment = data.success && data.has_deployment;
+        const hasGoadDeployment = goadData.success && goadData.has_deployment;
+        const hasAnyDeployment = hasC2Deployment || hasGoadDeployment;
+        
+        if (!data.success && !hasGoadDeployment) {
             overviewDiv.innerHTML = `
                 <div class="status-display error">
                     <p><strong>Error:</strong> ${data.error || 'Failed to load infrastructure'}</p>
@@ -1115,25 +1465,32 @@ async function refreshDeployments() {
             return;
         }
         
-        if (!data.has_deployment) {
+        if (!hasAnyDeployment) {
             // No deployment - show empty state
             hideAllInfrastructureSections();
             if (noDeploymentDiv) noDeploymentDiv.style.display = 'block';
             if (overviewDiv) overviewDiv.innerHTML = '';
             document.getElementById('connection-info-section').style.display = 'none';
             document.getElementById('destroy-section').style.display = 'none';
+            document.getElementById('goad-lab-section').style.display = 'none';
             return;
         }
         
         // Has deployment - show infrastructure
         if (noDeploymentDiv) noDeploymentDiv.style.display = 'none';
         
-        // Show overview summary
-        const summary = data.summary || {};
-        overviewDiv.innerHTML = `
+        // Build overview summary including GOAD
+        const summary = data.success && data.has_deployment ? (data.summary || {}) : {};
+        const goadInfo = hasGoadDeployment ? goadData.deployment_info?.lab_info : null;
+        
+        let overviewHtml = `
             <div class="status-display success">
                 <p><strong>✅ Infrastructure Active</strong></p>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-top: 15px;">
+        `;
+        
+        if (hasC2Deployment) {
+            overviewHtml += `
                     <div style="text-align: center; padding: 15px; background: white; border-radius: 8px;">
                         <div style="font-size: 2em; font-weight: bold; color: #f44336;">${summary.c2_server_count || 0}</div>
                         <div style="color: #666; font-size: 0.9em;">C2 Servers</div>
@@ -1146,34 +1503,50 @@ async function refreshDeployments() {
                         <div style="font-size: 2em; font-weight: bold; color: #2196F3;">${summary.has_bastion ? '1' : '0'}</div>
                         <div style="color: #666; font-size: 0.9em;">Bastion Host</div>
                     </div>
-                    <div style="text-align: center; padding: 15px; background: white; border-radius: 8px;">
-                        <div style="font-size: 2em; font-weight: bold; color: #9c27b0;">${summary.subnet_count || 0}</div>
-                        <div style="color: #666; font-size: 0.9em;">Subnets</div>
+            `;
+        }
+        
+        if (hasGoadDeployment && goadInfo) {
+            overviewHtml += `
+                    <div style="text-align: center; padding: 15px; background: white; border-radius: 8px; border: 2px solid #ff9800;">
+                        <div style="font-size: 2em; font-weight: bold; color: #e65100;">${goadInfo.vms || 0}</div>
+                        <div style="color: #666; font-size: 0.9em;">GOAD VMs</div>
                     </div>
+            `;
+        }
+        
+        overviewHtml += `
                 </div>
-                <p style="margin-top: 15px; color: #666;"><strong>Deployment Mode:</strong> ${data.deployment_mode || 'N/A'}</p>
-            </div>
         `;
         
-        // Populate Bastion section
-        populateBastionSection(data.bastion);
+        if (hasC2Deployment) {
+            overviewHtml += `<p style="margin-top: 15px; color: #666;"><strong>C2 Deployment Mode:</strong> ${data.deployment_mode || 'N/A'}</p>`;
+        }
+        if (hasGoadDeployment) {
+            overviewHtml += `<p style="margin-top: 5px; color: #666;"><strong>GOAD Lab:</strong> ${goadData.deployed_lab || 'N/A'}</p>`;
+        }
         
-        // Populate C2 Servers section
-        populateC2ServersSection(data.c2_servers, data.deployment_mode);
+        overviewHtml += `</div>`;
+        overviewDiv.innerHTML = overviewHtml;
         
-        // Populate Redirectors section
-        populateRedirectorsSection(data.redirectors);
+        // Populate C2 sections if we have C2 deployment
+        if (hasC2Deployment) {
+            populateBastionSection(data.bastion);
+            populateC2ServersSection(data.c2_servers, data.deployment_mode);
+            populateRedirectorsSection(data.redirectors);
+            populateNetworkSection(data.network, data.security_groups);
+            populateConnectionInfo(data);
+        } else {
+            hideAllInfrastructureSections();
+        }
         
-        // Populate Network section
-        populateNetworkSection(data.network, data.security_groups);
-        
-        // Populate Connection Info
-        populateConnectionInfo(data);
+        // Load GOAD status separately (it has its own section)
+        await loadGoadStatus();
         
         // Show destroy section when there's an active deployment
         const destroySection = document.getElementById('destroy-section');
         if (destroySection) {
-            destroySection.style.display = data.has_deployment ? 'block' : 'none';
+            destroySection.style.display = hasAnyDeployment ? 'block' : 'none';
         }
         
     } catch (error) {
