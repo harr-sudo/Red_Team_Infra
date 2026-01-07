@@ -1,22 +1,29 @@
 # Red Team Infrastructure Web Application
 
-Local-only web interface for managing and deploying Red Team Infrastructure.
+Local-only web interface for managing and deploying Red Team Infrastructure with integrated GOAD (vulnerable AD) labs.
 
 ## Overview
 
 This web application provides a user-friendly interface for:
 - Configuring infrastructure settings
-- Deploying infrastructure
+- Deploying C2 infrastructure and GOAD labs
 - Monitoring infrastructure status
 - Running health checks
 - Managing infrastructure lifecycle
+- Connecting to deployed resources
 
 ## Features
 
 - ✅ **Configuration Editor** - Web-based form for editing terraform.tfvars
+- ✅ **Engagement Types** - Pre-configured setups (Ad-Hoc, Purple Team, Full Red Team)
+- ✅ **GOAD Lab Selection** - Deploy vulnerable AD environments alongside C2 infrastructure
 - ✅ **Deployment Control** - One-click deployment with real-time status
+- ✅ **Deployment Manager** - View all deployments, connection info, and manage lifecycle
 - ✅ **Status Dashboard** - View infrastructure status and outputs
 - ✅ **Health Checks** - Check prerequisites and infrastructure health
+- ✅ **AWS Permissions Check** - Validate required AWS permissions before deployment
+- ✅ **GitHub CLI Check** - Verify access to private tools repository
+- ✅ **Connection Instructions** - SSH tunnel, RDP, and direct connection commands
 - ✅ **Local Only** - Runs on localhost only (127.0.0.1:5000)
 
 ## Quick Start
@@ -49,25 +56,39 @@ Then open your browser to: http://127.0.0.1:5000
 
 ## Usage
 
-### 1. Configuration Tab
-- Select engagement type (adhoc/purple-team/full-red-team)
-- Configure infrastructure settings
-- Validate configuration
+### 1. Pre-Reqs Tab
+- Check all prerequisites (AWS CLI, Terraform, Ansible, GitHub CLI)
+- Verify AWS connectivity and permissions
+- Validate GitHub access to tools repository
+
+### 2. Configuration Tab
+- Select engagement type (Ad-Hoc, Purple Team, Full Red Team)
+- View deployment overview with cost estimates
+- Configure AWS region, key pairs, CIDR blocks
+- **Select GOAD Lab** (optional) - Choose vulnerable AD environment
+- Configure domain settings
 - Save configuration
 
-### 2. Deploy Tab
+### 3. Deploy Tab
 - Run Terraform plan (preview changes)
 - Deploy infrastructure
-- Monitor deployment progress
-- Destroy infrastructure (with confirmation)
+- Monitor deployment progress in real-time
+- Upload Cobalt Strike files
 
-### 3. Status Tab
+### 4. Deployment Manager Tab
+- View all active deployments (C2 + GOAD labs)
+- **Connection instructions** - SSH tunnel, RDP, direct connection commands
+- Start/Stop labs to save costs
+- Destroy infrastructure
+- View credentials and access info
+
+### 5. Status Tab
 - View infrastructure status
 - See Terraform outputs
 - List deployed resources
 - Refresh status
 
-### 4. Health Tab
+### 6. Health Tab
 - Check prerequisites (AWS CLI, Terraform, Ansible, etc.)
 - Verify AWS connectivity
 - **Check AWS permissions** - Validate required permissions for deployment
@@ -86,6 +107,16 @@ Then open your browser to: http://127.0.0.1:5000
 - `POST /api/deploy/deploy` - Start deployment
 - `POST /api/deploy/destroy` - Destroy infrastructure
 - `GET /api/deploy/plan` - Run Terraform plan
+- `GET /api/deploy/infrastructure` - Get detailed infrastructure info
+
+### GOAD Labs
+- `GET /api/goad/labs` - List available GOAD labs
+- `POST /api/goad/deploy` - Deploy GOAD lab
+- `GET /api/goad/status` - Get GOAD deployment status
+- `POST /api/goad/start` - Start GOAD lab VMs
+- `POST /api/goad/stop` - Stop GOAD lab VMs
+- `POST /api/goad/destroy` - Destroy GOAD lab
+- `GET /api/goad/credentials` - Get lab credentials
 
 ### Status
 - `GET /api/status/` - Get infrastructure status
@@ -96,6 +127,7 @@ Then open your browser to: http://127.0.0.1:5000
 - `GET /api/health/prerequisites` - Check prerequisites
 - `GET /api/health/aws` - Check AWS connectivity
 - `GET /api/health/permissions` - Check AWS permissions for deployment
+- `GET /api/aws-check/github-cli` - Check GitHub CLI authentication
 - `POST /api/health/check` - Run health check
 
 ## Security

@@ -1,0 +1,3 @@
+[submodule "tools/goad"]
+	path = tools/goad
+	url = https://github.com/Orange-Cyberdefense/GOAD.git

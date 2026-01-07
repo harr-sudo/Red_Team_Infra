@@ -1,6 +1,6 @@
 # Red Team Infrastructure
 
-A scalable, replicable red team infrastructure deployment framework for AWS.
+A scalable, replicable red team infrastructure deployment framework for AWS with integrated vulnerable Active Directory lab environments.
 
 ## Overview
 
@@ -11,6 +11,7 @@ This project provides Infrastructure as Code (IaC) and automation scripts to dep
 - **Automated**: Minimal manual intervention required
 - **Secure**: Built with security best practices
 - **Maintainable**: Well-documented and version-controlled
+- **Training Ready**: Includes GOAD (Game Of Active Directory) labs for realistic attack practice
 
 ## Architecture
 
@@ -29,6 +30,7 @@ The infrastructure is built using:
 - **Bastion/Jump Box**: Windows Server with WSL2 for management access (public subnet)
 - **VPC**: Isolated network with public/private subnets
 - **Security Groups**: Firewall rules for traffic control
+- **GOAD Labs** (Optional): Vulnerable Active Directory environments for testing
 
 ## Quick Start
 
@@ -49,6 +51,7 @@ The web application provides:
 - Configuration editor
 - **Prerequisite validation** (Domain configuration & Cobalt Strike file)
 - One-click deployment
+- **GOAD Lab selection** (vulnerable AD environments)
 - Status dashboard
 - Health checks
 - AWS permissions checker
@@ -166,7 +169,10 @@ Red_Team_Infra/
 ├── ansible/            # Ansible playbooks and roles
 ├── scripts/            # Automation scripts
 ├── configs/            # Configuration files
+├── tools/              # External tools
+│   └── goad/           # GOAD (Game Of Active Directory) - vulnerable AD labs
 ├── webapp/             # Web application for infrastructure management
+├── uploads/            # Uploaded files (Cobalt Strike, etc.)
 └── docs/               # Documentation
 ```
 
@@ -199,6 +205,23 @@ See [Bastion/Jump Box Guide](./docs/BASTION_JUMPBOX.md) for details.
 See [Tools Repository Quick Start](./docs/TOOLS_REPOSITORY_QUICK_START.md) for setup instructions.
 See [Tools Repository Access](./docs/TOOLS_REPOSITORY_ACCESS.md) for accessing tools.
 
+### 🏰 GOAD Integration (Vulnerable AD Labs)
+- **Integrated GOAD labs** for realistic attack practice
+- **Multiple lab types**: GOAD, GOAD-Light, GOAD-Mini, SCCM, NHA, MINILAB
+- **Pre-configured vulnerabilities**: Kerberoasting, AS-REP Roasting, DCSync, Pass-the-Hash, and more
+- **Built-in jumpbox**: SSH access and SOCKS proxy for C2 integration
+- **Cost management**: Start/Stop labs to save money when not in use
+- **VPC peering**: Seamless connectivity between C2 infrastructure and GOAD labs
+
+**Quick Setup:**
+1. Select GOAD lab type in Configuration page
+2. Deploy alongside C2 infrastructure
+3. Use jumpbox SOCKS proxy for Cobalt Strike access
+4. Practice attacks on realistic AD environment
+
+See [GOAD Integration Plan](./docs/GOAD_INTEGRATION_PLAN.md) for detailed architecture.
+See [GOAD Quick Start](./docs/GOAD_QUICK_START.md) for deployment instructions.
+
 ### 🌐 Web Application
 - **Local web interface** for infrastructure management
 - **Configuration editor** for terraform.tfvars
@@ -207,6 +230,28 @@ See [Tools Repository Access](./docs/TOOLS_REPOSITORY_ACCESS.md) for accessing t
 - **AWS permissions checker** to validate required permissions
 
 See [Web Application Guide](./webapp/README.md) for details.
+
+### 🏰 GOAD Labs (Game Of Active Directory)
+
+Integrated vulnerable Active Directory environments for testing your C2 infrastructure:
+
+| Lab | VMs | Forests | Domains | Description | Est. Cost |
+|-----|-----|---------|---------|-------------|-----------|
+| **GOAD** | 5 | 2 | 3 | Full lab - complete AD environment | ~$350/mo |
+| **GOAD-Light** | 3 | 1 | 2 | Smaller lab for limited resources | ~$200/mo |
+| **GOAD-Mini** | 1 | 1 | 1 | Minimalist - single domain | ~$75/mo |
+| **SCCM** | 4 | 1 | 1 | Microsoft Configuration Manager lab | ~$300/mo |
+| **NHA** | 5 | 1 | 2 | Challenge lab (no hints) | ~$350/mo |
+| **MINILAB** | 2 | 1 | 1 | Basic DC + Workstation | ~$150/mo |
+
+**Key Features:**
+- 🎯 Pre-configured vulnerabilities (Kerberoasting, AS-REP Roasting, DCSync, etc.)
+- 🔗 Integrated with C2 infrastructure via VPC peering
+- 📡 Built-in jumpbox for SOCKS proxy access
+- 💰 Start/Stop functionality to save costs when not in use
+
+See [GOAD Integration Plan](./docs/GOAD_INTEGRATION_PLAN.md) for setup details.
+See [GOAD Quick Start](./docs/GOAD_QUICK_START.md) for deployment instructions.
 
 ## Documentation
 
@@ -219,6 +264,7 @@ See [Web Application Guide](./webapp/README.md) for details.
 - **[AWS Authentication Guide](./docs/AWS_AUTHENTICATION.md)** 🔐 - **How deployment connects to AWS** - Credential setup and authentication
 - **[Domain Requirements](./docs/DOMAIN_REQUIREMENTS.md)** ⚠️ - **REQUIRED PREREQUISITE** - Domain registration guide
 - **[Cobalt Strike Deployment](./docs/COBALT_STRIKE_DEPLOYMENT.md)** 📦 - **REQUIRED PREREQUISITE** - Cobalt Strike file upload and deployment automation
+- **[GOAD Quick Start](./docs/GOAD_QUICK_START.md)** 🏰 - **Deploy vulnerable AD labs** - Quick setup for GOAD environments
 - **[Quick Reference](./docs/QUICK_REFERENCE.md)** - Quick commands and checklists
 - **[GitHub Setup Guide](./docs/GITHUB_SETUP.md)** - Setting up GitHub integration (recommended for team collaboration)
 
@@ -228,6 +274,7 @@ See [Web Application Guide](./webapp/README.md) for details.
 - [Ansible SSH Key Distribution](./docs/ANSIBLE_SSH_KEYS.md) 🔑 - **Automated SSH key distribution** to all instances
 - **[Tools Repository Setup](./docs/TOOLS_REPOSITORY_SETUP.md)** 🛠️ - **Setting up tools repository** - Create repo and configure multi-user access
 - [Tools Repository Access](./docs/TOOLS_REPOSITORY_ACCESS.md) 🛠️ - **Accessing tools repository** on jump box
+- **[GOAD Integration Plan](./docs/GOAD_INTEGRATION_PLAN.md)** 🏰 - **Detailed GOAD architecture** - Full integration plan and connectivity
 - [Deployment Guide](./docs/deployment-guide.md) - Detailed deployment instructions and advanced scenarios
 - [Scripting Guide](./docs/scripting-guide.md) - Understanding automation scripts
 - [Architecture Guide](./docs/architecture.md) - Detailed architecture (coming soon)
