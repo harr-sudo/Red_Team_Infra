@@ -342,10 +342,10 @@ const DEPLOYMENT_CONFIGS = {
         components: [
             { icon: '🏰', label: 'AD VMs', value: '1' },
             { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🌲', label: 'Domains', value: '1' },
+            { icon: '🌲', label: 'Domain', value: '1' },
             { icon: '💰', label: 'Est. Cost', value: '~$100/mo' }
         ],
-        details: 'Single DC with Cobalt Strike on jumpbox. Direct internal access for training.',
+        details: 'Single DC (sevenkingdoms.local) with Cobalt Strike on jumpbox.',
         bestFor: 'Learning AD attacks, quick testing',
         attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Pass-the-Hash'],
         architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
@@ -362,12 +362,12 @@ const DEPLOYMENT_CONFIGS = {
         components: [
             { icon: '🏰', label: 'AD VMs', value: '2' },
             { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🌲', label: 'Domains', value: '1' },
+            { icon: '🌲', label: 'Domain', value: '1' },
             { icon: '💰', label: 'Est. Cost', value: '~$175/mo' }
         ],
-        details: 'DC + Workstation with Cobalt Strike on jumpbox.',
+        details: 'DC (Win2019) + Workstation (Win10). 1 forest, 1 domain.',
         bestFor: 'Attack chains, lateral movement practice',
-        attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Lateral Movement'],
+        attacks: ['Kerberoasting', 'AS-REP Roasting', 'Lateral Movement', 'Credential Dumping'],
         architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
     },
     'goad-light': {
@@ -385,9 +385,9 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🌲', label: 'Domains', value: '2' },
             { icon: '💰', label: 'Est. Cost', value: '~$225/mo' }
         ],
-        details: 'Multi-domain lab with Cobalt Strike on jumpbox.',
+        details: '3 VMs, 1 forest, 2 domains. Smaller version of full GOAD.',
         bestFor: 'Trust attacks, cross-domain techniques',
-        attacks: ['Trust Attacks', 'Constrained Delegation', 'Cross-domain attacks'],
+        attacks: ['Trust Attacks', 'Constrained Delegation', 'Cross-domain attacks', 'Kerberoasting'],
         architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
     },
     'goad-sccm': {
@@ -405,9 +405,9 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '⚙️', label: 'SCCM', value: '✓' },
             { icon: '💰', label: 'Est. Cost', value: '~$325/mo' }
         ],
-        details: 'SCCM environment with Cobalt Strike on jumpbox.',
+        details: '4 VMs, 1 forest, 1 domain with Microsoft Configuration Manager.',
         bestFor: 'SCCM attacks, enterprise environments',
-        attacks: ['NAA Credentials', 'PXE Boot Attacks', 'Task Sequence Attacks'],
+        attacks: ['NAA Credentials', 'PXE Boot Attacks', 'Task Sequence Attacks', 'SCCM Client Attacks'],
         architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
     },
     'goad-full': {
@@ -422,12 +422,12 @@ const DEPLOYMENT_CONFIGS = {
         components: [
             { icon: '🏰', label: 'AD VMs', value: '5' },
             { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🌲', label: 'Forests', value: '2' },
+            { icon: '🌲', label: 'Domains', value: '3' },
             { icon: '💰', label: 'Est. Cost', value: '~$375/mo' }
         ],
-        details: 'Complete 3-domain, 2-forest lab with Cobalt Strike on jumpbox.',
+        details: '5 VMs, 2 forests, 3 domains. Complete AD training environment.',
         bestFor: 'Comprehensive AD training, forest attacks',
-        attacks: ['Forest Attacks', 'Golden/Silver Tickets', 'DCShadow', 'ACL Abuse'],
+        attacks: ['Forest Attacks', 'Golden/Silver Tickets', 'DCShadow', 'ACL Abuse', 'Trust Attacks'],
         architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
     },
     'goad-nha': {
@@ -442,10 +442,10 @@ const DEPLOYMENT_CONFIGS = {
         components: [
             { icon: '🏰', label: 'AD VMs', value: '5' },
             { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🏆', label: 'CTF', value: '✓' },
+            { icon: '🌲', label: 'Domains', value: '2' },
             { icon: '💰', label: 'Est. Cost', value: '~$375/mo' }
         ],
-        details: 'Challenge lab (no hints) with Cobalt Strike on jumpbox.',
+        details: '5 VMs, 2 domains. Challenge lab - no schema provided!',
         bestFor: 'CTF practice, skill assessment',
         attacks: ['Unknown - Challenge Mode!'],
         architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'

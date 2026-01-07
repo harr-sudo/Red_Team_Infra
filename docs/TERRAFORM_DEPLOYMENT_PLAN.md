@@ -309,7 +309,166 @@ modules/goad/
     └── install_cs.sh # Cobalt Strike installation script
 ```
 
-**Key file: `modules/goad/jumpbox.tf`**
+---
+
+## Centralized Cobalt Strike Setup (CRITICAL)
+
+### Existing C2 Server Setup
+
+We already have a centralized Cobalt Strike installation script used by the C2 team server module. This script:
+
+1. **Downloads CS archive** from uploaded file
+2. **Clones tools repo** (`harr-sudo/red-team-tools`)
+3. **Installs dependencies** (Java, etc.)
+4. **Configures team server** with password
+5. **Sets up systemd service** for auto-start
+
+**Location**: `terraform/modules/c2_team_server/` (user_data or provisioner)
+
+### Reusing for GOAD Jumpbox
+
+For GOAD-only deployments, the jumpbox needs the **same CS setup**. We will:
+
+1. **Extract the CS setup into a shared script** at `terraform/scripts/install_cobalt_strike.sh`
+2. **Reference from both modules**:
+   - `modules/c2_team_server/` - existing C2 servers
+   - `modules/goad/jumpbox.tf` - GOAD jumpbox (when `install_cobalt_strike = true`)
+
+### Shared Script Structure
+
+**File: `terraform/scripts/install_cobalt_strike.sh`**
+
+```bash
+#!/bin/bash
+# Centralized Cobalt Strike Installation Script
+# Used by: C2 Team Servers, GOAD Jumpbox (training mode)
+
+set -e
+
+# Variables passed via templatefile()
+CS_ARCHIVE_PATH="${cs_archive_path}"
+CS_PASSWORD="${cs_password}"
+TOOLS_REPO_URL="${tools_repo_url}"
+TOOLS_REPO_BRANCH="${tools_repo_branch}"
+
+echo "=== Installing Cobalt Strike ==="
+
+# 1. Install dependencies
+apt-get update
+apt-get install -y openjdk-11-jdk git unzip
+
+# 2. Create CS directory
+mkdir -p /opt/cobaltstrike
+cd /opt/cobaltstrike
+
+# 3. Download and extract CS archive
+aws s3 cp "$CS_ARCHIVE_PATH" /tmp/cobaltstrike.tar.gz
+tar -xzf /tmp/cobaltstrike.tar.gz -C /opt/cobaltstrike --strip-components=1
+
+# 4. Clone tools repository
+if [ -n "$TOOLS_REPO_URL" ]; then
+    echo "=== Cloning tools repository ==="
+    git clone --branch "$TOOLS_REPO_BRANCH" "$TOOLS_REPO_URL" /opt/tools
+fi
+
+# 5. Create systemd service for team server
+cat > /etc/systemd/system/teamserver.service << 'EOF'
+[Unit]
+Description=Cobalt Strike Team Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/cobaltstrike
+ExecStart=/opt/cobaltstrike/teamserver 0.0.0.0 ${cs_password}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 6. Enable and start service
+systemctl daemon-reload
+systemctl enable teamserver
+systemctl start teamserver
+
+echo "=== Cobalt Strike Installation Complete ==="
+echo "Team server running on port 50050"
+```
+
+### Module Usage
+
+**C2 Team Server Module** (`modules/c2_team_server/main.tf`):
+
+```hcl
+resource "aws_instance" "c2_server" {
+  # ... existing config ...
+  
+  user_data = templatefile("${path.root}/scripts/install_cobalt_strike.sh", {
+    cs_archive_path   = var.cobalt_strike_archive
+    cs_password       = var.cs_teamserver_password
+    tools_repo_url    = var.tools_repo_url
+    tools_repo_branch = var.tools_repo_branch
+  })
+}
+```
+
+**GOAD Jumpbox** (`modules/goad/jumpbox.tf`):
+
+```hcl
+resource "aws_instance" "jumpbox" {
+  # ... existing config ...
+  
+  # Use same centralized script when CS is enabled
+  user_data = var.install_cobalt_strike ? templatefile("${path.root}/scripts/install_cobalt_strike.sh", {
+    cs_archive_path   = var.cobalt_strike_archive
+    cs_password       = var.cs_teamserver_password
+    tools_repo_url    = var.tools_repo_url
+    tools_repo_branch = var.tools_repo_branch
+  }) : templatefile("${path.module}/scripts/jumpbox_basic.sh", {})
+}
+```
+
+### Key Benefits
+
+1. **Single source of truth** - One script to maintain
+2. **Consistent setup** - Same CS config across all deployment types
+3. **Tools repo included** - All deployments get the tools repo
+4. **Easy updates** - Change once, applies everywhere
+5. **Future extensibility** - Add more tools to the script, all deployments benefit
+
+### Variables Required
+
+Both modules need access to these variables:
+
+```hcl
+variable "cobalt_strike_archive" {
+  description = "S3 path or local path to CS archive"
+  type        = string
+}
+
+variable "cs_teamserver_password" {
+  description = "Password for CS team server"
+  type        = string
+  sensitive   = true
+}
+
+variable "tools_repo_url" {
+  description = "Git URL for tools repository"
+  type        = string
+  default     = "https://github.com/harr-sudo/red-team-tools.git"
+}
+
+variable "tools_repo_branch" {
+  description = "Branch to clone from tools repo"
+  type        = string
+  default     = "main"
+}
+```
+
+---
 
 ```hcl
 resource "aws_instance" "jumpbox" {
@@ -425,8 +584,11 @@ DEPLOYMENT_TYPE_MAP = {
 | `terraform/variables.tf` | Modify | Add deployment_type, goad_lab_type, enable_goad |
 | `terraform/main.tf` | Modify | Add locals for mode detection, conditional modules |
 | `terraform/outputs.tf` | Modify | Add GOAD outputs |
+| `terraform/scripts/install_cobalt_strike.sh` | Create | **Centralized CS setup script (shared by all)** |
 | `terraform/modules/goad/` | Create | New GOAD deployment module |
+| `terraform/modules/goad/jumpbox.tf` | Create | Uses centralized CS script |
 | `terraform/modules/vpc_peering/` | Create | New VPC peering module |
+| `terraform/modules/c2_team_server/main.tf` | Modify | Use centralized CS script |
 | `webapp/backend/utils/config_parser.py` | Modify | Handle deployment_type mapping |
 | `webapp/backend/routes/deploy.py` | Modify | Pass deployment_type to Terraform |
 
