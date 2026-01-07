@@ -31,7 +31,89 @@ GOAD creates realistic, vulnerable Active Directory environments with:
 - Can be accessed via `ssh_jumpbox` command
 - Supports SOCKS proxy via `ssh_jumpbox_proxy <port>`
 
-### Architecture Overview (AWS)
+---
+
+## Deployment Architecture: Two Modes
+
+### Mode 1: GOAD-Only (Training Lab)
+
+When deploying **GOAD labs standalone** (without full C2 infrastructure), we use a **simplified architecture**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         GOAD-Only Deployment                                 │
+│                    (Isolated Training Environment)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                        GOAD Network (Private)                        │    │
+│  │                                                                      │    │
+│  │   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐          │    │
+│  │   │  DC01        │    │  DC02        │    │  DC03        │          │    │
+│  │   │  (Win2019)   │    │  (Win2019)   │    │  (Win2016)   │          │    │
+│  │   │  10.x.x.10   │    │  10.x.x.11   │    │  10.x.x.12   │          │    │
+│  │   └──────────────┘    └──────────────┘    └──────────────┘          │    │
+│  │                                                                      │    │
+│  │   ┌──────────────┐    ┌──────────────┐                              │    │
+│  │   │  SRV02       │    │  SRV03       │                              │    │
+│  │   │  (Win2019)   │    │  (Win2019)   │                              │    │
+│  │   │  10.x.x.22   │    │  10.x.x.23   │                              │    │
+│  │   └──────────────┘    └──────────────┘                              │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                      │                                       │
+│                                      │ Internal Network                      │
+│                                      ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │              GOAD Jumpbox + Cobalt Strike Server                     │    │
+│  │                        (Single VM)                                   │    │
+│  │                                                                      │    │
+│  │   ┌────────────────────────────────────────────────────────────┐    │    │
+│  │   │  Ubuntu Server (t3.medium)                                  │    │    │
+│  │   │                                                             │    │    │
+│  │   │  • Public IP (for operator access)                         │    │    │
+│  │   │  • Cobalt Strike Team Server (port 50050)                  │    │    │
+│  │   │  • SSH access to all GOAD VMs                              │    │    │
+│  │   │  • Ansible for lab management                              │    │    │
+│  │   │  • Direct route to GOAD network                            │    │    │
+│  │   │                                                             │    │    │
+│  │   │  Security Groups:                                           │    │    │
+│  │   │  • 22/tcp from management_cidr (SSH)                       │    │    │
+│  │   │  • 50050/tcp from management_cidr (CS Client)              │    │    │
+│  │   │  • All traffic to GOAD private network                     │    │    │
+│  │   └────────────────────────────────────────────────────────────┘    │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                      ▲                                       │
+│                                      │ SSH + CS Client (50050)              │
+│                                      │                                       │
+└──────────────────────────────────────┼───────────────────────────────────────┘
+                                       │
+                              ┌────────┴────────┐
+                              │  Your Laptop    │
+                              │  CS Client GUI  │
+                              │  connects to    │
+                              │  jumpbox:50050  │
+                              └─────────────────┘
+```
+
+**Key Points for GOAD-Only Mode:**
+
+1. **No Redirectors Needed**: This is an isolated lab - beacons don't need to traverse the internet
+2. **No Separate Bastion**: The GOAD jumpbox serves dual purpose (lab access + CS server)
+3. **Cobalt Strike on Jumpbox**: Team server runs directly on the jumpbox
+4. **Direct Internal Access**: CS server has direct network access to all GOAD VMs
+5. **Operator Connects Directly**: Your CS client connects to jumpbox public IP on port 50050
+
+**Why This Works:**
+- GOAD is a **training environment** - no need to simulate realistic C2 infrastructure
+- Beacons call back directly to the jumpbox (same network)
+- You're testing **AD attacks**, not **C2 infrastructure resilience**
+- Simpler = cheaper and easier to manage
+
+---
+
+### Mode 2: Combined (C2 + GOAD)
+
+When deploying **C2 infrastructure WITH a GOAD lab** (for realistic red team training):
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -53,14 +135,14 @@ GOAD creates realistic, vulnerable Active Directory environments with:
 │  │                                                                      │    │
 │  │   ┌──────────────────────────────────────────────────────────────┐  │    │
 │  │   │                    GOAD Jumpbox (Ubuntu)                      │  │    │
-│  │   │  - Ansible installed                                          │  │    │
 │  │   │  - SSH access to all VMs                                      │  │    │
 │  │   │  - SOCKS proxy capability                                     │  │    │
+│  │   │  - NO Cobalt Strike (that's on C2 server)                    │  │    │
 │  │   └──────────────────────────────────────────────────────────────┘  │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                    Our C2 Infrastructure                             │    │
+│  │                    Full C2 Infrastructure                           │    │
 │  │                                                                      │    │
 │  │   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐          │    │
 │  │   │  C2 Server   │    │  Redirector  │    │  Our Bastion │          │    │
@@ -73,6 +155,29 @@ GOAD creates realistic, vulnerable Active Directory environments with:
 │                    (Allow traffic between C2 and GOAD)                       │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Key Points for Combined Mode:**
+- Full redirector infrastructure for realistic C2 traffic flow
+- Beacons traverse redirectors like a real engagement
+- GOAD jumpbox is just for lab management (no CS)
+- Practice both AD attacks AND C2 tradecraft
+
+---
+
+## Cost Comparison
+
+| Deployment Type | Components | Est. Monthly Cost |
+|-----------------|------------|-------------------|
+| **GOAD-Only (Mini)** | 1 GOAD VM + Jumpbox/CS | ~$75-100 |
+| **GOAD-Only (Light)** | 3 GOAD VMs + Jumpbox/CS | ~$200-250 |
+| **GOAD-Only (Full)** | 5 GOAD VMs + Jumpbox/CS | ~$350-400 |
+| **C2 Ad-Hoc + GOAD Mini** | 1 C2 + 2 Redirectors + Bastion + GOAD Mini | ~$180-220 |
+| **C2 Full + GOAD Full** | 3 C2 + 2 Redirectors + Bastion + GOAD Full | ~$500-600 |
+
+**GOAD-Only is ~30-40% cheaper** because:
+- No separate bastion (jumpbox serves this role)
+- No redirectors (internal network only)
+- Single CS server on jumpbox (no dedicated C2 instance)
 
 ---
 
@@ -315,36 +420,53 @@ Check: ad/<lab>/data/inventory file for credentials
 
 ---
 
-## Operator Access Methods (Connecting to Your C2 Infrastructure)
+## Operator Access Methods (Connecting to Your C2)
 
-This section explains how **YOU** (the operator) connect from your home laptop/workstation to the Cobalt Strike team server. This is separate from how beacons communicate.
+This section explains how **YOU** (the operator) connect from your home laptop to the Cobalt Strike team server.
 
-### Understanding the Two Types of Connections
+### GOAD-Only Mode: Simple Direct Access
+
+For GOAD-only deployments, connecting is straightforward since the team server runs on the jumpbox with a public IP:
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        CONNECTION TYPES                                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  1. OPERATOR CONNECTION (You → Team Server)                                 │
-│     ─────────────────────────────────────                                   │
-│     Your CS Client GUI connects to Team Server on port 50050                │
-│     This is for YOU to control the team server                              │
-│                                                                              │
-│  2. BEACON CONNECTION (Target → Redirector → Team Server)                   │
-│     ─────────────────────────────────────────────────                       │
-│     Compromised hosts call back through the redirector                      │
-│     This is how IMPLANTS communicate                                        │
-│                                                                              │
-│  ⚠️  These are DIFFERENT paths! Redirectors are for beacons, not for you!   │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                    GOAD-Only: Operator Connection                             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│   ┌─────────────┐                              ┌─────────────────────────┐   │
+│   │ Your Laptop │     Port 50050 (Direct)      │   GOAD Jumpbox          │   │
+│   │             │ ───────────────────────────► │   + Cobalt Strike       │   │
+│   │ CS Client   │     (Your IP whitelisted)    │   Public: 54.x.x.x      │   │
+│   └─────────────┘                              │   Port 50050 open       │   │
+│                                                └───────────┬─────────────┘   │
+│                                                            │                  │
+│                                                            │ Internal         │
+│                                                            ▼                  │
+│                                                ┌─────────────────────────┐   │
+│                                                │   GOAD Lab VMs          │   │
+│                                                │   (Private Network)     │   │
+│                                                │   Beacons → Jumpbox     │   │
+│                                                └─────────────────────────┘   │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Access Method Options
+**Connection Steps (GOAD-Only):**
 
-The web app will present these options clearly after deployment:
+1. **Get jumpbox IP** from Deployment Manager
+2. **Open Cobalt Strike client** on your laptop
+3. **Connect to**: `<jumpbox-public-ip>:50050`
+4. **Enter teamserver password**
+
+That's it! No tunnels, no bastion hopping. Your IP just needs to be in `management_cidr_blocks`.
+
+**Security Note**: Port 50050 is only accessible from your whitelisted management CIDRs.
 
 ---
+
+### Combined Mode: Full C2 Infrastructure Access
+
+For combined deployments (C2 + GOAD), use the full access methods since the team server is on a private C2 instance:
 
 #### Option 1: SSH Tunnel through Bastion (Recommended) ✅
 
