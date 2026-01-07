@@ -57,6 +57,7 @@ class ConfigParser:
             'VPC Configuration': ['vpc_cidr', 'availability_zones', 'public_subnet_cidrs', 'private_subnet_cidrs', 'enable_nat_gateway'],
             'Security Configuration': ['management_cidr_blocks', 'ssh_port', 'c2_server_port'],
             'Key Pair Configuration': ['key_pair_name'],
+            'Domain Configuration': ['primary_domain_name', 'primary_domain_hosted_zone_id', 'backup_domains', 'c2_subdomain', 'www_subdomain', 'cdn_subdomain', 'dns_provider', 'enable_dns_validation'],
             'C2 Team Server Configuration': ['c2_deployment_mode', 'c2_server_count', 'c2_server_instance_type', 'c2_server_ami_id', 'c2_server_root_volume_size', 'c2_server_enable_elastic_ips', 'c2_server_iam_instance_profile_name', 'c2_server_user_data'],
             'Proxy/Redirector Configuration': ['proxy_redirector_count', 'proxy_redirector_instance_type', 'proxy_redirector_ami_id', 'proxy_redirector_root_volume_size', 'proxy_redirector_iam_instance_profile_name', 'proxy_redirector_user_data'],
             'Monitoring Configuration': ['enable_detailed_monitoring'],
@@ -90,11 +91,24 @@ class ConfigParser:
         elif isinstance(value, (int, float)):
             return f'{key} = {value}'
         elif isinstance(value, list):
-            if all(isinstance(item, str) for item in value):
+            # Check if it's a list of dicts (like backup_domains)
+            if value and all(isinstance(item, dict) for item in value):
+                items = []
+                for item in value:
+                    obj_items = []
+                    for k, v in item.items():
+                        if isinstance(v, str):
+                            obj_items.append(f'    {k} = "{v}"')
+                        else:
+                            obj_items.append(f'    {k} = {v}')
+                    items.append('  {\n' + '\n'.join(obj_items) + '\n  }')
+                return f'{key} = [\n' + ',\n'.join(items) + '\n]'
+            elif all(isinstance(item, str) for item in value):
                 items = ', '.join(f'"{item}"' for item in value)
+                return f'{key} = [{items}]'
             else:
                 items = ', '.join(str(item) for item in value)
-            return f'{key} = [{items}]'
+                return f'{key} = [{items}]'
         elif isinstance(value, dict):
             # Format as HCL object
             items = []

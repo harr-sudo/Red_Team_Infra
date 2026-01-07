@@ -82,6 +82,33 @@ output "c2_servers" {
   } : {})
 }
 
+# Bastion/Jump Box Outputs
+output "bastion_public_ip" {
+  description = "Public IP address (Elastic IP) of the bastion host"
+  value       = var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_public_ip : null
+}
+
+output "bastion_private_ip" {
+  description = "Private IP address of the bastion host"
+  value       = var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_private_ip : null
+}
+
+output "bastion_rdp_connection" {
+  description = "RDP connection command"
+  value       = var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_rdp_connection : null
+}
+
+output "bastion_windows_password_info" {
+  description = "Information about retrieving Windows password"
+  value       = var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_windows_password : null
+  sensitive   = true
+}
+
+output "bastion_wsl2_info" {
+  description = "Information about WSL2 setup"
+  value       = var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_wsl2_info : null
+}
+
 # Proxy/Redirector Outputs
 output "proxy_redirector_instance_ids" {
   description = "IDs of the proxy/redirector instances"

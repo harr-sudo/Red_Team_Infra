@@ -49,6 +49,12 @@ webapp/.flaskenv
 *~
 .DS_Store
 
+# Uploaded files (Cobalt Strike, etc.)
+uploads/
+*.tar.gz
+*.zip
+!*.example.*
+
 # Logs
 *.log
 logs/

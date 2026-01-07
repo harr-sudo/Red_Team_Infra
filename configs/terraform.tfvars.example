@@ -109,6 +109,36 @@ proxy_redirector_iam_instance_profile_name = ""  # Optional: IAM role for proxie
 proxy_redirector_user_data = ""  # Optional: User data script for proxy configuration
 
 # =============================================================================
+# Bastion/Jump Box Configuration (Windows Server with WSL2)
+# =============================================================================
+# Dedicated jump box for management access - provides RDP for Windows management
+# and WSL2 (Ubuntu) for SSH access to C2 servers
+enable_bastion = true  # Set to false to disable bastion host
+bastion_instance_type = "t3.medium"  # Windows needs more resources (2 vCPU, 4 GB RAM)
+bastion_ami_id = ""  # Leave empty to use latest Windows Server 2022
+bastion_root_volume_size = 30  # GB (Windows needs more space)
+bastion_iam_instance_profile_name = ""  # Optional: IAM role for bastion
+windows_admin_password = ""  # Leave empty to retrieve from AWS using key pair (recommended)
+
+# =============================================================================
+# Tools Repository Configuration (Jump Box Only)
+# =============================================================================
+# Tools repository will be cloned to jump box at C:\Tools\ (Windows) and /opt/tools/ (WSL2)
+# Operators can access tools via RDP/SSH to jump box
+# See docs/TOOLS_REPOSITORY_SETUP.md for complete setup instructions
+#
+# IMPORTANT: Create the repository first using:
+#   gh repo create red-team-tools --private
+# Then update the URL below with your actual repository URL
+tools_repo_url = "https://github.com/harr-sudo/red-team-tools.git"  # Repository URL (use HTTPS for PAT authentication)
+tools_repo_branch = "main"  # Branch to clone
+tools_repo_ssh_key = ""  # SSH private key stored in AWS SSM Parameter Store (e.g., "/red-team/tools-repo-ssh-key")
+# OR for multiple users (each user has their own token):
+tools_repo_https_token = ""  # Personal access token stored in AWS SSM Parameter Store (e.g., "/red-team/tools-repo-token-USERNAME")
+# Note: Use either SSH key OR HTTPS token, not both
+# For multiple users, use HTTPS tokens (each user stores their own token in SSM)
+
+# =============================================================================
 # Monitoring Configuration
 # =============================================================================
 enable_detailed_monitoring = false  # Enable detailed CloudWatch monitoring (costs extra)

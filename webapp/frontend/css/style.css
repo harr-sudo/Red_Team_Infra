@@ -20,7 +20,7 @@ body {
     background: white;
     border-radius: 10px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-    overflow: hidden;
+    overflow: visible;
 }
 
 header {
@@ -47,7 +47,7 @@ header h1 {
     border-bottom: 2px solid #ddd;
 }
 
-.tab-button {
+.tab-btn {
     flex: 1;
     padding: 15px 20px;
     background: transparent;
@@ -60,24 +60,30 @@ header h1 {
     border-bottom: 3px solid transparent;
 }
 
-.tab-button:hover {
+.tab-btn:hover {
     background: #e8e8e8;
     color: #333;
 }
 
-.tab-button.active {
+.tab-btn.active {
     background: white;
     color: #667eea;
     border-bottom-color: #667eea;
 }
 
-/* Tab Content */
-.tab-content {
+/* Tab Container */
+#tab-container {
+    position: relative;
+    min-height: 400px;
+}
+
+/* Tab Pages */
+.tab-page {
     display: none;
     padding: 30px;
 }
 
-.tab-content.active {
+.tab-page.active {
     display: block;
 }
 
@@ -340,6 +346,112 @@ header h1 {
     
     .btn {
         width: 100%;
+    }
+}
+
+/* Status Tab Enhancements */
+.status-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.status-card {
+    background: #f8f9fa;
+    border: 2px solid #e9ecef;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.status-card h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #333;
+}
+
+.status-badge-large {
+    text-align: center;
+    padding: 20px;
+    font-size: 1.2em;
+}
+
+.status-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+}
+
+.metric-item {
+    padding: 10px;
+    background: white;
+    border-radius: 5px;
+    border: 1px solid #e9ecef;
+}
+
+.collapsible h3 {
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.collapsible h3:hover {
+    color: #667eea;
+}
+
+.expand-icon {
+    font-size: 0.8em;
+    transition: transform 0.3s;
+}
+
+.collapsible-content {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.btn-sm {
+    padding: 3px 8px;
+    font-size: 0.85em;
+    border-radius: 3px;
+}
+
+.toggle-switch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-switch input[type="checkbox"] {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+}
+
+/* Toast Notifications */
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOut {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(100%);
+        opacity: 0;
     }
 }
 

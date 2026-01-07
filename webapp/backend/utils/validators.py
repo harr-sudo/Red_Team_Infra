@@ -72,6 +72,38 @@ class ConfigValidator:
         return mode in valid_modes
     
     @staticmethod
+    def validate_domain(domain: str) -> bool:
+        """Validate domain name format"""
+        if not domain or domain.strip() == "":
+            return False
+        
+        # Basic domain validation pattern
+        pattern = r'^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$'
+        return bool(re.match(pattern, domain.lower()))
+    
+    @staticmethod
+    def validate_domain_config(config: Dict) -> Tuple[bool, List[str]]:
+        """Validate domain configuration"""
+        errors = []
+        
+        primary_domain = config.get('primary_domain_name', '').strip()
+        if not primary_domain:
+            errors.append("primary_domain_name is required for C2 infrastructure")
+        elif not ConfigValidator.validate_domain(primary_domain):
+            errors.append(f"Invalid primary_domain_name format: {primary_domain}")
+        
+        # Backup domains are recommended but not strictly required
+        backup_domains = config.get('backup_domains', [])
+        if isinstance(backup_domains, list) and len(backup_domains) > 0:
+            for i, backup in enumerate(backup_domains):
+                if isinstance(backup, dict):
+                    backup_domain = backup.get('domain_name', '').strip()
+                    if backup_domain and not ConfigValidator.validate_domain(backup_domain):
+                        errors.append(f"Invalid backup_domains[{i}].domain_name format: {backup_domain}")
+        
+        return len(errors) == 0, errors
+    
+    @staticmethod
     def validate_config(config: Dict) -> Tuple[bool, List[str]]:
         """Validate complete configuration"""
         errors = []
@@ -107,6 +139,11 @@ class ConfigValidator:
         vpc_cidr = config.get('vpc_cidr', '')
         if vpc_cidr and not ConfigValidator.validate_ip_cidr(vpc_cidr):
             errors.append(f"Invalid VPC CIDR: {vpc_cidr}")
+        
+        # Validate domain configuration
+        domain_valid, domain_errors = ConfigValidator.validate_domain_config(config)
+        if not domain_valid:
+            errors.extend(domain_errors)
         
         return len(errors) == 0, errors
 

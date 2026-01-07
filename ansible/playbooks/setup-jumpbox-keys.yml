@@ -1,0 +1,53 @@
+---
+# Ansible Playbook: Setup SSH Keys on Jump Box
+# This playbook generates SSH keys on the jump box and prepares them for distribution
+# Run this on the jump box (Windows with WSL2) to set up keys
+
+- name: Setup SSH Keys on Jump Box
+  hosts: localhost
+  connection: local
+  vars:
+    key_name: "red-team-jumpbox-key"
+    key_path: "~/.ssh/{{ key_name }}"
+
+  tasks:
+    - name: Ensure .ssh directory exists
+      file:
+        path: "{{ ansible_env.HOME }}/.ssh"
+        state: directory
+        mode: '0700'
+
+    - name: Check if SSH key already exists
+      stat:
+        path: "{{ ansible_env.HOME }}/.ssh/{{ key_name }}"
+      register: key_file
+
+    - name: Generate SSH key pair
+      openssh_keypair:
+        path: "{{ ansible_env.HOME }}/.ssh/{{ key_name }}"
+        type: rsa
+        size: 4096
+        comment: "red-team-jumpbox@{{ ansible_hostname }}"
+      when: not key_file.stat.exists
+
+    - name: Display public key
+      debug:
+        msg: "Public key generated. Add this to instances:"
+      when: not key_file.stat.exists
+
+    - name: Read public key
+      slurp:
+        src: "{{ ansible_env.HOME }}/.ssh/{{ key_name }}.pub"
+      register: public_key_content
+
+    - name: Display public key content
+      debug:
+        msg: "{{ public_key_content.content | b64decode }}"
+
+    - name: Save public key to file
+      copy:
+        content: "{{ public_key_content.content | b64decode }}"
+        dest: "{{ ansible_env.HOME }}/.ssh/{{ key_name }}.pub"
+        mode: '0644'
+      when: public_key_content.content is defined
+

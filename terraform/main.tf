@@ -156,6 +156,26 @@ module "proxy_redirector" {
   enable_detailed_monitoring = var.enable_detailed_monitoring
   iam_instance_profile_name = var.proxy_redirector_iam_instance_profile_name
   user_data                 = var.proxy_redirector_user_data
-  tags                      = var.tags
+  tags                      = local.enhanced_tags
+}
+
+# Bastion/Jump Box Module (Windows Server with WSL2)
+module "bastion" {
+  count = var.enable_bastion ? 1 : 0
+
+  source = "./modules/bastion"
+
+  project_name              = var.project_name
+  environment               = var.environment
+  public_subnet_id          = module.vpc.public_subnet_ids[0]  # Use first public subnet
+  security_group_id         = module.security.bastion_security_group_id
+  key_pair_name             = var.key_pair_name
+  instance_type             = var.bastion_instance_type
+  ami_id                    = var.bastion_ami_id
+  root_volume_size          = var.bastion_root_volume_size
+  enable_detailed_monitoring = var.enable_detailed_monitoring
+  iam_instance_profile_name = var.bastion_iam_instance_profile_name
+  windows_admin_password    = var.windows_admin_password
+  tags                      = local.enhanced_tags
 }
 

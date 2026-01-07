@@ -17,7 +17,7 @@ frontend_path = Path(__file__).parent.parent / 'frontend'
 
 from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_cors import CORS
-from webapp.backend.routes import config, deploy, status, health
+from webapp.backend.routes import config, deploy, aws_check, health
 
 # Initialize Flask app
 app = Flask(__name__, 
@@ -26,10 +26,13 @@ app = Flask(__name__,
             template_folder=str(frontend_path))
 CORS(app)  # Enable CORS for local development
 
+# Configure file upload limits
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
+
 # Register blueprints
 app.register_blueprint(config.bp, url_prefix='/api/config')
 app.register_blueprint(deploy.bp, url_prefix='/api/deploy')
-app.register_blueprint(status.bp, url_prefix='/api/status')
+app.register_blueprint(aws_check.bp, url_prefix='/api/aws')
 app.register_blueprint(health.bp, url_prefix='/api/health')
 
 # Serve frontend
@@ -62,8 +65,7 @@ def api_info():
         'endpoints': {
             'config': '/api/config',
             'deploy': '/api/deploy',
-            'status': '/api/status',
-            'health': '/api/health'
+            'aws': '/api/aws'
         }
     })
 

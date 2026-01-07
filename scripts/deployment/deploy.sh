@@ -135,15 +135,47 @@ wait_for_instances() {
 configure_instances() {
     log_info "Configuring instances with Ansible..."
     
-    # Update Ansible inventory from Terraform output
-    log_info "Updating Ansible inventory..."
-    # TODO: Generate inventory from Terraform outputs
+    # Generate Ansible inventory from Terraform outputs
+    log_info "Generating Ansible inventory from Terraform outputs..."
+    if [ -f "${PROJECT_ROOT}/scripts/utilities/generate-inventory.sh" ]; then
+        bash "${PROJECT_ROOT}/scripts/utilities/generate-inventory.sh"
+    else
+        log_warn "Inventory generation script not found. Skipping..."
+    fi
     
     # Run Ansible playbooks
     cd "${ANSIBLE_DIR}"
     
-    log_info "Running base setup playbook..."
-    ansible-playbook playbooks/base-setup.yml
+    # Check if base setup playbook exists
+    if [ -f "playbooks/base-setup.yml" ]; then
+        log_info "Running base setup playbook..."
+        ansible-playbook -i inventory/hosts.yml playbooks/base-setup.yml || log_warn "Base setup playbook failed or not configured"
+    fi
+    
+    # Deploy tools repository to jump box (if configured)
+    if [ -f "playbooks/deploy-tools-repo.yml" ]; then
+        # Check if tools repo URL is configured
+        local tools_repo_url=$(grep -E "^tools_repo_url\s*=" "${CONFIG_DIR}/terraform.tfvars" 2>/dev/null | sed 's/.*=\s*"\(.*\)".*/\1/' | sed 's/.*=\s*\(.*\)/\1/' | head -1)
+        
+        if [ -n "$tools_repo_url" ] && [ "$tools_repo_url" != '""' ] && [ "$tools_repo_url" != "" ]; then
+            log_info "Deploying tools repository to jump box..."
+            
+            # Extract tools repo configuration from terraform.tfvars
+            local tools_repo_branch=$(grep -E "^tools_repo_branch\s*=" "${CONFIG_DIR}/terraform.tfvars" 2>/dev/null | sed 's/.*=\s*"\(.*\)".*/\1/' | sed 's/.*=\s*\(.*\)/\1/' | head -1 || echo "main")
+            local tools_repo_ssh_key=$(grep -E "^tools_repo_ssh_key\s*=" "${CONFIG_DIR}/terraform.tfvars" 2>/dev/null | sed 's/.*=\s*"\(.*\)".*/\1/' | sed 's/.*=\s*\(.*\)/\1/' | head -1 || echo "")
+            local tools_repo_https_token=$(grep -E "^tools_repo_https_token\s*=" "${CONFIG_DIR}/terraform.tfvars" 2>/dev/null | sed 's/.*=\s*"\(.*\)".*/\1/' | sed 's/.*=\s*\(.*\)/\1/' | head -1 || echo "")
+            
+            # Export environment variables for Ansible
+            export TOOLS_REPO_URL="$tools_repo_url"
+            export TOOLS_REPO_BRANCH="${tools_repo_branch:-main}"
+            [ -n "$tools_repo_ssh_key" ] && export TOOLS_REPO_SSH_KEY="$tools_repo_ssh_key"
+            [ -n "$tools_repo_https_token" ] && export TOOLS_REPO_HTTPS_TOKEN="$tools_repo_https_token"
+            
+            ansible-playbook -i inventory/hosts.yml playbooks/deploy-tools-repo.yml || log_warn "Tools repository deployment failed or not configured"
+        else
+            log_info "Tools repository URL not configured. Skipping tools deployment."
+        fi
+    fi
     
     log_info "Configuration completed!"
 }
@@ -162,6 +194,23 @@ main() {
     log_info "============================================"
     log_info "Deployment completed successfully!"
     log_info "Check terraform-outputs.json for connection information"
+    log_info ""
+    
+    # Prompt for SSH key distribution
+    if [ -f "${PROJECT_ROOT}/scripts/utilities/setup-ssh-keys.sh" ]; then
+        log_info "Next step: Distribute SSH keys to all instances"
+        log_info "Run: ${PROJECT_ROOT}/scripts/utilities/setup-ssh-keys.sh"
+        log_info ""
+        read -p "Do you want to distribute SSH keys now? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Distributing SSH keys..."
+            bash "${PROJECT_ROOT}/scripts/utilities/setup-ssh-keys.sh"
+        else
+            log_info "You can distribute SSH keys later by running:"
+            log_info "  ./scripts/utilities/setup-ssh-keys.sh"
+        fi
+    fi
 }
 
 # Run main function

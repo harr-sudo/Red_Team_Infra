@@ -209,6 +209,71 @@ variable "proxy_redirector_user_data" {
   default     = ""
 }
 
+# Bastion/Jump Box Configuration
+variable "enable_bastion" {
+  description = "Enable bastion/jump box for management access"
+  type        = bool
+  default     = true
+}
+
+variable "bastion_instance_type" {
+  description = "EC2 instance type for bastion host (Windows Server)"
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "bastion_ami_id" {
+  description = "AMI ID for bastion host (leave empty to use latest Windows Server 2022)"
+  type        = string
+  default     = ""
+}
+
+variable "bastion_root_volume_size" {
+  description = "Root volume size in GB for bastion host"
+  type        = number
+  default     = 30
+}
+
+variable "bastion_iam_instance_profile_name" {
+  description = "IAM instance profile name for bastion host"
+  type        = string
+  default     = ""
+}
+
+variable "windows_admin_password" {
+  description = "Windows administrator password (leave empty to retrieve from AWS Systems Manager using key pair)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# Tools Repository Configuration
+variable "tools_repo_url" {
+  description = "Git repository URL for tools (e.g., git@github.com:org/red-team-tools.git or https://github.com/org/red-team-tools.git)"
+  type        = string
+  default     = ""
+}
+
+variable "tools_repo_branch" {
+  description = "Git branch to clone for tools repository"
+  type        = string
+  default     = "main"
+}
+
+variable "tools_repo_ssh_key" {
+  description = "SSH private key for Git access (stored in AWS SSM Parameter Store). Leave empty if using HTTPS with token."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "tools_repo_https_token" {
+  description = "Personal access token for HTTPS Git access (stored in AWS SSM Parameter Store). Leave empty if using SSH."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 # Monitoring Configuration
 variable "enable_detailed_monitoring" {
   description = "Enable detailed CloudWatch monitoring for all instances"

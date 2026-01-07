@@ -13,172 +13,477 @@
             <p class="subtitle">Local Management Interface</p>
         </header>
 
-        <nav class="tabs">
-            <button class="tab-button active" data-tab="dashboard">Dashboard</button>
-            <button class="tab-button" data-tab="config">Configuration</button>
-            <button class="tab-button" data-tab="deploy">Deploy</button>
-            <button class="tab-button" data-tab="status">Status</button>
-            <button class="tab-button" data-tab="health">Health</button>
+        <!-- Navigation Tabs -->
+        <nav class="tabs" id="tab-navigation">
+            <button class="tab-btn active" data-target="dashboard">Dashboard</button>
+            <button class="tab-btn" data-target="aws-check">Pre Reqs</button>
+            <button class="tab-btn" data-target="configuration">Configuration</button>
+            <button class="tab-btn" data-target="deployment">Deploy</button>
+            <button class="tab-btn" data-target="deployments">Deployment Manager</button>
+            <button class="tab-btn" data-target="settings">Settings</button>
         </nav>
 
-        <!-- Dashboard Tab -->
-        <div id="dashboard" class="tab-content active">
-            <div class="card">
-                <h2>Infrastructure Overview</h2>
-                <div id="dashboard-status" class="status-display">
-                    <p>Loading...</p>
-                </div>
-                <div class="quick-actions">
-                    <button class="btn btn-primary" onclick="loadConfigTab()">Configure</button>
-                    <button class="btn btn-success" onclick="loadDeployTab()">Deploy</button>
-                    <button class="btn btn-info" onclick="checkStatus()">Check Status</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Configuration Tab -->
-        <div id="config" class="tab-content">
-            <div class="card">
-                <h2>Configuration Editor</h2>
-                <div class="form-group">
-                    <label for="engagement-type">Engagement Type:</label>
-                    <select id="engagement-type" onchange="updateEngagementType()">
-                        <option value="">Manual Configuration</option>
-                        <option value="adhoc">Adhoc (One-off tests)</option>
-                        <option value="purple-team">Purple Team Exercises</option>
-                        <option value="full-red-team">Full Red Team Engagement</option>
-                    </select>
-                    <small>Select engagement type to auto-configure deployment mode</small>
-                </div>
-
-                <div class="form-group">
-                    <label for="project-name">Project Name:</label>
-                    <input type="text" id="project-name" placeholder="red-team-infra">
-                </div>
-
-                <div class="form-group">
-                    <label for="environment">Environment:</label>
-                    <select id="environment">
-                        <option value="dev">dev</option>
-                        <option value="staging">staging</option>
-                        <option value="prod">prod</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="aws-region">AWS Region:</label>
-                    <input type="text" id="aws-region" placeholder="us-east-1">
-                </div>
-
-                <div class="form-group">
-                    <label for="key-pair-name">Key Pair Name:</label>
-                    <input type="text" id="key-pair-name" placeholder="red-team-keypair">
-                </div>
-
-                <div class="form-group">
-                    <label for="management-cidr">Management CIDR Blocks:</label>
-                    <input type="text" id="management-cidr" placeholder='["YOUR.IP.ADDRESS/32"]'>
-                    <small>⚠️ Restrict to your IP address!</small>
-                </div>
-
-                <div class="form-group">
-                    <label for="c2-server-count">C2 Server Count:</label>
-                    <input type="number" id="c2-server-count" value="2" min="1">
-                </div>
-
-                <div class="form-group">
-                    <label for="c2-instance-type">C2 Instance Type:</label>
-                    <select id="c2-instance-type">
-                        <option value="t3.small">t3.small</option>
-                        <option value="t3.medium" selected>t3.medium</option>
-                        <option value="t3.large">t3.large</option>
-                    </select>
-                </div>
-
-                <div class="form-actions">
-                    <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
-                    <button class="btn btn-secondary" onclick="validateConfig()">Validate</button>
-                    <button class="btn btn-secondary" onclick="loadConfig()">Load Current</button>
-                </div>
-
-                <div id="config-message" class="message"></div>
-            </div>
-        </div>
-
-        <!-- Deploy Tab -->
-        <div id="deploy" class="tab-content">
-            <div class="card">
-                <h2>Deployment Control</h2>
-                
-                <div id="deployment-status" class="status-display">
-                    <p>Ready to deploy</p>
-                </div>
-
-                <div class="deployment-actions">
-                    <button class="btn btn-success" onclick="startDeployment()">Deploy Infrastructure</button>
-                    <button class="btn btn-warning" onclick="runPlan()">Run Plan (Preview)</button>
-                    <button class="btn btn-danger" onclick="destroyInfrastructure()">Destroy Infrastructure</button>
-                </div>
-
-                <div id="deployment-output" class="output-display"></div>
-            </div>
-        </div>
-
-        <!-- Status Tab -->
-        <div id="status" class="tab-content">
-            <div class="card">
-                <h2>Infrastructure Status</h2>
-                <button class="btn btn-info" onclick="refreshStatus()">Refresh</button>
-                
-                <div id="status-info" class="status-display">
-                    <p>Loading...</p>
-                </div>
-
-                <h3>Outputs</h3>
-                <div id="status-outputs" class="output-display">
-                    <p>No outputs available</p>
-                </div>
-
-                <h3>Resources</h3>
-                <div id="status-resources" class="output-display">
-                    <p>No resources found</p>
+        <!-- Tab Content Container -->
+        <div id="tab-container">
+            
+            <!-- Dashboard Page -->
+            <div class="tab-page active" data-page="dashboard">
+                <div class="card">
+                    <h2>Infrastructure Overview</h2>
+                    <div id="dashboard-status" class="status-display">
+                        <p>Loading...</p>
+                    </div>
+                    <div class="quick-actions">
+                        <button class="btn btn-info" onclick="APP.navigateTo('aws-check')">Check Prerequisites</button>
+                        <button class="btn btn-primary" onclick="APP.navigateTo('configuration')">Configure</button>
+                        <button class="btn btn-success" onclick="APP.navigateTo('deployment')">Deploy</button>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Health Tab -->
-        <div id="health" class="tab-content">
-            <div class="card">
-                <h2>Health Checks</h2>
-                
-                <h3>Prerequisites</h3>
-                <button class="btn btn-info" onclick="checkPrerequisites()">Check Prerequisites</button>
-                <div id="prerequisites-status" class="status-display">
-                    <p>Click button to check</p>
-                </div>
+            <!-- Configuration Page -->
+            <div class="tab-page" data-page="configuration">
+                <div class="card">
+                    <h2>Configuration Editor</h2>
+                    <div class="form-group">
+                        <label for="engagement-type">Engagement Type:</label>
+                        <select id="engagement-type" onchange="updateEngagementType()">
+                            <option value="" disabled selected>Select an engagement type...</option>
+                            <option value="adhoc">Adhoc (One-off tests)</option>
+                            <option value="purple-team">Purple Team Exercises</option>
+                            <option value="full-red-team">Full Red Team Engagement</option>
+                        </select>
+                        <small>Select engagement type to see deployment overview and auto-configure settings</small>
+                    </div>
 
-                <h3>AWS Connectivity</h3>
-                <button class="btn btn-info" onclick="checkAWS()">Check AWS</button>
-                <div id="aws-status" class="status-display">
-                    <p>Click button to check</p>
-                </div>
+                    <!-- Deployment Overview Section -->
+                    <div id="deployment-overview" style="margin: 20px 0; padding: 20px; border-radius: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; display: none;">
+                        <h4 style="margin: 0 0 15px 0; display: flex; align-items: center; gap: 10px;">
+                            <span>📦</span> <span id="overview-title">Deployment Overview</span>
+                        </h4>
+                        <div id="overview-content" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                        <div id="overview-details" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.3); font-size: 0.9em;">
+                            <!-- Additional details -->
+                        </div>
+                    </div>
 
-                <h3>Infrastructure Health</h3>
-                <button class="btn btn-info" onclick="runHealthCheck()">Run Health Check</button>
-                <div id="health-status" class="status-display">
-                    <p>Click button to check</p>
-                </div>
+                    <div class="form-group">
+                        <label for="project-name">Project Name:</label>
+                        <input type="text" id="project-name" placeholder="red-team-infra">
+                    </div>
 
-                <h3>AWS Permissions</h3>
-                <button class="btn btn-info" onclick="checkPermissions()">Check Required Permissions</button>
-                <div id="permissions-status" class="status-display">
-                    <p>Click button to check if your AWS account has required permissions for deployment</p>
+                    <div class="form-group">
+                        <label for="environment">Environment:</label>
+                        <select id="environment">
+                            <option value="dev">dev</option>
+                            <option value="staging">staging</option>
+                            <option value="prod">prod</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="aws-region">AWS Region:</label>
+                        <select id="aws-region">
+                            <optgroup label="US Regions">
+                                <option value="us-east-1">US East (N. Virginia) - us-east-1</option>
+                                <option value="us-east-2">US East (Ohio) - us-east-2</option>
+                                <option value="us-west-1">US West (N. California) - us-west-1</option>
+                                <option value="us-west-2">US West (Oregon) - us-west-2</option>
+                            </optgroup>
+                            <optgroup label="Europe Regions">
+                                <option value="eu-west-1">Europe (Ireland) - eu-west-1</option>
+                                <option value="eu-west-2">Europe (London) - eu-west-2</option>
+                                <option value="eu-west-3">Europe (Paris) - eu-west-3</option>
+                                <option value="eu-central-1">Europe (Frankfurt) - eu-central-1</option>
+                                <option value="eu-central-2">Europe (Zurich) - eu-central-2</option>
+                                <option value="eu-north-1">Europe (Stockholm) - eu-north-1</option>
+                                <option value="eu-south-1">Europe (Milan) - eu-south-1</option>
+                                <option value="eu-south-2">Europe (Spain) - eu-south-2</option>
+                            </optgroup>
+                            <optgroup label="Asia Pacific Regions">
+                                <option value="ap-east-1">Asia Pacific (Hong Kong) - ap-east-1</option>
+                                <option value="ap-south-1">Asia Pacific (Mumbai) - ap-south-1</option>
+                                <option value="ap-south-2">Asia Pacific (Hyderabad) - ap-south-2</option>
+                                <option value="ap-northeast-1">Asia Pacific (Tokyo) - ap-northeast-1</option>
+                                <option value="ap-northeast-2">Asia Pacific (Seoul) - ap-northeast-2</option>
+                                <option value="ap-northeast-3">Asia Pacific (Osaka) - ap-northeast-3</option>
+                                <option value="ap-southeast-1">Asia Pacific (Singapore) - ap-southeast-1</option>
+                                <option value="ap-southeast-2">Asia Pacific (Sydney) - ap-southeast-2</option>
+                                <option value="ap-southeast-3">Asia Pacific (Jakarta) - ap-southeast-3</option>
+                                <option value="ap-southeast-4">Asia Pacific (Melbourne) - ap-southeast-4</option>
+                            </optgroup>
+                            <optgroup label="Canada">
+                                <option value="ca-central-1">Canada (Central) - ca-central-1</option>
+                                <option value="ca-west-1">Canada (Calgary) - ca-west-1</option>
+                            </optgroup>
+                            <optgroup label="South America">
+                                <option value="sa-east-1">South America (São Paulo) - sa-east-1</option>
+                            </optgroup>
+                            <optgroup label="Middle East">
+                                <option value="me-south-1">Middle East (Bahrain) - me-south-1</option>
+                                <option value="me-central-1">Middle East (UAE) - me-central-1</option>
+                                <option value="il-central-1">Israel (Tel Aviv) - il-central-1</option>
+                            </optgroup>
+                            <optgroup label="Africa">
+                                <option value="af-south-1">Africa (Cape Town) - af-south-1</option>
+                            </optgroup>
+                        </select>
+                        <small>Select the AWS region closest to your target environment</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="key-pair-name">Key Pair Name:</label>
+                        <input type="text" id="key-pair-name" placeholder="red-team-keypair">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="management-cidr">Management CIDR Blocks:</label>
+                        <input type="text" id="management-cidr" placeholder="e.g. 203.0.113.50/32, 198.51.100.0/24">
+                        <small style="display: block; margin-top: 5px;">
+                            <strong>⚠️ Security:</strong> Only these IPs can SSH/RDP to your infrastructure.<br>
+                            <span style="color: #666;">Enter one or more CIDR blocks, separated by commas. Use <code>/32</code> for a single IP.</span><br>
+                            <span style="color: #888; font-size: 0.9em;">Examples: <code>1.2.3.4/32</code> (single IP) • <code>10.0.0.0/24</code> (IP range) • <code>1.2.3.4/32, 5.6.7.8/32</code> (multiple)</span>
+                        </small>
+                    </div>
+
+                    <!-- Domain Configuration Section -->
+                    <div style="margin: 25px 0; padding: 20px; border: 2px solid #2196F3; border-radius: 8px; background-color: #e3f2fd;">
+                        <h3 style="margin: 0 0 15px 0; color: #1565c0;">🌐 Domain Configuration</h3>
+                        <p style="color: #666; margin-bottom: 15px; font-size: 0.9em;">
+                            Domains are required for CDN/domain fronting. Register domains before deployment.
+                            <a href="#" onclick="window.open('docs/DOMAIN_REQUIREMENTS.md')" style="color: #1565c0;">Learn more</a>
+                        </p>
+                        
+                        <div class="form-group" style="margin-bottom: 15px;">
+                            <label for="primary-domain">Primary Domain:</label>
+                            <input type="text" id="primary-domain" placeholder="e.g. example-business-services.com">
+                            <small style="color: #666;">Your main domain for C2 infrastructure (must be registered)</small>
+                        </div>
+                        
+                        <div class="form-group" style="margin-bottom: 15px;">
+                            <label for="backup-domains">Backup Domains:</label>
+                            <input type="text" id="backup-domains" placeholder="e.g. backup1.com, backup2.net">
+                            <small style="color: #666;">Comma-separated list of backup domains for redundancy (recommended: 2-3)</small>
+                        </div>
+                        
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="c2-subdomain">C2 Subdomain:</label>
+                                <input type="text" id="c2-subdomain" value="c2" placeholder="c2">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="www-subdomain">WWW Subdomain:</label>
+                                <input type="text" id="www-subdomain" value="www" placeholder="www">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="cdn-subdomain">CDN Subdomain:</label>
+                                <input type="text" id="cdn-subdomain" value="cdn" placeholder="cdn">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="c2-server-count-group">
+                        <label for="c2-server-count">C2 Server Count:</label>
+                        <input type="number" id="c2-server-count" value="2" min="1">
+                        <small id="c2-server-count-hint" style="display: block; margin-top: 5px; color: #666;">
+                            Only applies to Purple Team (redundancy mode). Adhoc always deploys 1, Full Red Team always deploys 3 (one per phase).
+                        </small>
+                    </div>
+
+                    <div class="form-group" id="c2-instance-type-group">
+                        <label for="c2-instance-type">C2 Instance Type:</label>
+                        <select id="c2-instance-type">
+                            <option value="t3.small">t3.small (~$15/mo)</option>
+                            <option value="t3.medium" selected>t3.medium (~$30/mo)</option>
+                            <option value="t3.large">t3.large (~$60/mo)</option>
+                            <option value="t3.xlarge">t3.xlarge (~$120/mo)</option>
+                        </select>
+                        <small id="c2-instance-type-hint" style="display: block; margin-top: 5px; color: #666;">
+                            Applies to Adhoc and Purple Team. Full Red Team uses per-phase instance types (default: t3.medium).
+                        </small>
+                    </div>
+
+                    <div class="form-actions">
+                        <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
+                        <button class="btn btn-secondary" onclick="validateConfig()">Validate</button>
+                        <button class="btn btn-secondary" onclick="loadConfig()">Load Current</button>
+                    </div>
+
+                    <div id="config-message" class="message"></div>
                 </div>
             </div>
+
+            <!-- Deployment Page -->
+            <div class="tab-page" data-page="deployment">
+                <div class="card">
+                    <h2>Deployment Control</h2>
+                    
+                    <!-- Prerequisites Section -->
+                    <div style="margin-bottom: 30px;">
+                        <h3 style="margin-bottom: 20px;">📋 Deployment Prerequisites</h3>
+                        
+                        <!-- Domain Configuration Check -->
+                        <div class="upload-section" style="margin-bottom: 20px; padding: 20px; border: 2px solid #2196F3; border-radius: 8px; background-color: #e3f2fd;">
+                            <h4>🌐 Domain Configuration (Required)</h4>
+                            <p style="color: #666; margin-bottom: 15px;">
+                                Configure your primary domain and backup domains in the Configuration tab before deployment.
+                            </p>
+                            
+                            <div id="domain-status" class="status-display" style="margin-bottom: 15px;">
+                                <p>Checking domain configuration...</p>
+                            </div>
+                            
+                            <div id="domain-info" style="margin-top: 15px; padding: 10px; background-color: #bbdefb; border-radius: 4px; display: none;">
+                                <h5>Domain Configuration:</h5>
+                                <p id="domain-details"></p>
+                            </div>
+                        </div>
+                        
+                        <!-- Cobalt Strike File Upload Section -->
+                        <div class="upload-section" style="margin-bottom: 20px; padding: 20px; border: 2px solid #4CAF50; border-radius: 8px; background-color: #f0f8f0;">
+                            <h4>📦 Cobalt Strike File Upload (Required)</h4>
+                            <p style="color: #666; margin-bottom: 15px;">
+                                Upload your Cobalt Strike archive file before deployment. File will be stored locally on your machine.
+                            </p>
+                            
+                            <div id="cs-file-status" class="status-display" style="margin-bottom: 15px;">
+                                <p>Checking for uploaded file...</p>
+                            </div>
+                        
+                        <form id="upload-cs-form" enctype="multipart/form-data" style="margin-bottom: 15px;">
+                            <div style="margin-bottom: 10px;">
+                                <label for="cs-file-input" style="display: block; margin-bottom: 5px; font-weight: bold;">
+                                    Select Cobalt Strike Archive:
+                                </label>
+                                <input type="file" id="cs-file-input" name="file" 
+                                       accept=".tar.gz,.zip,.tar" 
+                                       style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 100%; max-width: 400px;">
+                                <small style="display: block; color: #666; margin-top: 5px;">
+                                    Supported formats: .tar.gz, .zip, .tar (Max: 500MB)
+                                </small>
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="upload-btn">
+                                Upload File
+                            </button>
+                        </form>
+                        
+                        <div id="upload-progress" style="display: none; margin-top: 10px;">
+                            <div class="progress-bar" style="width: 100%; height: 20px; background-color: #f0f0f0; border-radius: 10px; overflow: hidden;">
+                                <div class="progress-fill" id="progress-fill" style="height: 100%; background-color: #4CAF50; width: 0%; transition: width 0.3s;"></div>
+                            </div>
+                            <p id="progress-text" style="text-align: center; margin-top: 5px;">Uploading...</p>
+                        </div>
+                        
+                        <div id="cs-file-info" style="margin-top: 15px; padding: 10px; background-color: #e8f5e9; border-radius: 4px; display: none;">
+                            <h4>Uploaded File:</h4>
+                            <p id="file-details"></p>
+                            <button class="btn btn-danger" id="delete-file-btn" style="margin-top: 10px;">
+                                Delete File
+                            </button>
+                        </div>
+                    </div>
+                    </div>
+                    
+                    <div id="deployment-status" class="status-display">
+                        <p>Ready to deploy</p>
+                    </div>
+
+                    <div class="deployment-actions">
+                        <button class="btn btn-success" onclick="startDeployment()" id="deploy-btn">Deploy Infrastructure</button>
+                        <button class="btn btn-warning" onclick="runPlan()">Run Plan (Preview)</button>
+                    </div>
+                    
+                    <div style="margin-top: 15px; padding: 12px; background: #e3f2fd; border-radius: 6px; border-left: 4px solid #2196F3;">
+                        <p style="margin: 0; color: #1565c0; font-size: 0.9em;">
+                            <strong>💡 Tip:</strong> Run Plan shows a preview of what will be created without making changes. 
+                            To destroy existing infrastructure, go to the <a href="#" onclick="APP.navigateTo('deployments'); return false;" style="color: #1565c0;">Deployments</a> page.
+                        </p>
+                    </div>
+                    
+                    <div id="deployment-prereq-warning" class="status-display warning" style="display: none; margin-top: 15px;">
+                        <p><strong>⚠️ Prerequisites Missing:</strong> Domain configuration and Cobalt Strike file are required before deployment.</p>
+                    </div>
+
+                    <div id="deployment-output" class="output-display"></div>
+                </div>
+            </div>
+
+            <!-- AWS Check Page -->
+            <div class="tab-page" data-page="aws-check">
+                <div class="card">
+                    <h2>Prerequisites Check</h2>
+                    <p style="color: #666; margin-bottom: 20px;">
+                        Verify your local AWS CLI credentials and check if they have sufficient permissions for infrastructure deployment.
+                    </p>
+                    <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
+                        <p style="margin: 0; color: #856404;"><strong>📌 Note:</strong> These checks are performed against the AWS CLI configuration on your local machine. Ensure you have configured AWS CLI with <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px;">aws configure</code> before proceeding.</p>
+                    </div>
+
+                    <!-- AWS Credentials Check Section -->
+                    <div style="margin-bottom: 30px; padding: 20px; border: 2px solid #2196F3; border-radius: 8px; background-color: #e3f2fd;">
+                        <h3 style="margin-top: 0;">🔐 AWS Credentials Check</h3>
+                        <p style="color: #666; margin-bottom: 15px;">
+                            Check if your AWS CLI credentials are configured and valid.
+                        </p>
+                        <button class="btn btn-info" onclick="checkAWSCredentials()">Check AWS Credentials</button>
+                        <div id="aws-credentials-status" class="status-display" style="margin-top: 15px;">
+                            <p>Click the button above to check your AWS credentials</p>
+                        </div>
+                    </div>
+
+                    <!-- AWS Permissions Check Section -->
+                    <div style="margin-bottom: 30px; padding: 20px; border: 2px solid #4CAF50; border-radius: 8px; background-color: #f0f8f0;">
+                        <h3 style="margin-top: 0;">🔑 AWS Permissions Check</h3>
+                        <p style="color: #666; margin-bottom: 15px;">
+                            Verify that your AWS credentials have all the required permissions to deploy the infrastructure.
+                        </p>
+                        <button class="btn btn-success" onclick="checkAWSPermissions()">Check AWS Permissions</button>
+                        <div id="aws-permissions-status" class="status-display" style="margin-top: 15px;">
+                            <p>Click the button above to check your AWS permissions</p>
+                        </div>
+                    </div>
+
+                    <!-- GitHub CLI Check Section -->
+                    <div style="margin-bottom: 30px; padding: 20px; border: 2px solid #9c27b0; border-radius: 8px; background-color: #f3e5f5;">
+                        <h3 style="margin-top: 0;">🐙 GitHub CLI Authentication</h3>
+                        <p style="color: #666; margin-bottom: 15px;">
+                            Check if you're logged into GitHub CLI. This is required to access the tools repository at 
+                            <a href="https://github.com/harr-sudo/red-team-tools" target="_blank" style="color: #9c27b0;">github.com/harr-sudo/red-team-tools</a>.
+                        </p>
+                        <button class="btn" style="background-color: #9c27b0; color: white;" onclick="checkGitHubCLI()">Check GitHub CLI</button>
+                        <div id="github-cli-status" class="status-display" style="margin-top: 15px;">
+                            <p>Click the button above to check your GitHub CLI authentication</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Page -->
+            <div class="tab-page" data-page="settings">
+                <div class="card">
+                    <h2>⚙️ Settings</h2>
+                    <p style="color: #666; margin-bottom: 20px;">
+                        Application settings and preferences.
+                    </p>
+
+                    <div class="status-display info">
+                        <p><strong>Application Information</strong></p>
+                        <p>Red Team Infrastructure Manager v1.0.0</p>
+                        <p>Local management interface for deploying and managing red team infrastructure on AWS.</p>
+                    </div>
+
+                    <div style="margin-top: 30px;">
+                        <h3>General Settings</h3>
+                        <p style="color: #888;">Additional settings will be configured here.</p>
+                    </div>
+
+                    <div style="margin-top: 30px;">
+                        <h3>Advanced Options</h3>
+                        <p style="color: #888;">Advanced configuration options will be added here.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Deployments Page (Active Infrastructure) -->
+            <div class="tab-page" data-page="deployments">
+                <div class="card">
+                    <h2>🖥️ Deployment Manager</h2>
+                    <p style="color: #666; margin-bottom: 20px;">
+                        Monitor and manage your running infrastructure. View deployed resources, connection info, and manage lifecycle.
+                    </p>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <button class="btn btn-info" onclick="refreshDeployments()">🔄 Refresh Status</button>
+                        <span id="deployments-last-updated" style="margin-left: 15px; color: #888; font-size: 0.9em;"></span>
+                    </div>
+
+                    <!-- Deployment Status Overview -->
+                    <div id="deployments-overview" style="margin-bottom: 30px;">
+                        <div class="status-display info">
+                            <p>Loading deployment information...</p>
+                        </div>
+                    </div>
+
+                    <!-- Infrastructure Components -->
+                    <div id="infrastructure-components">
+                        
+                        <!-- Bastion/Jump Box Section -->
+                        <div id="bastion-section" style="margin-bottom: 25px; padding: 20px; border: 2px solid #2196F3; border-radius: 8px; background-color: #e3f2fd; display: none;">
+                            <h3 style="margin-top: 0; color: #1565c0;">🖥️ Bastion Host (Jump Box)</h3>
+                            <p style="color: #666; margin-bottom: 15px;">Windows Server with WSL2 for SSH access to internal infrastructure.</p>
+                            <div id="bastion-details" class="infrastructure-details">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                        </div>
+
+                        <!-- C2 Team Servers Section -->
+                        <div id="c2-servers-section" style="margin-bottom: 25px; padding: 20px; border: 2px solid #f44336; border-radius: 8px; background-color: #ffebee; display: none;">
+                            <h3 style="margin-top: 0; color: #c62828;">🎯 C2 Team Servers</h3>
+                            <p style="color: #666; margin-bottom: 15px;">Command and Control servers running in private subnets.</p>
+                            <div id="c2-servers-details" class="infrastructure-details">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                        </div>
+
+                        <!-- Proxy/Redirectors Section -->
+                        <div id="redirectors-section" style="margin-bottom: 25px; padding: 20px; border: 2px solid #4CAF50; border-radius: 8px; background-color: #e8f5e9; display: none;">
+                            <h3 style="margin-top: 0; color: #2e7d32;">🔀 Proxy Redirectors</h3>
+                            <p style="color: #666; margin-bottom: 15px;">Public-facing redirectors that route traffic to C2 servers.</p>
+                            <div id="redirectors-details" class="infrastructure-details">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                        </div>
+
+                        <!-- Network/VPC Section -->
+                        <div id="network-section" style="margin-bottom: 25px; padding: 20px; border: 2px solid #9c27b0; border-radius: 8px; background-color: #f3e5f5; display: none;">
+                            <h3 style="margin-top: 0; color: #7b1fa2;">🌐 Network Configuration</h3>
+                            <p style="color: #666; margin-bottom: 15px;">VPC, subnets, and security groups.</p>
+                            <div id="network-details" class="infrastructure-details">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- No Deployment State -->
+                    <div id="no-deployment-message" style="display: none; text-align: center; padding: 40px;">
+                        <div style="font-size: 4em; margin-bottom: 20px;">🚀</div>
+                        <h3 style="color: #666;">No Active Deployments</h3>
+                        <p style="color: #888; margin-bottom: 20px;">You haven't deployed any infrastructure yet.</p>
+                        <button class="btn btn-success" onclick="APP.navigateTo('deployment')">Go to Deploy Tab</button>
+                    </div>
+
+                    <!-- Connection Info Section -->
+                    <div id="connection-info-section" style="margin-top: 30px; display: none;">
+                        <h3>📋 Quick Connection Reference</h3>
+                        <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin-top: 15px;">
+                            <div id="connection-commands">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Danger Zone - Destroy Infrastructure -->
+                    <div id="destroy-section" style="margin-top: 30px; display: none;">
+                        <h3>⚠️ Danger Zone</h3>
+                        <div style="background: #ffebee; padding: 20px; border-radius: 8px; margin-top: 15px; border: 2px solid #f44336;">
+                            <p style="color: #c62828; margin-bottom: 15px;">
+                                <strong>Destroy Infrastructure</strong> - This will permanently delete all deployed resources including EC2 instances, VPCs, security groups, and all associated data.
+                            </p>
+                            <button class="btn btn-danger" onclick="destroyInfrastructure()" style="background: #c62828;">
+                                🗑️ Destroy All Infrastructure
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
         </div>
     </div>
 
     <script src="js/app.js"></script>
 </body>
 </html>
-
