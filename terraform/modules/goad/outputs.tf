@@ -179,7 +179,7 @@ output "access_instructions" {
     "2. SSH to jumpbox: ssh -i goad-jumpbox.pem ${var.jumpbox_username}@${aws_eip.jumpbox.public_ip}",
     "3. From jumpbox, access Windows VMs via RDP or WinRM",
     "4. Run Ansible to provision AD: cd /opt/goad && ansible-playbook main.yml"
-  ] : [
+    ] : [
     "1. SSH to jumpbox: ssh -i goad-jumpbox.pem ${var.jumpbox_username}@${aws_eip.jumpbox.public_ip}",
     "2. From jumpbox, access Windows VMs via RDP or WinRM",
     "3. Run Ansible to provision AD: cd /opt/goad && ansible-playbook main.yml"

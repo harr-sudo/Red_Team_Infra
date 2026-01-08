@@ -165,17 +165,25 @@
                         <small>Select the AWS region closest to your target environment</small>
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" id="key-pair-name-group">
                         <label for="key-pair-name">Key Pair Name:</label>
                         <input type="text" id="key-pair-name" placeholder="red-team-keypair">
+                        <small id="key-pair-name-hint" style="display: block; margin-top: 5px; color: #666;">
+                            AWS EC2 key pair for SSH access to C2 servers
+                        </small>
                     </div>
 
                     <div class="form-group">
-                        <label for="management-cidr">Management CIDR Blocks:</label>
-                        <input type="text" id="management-cidr" placeholder="e.g. 203.0.113.50/32, 198.51.100.0/24">
+                        <label for="management-cidr">Management CIDR Blocks: <span style="color: #c62828;">*</span></label>
+                        <div style="display: flex; gap: 10px; align-items: flex-start;">
+                            <input type="text" id="management-cidr" placeholder="e.g. 203.0.113.50/32, 198.51.100.0/24" style="flex: 1;">
+                            <button type="button" class="btn btn-secondary" onclick="fetchMyPublicIP()" id="fetch-ip-btn" style="white-space: nowrap;">
+                                🌐 Fetch My IP
+                            </button>
+                        </div>
                         <small style="display: block; margin-top: 5px;">
-                            <strong>⚠️ Security:</strong> Only these IPs can SSH/RDP to your infrastructure.<br>
-                            <span style="color: #666;">Enter one or more CIDR blocks, separated by commas. Use <code>/32</code> for a single IP.</span><br>
+                            <strong>⚠️ Required:</strong> Without this, you won't be able to access your infrastructure!<br>
+                            <span style="color: #666;">Only these IPs can SSH/RDP/connect to CS. Use <code>/32</code> for a single IP.</span><br>
                             <span style="color: #888; font-size: 0.9em;">Examples: <code>1.2.3.4/32</code> (single IP) • <code>10.0.0.0/24</code> (IP range) • <code>1.2.3.4/32, 5.6.7.8/32</code> (multiple)</span>
                         </small>
                     </div>
@@ -203,7 +211,7 @@
                         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label for="c2-subdomain">C2 Subdomain:</label>
-                                <input type="text" id="c2-subdomain" value="c2" placeholder="c2">
+                                <input type="text" id="c2-subdomain" value="api" placeholder="api">
                             </div>
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label for="www-subdomain">WWW Subdomain:</label>
@@ -213,6 +221,126 @@
                                 <label for="cdn-subdomain">CDN Subdomain:</label>
                                 <input type="text" id="cdn-subdomain" value="cdn" placeholder="cdn">
                             </div>
+                        </div>
+                        
+                        <!-- Important Domain Setup Instructions -->
+                        <div style="margin-top: 20px; padding: 15px; background: #fff3e0; border-left: 4px solid #ff9800; border-radius: 4px;">
+                            <h4 style="margin: 0 0 10px 0; color: #e65100;">⚠️ Important: Domain Setup Required After Deployment</h4>
+                            <p style="margin: 0 0 10px 0; font-size: 0.9em; color: #666;">
+                                After deployment, you must update your domain registrar with the AWS name servers provided in the Terraform output. 
+                                DNS propagation can take up to 48 hours.
+                            </p>
+                            <details style="margin-top: 10px;">
+                                <summary style="cursor: pointer; color: #1565c0; font-weight: 500;">📋 Domain Setup Checklist</summary>
+                                <ul style="margin: 10px 0 0 20px; font-size: 0.85em; color: #555;">
+                                    <li>Register domain with a registrar (Namecheap, GoDaddy, etc.)</li>
+                                    <li>Use an aged domain (6+ months) for better reputation</li>
+                                    <li>Get domain categorized as "Business/Technology" in web filters</li>
+                                    <li>After deployment, copy AWS name servers from output</li>
+                                    <li>Update your registrar's DNS settings with AWS name servers</li>
+                                    <li>Wait for DNS propagation (check with <code>dig</code> or <code>nslookup</code>)</li>
+                                </ul>
+                            </details>
+                        </div>
+                    </div>
+                    
+                    <!-- SSL/TLS Configuration Section -->
+                    <div id="ssl-config-section" style="margin-bottom: 20px; padding: 20px; border: 2px solid #4CAF50; border-radius: 8px; background-color: #e8f5e9; display: none;">
+                        <h3 style="margin-top: 0; color: #2e7d32;">🔐 SSL/TLS Configuration</h3>
+                        <p style="color: #666; margin-bottom: 15px;">
+                            Configure SSL certificates for HTTPS traffic on your redirectors.
+                        </p>
+                        
+                        <div class="form-group" style="margin-bottom: 15px;">
+                            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                                <input type="checkbox" id="enable-ssl" checked style="width: 18px; height: 18px;">
+                                <span>Enable SSL/TLS on Redirectors</span>
+                            </label>
+                        </div>
+                        
+                        <div id="ssl-options" style="margin-left: 28px;">
+                            <div class="form-group" style="margin-bottom: 15px;">
+                                <label for="ssl-provider">SSL Certificate Provider:</label>
+                                <select id="ssl-provider" style="width: 100%;">
+                                    <option value="letsencrypt">Let's Encrypt (Recommended - Free, Trusted)</option>
+                                    <option value="self-signed">Self-Signed (Immediate, but browser warnings)</option>
+                                </select>
+                                <small style="color: #666;">Let's Encrypt provides free, trusted certificates that auto-renew</small>
+                            </div>
+                            
+                            <div id="letsencrypt-options">
+                                <div class="form-group" style="margin-bottom: 15px;">
+                                    <label for="admin-email">Admin Email: <span style="color: #f44336;">*</span></label>
+                                    <input type="email" id="admin-email" placeholder="admin@yourcompany.com">
+                                    <small style="color: #666;">Required for Let's Encrypt. Receives certificate expiry warnings.</small>
+                                </div>
+                                
+                                <div class="form-group" style="margin-bottom: 15px;">
+                                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                                        <input type="checkbox" id="ssl-auto-retry" checked style="width: 18px; height: 18px;">
+                                        <span>Auto-request certificate when DNS propagates</span>
+                                    </label>
+                                    <small style="color: #666; margin-left: 28px; display: block;">
+                                        Redirector will automatically request a Let's Encrypt certificate once DNS is configured
+                                    </small>
+                                </div>
+                            </div>
+                            
+                            <!-- Info box -->
+                            <div style="padding: 15px; background: #e3f2fd; border-left: 4px solid #2196F3; border-radius: 4px; margin-top: 15px;">
+                                <h4 style="margin: 0 0 10px 0; color: #1565c0;">ℹ️ How Let's Encrypt Works</h4>
+                                <ol style="margin: 0; padding-left: 20px; font-size: 0.9em; color: #555;">
+                                    <li><strong>Initial Boot:</strong> Redirector starts with a temporary self-signed certificate</li>
+                                    <li><strong>DNS Check:</strong> Every 5 minutes, checks if DNS resolves to the redirector</li>
+                                    <li><strong>Auto-Request:</strong> Once DNS is ready, automatically requests Let's Encrypt certificate</li>
+                                    <li><strong>Auto-Renewal:</strong> Certificates auto-renew before expiry (90-day validity)</li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Malleable C2 Profile Section -->
+                    <div id="malleable-profile-section" style="margin-bottom: 20px; padding: 20px; border: 2px solid #9c27b0; border-radius: 8px; background-color: #f3e5f5; display: none;">
+                        <h3 style="margin-top: 0; color: #7b1fa2;">🎭 Malleable C2 Profile (Advanced)</h3>
+                        <p style="color: #666; margin-bottom: 15px;">
+                            The redirector uses nginx to route C2 traffic. URIs must match your Cobalt Strike Malleable C2 profile.
+                        </p>
+                        
+                        <div class="form-group" style="margin-bottom: 15px;">
+                            <label for="malleable-profile">Profile Type:</label>
+                            <select id="malleable-profile">
+                                <option value="default">Default (jQuery-style URIs)</option>
+                                <option value="amazon">Amazon CDN Profile</option>
+                                <option value="google">Google APIs Profile</option>
+                                <option value="microsoft">Microsoft Azure Profile</option>
+                                <option value="custom">Custom (Manual Configuration)</option>
+                            </select>
+                            <small style="color: #666;">Select a profile that matches your Malleable C2 configuration</small>
+                        </div>
+                        
+                        <!-- Important OPSEC Warning -->
+                        <div style="padding: 15px; background: #ffebee; border-left: 4px solid #f44336; border-radius: 4px; margin-top: 15px;">
+                            <h4 style="margin: 0 0 10px 0; color: #c62828;">🔴 Critical OPSEC Note</h4>
+                            <p style="margin: 0; font-size: 0.9em; color: #666;">
+                                <strong>You MUST customize the redirector nginx configuration</strong> to match your actual Malleable C2 profile URIs. 
+                                The default configuration includes example patterns that may not match your profile.
+                            </p>
+                            <details style="margin-top: 10px;">
+                                <summary style="cursor: pointer; color: #c62828; font-weight: 500;">📖 How to Customize Redirector URIs</summary>
+                                <div style="margin-top: 10px; font-size: 0.85em; color: #555;">
+                                    <p>After deployment, SSH into the redirector and edit:</p>
+                                    <code style="display: block; background: #f5f5f5; padding: 10px; border-radius: 4px; margin: 10px 0;">
+                                        sudo nano /etc/nginx/sites-available/c2-redirector
+                                    </code>
+                                    <p>Update the <code>location</code> blocks to match your Malleable profile's:</p>
+                                    <ul style="margin-left: 20px;">
+                                        <li><code>http-get { uri }</code> - GET request URIs</li>
+                                        <li><code>http-post { uri }</code> - POST request URIs</li>
+                                        <li><code>http-stager { uri }</code> - Stager URIs</li>
+                                    </ul>
+                                    <p>Then reload nginx: <code>sudo systemctl reload nginx</code></p>
+                                </div>
+                            </details>
                         </div>
                     </div>
 
@@ -240,7 +368,7 @@
                     <div class="form-actions">
                         <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
                         <button class="btn btn-secondary" onclick="validateConfig()">Validate</button>
-                        <button class="btn btn-secondary" onclick="loadConfig()">Load Current</button>
+                        <button class="btn btn-danger" onclick="clearConfig()" style="margin-left: auto;">Clear All</button>
                     </div>
 
                     <div id="config-message" class="message"></div>
@@ -264,6 +392,25 @@
                                     <strong id="deploy-type-name">Deployment Type</strong>
                                     <div style="font-size: 0.85em; opacity: 0.9;" id="deploy-type-arch">Architecture info</div>
                                 </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Configuration Summary Section -->
+                        <div id="config-summary-section" style="margin-bottom: 20px; padding: 20px; border: 2px solid #9c27b0; border-radius: 8px; background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%); display: none;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                                <h4 style="margin: 0; color: #7b1fa2;">📋 Configuration Summary</h4>
+                                <button class="btn btn-secondary" onclick="APP.navigateTo('configuration')" style="font-size: 0.85em; padding: 6px 12px;">
+                                    ✏️ Edit Config
+                                </button>
+                            </div>
+                            
+                            <div id="config-summary-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                            
+                            <!-- Warnings/Issues -->
+                            <div id="config-summary-warnings" style="margin-top: 15px; display: none;">
+                                <!-- Populated by JavaScript if there are issues -->
                             </div>
                         </div>
                         
@@ -301,10 +448,11 @@
                                     Select Cobalt Strike Archive:
                                 </label>
                                 <input type="file" id="cs-file-input" name="file" 
-                                       accept=".tar.gz,.zip,.tar" 
+                                       accept=".tar.gz,.tgz,.zip,.tar,application/gzip,application/x-gzip,application/x-tar,application/zip,application/x-compressed-tar" 
                                        style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 100%; max-width: 400px;">
                                 <small style="display: block; color: #666; margin-top: 5px;">
-                                    Supported formats: .tar.gz, .zip, .tar (Max: 500MB)
+                                    Supported formats: .tar.gz, .tgz, .tar, .zip (Max: 500MB)<br>
+                                    <span style="color: #888; font-size: 0.9em;">💡 If your file doesn't appear, select "All Files" in the file picker</span>
                                 </small>
                             </div>
                             <button type="submit" class="btn btn-primary" id="upload-btn">
@@ -345,6 +493,67 @@
                         </p>
                     </div>
                     
+                    <!-- Post-Deployment Steps (shown after successful deployment) -->
+                    <div id="post-deployment-steps" style="margin-top: 20px; padding: 20px; background: #e8f5e9; border: 2px solid #4CAF50; border-radius: 8px; display: none;">
+                        <h4 style="margin: 0 0 15px 0; color: #2e7d32;">✅ Deployment Successful - Next Steps</h4>
+                        
+                        <div style="margin-bottom: 15px;">
+                            <h5 style="margin: 0 0 8px 0; color: #1b5e20;">1. Update DNS (Required)</h5>
+                            <p style="margin: 0; font-size: 0.9em; color: #555;">
+                                Copy the AWS name servers from the Terraform output and update your domain registrar.
+                                DNS propagation takes 15 minutes to 48 hours.
+                            </p>
+                        </div>
+                        
+                        <div style="margin-bottom: 15px;">
+                            <h5 style="margin: 0 0 8px 0; color: #1b5e20;">2. Wait for SSL Certificate (Automatic)</h5>
+                            <p style="margin: 0; font-size: 0.9em; color: #555;">
+                                Once DNS propagates, the redirector automatically requests a Let's Encrypt certificate.
+                                Check status by SSH'ing into the redirector:
+                            </p>
+                            <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block; margin-top: 8px; font-size: 0.85em;">
+                                ssh -i ~/.ssh/your-key.pem ubuntu@REDIRECTOR_IP
+                            </code>
+                            <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block; margin-top: 5px; font-size: 0.85em;">
+                                cat /opt/ssl-status.json
+                            </code>
+                        </div>
+                        
+                        <div style="margin-bottom: 15px;">
+                            <h5 style="margin: 0 0 8px 0; color: #1b5e20;">3. Customize Redirector URIs (Critical for OPSEC)</h5>
+                            <p style="margin: 0; font-size: 0.9em; color: #555;">
+                                SSH into your redirector and edit the Nginx config to match your Malleable C2 profile URIs:
+                            </p>
+                            <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block; margin-top: 8px; font-size: 0.85em;">
+                                sudo nano /etc/nginx/sites-enabled/default
+                            </code>
+                            <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block; margin-top: 5px; font-size: 0.85em;">
+                                sudo nginx -t && sudo systemctl reload nginx
+                            </code>
+                        </div>
+                        
+                        <div style="margin-bottom: 15px;">
+                            <h5 style="margin: 0 0 8px 0; color: #1b5e20;">4. Configure Cobalt Strike</h5>
+                            <p style="margin: 0; font-size: 0.9em; color: #555;">
+                                Connect to your C2 team server and configure your Malleable C2 profile to use your domain.
+                                Set the <code>host</code> header to match your configured subdomain.
+                            </p>
+                        </div>
+                        
+                        <div>
+                            <h5 style="margin: 0 0 8px 0; color: #1b5e20;">5. Test Connectivity</h5>
+                            <p style="margin: 0; font-size: 0.9em; color: #555;">
+                                Test that your domain resolves correctly: <code>curl -k https://api.yourdomain.com/health</code>
+                            </p>
+                        </div>
+                        
+                        <div style="margin-top: 15px; padding: 10px; background: #fff8e1; border-radius: 5px;">
+                            <p style="margin: 0; font-size: 0.85em; color: #f57c00;">
+                                <strong>💡 Tip:</strong> Go to the <strong>Deployment Manager</strong> page for connection details, IPs, and SSL status.
+                            </p>
+                        </div>
+                    </div>
+                    
                     <div id="deployment-prereq-warning" class="status-display warning" style="display: none; margin-top: 15px;">
                         <p><strong>⚠️ Prerequisites Missing:</strong> Domain configuration and Cobalt Strike file are required before deployment.</p>
                     </div>
@@ -358,15 +567,50 @@
                 <div class="card">
                     <h2>Prerequisites Check</h2>
                     <p style="color: #666; margin-bottom: 20px;">
-                        Verify your local AWS CLI credentials and check if they have sufficient permissions for infrastructure deployment.
+                        Verify all required tools and credentials are properly configured before deploying infrastructure.
                     </p>
                     <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
-                        <p style="margin: 0; color: #856404;"><strong>📌 Note:</strong> These checks are performed against the AWS CLI configuration on your local machine. Ensure you have configured AWS CLI with <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px;">aws configure</code> before proceeding.</p>
+                        <p style="margin: 0; color: #856404;"><strong>📌 Note:</strong> All checks must pass before you can deploy. Click each button to verify your setup.</p>
+                    </div>
+
+                    <!-- Terraform Check Section -->
+                    <div style="margin-bottom: 30px; padding: 20px; border: 2px solid #7c4dff; border-radius: 8px; background-color: #ede7f6;">
+                        <h3 style="margin-top: 0;">🏗️ Terraform CLI</h3>
+                        <p style="color: #666; margin-bottom: 15px;">
+                            Terraform is required to provision AWS infrastructure. Check if it's installed and accessible.
+                        </p>
+                        <button class="btn" style="background-color: #7c4dff; color: white;" onclick="checkTerraform()">Check Terraform</button>
+                        <div id="terraform-status" class="status-display" style="margin-top: 15px;">
+                            <p>Click the button above to check Terraform installation</p>
+                        </div>
+                        <div id="terraform-install-help" style="display: none; margin-top: 15px; padding: 15px; background: white; border-radius: 6px; border-left: 4px solid #7c4dff;">
+                            <h4 style="margin: 0 0 10px 0; color: #5e35b1;">📦 How to Install Terraform</h4>
+                            <p style="margin-bottom: 10px; color: #666; font-size: 0.9em;"><strong>Option 1: Homebrew (Recommended for macOS)</strong></p>
+                            <code style="display: block; background: #1e1e1e; color: #4ec9b0; padding: 10px; border-radius: 4px; margin-bottom: 15px;">brew install terraform</code>
+                            <p style="margin-bottom: 10px; color: #666; font-size: 0.9em;"><strong>Option 2: Direct Download</strong></p>
+                            <ol style="margin: 0; padding-left: 20px; color: #666; font-size: 0.9em;">
+                                <li>Visit <a href="https://developer.hashicorp.com/terraform/downloads" target="_blank" style="color: #7c4dff;">terraform.io/downloads</a></li>
+                                <li>Download the appropriate version for your OS</li>
+                                <li>Unzip and move to a directory in your PATH</li>
+                            </ol>
+                        </div>
+                    </div>
+
+                    <!-- AWS CLI Check Section -->
+                    <div style="margin-bottom: 30px; padding: 20px; border: 2px solid #ff9800; border-radius: 8px; background-color: #fff8e1;">
+                        <h3 style="margin-top: 0;">🔧 AWS CLI</h3>
+                        <p style="color: #666; margin-bottom: 15px;">
+                            AWS CLI is required for credential management and some operations.
+                        </p>
+                        <button class="btn" style="background-color: #ff9800; color: white;" onclick="checkAWSCLI()">Check AWS CLI</button>
+                        <div id="aws-cli-status" class="status-display" style="margin-top: 15px;">
+                            <p>Click the button above to check AWS CLI installation</p>
+                        </div>
                     </div>
 
                     <!-- AWS Credentials Check Section -->
                     <div style="margin-bottom: 30px; padding: 20px; border: 2px solid #2196F3; border-radius: 8px; background-color: #e3f2fd;">
-                        <h3 style="margin-top: 0;">🔐 AWS Credentials Check</h3>
+                        <h3 style="margin-top: 0;">🔐 AWS Credentials</h3>
                         <p style="color: #666; margin-bottom: 15px;">
                             Check if your AWS CLI credentials are configured and valid.
                         </p>
@@ -511,6 +755,121 @@
                         </div>
                     </div>
 
+                    <!-- Full Resource List Section -->
+                    <div id="resource-list-section" style="margin-bottom: 30px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <h3 style="margin: 0;">📋 All Deployed Resources</h3>
+                            <div>
+                                <button class="btn btn-secondary" onclick="refreshResourceList()" style="font-size: 0.85em;">
+                                    🔄 Refresh
+                                </button>
+                                <button class="btn btn-secondary" onclick="exportResourceList()" style="font-size: 0.85em; margin-left: 5px;">
+                                    📥 Export CSV
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Resource Filter -->
+                        <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                            <select id="resource-type-filter" onchange="filterResources()" style="padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
+                                <option value="all">All Types</option>
+                                <option value="ec2">EC2 Instances</option>
+                                <option value="vpc">VPC</option>
+                                <option value="subnet">Subnets</option>
+                                <option value="sg">Security Groups</option>
+                                <option value="eip">Elastic IPs</option>
+                                <option value="nat">NAT Gateways</option>
+                                <option value="s3">S3 Buckets</option>
+                            </select>
+                            <input type="text" id="resource-search" placeholder="Search by name or ID..." 
+                                   onkeyup="filterResources()" 
+                                   style="padding: 8px; border-radius: 4px; border: 1px solid #ddd; flex: 1; min-width: 200px;">
+                        </div>
+                        
+                        <!-- Resource Table -->
+                        <div style="overflow-x: auto; border: 1px solid #ddd; border-radius: 8px;">
+                            <table id="resource-table" style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                <thead>
+                                    <tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Type</th>
+                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Name</th>
+                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Resource ID</th>
+                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">State</th>
+                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="resource-table-body">
+                                    <!-- Populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <div id="resource-count" style="margin-top: 10px; color: #666; font-size: 0.85em;"></div>
+                    </div>
+
+                    <!-- Deployment History & Logs Section -->
+                    <div id="deployment-history-section" style="margin-bottom: 30px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <h3 style="margin: 0;">📜 Deployment History & Logs</h3>
+                            <div>
+                                <button class="btn btn-secondary" onclick="refreshDeploymentHistory()" style="font-size: 0.85em;">
+                                    🔄 Refresh
+                                </button>
+                                <button class="btn btn-secondary" onclick="viewArchivedLogs()" style="font-size: 0.85em; margin-left: 5px;">
+                                    📚 View Archived
+                                </button>
+                                <button class="btn btn-secondary" onclick="clearDeploymentLogs()" style="font-size: 0.85em; margin-left: 5px;">
+                                    🗑️ Clear Logs
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Log Level Filter -->
+                        <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
+                            <span style="color: #666;">Filter:</span>
+                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                <input type="checkbox" id="log-filter-info" checked onchange="filterLogs()"> 
+                                <span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.8em;">INFO</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                <input type="checkbox" id="log-filter-success" checked onchange="filterLogs()"> 
+                                <span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.8em;">SUCCESS</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                <input type="checkbox" id="log-filter-warning" checked onchange="filterLogs()"> 
+                                <span style="background: #ff9800; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.8em;">WARNING</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                <input type="checkbox" id="log-filter-error" checked onchange="filterLogs()"> 
+                                <span style="background: #f44336; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.8em;">ERROR</span>
+                            </label>
+                        </div>
+                        
+                        <!-- Deployment Timeline -->
+                        <div id="deployment-timeline" style="margin-bottom: 20px; padding: 15px; background: #f5f5f5; border-radius: 8px; max-height: 200px; overflow-y: auto;">
+                            <div id="timeline-content">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                        </div>
+                        
+                        <!-- Detailed Logs -->
+                        <div style="background: #1e1e1e; border-radius: 8px; overflow: hidden;">
+                            <div style="background: #333; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center;">
+                                <span style="color: #fff; font-weight: bold;">📝 Detailed Logs</span>
+                                <div>
+                                    <button onclick="copyLogs()" style="background: #555; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em;">
+                                        📋 Copy
+                                    </button>
+                                    <button onclick="downloadLogs()" style="background: #555; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em; margin-left: 5px;">
+                                        💾 Download
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="deployment-logs" style="padding: 15px; max-height: 400px; overflow-y: auto; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: 0.85em; line-height: 1.6;">
+                                <div style="color: #888;">No deployment logs yet. Deploy infrastructure to see logs here.</div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Infrastructure Components -->
                     <div id="infrastructure-components">
                         
@@ -550,6 +909,19 @@
                             <p style="color: #666; margin-bottom: 15px;">Public-facing redirectors that route traffic to C2 servers.</p>
                             <div id="redirectors-details" class="infrastructure-details">
                                 <!-- Populated by JavaScript -->
+                            </div>
+                            
+                            <!-- SSL Status Section -->
+                            <div id="ssl-status-section" style="margin-top: 20px; padding: 15px; background: white; border-radius: 8px; border: 1px solid #c8e6c9;">
+                                <h4 style="margin: 0 0 15px 0; color: #2e7d32; display: flex; align-items: center; gap: 10px;">
+                                    🔐 SSL Certificate Status
+                                    <button class="btn btn-secondary" onclick="refreshSSLStatus()" style="font-size: 0.75em; padding: 4px 10px; margin-left: auto;">
+                                        🔄 Refresh
+                                    </button>
+                                </h4>
+                                <div id="ssl-status-content">
+                                    <p style="color: #666; font-style: italic;">Loading SSL status...</p>
+                                </div>
                             </div>
                         </div>
 

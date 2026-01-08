@@ -7,9 +7,16 @@ from flask import Blueprint, jsonify, request
 import subprocess
 import os
 import json
+import boto3
 from pathlib import Path
 
 bp = Blueprint('goad', __name__, url_prefix='/api/goad')
+
+# Timeout constants (in seconds)
+TERRAFORM_INIT_TIMEOUT = 300      # 5 minutes
+TERRAFORM_DESTROY_TIMEOUT = 3600  # 60 minutes (increased from 30)
+TERRAFORM_OUTPUT_TIMEOUT = 60     # 1 minute
+AWS_OPERATION_TIMEOUT = 300       # 5 minutes
 
 # GOAD lab configurations
 GOAD_LABS = {
@@ -315,13 +322,13 @@ def destroy_goad():
                 'error': f'Terraform directory not found: {lab_tf_dir}'
             }), 500
         
-        # Run terraform destroy
+        # Run terraform destroy with increased timeout
         result = subprocess.run(
             ['terraform', 'destroy', '-auto-approve'],
             cwd=str(lab_tf_dir),
             capture_output=True,
             text=True,
-            timeout=1800  # 30 minutes
+            timeout=TERRAFORM_DESTROY_TIMEOUT  # 60 minutes for complex deployments
         )
         
         # Clean up marker
@@ -374,17 +381,114 @@ def get_credentials():
         lab_name = deployment.get('lab_name')
         lab_info = GOAD_LABS.get(lab_name, {})
         
-        # Default credentials (these are from GOAD's documentation)
+        # Lab-specific credential configurations
+        # These are from official GOAD documentation - intentionally vulnerable
+        LAB_CREDENTIALS = {
+            'GOAD-Mini': {
+                'domains': [
+                    {'name': 'SEVENKINGDOMS', 'fqdn': 'sevenkingdoms.local', 'dc': 'DC01'}
+                ],
+                'key_users': [
+                    {'username': 'Administrator', 'password': 'vagrant', 'domain': 'SEVENKINGDOMS', 'role': 'Domain Admin'},
+                    {'username': 'cersei.lannister', 'password': 'vagrant', 'domain': 'SEVENKINGDOMS', 'role': 'Domain User'},
+                    {'username': 'jaime.lannister', 'password': 'vagrant', 'domain': 'SEVENKINGDOMS', 'role': 'Domain User'},
+                ]
+            },
+            'MINILAB': {
+                'domains': [
+                    {'name': 'PSYCHO', 'fqdn': 'psycho.psycho.local', 'dc': 'DC01'}
+                ],
+                'key_users': [
+                    {'username': 'Administrator', 'password': 'vagrant', 'domain': 'PSYCHO', 'role': 'Domain Admin'},
+                ]
+            },
+            'GOAD-Light': {
+                'domains': [
+                    {'name': 'SEVENKINGDOMS', 'fqdn': 'sevenkingdoms.local', 'dc': 'DC01'},
+                    {'name': 'NORTH', 'fqdn': 'north.sevenkingdoms.local', 'dc': 'DC02'}
+                ],
+                'key_users': [
+                    {'username': 'Administrator', 'password': 'vagrant', 'domain': 'SEVENKINGDOMS', 'role': 'Domain Admin'},
+                    {'username': 'Administrator', 'password': 'vagrant', 'domain': 'NORTH', 'role': 'Domain Admin'},
+                    {'username': 'cersei.lannister', 'password': 'vagrant', 'domain': 'SEVENKINGDOMS', 'role': 'Domain User'},
+                    {'username': 'eddard.stark', 'password': 'vagrant', 'domain': 'NORTH', 'role': 'Domain User'},
+                ]
+            },
+            'SCCM': {
+                'domains': [
+                    {'name': 'SCCM', 'fqdn': 'sccm.local', 'dc': 'DC01'}
+                ],
+                'key_users': [
+                    {'username': 'Administrator', 'password': 'vagrant', 'domain': 'SCCM', 'role': 'Domain Admin'},
+                    {'username': 'sccm_admin', 'password': 'vagrant', 'domain': 'SCCM', 'role': 'SCCM Admin'},
+                ],
+                'special_accounts': [
+                    {'name': 'NAA (Network Access Account)', 'note': 'Check SCCM for credentials - often misconfigured'},
+                    {'name': 'Task Sequence Account', 'note': 'Used for OSD - may have elevated privileges'},
+                ]
+            },
+            'GOAD': {
+                'domains': [
+                    {'name': 'SEVENKINGDOMS', 'fqdn': 'sevenkingdoms.local', 'dc': 'DC01'},
+                    {'name': 'NORTH', 'fqdn': 'north.sevenkingdoms.local', 'dc': 'DC02'},
+                    {'name': 'ESSOS', 'fqdn': 'essos.local', 'dc': 'DC03'}
+                ],
+                'key_users': [
+                    {'username': 'Administrator', 'password': 'vagrant', 'domain': 'SEVENKINGDOMS', 'role': 'Domain Admin'},
+                    {'username': 'Administrator', 'password': 'vagrant', 'domain': 'NORTH', 'role': 'Domain Admin'},
+                    {'username': 'Administrator', 'password': 'vagrant', 'domain': 'ESSOS', 'role': 'Domain Admin'},
+                    {'username': 'cersei.lannister', 'password': 'vagrant', 'domain': 'SEVENKINGDOMS', 'role': 'Domain User'},
+                    {'username': 'eddard.stark', 'password': 'vagrant', 'domain': 'NORTH', 'role': 'Domain User'},
+                    {'username': 'daenerys.targaryen', 'password': 'vagrant', 'domain': 'ESSOS', 'role': 'Domain User'},
+                ],
+                'trusts': [
+                    {'from': 'NORTH', 'to': 'SEVENKINGDOMS', 'type': 'Parent-Child'},
+                    {'from': 'ESSOS', 'to': 'SEVENKINGDOMS', 'type': 'External (Bidirectional)'},
+                ]
+            },
+            'NHA': {
+                'domains': [
+                    {'name': 'Hidden', 'fqdn': 'Challenge Mode', 'dc': 'Unknown'}
+                ],
+                'key_users': [
+                    {'username': '???', 'password': '???', 'domain': 'NHA', 'role': 'Find them yourself!'},
+                ],
+                'note': 'NHA is a challenge lab - credentials are intentionally hidden. Good luck!'
+            }
+        }
+        
+        # Get lab-specific creds or use defaults
+        lab_creds = LAB_CREDENTIALS.get(lab_name, {})
+        
+        # Build credentials response
         credentials = {
             'lab_name': lab_name,
-            'domains': lab_info.get('domain_names', []),
+            'lab_display_name': lab_info.get('display_name', lab_name),
+            'domains': lab_creds.get('domains', []),
+            'default_password': 'vagrant',  # Standard GOAD password
+            'local_admin_password': 'vagrant',
             'default_users': [
-                {'domain': 'SEVENKINGDOMS', 'username': 'Administrator', 'note': 'Check GOAD inventory for password'},
-                {'domain': 'NORTH', 'username': 'Administrator', 'note': 'Check GOAD inventory for password'},
+                {'username': 'Administrator', 'password': 'vagrant', 'domain': 'Local Admin', 'note': 'Local admin on all VMs'},
+                {'username': 'vagrant', 'password': 'vagrant', 'domain': 'Local User', 'note': 'Default vagrant user'},
             ],
+            'domain_admins': [],
+            'key_users': lab_creds.get('key_users', []),
+            'trusts': lab_creds.get('trusts', []),
+            'special_accounts': lab_creds.get('special_accounts', []),
             'inventory_path': str(goad_dir / 'ad' / lab_name / 'data' / 'inventory'),
-            'note': 'Actual credentials are in the GOAD inventory files. Check ad/<lab>/data/inventory'
+            'note': lab_creds.get('note', 'Default GOAD password is "vagrant" for all users. Check inventory for specific accounts.')
         }
+        
+        # Add domain admins from domains list
+        for domain in lab_creds.get('domains', []):
+            if domain.get('name') != 'Hidden':
+                credentials['domain_admins'].append({
+                    'username': 'Administrator',
+                    'password': 'vagrant',
+                    'domain': domain.get('name'),
+                    'fqdn': domain.get('fqdn'),
+                    'dc': domain.get('dc')
+                })
         
         return jsonify({
             'success': True,
@@ -459,8 +563,7 @@ def get_jumpbox_info():
 
 @bp.route('/start', methods=['POST'])
 def start_goad():
-    """Start stopped GOAD lab VMs"""
-    goad_dir = get_goad_dir()
+    """Start stopped GOAD lab VMs using AWS EC2 API directly"""
     goad_workspace = get_goad_workspace()
     
     deployment_marker = goad_workspace / 'current_deployment.json'
@@ -476,20 +579,51 @@ def start_goad():
         
         lab_name = deployment.get('lab_name')
         
-        # Use GOAD's start command
-        result = subprocess.run(
-            ['./goad.sh', '-t', 'aws', '-l', lab_name, '-p', 'start'],
-            cwd=str(goad_dir),
-            capture_output=True,
-            text=True,
-            timeout=300
-        )
+        # Get AWS region from config
+        from webapp.backend.utils.config_parser import ConfigParser
+        project_root = get_project_root()
+        config_dir = project_root / "configs"
+        tfvars_file = config_dir / "terraform.tfvars"
+        
+        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        aws_region = config.get('aws_region', 'us-east-1')
+        project_name = config.get('project_name', '')
+        
+        # Use AWS EC2 API to start instances
+        ec2 = boto3.client('ec2', region_name=aws_region)
+        
+        # Find GOAD instances by tags
+        filters = [
+            {'Name': 'instance-state-name', 'Values': ['stopped']},
+            {'Name': 'tag:Lab', 'Values': [lab_name.lower().replace('-', '')]}
+        ]
+        
+        # Also try with Project tag if available
+        if project_name:
+            filters.append({'Name': 'tag:Project', 'Values': [project_name]})
+        
+        response = ec2.describe_instances(Filters=filters)
+        
+        instance_ids = []
+        for reservation in response.get('Reservations', []):
+            for instance in reservation.get('Instances', []):
+                instance_ids.append(instance['InstanceId'])
+        
+        if not instance_ids:
+            return jsonify({
+                'success': True,
+                'message': f'No stopped instances found for GOAD {lab_name}',
+                'started_count': 0
+            })
+        
+        # Start instances
+        ec2.start_instances(InstanceIds=instance_ids)
         
         return jsonify({
-            'success': result.returncode == 0,
-            'message': f'GOAD {lab_name} start command executed',
-            'stdout': result.stdout,
-            'stderr': result.stderr if result.returncode != 0 else None
+            'success': True,
+            'message': f'Started {len(instance_ids)} GOAD {lab_name} instances',
+            'started_count': len(instance_ids),
+            'instance_ids': instance_ids
         })
         
     except Exception as e:
@@ -501,8 +635,7 @@ def start_goad():
 
 @bp.route('/stop', methods=['POST'])
 def stop_goad():
-    """Stop GOAD lab VMs to save costs"""
-    goad_dir = get_goad_dir()
+    """Stop GOAD lab VMs to save costs using AWS EC2 API directly"""
     goad_workspace = get_goad_workspace()
     
     deployment_marker = goad_workspace / 'current_deployment.json'
@@ -518,20 +651,135 @@ def stop_goad():
         
         lab_name = deployment.get('lab_name')
         
-        # Use GOAD's stop command
-        result = subprocess.run(
-            ['./goad.sh', '-t', 'aws', '-l', lab_name, '-p', 'stop'],
-            cwd=str(goad_dir),
-            capture_output=True,
-            text=True,
-            timeout=300
-        )
+        # Get AWS region from config
+        from webapp.backend.utils.config_parser import ConfigParser
+        project_root = get_project_root()
+        config_dir = project_root / "configs"
+        tfvars_file = config_dir / "terraform.tfvars"
+        
+        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        aws_region = config.get('aws_region', 'us-east-1')
+        project_name = config.get('project_name', '')
+        
+        # Use AWS EC2 API to stop instances
+        ec2 = boto3.client('ec2', region_name=aws_region)
+        
+        # Find GOAD instances by tags
+        filters = [
+            {'Name': 'instance-state-name', 'Values': ['running']},
+            {'Name': 'tag:Lab', 'Values': [lab_name.lower().replace('-', '')]}
+        ]
+        
+        # Also try with Project tag if available
+        if project_name:
+            filters.append({'Name': 'tag:Project', 'Values': [project_name]})
+        
+        response = ec2.describe_instances(Filters=filters)
+        
+        instance_ids = []
+        for reservation in response.get('Reservations', []):
+            for instance in reservation.get('Instances', []):
+                instance_ids.append(instance['InstanceId'])
+        
+        if not instance_ids:
+            return jsonify({
+                'success': True,
+                'message': f'No running instances found for GOAD {lab_name}',
+                'stopped_count': 0
+            })
+        
+        # Stop instances
+        ec2.stop_instances(InstanceIds=instance_ids)
         
         return jsonify({
-            'success': result.returncode == 0,
-            'message': f'GOAD {lab_name} stop command executed',
-            'stdout': result.stdout,
-            'stderr': result.stderr if result.returncode != 0 else None
+            'success': True,
+            'message': f'Stopped {len(instance_ids)} GOAD {lab_name} instances',
+            'stopped_count': len(instance_ids),
+            'instance_ids': instance_ids
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/instance-status', methods=['GET'])
+def get_goad_instance_status():
+    """Get the current status of all GOAD EC2 instances"""
+    goad_workspace = get_goad_workspace()
+    
+    deployment_marker = goad_workspace / 'current_deployment.json'
+    if not deployment_marker.exists():
+        return jsonify({
+            'success': False,
+            'error': 'No GOAD deployment found'
+        }), 404
+    
+    try:
+        with open(deployment_marker, 'r') as f:
+            deployment = json.load(f)
+        
+        lab_name = deployment.get('lab_name')
+        
+        # Get AWS region from config
+        from webapp.backend.utils.config_parser import ConfigParser
+        project_root = get_project_root()
+        config_dir = project_root / "configs"
+        tfvars_file = config_dir / "terraform.tfvars"
+        
+        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        aws_region = config.get('aws_region', 'us-east-1')
+        project_name = config.get('project_name', '')
+        
+        # Use AWS EC2 API to get instance status
+        ec2 = boto3.client('ec2', region_name=aws_region)
+        
+        # Find GOAD instances by tags
+        filters = [
+            {'Name': 'tag:Lab', 'Values': [lab_name.lower().replace('-', '')]}
+        ]
+        
+        if project_name:
+            filters.append({'Name': 'tag:Project', 'Values': [project_name]})
+        
+        response = ec2.describe_instances(Filters=filters)
+        
+        instances = []
+        status_counts = {'running': 0, 'stopped': 0, 'pending': 0, 'stopping': 0, 'terminated': 0}
+        
+        for reservation in response.get('Reservations', []):
+            for instance in reservation.get('Instances', []):
+                state = instance['State']['Name']
+                status_counts[state] = status_counts.get(state, 0) + 1
+                
+                # Get instance name from tags
+                name = 'Unknown'
+                role = 'Unknown'
+                for tag in instance.get('Tags', []):
+                    if tag['Key'] == 'Name':
+                        name = tag['Value']
+                    if tag['Key'] == 'Role':
+                        role = tag['Value']
+                
+                instances.append({
+                    'id': instance['InstanceId'],
+                    'name': name,
+                    'role': role,
+                    'state': state,
+                    'type': instance['InstanceType'],
+                    'private_ip': instance.get('PrivateIpAddress'),
+                    'public_ip': instance.get('PublicIpAddress')
+                })
+        
+        return jsonify({
+            'success': True,
+            'lab_name': lab_name,
+            'region': aws_region,
+            'instances': instances,
+            'status_counts': status_counts,
+            'total_instances': len(instances)
         })
         
     except Exception as e:

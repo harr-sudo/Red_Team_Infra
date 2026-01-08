@@ -37,7 +37,7 @@ variable "deployment_type" {
   description = "Primary deployment type controlling what infrastructure to deploy"
   type        = string
   default     = "c2-adhoc"
-  
+
   validation {
     condition = contains([
       # C2-Only modes
@@ -59,7 +59,7 @@ variable "goad_lab_type" {
   description = "GOAD lab type to deploy. Auto-configured from deployment_type if not set."
   type        = string
   default     = ""
-  
+
   validation {
     condition     = var.goad_lab_type == "" || contains(["GOAD-Mini", "MINILAB", "GOAD-Light", "SCCM", "GOAD", "NHA"], var.goad_lab_type)
     error_message = "goad_lab_type must be one of: GOAD-Mini, MINILAB, GOAD-Light, SCCM, GOAD, NHA, or empty (auto-configure)"
@@ -108,6 +108,137 @@ variable "cs_teamserver_port" {
 }
 
 # =============================================================================
+# Domain Configuration
+# =============================================================================
+
+variable "primary_domain_name" {
+  description = "Primary domain name for C2 infrastructure (e.g., example.com). User must own this domain."
+  type        = string
+  default     = ""
+}
+
+variable "backup_domains" {
+  description = "List of backup domain names for redundancy"
+  type        = list(string)
+  default     = []
+}
+
+variable "c2_subdomain" {
+  description = "Subdomain prefix for C2 servers (e.g., 'api' creates api.example.com)"
+  type        = string
+  default     = "api"
+}
+
+variable "www_subdomain" {
+  description = "Subdomain prefix for web redirectors"
+  type        = string
+  default     = "www"
+}
+
+variable "cdn_subdomain" {
+  description = "Subdomain prefix for CDN/content delivery redirectors"
+  type        = string
+  default     = "cdn"
+}
+
+# =============================================================================
+# DNS Configuration
+# =============================================================================
+
+variable "create_dns_hosted_zone" {
+  description = "Create a new Route 53 hosted zone. Set to false if domain is already in Route 53."
+  type        = bool
+  default     = true
+}
+
+variable "dns_ttl" {
+  description = "TTL for DNS records in seconds"
+  type        = number
+  default     = 300
+}
+
+variable "enable_www_subdomain" {
+  description = "Create www subdomain DNS record"
+  type        = bool
+  default     = true
+}
+
+variable "enable_cdn_subdomain" {
+  description = "Create cdn subdomain DNS record"
+  type        = bool
+  default     = true
+}
+
+variable "enable_apex_record" {
+  description = "Create apex/root domain DNS record"
+  type        = bool
+  default     = true
+}
+
+variable "create_backup_domain_records" {
+  description = "Create CNAME records for backup domains"
+  type        = bool
+  default     = true
+}
+
+variable "enable_spf_record" {
+  description = "Create SPF record (helps domain look legitimate)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_dmarc_record" {
+  description = "Create DMARC record (helps domain look legitimate)"
+  type        = bool
+  default     = true
+}
+
+# =============================================================================
+# SSL/TLS Configuration
+# =============================================================================
+
+variable "ssl_provider" {
+  description = "SSL certificate provider for redirectors: 'letsencrypt' (recommended) or 'self-signed'"
+  type        = string
+  default     = "letsencrypt"
+  
+  validation {
+    condition     = contains(["letsencrypt", "self-signed"], var.ssl_provider)
+    error_message = "ssl_provider must be 'letsencrypt' or 'self-signed'"
+  }
+}
+
+variable "admin_email" {
+  description = "Admin email for Let's Encrypt notifications and certificate expiry alerts (required for Let's Encrypt)"
+  type        = string
+  default     = ""
+}
+
+variable "ssl_auto_retry" {
+  description = "Automatically retry Let's Encrypt certificate request when DNS propagates"
+  type        = bool
+  default     = true
+}
+
+variable "enable_ssl_certificate" {
+  description = "Enable SSL/TLS on redirectors"
+  type        = bool
+  default     = true
+}
+
+variable "use_letsencrypt" {
+  description = "DEPRECATED: Use ssl_provider instead. Kept for backward compatibility."
+  type        = bool
+  default     = false
+}
+
+variable "malleable_profile" {
+  description = "Name of Malleable C2 profile for nginx URI matching"
+  type        = string
+  default     = "default"
+}
+
+# =============================================================================
 # Legacy Engagement Type (Deprecated - use deployment_type instead)
 # =============================================================================
 
@@ -115,7 +246,7 @@ variable "engagement_type" {
   description = "DEPRECATED: Use deployment_type instead. Kept for backward compatibility."
   type        = string
   default     = ""
-  
+
   validation {
     condition     = var.engagement_type == "" || contains(["adhoc", "purple-team", "full-red-team"], var.engagement_type)
     error_message = "engagement_type must be 'adhoc', 'purple-team', 'full-red-team', or empty string"
@@ -196,7 +327,7 @@ variable "c2_deployment_mode" {
   description = "C2 server deployment mode: 'single', 'redundancy', or 'phases'. Auto-configured from deployment_type if empty."
   type        = string
   default     = ""
-  
+
   validation {
     condition     = var.c2_deployment_mode == "" || contains(["single", "redundancy", "phases"], var.c2_deployment_mode)
     error_message = "c2_deployment_mode must be 'single', 'redundancy', 'phases', or empty string (for auto-configuration)"
@@ -254,32 +385,32 @@ variable "c2_server_user_data" {
 variable "c2_phases" {
   description = "Phase-based C2 server configuration. Each phase can have its own settings."
   type = map(object({
-    enabled          = bool
-    instance_type    = string
-    root_volume_size = number
-    user_data        = string
+    enabled                   = bool
+    instance_type             = string
+    root_volume_size          = number
+    user_data                 = string
     iam_instance_profile_name = string
   }))
   default = {
     staging = {
-      enabled          = true
-      instance_type    = "t3.medium"
-      root_volume_size = 20
-      user_data        = ""
+      enabled                   = true
+      instance_type             = "t3.medium"
+      root_volume_size          = 20
+      user_data                 = ""
       iam_instance_profile_name = ""
     }
     post-ex = {
-      enabled          = true
-      instance_type    = "t3.medium"
-      root_volume_size = 20
-      user_data        = ""
+      enabled                   = true
+      instance_type             = "t3.medium"
+      root_volume_size          = 20
+      user_data                 = ""
       iam_instance_profile_name = ""
     }
     long-haul = {
-      enabled          = true
-      instance_type    = "t3.medium"
-      root_volume_size = 20
-      user_data        = ""
+      enabled                   = true
+      instance_type             = "t3.medium"
+      root_volume_size          = 20
+      user_data                 = ""
       iam_instance_profile_name = ""
     }
   }

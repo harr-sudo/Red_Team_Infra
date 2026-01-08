@@ -28,7 +28,7 @@ variable "key_pair_name" {
 variable "instance_type" {
   description = "EC2 instance type for bastion host"
   type        = string
-  default     = "t3.medium"  # Windows needs more resources than Linux
+  default     = "t3.medium" # Windows needs more resources than Linux
 }
 
 variable "ami_id" {
@@ -40,7 +40,7 @@ variable "ami_id" {
 variable "root_volume_size" {
   description = "Root volume size in GB"
   type        = number
-  default     = 30  # Windows needs more space
+  default     = 30 # Windows needs more space
 }
 
 variable "enable_detailed_monitoring" {

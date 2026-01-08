@@ -72,3 +72,66 @@ variable "tags" {
   default     = {}
 }
 
+# =============================================================================
+# DOMAIN CONFIGURATION (for nginx setup)
+# =============================================================================
+
+variable "primary_domain" {
+  description = "Primary domain name for the redirector"
+  type        = string
+  default     = ""
+}
+
+variable "c2_subdomain" {
+  description = "C2 subdomain prefix"
+  type        = string
+  default     = "api"
+}
+
+variable "c2_server_ip" {
+  description = "Internal IP address of the C2 team server"
+  type        = string
+  default     = ""
+}
+
+variable "c2_server_port" {
+  description = "Port of the C2 team server"
+  type        = number
+  default     = 443
+}
+
+variable "enable_ssl" {
+  description = "Enable SSL/TLS on the redirector"
+  type        = bool
+  default     = true
+}
+
+variable "ssl_provider" {
+  description = "SSL certificate provider: 'letsencrypt' or 'self-signed'"
+  type        = string
+  default     = "letsencrypt"
+}
+
+variable "ssl_auto_retry" {
+  description = "Auto-retry Let's Encrypt when DNS propagates"
+  type        = bool
+  default     = true
+}
+
+variable "use_letsencrypt" {
+  description = "DEPRECATED: Use ssl_provider instead"
+  type        = bool
+  default     = false
+}
+
+variable "admin_email" {
+  description = "Admin email for Let's Encrypt notifications"
+  type        = string
+  default     = ""
+}
+
+variable "malleable_profile" {
+  description = "Name of Malleable C2 profile for URI matching"
+  type        = string
+  default     = "default"
+}

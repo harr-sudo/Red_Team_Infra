@@ -10,7 +10,7 @@
 variable "lab_type" {
   description = "GOAD lab type: GOAD-Mini, MINILAB, GOAD-Light, SCCM, GOAD, NHA"
   type        = string
-  
+
   validation {
     condition     = contains(["GOAD-Mini", "MINILAB", "GOAD-Light", "SCCM", "GOAD", "NHA"], var.lab_type)
     error_message = "lab_type must be one of: GOAD-Mini, MINILAB, GOAD-Light, SCCM, GOAD, NHA"

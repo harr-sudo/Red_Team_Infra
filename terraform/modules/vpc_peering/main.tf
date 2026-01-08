@@ -20,7 +20,7 @@ terraform {
 resource "aws_vpc_peering_connection" "c2_to_goad" {
   vpc_id      = var.c2_vpc_id
   peer_vpc_id = var.goad_vpc_id
-  auto_accept = true  # Same account, same region
+  auto_accept = true # Same account, same region
 
   accepter {
     allow_remote_vpc_dns_resolution = true

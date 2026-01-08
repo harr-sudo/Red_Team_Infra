@@ -34,6 +34,45 @@ SSH_KEYS_FOLDER = project_root / "ssh_keys"
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 SSH_KEYS_FOLDER.mkdir(exist_ok=True)
 
+# =============================================================================
+# DEPLOYMENT HISTORY HELPERS (defined early for use by add_log)
+# =============================================================================
+
+HISTORY_FILE = project_root / "logs" / "deployment_history.json"
+
+def load_deployment_history():
+    """Load deployment history from file"""
+    try:
+        if HISTORY_FILE.exists():
+            with open(HISTORY_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error loading deployment history: {e}")
+    return []
+
+def save_deployment_history(history):
+    """Save deployment history to file"""
+    try:
+        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(HISTORY_FILE, 'w') as f:
+            json.dump(history[-500:], f, indent=2)  # Keep last 500 entries
+    except Exception as e:
+        print(f"Error saving deployment history: {e}")
+
+def add_history_entry(message, level='info', details=None):
+    """Add an entry to deployment history"""
+    from datetime import datetime
+    history = load_deployment_history()
+    history.append({
+        'timestamp': datetime.now().isoformat(),
+        'level': level,
+        'message': message,
+        'details': details
+    })
+    save_deployment_history(history)
+
+# =============================================================================
+
 # Deployment state (in-memory, simple implementation)
 deployment_state = {
     "status": "idle",  # idle, running, success, error
@@ -89,12 +128,14 @@ DEPLOYMENT_PHASES = {
 }
 
 def add_log(message, log_type="info"):
-    """Add a log entry to deployment state"""
+    """Add a log entry to deployment state and persistent history"""
     deployment_state["logs"].append({
         "timestamp": time.time(),
         "message": message,
         "type": log_type  # info, success, warning, error
     })
+    # Also save to persistent history
+    add_history_entry(message, log_type)
 
 def update_phase(phase_name, deployment_type="c2"):
     """Update current phase and calculate progress"""
@@ -374,20 +415,7 @@ def deploy():
             "error": "Deployment already in progress"
         }), 400
     
-    # Check prerequisite: Cobalt Strike file must be uploaded
-    cobalt_strike_files = list(UPLOAD_FOLDER.glob("*"))
-    has_file = any(
-        f.is_file() and allowed_file(f.name)
-        for f in cobalt_strike_files
-    )
-    
-    if not has_file:
-        return jsonify({
-            "success": False,
-            "error": "Cobalt Strike file must be uploaded before deployment. Please upload the file first."
-        }), 400
-    
-    # Check prerequisite: Domain must be configured
+    # Load configuration to check deployment type
     from webapp.backend.utils.config_parser import ConfigParser
     from webapp.backend.utils.validators import ConfigValidator
     
@@ -401,20 +429,57 @@ def deploy():
         }), 400
     
     config = ConfigParser.parse_tfvars(tfvars_file)
-    primary_domain = config.get('primary_domain_name', '').strip()
+    deployment_type = config.get('deployment_type', '').strip()
     
-    if not primary_domain:
-        return jsonify({
-            "success": False,
-            "error": "Domain configuration is required. Please configure primary_domain_name in terraform.tfvars before deployment."
-        }), 400
+    # Define which deployment types require what prerequisites
+    # GOAD deployments: CS on jumpbox (no redirectors), so NO domain needed but CS IS needed
+    # C2 deployments: Full C2 infra with redirectors, needs domain for SSL/routing
+    # Combined: Both GOAD + C2 infra, needs everything
+    GOAD_ONLY_TYPES = ['goad-mini', 'goad-minilab', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha']
+    C2_ONLY_TYPES = ['c2-adhoc', 'c2-purple', 'c2-full']
+    COMBINED_TYPES = ['combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full']
     
-    domain_valid, domain_errors = ConfigValidator.validate_domain_config(config)
-    if not domain_valid:
-        return jsonify({
-            "success": False,
-            "error": f"Domain configuration is invalid: {', '.join(domain_errors)}"
-        }), 400
+    # All deployments with CS need the CS file uploaded
+    # GOAD has CS on jumpbox, C2 has CS on team servers, Combined has both
+    requires_cobalt_strike = True  # All our deployment types include CS
+    
+    # Only C2 and Combined need domain (for redirector SSL certs and routing)
+    # GOAD connects directly to jumpbox, no domain needed
+    requires_domain = deployment_type in C2_ONLY_TYPES or deployment_type in COMBINED_TYPES
+    
+    # Check prerequisite: Cobalt Strike file
+    if requires_cobalt_strike:
+        cobalt_strike_files = list(UPLOAD_FOLDER.glob("*"))
+        has_file = any(
+            f.is_file() and allowed_file(f.name)
+            for f in cobalt_strike_files
+        )
+        
+        if not has_file:
+            return jsonify({
+                "success": False,
+                "error": "Cobalt Strike file must be uploaded before deployment. Please upload the file first."
+            }), 400
+    
+    # Check prerequisite: Domain configuration (only for C2 and combined deployments)
+    if requires_domain:
+        primary_domain = config.get('primary_domain_name', '').strip()
+        
+        if not primary_domain:
+            return jsonify({
+                "success": False,
+                "error": "Domain configuration is required for C2 deployments. Please configure primary_domain_name in terraform.tfvars."
+            }), 400
+        
+        domain_valid, domain_errors = ConfigValidator.validate_domain_config(config)
+        if not domain_valid:
+            return jsonify({
+                "success": False,
+                "error": f"Domain configuration is invalid: {', '.join(domain_errors)}"
+            }), 400
+    
+    # Log what we're deploying
+    add_history_entry(f"Starting deployment: {deployment_type}", "info")
     
     # Start deployment in background thread
     thread = threading.Thread(target=run_deployment)
@@ -423,7 +488,7 @@ def deploy():
     
     return jsonify({
         "success": True,
-        "message": "Deployment started"
+        "message": f"Deployment started for {deployment_type}"
     })
 
 @bp.route('/destroy', methods=['POST'])
@@ -457,20 +522,137 @@ def destroy():
 
 @bp.route('/plan', methods=['GET'])
 def plan():
-    """Run Terraform plan"""
+    """Run Terraform plan with improved error handling"""
     try:
+        # Check if terraform is installed
+        import shutil
+        if not shutil.which('terraform'):
+            return jsonify({
+                "success": False,
+                "error": "Terraform CLI not found. Please install Terraform first.",
+                "error_type": "terraform_not_installed",
+                "help": "Please install Terraform CLI. Run: brew install terraform (macOS) or visit https://terraform.io/downloads",
+                "stdout": "",
+                "stderr": "Terraform CLI is not installed on this system.\n\nTo install:\n  macOS: brew install terraform\n  Linux: See https://terraform.io/downloads\n  Windows: choco install terraform"
+            })
+        
+        # Check if tfvars file exists
+        if not terraform_service.tfvars_file.exists():
+            return jsonify({
+                "success": False,
+                "error": "Configuration file not found",
+                "error_type": "config_missing",
+                "help": "Please save your configuration in the Configuration tab before running plan.",
+                "stdout": "",
+                "stderr": f"Configuration file not found at:\n{terraform_service.tfvars_file}\n\nPlease go to the Configuration tab and save your settings first."
+            })
+        
+        # Check if terraform is initialized
+        terraform_dir = terraform_service.terraform_dir
+        if not (terraform_dir / ".terraform").exists():
+            # Auto-initialize terraform
+            add_history_entry("Auto-initializing Terraform...", "info")
+            init_result = terraform_service.init()
+            if not init_result.get("success"):
+                init_error = init_result.get("stderr", "") or init_result.get("stdout", "") or "Unknown initialization error"
+                return jsonify({
+                    "success": False,
+                    "error": "Terraform initialization failed",
+                    "error_type": "init_failed",
+                    "help": "Terraform failed to initialize. This usually means network issues or missing AWS credentials.",
+                    "stdout": init_result.get("stdout", ""),
+                    "stderr": f"Terraform Init Failed:\n\n{init_error}"
+                })
+        
+        # Run the plan
+        add_history_entry("Running Terraform plan...", "info")
         result = terraform_service.plan()
-        return jsonify({
-            "success": result["success"],
-            "exit_code": result.get("exit_code"),
-            "stdout": result.get("stdout", ""),
-            "stderr": result.get("stderr", ""),
-            "plan": result.get("plan", {})
-        })
+        
+        # Get combined output
+        full_output = result.get("full_output", "") or result.get("stdout", "") or result.get("stderr", "")
+        stdout = result.get("stdout", "")
+        stderr = result.get("stderr", "")
+        
+        if result["success"]:
+            add_history_entry("Terraform plan completed successfully", "success")
+            return jsonify({
+                "success": True,
+                "exit_code": result.get("exit_code"),
+                "stdout": full_output or "Plan completed. No output captured.",
+                "stderr": stderr,
+                "plan": result.get("plan", {}),
+                "message": "Plan completed successfully"
+            })
+        else:
+            # Combine all output for error analysis
+            all_output = f"{stdout}\n{stderr}".strip()
+            
+            # Parse common error patterns from combined output
+            error_type = "unknown"
+            help_text = "Check the error output below for details."
+            
+            # Check both stdout and stderr for error patterns
+            if "No valid credential sources found" in all_output or "NoCredentialProviders" in all_output:
+                error_type = "aws_credentials"
+                help_text = "AWS credentials not configured. Run 'aws configure' in your terminal to set up credentials."
+            elif "could not find credentials" in all_output.lower() or "no credentials" in all_output.lower():
+                error_type = "aws_credentials"
+                help_text = "AWS credentials not found. Run 'aws configure' to set up your AWS access keys."
+            elif "ExpiredToken" in all_output or "expired" in all_output.lower():
+                error_type = "aws_credentials"
+                help_text = "Your AWS credentials have expired. Please refresh your credentials."
+            elif "AccessDenied" in all_output or "UnauthorizedAccess" in all_output or "not authorized" in all_output.lower():
+                error_type = "aws_permissions"
+                help_text = "Your AWS credentials don't have sufficient permissions. Check your IAM policies."
+            elif "Invalid provider configuration" in all_output:
+                error_type = "provider_config"
+                help_text = "Invalid Terraform provider configuration. Check your AWS region setting."
+            elif "Error acquiring the state lock" in all_output:
+                error_type = "state_lock"
+                help_text = "Terraform state is locked. Another operation may be in progress. Wait and try again."
+            elif "timeout" in all_output.lower():
+                error_type = "timeout"
+                help_text = "The operation timed out. Check your network connection."
+            elif "Error:" in all_output:
+                # Generic error - try to extract the error message
+                error_type = "terraform_error"
+                help_text = "Terraform encountered an error. See the details below."
+            
+            # Create a helpful error message
+            error_display = all_output if all_output else "No error details available. Exit code: " + str(result.get("exit_code", "unknown"))
+            
+            add_history_entry(f"Terraform plan failed: {error_type}", "error")
+            
+            return jsonify({
+                "success": False,
+                "exit_code": result.get("exit_code"),
+                "error": help_text,
+                "error_type": error_type,
+                "stdout": stdout,
+                "stderr": error_display,
+                "help": help_text
+            })
+            
     except Exception as e:
+        error_msg = str(e)
+        error_type = "unknown"
+        help_text = "An unexpected error occurred."
+        detailed_error = error_msg
+        
+        if "No such file or directory: 'terraform'" in error_msg:
+            error_type = "terraform_not_installed"
+            help_text = "Terraform CLI is not installed. Please install it first."
+            detailed_error = "Terraform CLI is not installed on this system.\n\nTo install:\n  macOS: brew install terraform\n  Linux: See https://terraform.io/downloads"
+        
+        add_history_entry(f"Plan error: {error_msg}", "error")
+        
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": help_text,
+            "error_type": error_type,
+            "help": help_text,
+            "stdout": "",
+            "stderr": detailed_error
         }), 500
 
 @bp.route('/init', methods=['POST'])
@@ -713,7 +895,7 @@ def refresh_infrastructure():
         # Run terraform refresh to sync state with actual infrastructure
         exit_code, stdout, stderr = terraform_service._run_command([
             "terraform", "refresh",
-            "-var-file", str(terraform_service.tfvars_file.relative_to(terraform_service.terraform_dir))
+            "-var-file", str(terraform_service.tfvars_file.absolute())
         ])
         
         if exit_code != 0:
@@ -1271,6 +1453,411 @@ def get_instance_status():
             "total_instances": len(instances)
         })
         
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# =============================================================================
+# RESOURCE LIST ENDPOINT
+# =============================================================================
+
+@bp.route('/resources', methods=['GET'])
+def get_all_resources():
+    """
+    Get a comprehensive list of ALL deployed AWS resources for this project.
+    Uses boto3 to query AWS directly for accurate resource information.
+    """
+    try:
+        import boto3
+        from webapp.backend.utils.config_parser import ConfigParser
+        
+        # Get config
+        config_dir = project_root / "configs"
+        tfvars_file = config_dir / "terraform.tfvars"
+        
+        if not tfvars_file.exists():
+            return jsonify({
+                "success": True,
+                "resources": [],
+                "message": "No configuration found"
+            })
+        
+        config = ConfigParser.parse_tfvars(tfvars_file)
+        project_name = config.get('project_name', '')
+        aws_region = config.get('aws_region', 'us-east-1')
+        
+        if not project_name:
+            return jsonify({
+                "success": True,
+                "resources": [],
+                "message": "No project name configured"
+            })
+        
+        resources = []
+        
+        # EC2 Client
+        ec2 = boto3.client('ec2', region_name=aws_region)
+        
+        # 1. EC2 Instances
+        try:
+            response = ec2.describe_instances(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for reservation in response.get('Reservations', []):
+                for instance in reservation.get('Instances', []):
+                    name = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                    role = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Role'), '')
+                    resources.append({
+                        'type': 'ec2',
+                        'name': name,
+                        'id': instance['InstanceId'],
+                        'state': instance['State']['Name'],
+                        'details': f"{instance['InstanceType']} | {role}" if role else instance['InstanceType']
+                    })
+        except Exception as e:
+            print(f"Error fetching EC2 instances: {e}")
+        
+        # 2. VPCs
+        try:
+            response = ec2.describe_vpcs(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for vpc in response.get('Vpcs', []):
+                name = next((t['Value'] for t in vpc.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed VPC')
+                resources.append({
+                    'type': 'vpc',
+                    'name': name,
+                    'id': vpc['VpcId'],
+                    'state': vpc['State'],
+                    'details': vpc['CidrBlock']
+                })
+        except Exception as e:
+            print(f"Error fetching VPCs: {e}")
+        
+        # 3. Subnets
+        try:
+            response = ec2.describe_subnets(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for subnet in response.get('Subnets', []):
+                name = next((t['Value'] for t in subnet.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Subnet')
+                resources.append({
+                    'type': 'subnet',
+                    'name': name,
+                    'id': subnet['SubnetId'],
+                    'state': subnet['State'],
+                    'details': f"{subnet['CidrBlock']} | AZ: {subnet['AvailabilityZone']}"
+                })
+        except Exception as e:
+            print(f"Error fetching subnets: {e}")
+        
+        # 4. Security Groups
+        try:
+            response = ec2.describe_security_groups(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for sg in response.get('SecurityGroups', []):
+                resources.append({
+                    'type': 'sg',
+                    'name': sg['GroupName'],
+                    'id': sg['GroupId'],
+                    'state': 'active',
+                    'details': sg.get('Description', '')[:50]
+                })
+        except Exception as e:
+            print(f"Error fetching security groups: {e}")
+        
+        # 5. Elastic IPs
+        try:
+            response = ec2.describe_addresses(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for eip in response.get('Addresses', []):
+                name = next((t['Value'] for t in eip.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed EIP')
+                resources.append({
+                    'type': 'eip',
+                    'name': name,
+                    'id': eip.get('AllocationId', 'N/A'),
+                    'state': 'associated' if eip.get('InstanceId') else 'available',
+                    'details': eip.get('PublicIp', 'N/A')
+                })
+        except Exception as e:
+            print(f"Error fetching Elastic IPs: {e}")
+        
+        # 6. NAT Gateways
+        try:
+            response = ec2.describe_nat_gateways(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for nat in response.get('NatGateways', []):
+                name = next((t['Value'] for t in nat.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed NAT')
+                public_ip = nat.get('NatGatewayAddresses', [{}])[0].get('PublicIp', 'N/A')
+                resources.append({
+                    'type': 'nat',
+                    'name': name,
+                    'id': nat['NatGatewayId'],
+                    'state': nat['State'],
+                    'details': f"Public IP: {public_ip}"
+                })
+        except Exception as e:
+            print(f"Error fetching NAT Gateways: {e}")
+        
+        # 7. Internet Gateways
+        try:
+            response = ec2.describe_internet_gateways(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for igw in response.get('InternetGateways', []):
+                name = next((t['Value'] for t in igw.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed IGW')
+                attached = 'attached' if igw.get('Attachments') else 'detached'
+                resources.append({
+                    'type': 'igw',
+                    'name': name,
+                    'id': igw['InternetGatewayId'],
+                    'state': attached,
+                    'details': ''
+                })
+        except Exception as e:
+            print(f"Error fetching Internet Gateways: {e}")
+        
+        # 8. S3 Buckets (check for project-named buckets)
+        try:
+            s3 = boto3.client('s3', region_name=aws_region)
+            response = s3.list_buckets()
+            project_prefix = project_name.lower().replace('_', '-')
+            for bucket in response.get('Buckets', []):
+                if project_prefix in bucket['Name'].lower():
+                    resources.append({
+                        'type': 's3',
+                        'name': bucket['Name'],
+                        'id': bucket['Name'],
+                        'state': 'available',
+                        'details': f"Created: {bucket['CreationDate'].strftime('%Y-%m-%d')}"
+                    })
+        except Exception as e:
+            print(f"Error fetching S3 buckets: {e}")
+        
+        # 9. Key Pairs
+        try:
+            response = ec2.describe_key_pairs(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for kp in response.get('KeyPairs', []):
+                resources.append({
+                    'type': 'keypair',
+                    'name': kp['KeyName'],
+                    'id': kp.get('KeyPairId', kp['KeyName']),
+                    'state': 'available',
+                    'details': f"Type: {kp.get('KeyType', 'rsa')}"
+                })
+        except Exception as e:
+            print(f"Error fetching key pairs: {e}")
+        
+        # 10. Route Tables
+        try:
+            response = ec2.describe_route_tables(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for rt in response.get('RouteTables', []):
+                name = next((t['Value'] for t in rt.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Route Table')
+                route_count = len(rt.get('Routes', []))
+                resources.append({
+                    'type': 'rtb',
+                    'name': name,
+                    'id': rt['RouteTableId'],
+                    'state': 'active',
+                    'details': f"{route_count} routes"
+                })
+        except Exception as e:
+            print(f"Error fetching route tables: {e}")
+        
+        # 11. VPC Peering Connections
+        try:
+            response = ec2.describe_vpc_peering_connections(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for pcx in response.get('VpcPeeringConnections', []):
+                name = next((t['Value'] for t in pcx.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Peering')
+                requester = pcx.get('RequesterVpcInfo', {}).get('VpcId', 'N/A')
+                accepter = pcx.get('AccepterVpcInfo', {}).get('VpcId', 'N/A')
+                resources.append({
+                    'type': 'pcx',
+                    'name': name,
+                    'id': pcx['VpcPeeringConnectionId'],
+                    'state': pcx.get('Status', {}).get('Code', 'unknown'),
+                    'details': f"{requester} ↔ {accepter}"
+                })
+        except Exception as e:
+            print(f"Error fetching VPC peering connections: {e}")
+        
+        # 12. Network Interfaces (ENIs)
+        try:
+            response = ec2.describe_network_interfaces(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for eni in response.get('NetworkInterfaces', []):
+                name = next((t['Value'] for t in eni.get('TagSet', []) if t['Key'] == 'Name'), 'Unnamed ENI')
+                private_ip = eni.get('PrivateIpAddress', 'N/A')
+                resources.append({
+                    'type': 'eni',
+                    'name': name,
+                    'id': eni['NetworkInterfaceId'],
+                    'state': eni.get('Status', 'unknown'),
+                    'details': f"Private IP: {private_ip}"
+                })
+        except Exception as e:
+            print(f"Error fetching network interfaces: {e}")
+        
+        # 13. IAM Roles (for CS download)
+        try:
+            iam = boto3.client('iam', region_name=aws_region)
+            # List roles and filter by project name prefix
+            paginator = iam.get_paginator('list_roles')
+            for page in paginator.paginate():
+                for role in page.get('Roles', []):
+                    if project_prefix in role['RoleName'].lower() or 'cs-download' in role['RoleName'].lower():
+                        resources.append({
+                            'type': 'iam-role',
+                            'name': role['RoleName'],
+                            'id': role['RoleId'],
+                            'state': 'active',
+                            'details': f"Created: {role['CreateDate'].strftime('%Y-%m-%d')}"
+                        })
+        except Exception as e:
+            print(f"Error fetching IAM roles: {e}")
+        
+        # 14. IAM Instance Profiles
+        try:
+            iam = boto3.client('iam', region_name=aws_region)
+            paginator = iam.get_paginator('list_instance_profiles')
+            for page in paginator.paginate():
+                for profile in page.get('InstanceProfiles', []):
+                    if project_prefix in profile['InstanceProfileName'].lower() or 'cs-download' in profile['InstanceProfileName'].lower():
+                        resources.append({
+                            'type': 'iam-profile',
+                            'name': profile['InstanceProfileName'],
+                            'id': profile['InstanceProfileId'],
+                            'state': 'active',
+                            'details': f"Roles: {len(profile.get('Roles', []))}"
+                        })
+        except Exception as e:
+            print(f"Error fetching IAM instance profiles: {e}")
+        
+        # 15. Route 53 Hosted Zones
+        try:
+            route53 = boto3.client('route53', region_name=aws_region)
+            response = route53.list_hosted_zones()
+            for zone in response.get('HostedZones', []):
+                # Check if zone name matches any configured domain
+                zone_name = zone['Name'].rstrip('.')
+                if project_prefix in zone_name.lower() or zone.get('Config', {}).get('Comment', '').find(project_name) != -1:
+                    resources.append({
+                        'type': 'route53-zone',
+                        'name': zone_name,
+                        'id': zone['Id'].split('/')[-1],
+                        'state': 'active',
+                        'details': f"Records: {zone.get('ResourceRecordSetCount', 0)}"
+                    })
+        except Exception as e:
+            print(f"Error fetching Route 53 hosted zones: {e}")
+        
+        # 16. ACM Certificates
+        try:
+            acm = boto3.client('acm', region_name=aws_region)
+            response = acm.list_certificates()
+            for cert in response.get('CertificateSummaryList', []):
+                domain = cert.get('DomainName', '')
+                # Check if certificate is for a project domain
+                if project_prefix in domain.lower():
+                    resources.append({
+                        'type': 'acm-cert',
+                        'name': domain,
+                        'id': cert['CertificateArn'].split('/')[-1],
+                        'state': cert.get('Status', 'unknown').lower(),
+                        'details': f"Type: {cert.get('Type', 'N/A')}"
+                    })
+        except Exception as e:
+            print(f"Error fetching ACM certificates: {e}")
+        
+        return jsonify({
+            "success": True,
+            "resources": resources,
+            "total_count": len(resources),
+            "project_name": project_name,
+            "region": aws_region
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "resources": []
+        }), 500
+
+
+# =============================================================================
+# DEPLOYMENT HISTORY ENDPOINT
+# =============================================================================
+
+@bp.route('/history', methods=['GET'])
+def get_deployment_history():
+    """Get deployment history"""
+    try:
+        history = load_deployment_history()
+        return jsonify({
+            "success": True,
+            "history": history,
+            "total_entries": len(history)
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "history": []
+        }), 500
+
+
+@bp.route('/history', methods=['DELETE'])
+def clear_deployment_history():
+    """Clear deployment history"""
+    try:
+        if HISTORY_FILE.exists():
+            HISTORY_FILE.unlink()
+        return jsonify({
+            "success": True,
+            "message": "Deployment history cleared"
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@bp.route('/history/add', methods=['POST'])
+def add_deployment_history():
+    """Add a log entry to deployment history"""
+    try:
+        data = request.get_json() or {}
+        message = data.get('message', '')
+        level = data.get('level', 'info')
+        details = data.get('details')
+        
+        if not message:
+            return jsonify({
+                "success": False,
+                "error": "Message is required"
+            }), 400
+        
+        add_history_entry(message, level, details)
+        
+        return jsonify({
+            "success": True,
+            "message": "Log entry added"
+        })
     except Exception as e:
         return jsonify({
             "success": False,

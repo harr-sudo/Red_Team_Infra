@@ -23,13 +23,13 @@ output "deployment_type" {
 output "deployment_mode" {
   description = "Deployment mode details"
   value = {
-    type             = var.deployment_type
-    is_c2_only       = local.is_c2_only
-    is_goad_only     = local.is_goad_only
-    is_combined      = local.is_combined
-    c2_mode          = local.c2_deployment_mode
-    goad_lab         = local.goad_lab_type
-    cs_on_jumpbox    = local.install_cs_on_jumpbox
+    type          = var.deployment_type
+    is_c2_only    = local.is_c2_only
+    is_goad_only  = local.is_goad_only
+    is_combined   = local.is_combined
+    c2_mode       = local.c2_deployment_mode
+    goad_lab      = local.goad_lab_type
+    cs_on_jumpbox = local.install_cs_on_jumpbox
   }
 }
 
@@ -118,7 +118,7 @@ output "c2_server_primary_ip" {
   value = local.deploy_c2_infra ? (
     local.c2_deployment_mode == "phases" ? (
       length(module.c2_phase_servers) > 0 ? values(module.c2_phase_servers)[0].first_server_private_ip : null
-    ) : (
+      ) : (
       length(module.c2_team_server) > 0 ? module.c2_team_server[0].first_server_private_ip : null
     )
   ) : null
@@ -149,9 +149,9 @@ output "c2_servers" {
         private_ip  = module_instance.c2_team_server_private_ips[0]
         phase       = phase_name
       }
-    } : (
+      } : (
       local.c2_deployment_mode == "single" || local.c2_deployment_mode == "redundancy" ? {
-        for idx, instance_id in (length(module.c2_team_server) > 0 ? module.c2_team_server[0].c2_team_server_instance_ids : []) : "server-${idx + 1}" => {
+        for idx, instance_id in(length(module.c2_team_server) > 0 ? module.c2_team_server[0].c2_team_server_instance_ids : []) : "server-${idx + 1}" => {
           instance_id = instance_id
           private_ip  = length(module.c2_team_server) > 0 ? module.c2_team_server[0].c2_team_server_private_ips[idx] : null
           phase       = "generic"
@@ -283,11 +283,11 @@ output "cs_connection_info" {
   value = {
     host = local.is_goad_only ? (
       local.deploy_goad && length(module.goad) > 0 ? module.goad[0].jumpbox_public_ip : null
-    ) : (
+      ) : (
       local.deploy_c2_infra ? (
         local.c2_deployment_mode == "phases" ? (
           length(module.c2_phase_servers) > 0 ? values(module.c2_phase_servers)[0].first_server_private_ip : null
-        ) : (
+          ) : (
           length(module.c2_team_server) > 0 ? module.c2_team_server[0].first_server_private_ip : null
         )
       ) : null
@@ -311,10 +311,10 @@ output "access_instructions" {
       "2. SSH to jumpbox: ssh -i goad-jumpbox.pem goad@${module.goad[0].jumpbox_public_ip}",
       "3. From jumpbox, access Windows VMs via RDP or WinRM",
       "4. Run Ansible to provision AD: cd /opt/goad && ansible-playbook main.yml"
-    ] : [
+      ] : [
       "1. GOAD not deployed - check deployment_type",
     ]
-  } : local.is_combined ? {
+    } : local.is_combined ? {
     type = "combined"
     steps = [
       "1. RDP to bastion: ${local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_public_ip : "N/A"}",
@@ -323,7 +323,7 @@ output "access_instructions" {
       "4. GOAD VMs accessible via VPC peering from C2 servers",
       "5. Jumpbox IP: ${local.deploy_goad && length(module.goad) > 0 ? module.goad[0].jumpbox_public_ip : "N/A"}"
     ]
-  } : local.deploy_c2_infra ? {
+    } : local.deploy_c2_infra ? {
     type = "c2-only"
     steps = [
       "1. RDP to bastion: ${local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_public_ip : "N/A"}",
@@ -331,8 +331,8 @@ output "access_instructions" {
       "3. Connect CS client to localhost:50050",
       "4. Redirectors: ${local.deploy_redirectors && length(module.proxy_redirector) > 0 ? join(", ", module.proxy_redirector[0].proxy_redirector_public_ips) : "N/A"}"
     ]
-  } : {
-    type = "none"
+    } : {
+    type  = "none"
     steps = ["No infrastructure deployed"]
   }
 }
@@ -351,13 +351,13 @@ output "ansible_inventory" {
         ansible_user = "ubuntu"
         phase        = phase_name
       }
-    ] : (local.c2_deployment_mode == "single" || local.c2_deployment_mode == "redundancy" ? [
-      for idx, ip in (length(module.c2_team_server) > 0 ? module.c2_team_server[0].c2_team_server_private_ips : []) : {
-        name         = "${var.project_name}-${var.environment}-c2-team-server-${idx + 1}"
-        ansible_host = ip
-        ansible_user = "ubuntu"
-        phase        = "generic"
-      }
+      ] : (local.c2_deployment_mode == "single" || local.c2_deployment_mode == "redundancy" ? [
+        for idx, ip in(length(module.c2_team_server) > 0 ? module.c2_team_server[0].c2_team_server_private_ips : []) : {
+          name         = "${var.project_name}-${var.environment}-c2-team-server-${idx + 1}"
+          ansible_host = ip
+          ansible_user = "ubuntu"
+          phase        = "generic"
+        }
     ] : [])
     proxy_redirectors = local.deploy_redirectors && length(module.proxy_redirector) > 0 ? [
       for idx, ip in module.proxy_redirector[0].proxy_redirector_public_ips : {
@@ -366,7 +366,7 @@ output "ansible_inventory" {
         ansible_user = "ubuntu"
       }
     ] : []
-  } : {
+    } : {
     c2_team_servers   = []
     proxy_redirectors = []
   }

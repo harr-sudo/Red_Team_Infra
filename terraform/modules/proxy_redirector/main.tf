@@ -1,6 +1,7 @@
 # Proxy/Redirector Module
 # Creates EC2 instances for proxy/redirector servers in public subnets
 # These servers are pass-through only with no data storage
+# Can be configured with nginx for domain-based C2 traffic routing
 
 terraform {
   required_providers {
@@ -9,6 +10,36 @@ terraform {
       version = "~> 5.0"
     }
   }
+}
+
+# =============================================================================
+# LOCAL VALUES
+# =============================================================================
+
+locals {
+  # Determine if we should use the domain redirector script
+  use_redirector_script = var.primary_domain != "" && var.c2_server_ip != "" && var.user_data == ""
+  
+  # Determine SSL provider (support both new and legacy variable)
+  effective_ssl_provider = var.ssl_provider != "letsencrypt" ? var.ssl_provider : (var.use_letsencrypt ? "letsencrypt" : var.ssl_provider)
+
+  # Generate user_data from template if using redirector script
+  redirector_user_data = local.use_redirector_script ? templatefile("${path.root}/scripts/setup_redirector.sh", {
+    primary_domain    = var.primary_domain
+    c2_subdomain      = var.c2_subdomain
+    c2_server_ip      = var.c2_server_ip
+    c2_server_port    = var.c2_server_port
+    enable_ssl        = var.enable_ssl ? "true" : "false"
+    ssl_provider      = local.effective_ssl_provider
+    ssl_auto_retry    = var.ssl_auto_retry ? "true" : "false"
+    admin_email       = var.admin_email
+    malleable_profile = var.malleable_profile
+  }) : null
+
+  # Final user_data: custom > redirector script > none
+  final_user_data = var.user_data != "" ? var.user_data : (
+    local.use_redirector_script ? local.redirector_user_data : null
+  )
 }
 
 # Proxy/Redirector Instances
@@ -36,18 +67,19 @@ resource "aws_instance" "proxy_redirector" {
   # IAM role for instance (if provided)
   iam_instance_profile = var.iam_instance_profile_name != "" ? var.iam_instance_profile_name : null
 
-  # User data for proxy configuration (pass-through setup)
-  user_data = var.user_data != "" ? var.user_data : null
+  # User data for proxy configuration
+  user_data = local.final_user_data
 
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-proxy-redirector-${count.index + 1}"
-      Type = "ProxyRedirector"
-      Component = "ProxyInfrastructure"
+      Name         = "${var.project_name}-${var.environment}-proxy-redirector-${count.index + 1}"
+      Type         = "ProxyRedirector"
+      Component    = "ProxyInfrastructure"
       ServerNumber = count.index + 1
-      DataStorage = "None"
-      PassThrough = "True"
+      DataStorage  = "None"
+      PassThrough  = "True"
+      Domain       = var.primary_domain != "" ? var.primary_domain : "none"
     }
   )
 }
@@ -62,8 +94,8 @@ resource "aws_eip" "proxy_redirector_eip" {
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-proxy-redirector-${count.index + 1}-eip"
-      Type = "ElasticIP"
+      Name      = "${var.project_name}-${var.environment}-proxy-redirector-${count.index + 1}-eip"
+      Type      = "ElasticIP"
       Component = "ProxyInfrastructure"
     }
   )

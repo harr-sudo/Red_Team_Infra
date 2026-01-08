@@ -11,7 +11,7 @@
 # Ubuntu 22.04 LTS AMI
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"]  # Canonical
+  owners      = ["099720109477"] # Canonical
 
   filter {
     name   = "name"
@@ -80,7 +80,7 @@ resource "aws_instance" "jumpbox" {
     tools_repo_url     = var.tools_repo_url
     tools_repo_branch  = var.tools_repo_branch
     server_role        = "jumpbox"
-  }) : templatefile("${path.module}/scripts/jumpbox_init.sh", {
+    }) : templatefile("${path.module}/scripts/jumpbox_init.sh", {
     username = var.jumpbox_username
   })
 

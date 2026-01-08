@@ -47,7 +47,7 @@ locals {
   is_c2_only   = startswith(var.deployment_type, "c2-")
   is_goad_only = startswith(var.deployment_type, "goad-")
   is_combined  = startswith(var.deployment_type, "combined-")
-  
+
   # -------------------------------------------------------------------------
   # What to Deploy
   # -------------------------------------------------------------------------
@@ -56,8 +56,8 @@ locals {
   deploy_redirectors    = local.is_c2_only || local.is_combined
   deploy_bastion        = local.is_c2_only || local.is_combined
   deploy_vpc_peering    = local.is_combined
-  install_cs_on_jumpbox = local.is_goad_only  # Only for GOAD-only mode
-  
+  install_cs_on_jumpbox = local.is_goad_only # Only for GOAD-only mode
+
   # -------------------------------------------------------------------------
   # GOAD Lab Type Mapping
   # -------------------------------------------------------------------------
@@ -72,9 +72,9 @@ locals {
     "combined-adhoc-light" = "GOAD-Light"
     "combined-full-full"   = "GOAD"
   }
-  
+
   goad_lab_type = var.goad_lab_type != "" ? var.goad_lab_type : lookup(local.goad_lab_map, var.deployment_type, "")
-  
+
   # -------------------------------------------------------------------------
   # C2 Deployment Mode Mapping
   # -------------------------------------------------------------------------
@@ -86,19 +86,19 @@ locals {
     "combined-adhoc-light" = "single"
     "combined-full-full"   = "phases"
   }
-  
+
   # Use explicit c2_deployment_mode if set, otherwise derive from deployment_type
   c2_deployment_mode = var.c2_deployment_mode != "" ? var.c2_deployment_mode : (
     local.deploy_c2_infra ? lookup(local.c2_mode_map, var.deployment_type, "single") : "none"
   )
-  
+
   # -------------------------------------------------------------------------
   # C2 Server Count based on mode
   # -------------------------------------------------------------------------
   c2_server_count = local.c2_deployment_mode == "single" ? 1 : (
     local.c2_deployment_mode == "redundancy" ? var.c2_server_count : 0
   )
-  
+
   # -------------------------------------------------------------------------
   # Enhanced Tags
   # -------------------------------------------------------------------------
@@ -127,7 +127,7 @@ data "aws_availability_zones" "available" {
 # Ubuntu 22.04 LTS AMI (for C2 servers and redirectors)
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"]  # Canonical
+  owners      = ["099720109477"] # Canonical
 
   filter {
     name   = "name"
@@ -196,11 +196,11 @@ module "security" {
   management_cidr_blocks = var.management_cidr_blocks
   ssh_port               = var.ssh_port
   c2_server_port         = var.c2_server_port
-  
+
   # VPC Peering configuration (for combined mode)
   enable_vpc_peering = local.deploy_vpc_peering
   goad_vpc_cidr      = local.deploy_vpc_peering ? var.goad_vpc_cidr : ""
-  
+
   tags = var.tags
 }
 
@@ -210,7 +210,7 @@ module "security" {
 
 module "c2_team_server" {
   count = local.deploy_c2_infra && (local.c2_deployment_mode == "single" || local.c2_deployment_mode == "redundancy") ? 1 : 0
-  
+
   source = "./modules/c2_team_server"
 
   c2_server_count            = local.c2_server_count
@@ -225,15 +225,15 @@ module "c2_team_server" {
   enable_detailed_monitoring = var.enable_detailed_monitoring
   enable_elastic_ips         = var.c2_server_enable_elastic_ips
   iam_instance_profile_name  = length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name : var.c2_server_iam_instance_profile_name
-  phase                      = ""  # No phase for single/redundancy mode
+  phase                      = "" # No phase for single/redundancy mode
   tags                       = local.enhanced_tags
-  
+
   # Cobalt Strike configuration
-  cobalt_strike_s3_path    = var.cobalt_strike_archive_s3_path
-  cs_teamserver_password   = var.cs_teamserver_password
-  tools_repo_url           = var.tools_repo_url
-  tools_repo_branch        = var.tools_repo_branch
-  
+  cobalt_strike_s3_path  = var.cobalt_strike_archive_s3_path
+  cs_teamserver_password = var.cs_teamserver_password
+  tools_repo_url         = var.tools_repo_url
+  tools_repo_branch      = var.tools_repo_branch
+
   # Custom user_data overrides centralized script if provided
   user_data = var.c2_server_user_data
 }
@@ -250,7 +250,7 @@ module "c2_phase_servers" {
 
   source = "./modules/c2_team_server"
 
-  c2_server_count            = 1  # One server per phase
+  c2_server_count            = 1 # One server per phase
   instance_type              = each.value.instance_type
   ami_id                     = var.c2_server_ami_id != "" ? var.c2_server_ami_id : data.aws_ami.ubuntu.id
   key_pair_name              = var.key_pair_name
@@ -262,15 +262,15 @@ module "c2_phase_servers" {
   enable_detailed_monitoring = var.enable_detailed_monitoring
   enable_elastic_ips         = false
   iam_instance_profile_name  = each.value.iam_instance_profile_name != "" ? each.value.iam_instance_profile_name : (length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name : null)
-  phase                      = each.key  # Phase name (staging, post-ex, long-haul)
+  phase                      = each.key # Phase name (staging, post-ex, long-haul)
   tags                       = local.enhanced_tags
 
   # Cobalt Strike configuration
-  cobalt_strike_s3_path    = var.cobalt_strike_archive_s3_path
-  cs_teamserver_password   = var.cs_teamserver_password
-  tools_repo_url           = var.tools_repo_url
-  tools_repo_branch        = var.tools_repo_branch
-  
+  cobalt_strike_s3_path  = var.cobalt_strike_archive_s3_path
+  cs_teamserver_password = var.cs_teamserver_password
+  tools_repo_url         = var.tools_repo_url
+  tools_repo_branch      = var.tools_repo_branch
+
   # Custom user_data per phase
   user_data = each.value.user_data != "" ? each.value.user_data : ""
 }
@@ -296,6 +296,19 @@ module "proxy_redirector" {
   iam_instance_profile_name  = var.proxy_redirector_iam_instance_profile_name
   user_data                  = var.proxy_redirector_user_data
   tags                       = local.enhanced_tags
+
+  # Domain configuration for nginx redirector setup
+  primary_domain    = var.primary_domain_name
+  c2_subdomain      = var.c2_subdomain
+  c2_server_ip      = length(module.c2_team_server) > 0 ? module.c2_team_server[0].private_ips[0] : ""
+  c2_server_port    = var.c2_server_port
+  
+  # SSL configuration
+  enable_ssl        = var.enable_ssl_certificate
+  ssl_provider      = var.ssl_provider
+  ssl_auto_retry    = var.ssl_auto_retry
+  admin_email       = var.admin_email
+  malleable_profile = var.malleable_profile
 }
 
 # =============================================================================
@@ -329,34 +342,34 @@ module "goad" {
   count  = local.deploy_goad ? 1 : 0
   source = "./modules/goad"
 
-  lab_type               = local.goad_lab_type
-  vpc_cidr               = var.goad_vpc_cidr
-  public_subnet_cidr     = var.goad_public_subnet_cidr
-  private_subnet_cidr    = var.goad_private_subnet_cidr
-  ip_range               = split("/", var.goad_vpc_cidr)[0] != "" ? join(".", slice(split(".", split("/", var.goad_vpc_cidr)[0]), 0, 3)) : "192.168.56"
-  availability_zone      = var.availability_zones[0]
-  
+  lab_type            = local.goad_lab_type
+  vpc_cidr            = var.goad_vpc_cidr
+  public_subnet_cidr  = var.goad_public_subnet_cidr
+  private_subnet_cidr = var.goad_private_subnet_cidr
+  ip_range            = split("/", var.goad_vpc_cidr)[0] != "" ? join(".", slice(split(".", split("/", var.goad_vpc_cidr)[0]), 0, 3)) : "192.168.56"
+  availability_zone   = var.availability_zones[0]
+
   # Cobalt Strike on jumpbox (only for GOAD-only mode)
   install_cobalt_strike  = local.install_cs_on_jumpbox
   cobalt_strike_s3_path  = var.cobalt_strike_archive_s3_path
   cs_teamserver_password = var.cs_teamserver_password
-  
+
   # Access configuration
   management_cidr_blocks = var.management_cidr_blocks
   key_pair_name          = var.key_pair_name
-  
+
   # Tools
   tools_repo_url    = var.tools_repo_url
   tools_repo_branch = var.tools_repo_branch
-  
+
   # Project
   project_name = var.project_name
   environment  = var.environment
   aws_region   = var.aws_region
-  
+
   # IAM (for S3 access)
   iam_instance_profile_name = length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name : ""
-  
+
   tags = local.enhanced_tags
 }
 
@@ -376,6 +389,64 @@ module "vpc_peering" {
   goad_cidr            = var.goad_vpc_cidr
   project_name         = var.project_name
   tags                 = local.enhanced_tags
-  
+
   depends_on = [module.vpc, module.goad]
+}
+
+# =============================================================================
+# DNS MODULE - Route 53 for C2 Domain Management
+# =============================================================================
+
+module "dns" {
+  count  = local.deploy_c2_infra && var.primary_domain_name != "" ? 1 : 0
+  source = "./modules/dns"
+
+  primary_domain_name = var.primary_domain_name
+  backup_domains      = var.backup_domains
+  c2_subdomain        = var.c2_subdomain
+  www_subdomain       = var.www_subdomain
+  cdn_subdomain       = var.cdn_subdomain
+
+  # Point DNS records to redirector IPs
+  redirector_ips = length(module.proxy_redirector) > 0 ? module.proxy_redirector[0].public_ips : []
+
+  # Hosted zone settings
+  create_hosted_zone = var.create_dns_hosted_zone
+  dns_ttl            = var.dns_ttl
+
+  # Record options
+  enable_www_subdomain         = var.enable_www_subdomain
+  enable_cdn_subdomain         = var.enable_cdn_subdomain
+  enable_apex_record           = var.enable_apex_record
+  create_backup_domain_records = var.create_backup_domain_records
+  enable_spf_record            = var.enable_spf_record
+  enable_dmarc_record          = var.enable_dmarc_record
+
+  project_name = var.project_name
+  environment  = var.environment
+  tags         = local.enhanced_tags
+
+  depends_on = [module.proxy_redirector]
+}
+
+# =============================================================================
+# ACM CERTIFICATE MODULE - SSL for C2 Traffic
+# =============================================================================
+
+module "certificates" {
+  count  = local.deploy_c2_infra && var.primary_domain_name != "" && var.enable_ssl_certificate ? 1 : 0
+  source = "./modules/certificates"
+
+  primary_domain_name = var.primary_domain_name
+  c2_subdomain        = var.c2_subdomain
+  www_subdomain       = var.www_subdomain
+  cdn_subdomain       = var.cdn_subdomain
+
+  route53_zone_id = length(module.dns) > 0 ? module.dns[0].zone_id : ""
+
+  project_name = var.project_name
+  environment  = var.environment
+  tags         = local.enhanced_tags
+
+  depends_on = [module.dns]
 }

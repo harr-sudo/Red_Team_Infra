@@ -41,7 +41,7 @@ resource "aws_s3_bucket" "cs_files" {
 # Bucket versioning (optional but recommended)
 resource "aws_s3_bucket_versioning" "cs_files" {
   bucket = aws_s3_bucket.cs_files.id
-  
+
   versioning_configuration {
     status = "Enabled"
   }
@@ -76,6 +76,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "cs_files" {
   rule {
     id     = "delete-old-files"
     status = "Enabled"
+
+    filter {
+      prefix = "" # Apply to all objects
+    }
 
     expiration {
       days = 30

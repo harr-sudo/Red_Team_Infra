@@ -42,6 +42,27 @@ def get_config():
             "error": str(e)
         }), 500
 
+@bp.route('/', methods=['DELETE'])
+def delete_config():
+    """Delete the saved configuration file"""
+    try:
+        if tfvars_file.exists():
+            tfvars_file.unlink()
+            return jsonify({
+                "success": True,
+                "message": "Configuration file deleted successfully"
+            })
+        else:
+            return jsonify({
+                "success": True,
+                "message": "No configuration file to delete"
+            })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
 @bp.route('/', methods=['POST'])
 def update_config():
     """Update configuration"""

@@ -141,7 +141,9 @@ fi
 echo "[5/6] Creating systemd service..."
 
 if [ -n "$CS_PASSWORD" ] && [ "$CS_PASSWORD" != "" ] && [ -f /opt/cobaltstrike/teamserver ]; then
-    cat > /etc/systemd/system/teamserver.service << 'SERVICEEOF'
+    # Create systemd service file
+    # Note: Using double-quoted heredoc (EOF not 'EOF') to allow variable expansion
+    cat > /etc/systemd/system/teamserver.service << EOF
 [Unit]
 Description=Cobalt Strike Team Server
 After=network.target
@@ -151,7 +153,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/opt/cobaltstrike
-ExecStart=/opt/cobaltstrike/teamserver 0.0.0.0 ${cs_password}
+ExecStart=/opt/cobaltstrike/teamserver 0.0.0.0 $CS_PASSWORD
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:/opt/logs/teamserver.log
@@ -159,7 +161,7 @@ StandardError=append:/opt/logs/teamserver-error.log
 
 [Install]
 WantedBy=multi-user.target
-SERVICEEOF
+EOF
 
     # Reload systemd and enable service
     systemctl daemon-reload

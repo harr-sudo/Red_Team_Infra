@@ -37,9 +37,9 @@ resource "aws_instance" "bastion" {
 
   # Root volume configuration
   root_block_device {
-    volume_type = "gp3"
-    volume_size = var.root_volume_size
-    encrypted   = true
+    volume_type           = "gp3"
+    volume_size           = var.root_volume_size
+    encrypted             = true
     delete_on_termination = true
   }
 
@@ -58,25 +58,25 @@ resource "aws_instance" "bastion" {
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-bastion-jumpbox"
-      Type = "BastionHost"
+      Name      = "${var.project_name}-${var.environment}-bastion-jumpbox"
+      Type      = "BastionHost"
       Component = "Management"
-      OS = "WindowsServer"
-      WSL2 = "Enabled"
+      OS        = "WindowsServer"
+      WSL2      = "Enabled"
     }
   )
 }
 
 # Elastic IP for bastion (always needed for RDP access)
 resource "aws_eip" "bastion_eip" {
-  domain = "vpc"
+  domain   = "vpc"
   instance = aws_instance.bastion.id
 
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-bastion-eip"
-      Type = "ElasticIP"
+      Name      = "${var.project_name}-${var.environment}-bastion-eip"
+      Type      = "ElasticIP"
       Component = "Management"
     }
   )

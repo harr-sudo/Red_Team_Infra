@@ -57,6 +57,15 @@ const APP = {
             return;
         }
         
+        // Clear deployment polling when leaving the deployment page
+        if (this.currentPage === 'deployment' && pageName !== 'deployment') {
+            if (deploymentPollInterval) {
+                clearInterval(deploymentPollInterval);
+                deploymentPollInterval = null;
+                console.log('🛑 Cleared deployment polling interval');
+            }
+        }
+        
         // Hide all pages
         const allPages = document.querySelectorAll('.tab-page');
         allPages.forEach(page => {
@@ -110,6 +119,9 @@ const APP = {
                     loadConfig();
                     break;
                 case 'deployment':
+                    // Reset plan state when navigating to deployment page
+                    isPlanRunning = false;
+                    loadConfigSummary();
                     checkDeploymentStatus();
                     checkDomainConfig();
                     checkCobaltStrikeFile();
@@ -148,6 +160,37 @@ const APP = {
         const deleteBtn = document.getElementById('delete-file-btn');
         if (deleteBtn) {
             deleteBtn.addEventListener('click', handleFileDelete);
+        }
+        
+        // SSL configuration handlers
+        this.setupSSLHandlers();
+    },
+    
+    /**
+     * Setup SSL configuration event handlers
+     */
+    setupSSLHandlers() {
+        // Enable SSL checkbox
+        const enableSslCheckbox = document.getElementById('enable-ssl');
+        if (enableSslCheckbox) {
+            enableSslCheckbox.addEventListener('change', function() {
+                const sslOptions = document.getElementById('ssl-options');
+                if (sslOptions) {
+                    sslOptions.style.opacity = this.checked ? '1' : '0.5';
+                    sslOptions.style.pointerEvents = this.checked ? 'auto' : 'none';
+                }
+            });
+        }
+        
+        // SSL provider dropdown
+        const sslProviderSelect = document.getElementById('ssl-provider');
+        if (sslProviderSelect) {
+            sslProviderSelect.addEventListener('change', function() {
+                const letsencryptOptions = document.getElementById('letsencrypt-options');
+                if (letsencryptOptions) {
+                    letsencryptOptions.style.display = this.value === 'letsencrypt' ? 'block' : 'none';
+                }
+            });
         }
     }
 };
@@ -268,6 +311,82 @@ function parseCidrInput(input) {
         .split(',')
         .map(cidr => cidr.trim())
         .filter(cidr => cidr.length > 0);
+}
+
+/**
+ * Fetch user's public IP address and populate the Management CIDR field
+ */
+async function fetchMyPublicIP() {
+    const btn = document.getElementById('fetch-ip-btn');
+    const cidrInput = document.getElementById('management-cidr');
+    
+    if (!btn || !cidrInput) return;
+    
+    // Show loading state
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Fetching...';
+    btn.disabled = true;
+    
+    try {
+        // Try multiple IP services in case one fails
+        const ipServices = [
+            'https://api.ipify.org?format=json',
+            'https://ipinfo.io/json',
+            'https://api.ip.sb/geoip'
+        ];
+        
+        let publicIP = null;
+        
+        for (const service of ipServices) {
+            try {
+                const response = await fetch(service, { timeout: 5000 });
+                if (response.ok) {
+                    const data = await response.json();
+                    publicIP = data.ip;
+                    if (publicIP) break;
+                }
+            } catch (e) {
+                console.log(`IP service ${service} failed, trying next...`);
+            }
+        }
+        
+        if (publicIP) {
+            // Format as CIDR /32 for single IP
+            const cidrValue = `${publicIP}/32`;
+            
+            // Check if there's already content in the field
+            const currentValue = cidrInput.value.trim();
+            if (currentValue) {
+                // Ask if they want to replace or append
+                const existingCidrs = parseCidrInput(currentValue);
+                if (!existingCidrs.includes(cidrValue)) {
+                    cidrInput.value = currentValue + ', ' + cidrValue;
+                    showMessage(`Added your IP (${publicIP}) to existing CIDR blocks`, 'success');
+                } else {
+                    showMessage(`Your IP (${publicIP}) is already in the list`, 'info');
+                }
+            } else {
+                cidrInput.value = cidrValue;
+                showMessage(`Your public IP: ${publicIP}`, 'success');
+            }
+            
+            btn.innerHTML = '✅ Got IP!';
+            setTimeout(() => {
+                btn.innerHTML = originalText;
+            }, 2000);
+        } else {
+            throw new Error('Could not determine public IP');
+        }
+    } catch (error) {
+        console.error('Error fetching public IP:', error);
+        showMessage('Could not fetch public IP. Please enter manually.', 'error');
+        btn.innerHTML = '❌ Failed';
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+        }, 2000);
+    } finally {
+        btn.disabled = false;
+    }
 }
 
 // Deployment type configurations (combines C2 and GOAD)
@@ -637,6 +756,11 @@ function updateDeploymentType() {
     // Get domain config section (we'll show/hide based on deployment type)
     const domainConfigSection = document.getElementById('domain-config-section');
     
+    // Get key pair field elements
+    const keyPairInput = document.getElementById('key-pair-name');
+    const keyPairGroup = document.getElementById('key-pair-name-group');
+    const keyPairHint = document.getElementById('key-pair-name-hint');
+    
     const config = DEPLOYMENT_CONFIGS[deploymentType];
     
     if (config) {
@@ -672,6 +796,34 @@ function updateDeploymentType() {
             instanceTypeGroup.style.display = config.type === 'goad' ? 'none' : 'block';
         }
         
+        // Handle key_pair_name field based on deployment type
+        // GOAD-only deployments auto-generate their own SSH keys
+        const isGoadOnly = config.type === 'goad';
+        if (keyPairInput) {
+            if (isGoadOnly) {
+                keyPairInput.disabled = true;
+                keyPairInput.value = '';
+                keyPairInput.placeholder = 'Not required - auto-generated';
+                keyPairInput.style.backgroundColor = '#f5f5f5';
+                keyPairInput.style.cursor = 'not-allowed';
+            } else {
+                keyPairInput.disabled = false;
+                keyPairInput.placeholder = 'red-team-keypair';
+                keyPairInput.style.backgroundColor = '';
+                keyPairInput.style.cursor = '';
+            }
+        }
+        if (keyPairGroup) {
+            keyPairGroup.style.opacity = isGoadOnly ? '0.6' : '1';
+        }
+        if (keyPairHint) {
+            if (isGoadOnly) {
+                keyPairHint.innerHTML = '<span style="color: #4CAF50;">✅ GOAD deployments auto-generate SSH keys. Download them after deployment.</span>';
+            } else {
+                keyPairHint.innerHTML = 'AWS EC2 key pair for SSH access to C2 servers';
+            }
+        }
+        
         // Show/hide domain config based on whether it's required
         if (domainConfigSection) {
             if (config.requiresDomain) {
@@ -679,6 +831,21 @@ function updateDeploymentType() {
             } else {
                 domainConfigSection.style.display = 'none';
             }
+        }
+        
+        // Show/hide Malleable C2 profile section for C2 deployments
+        const malleableSection = document.getElementById('malleable-profile-section');
+        if (malleableSection) {
+            // Show for any deployment that includes C2 infrastructure
+            const hasC2 = config.type === 'c2' || config.type === 'combined';
+            malleableSection.style.display = hasC2 ? 'block' : 'none';
+        }
+        
+        // Show/hide SSL config section for C2 deployments
+        const sslSection = document.getElementById('ssl-config-section');
+        if (sslSection) {
+            const hasC2 = config.type === 'c2' || config.type === 'combined';
+            sslSection.style.display = hasC2 ? 'block' : 'none';
         }
         
         // Show and populate overview
@@ -754,6 +921,20 @@ function updateDeploymentType() {
             instanceTypeGroup.style.display = 'block';
         }
         
+        // Reset key pair field to default state
+        if (keyPairInput) {
+            keyPairInput.disabled = false;
+            keyPairInput.placeholder = 'red-team-keypair';
+            keyPairInput.style.backgroundColor = '';
+            keyPairInput.style.cursor = '';
+        }
+        if (keyPairGroup) {
+            keyPairGroup.style.opacity = '1';
+        }
+        if (keyPairHint) {
+            keyPairHint.innerHTML = 'AWS EC2 key pair for SSH access to C2 servers';
+        }
+        
         // Show domain config by default
         if (domainConfigSection) {
             domainConfigSection.style.display = 'block';
@@ -789,6 +970,20 @@ async function saveConfig() {
         const deploymentType = document.getElementById('deployment-type')?.value || '';
         const deployConfig = DEPLOYMENT_CONFIGS[deploymentType] || {};
         
+        // Get SSL configuration
+        const enableSsl = document.getElementById('enable-ssl')?.checked ?? true;
+        const sslProvider = document.getElementById('ssl-provider')?.value || 'letsencrypt';
+        const adminEmail = document.getElementById('admin-email')?.value?.trim() || '';
+        const sslAutoRetry = document.getElementById('ssl-auto-retry')?.checked ?? true;
+        
+        // Only validate admin email if deployment requires domain (C2-only or full red team)
+        const requiresDomain = deployConfig.requiresDomain === true;
+        if (requiresDomain && enableSsl && sslProvider === 'letsencrypt' && !adminEmail) {
+            showMessage('Error: Admin email is required for Let\'s Encrypt SSL', 'error');
+            document.getElementById('admin-email')?.focus();
+            return;
+        }
+        
         const config = {
             deployment_type: deploymentType,
             engagement_type: deployConfig.c2Mode || '', // For backward compatibility
@@ -800,9 +995,16 @@ async function saveConfig() {
             management_cidr_blocks: cidrBlocks,
             primary_domain_name: document.getElementById('primary-domain').value.trim(),
             backup_domains: backupDomains,
-            c2_subdomain: document.getElementById('c2-subdomain').value.trim() || 'c2',
+            c2_subdomain: document.getElementById('c2-subdomain').value.trim() || 'api',
             www_subdomain: document.getElementById('www-subdomain').value.trim() || 'www',
             cdn_subdomain: document.getElementById('cdn-subdomain').value.trim() || 'cdn',
+            malleable_profile: document.getElementById('malleable-profile')?.value || 'default',
+            // SSL configuration
+            enable_ssl_certificate: enableSsl,
+            ssl_provider: sslProvider,
+            ssl_auto_retry: sslAutoRetry,
+            admin_email: adminEmail,
+            // Server configuration
             c2_server_count: parseInt(document.getElementById('c2-server-count').value),
             c2_server_instance_type: document.getElementById('c2-instance-type').value
         };
@@ -879,11 +1081,242 @@ async function validateConfig() {
     }
 }
 
+/**
+ * Clear all configuration - resets form and deletes saved config file
+ */
+async function clearConfig() {
+    if (!confirm('⚠️ Clear All Configuration?\n\nThis will:\n• Reset all form fields to defaults\n• Delete the saved terraform.tfvars file\n\nAre you sure?')) {
+        return;
+    }
+    
+    try {
+        // Delete the saved config file on backend
+        const response = await fetch(`${API_BASE}/config/`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        // Reset all form fields to defaults
+        const defaults = {
+            'deployment-type': '',
+            'project-name': '',
+            'environment': 'dev',
+            'aws-region': 'us-east-1',
+            'key-pair-name': '',
+            'management-cidr': '',
+            'primary-domain': '',
+            'backup-domains': '',
+            'c2-subdomain': 'c2',
+            'www-subdomain': 'www',
+            'cdn-subdomain': 'cdn',
+            'c2-server-count': '2',
+            'c2-instance-type': 't3.medium'
+        };
+        
+        Object.entries(defaults).forEach(([id, value]) => {
+            const element = document.getElementById(id);
+            if (element) element.value = value;
+        });
+        
+        // Reset deployment type display
+        updateDeploymentType();
+        
+        // Clear the deployment overview
+        const overviewDiv = document.getElementById('deployment-overview');
+        if (overviewDiv) {
+            overviewDiv.innerHTML = '<p style="color: #666; text-align: center;">Select a deployment type above to see details</p>';
+        }
+        
+        if (data.success) {
+            showMessage('Configuration cleared successfully', 'success');
+        } else {
+            showMessage('Form cleared. Note: ' + (data.error || 'Could not delete saved file'), 'warning');
+        }
+    } catch (error) {
+        // Still clear the form even if backend fails
+        showMessage('Form cleared locally. Backend error: ' + error.message, 'warning');
+    }
+}
+
 // ============================================================================
 // DEPLOYMENT FUNCTIONS
 // ============================================================================
 
+/**
+ * Load and display configuration summary on the Deploy page
+ */
+async function loadConfigSummary() {
+    const summarySection = document.getElementById('config-summary-section');
+    const summaryGrid = document.getElementById('config-summary-grid');
+    const warningsDiv = document.getElementById('config-summary-warnings');
+    
+    if (!summarySection || !summaryGrid) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/config`);
+        const data = await response.json();
+        
+        if (!data.success || !data.config) {
+            summarySection.style.display = 'none';
+            return;
+        }
+        
+        const config = data.config;
+        const deploymentType = config.deployment_type || config.engagement_type || '';
+        const deployConfig = DEPLOYMENT_CONFIGS[deploymentType];
+        
+        if (!deploymentType) {
+            summarySection.style.display = 'none';
+            return;
+        }
+        
+        // Show the section
+        summarySection.style.display = 'block';
+        
+        // Build summary items
+        const summaryItems = [];
+        const warnings = [];
+        
+        // Deployment Type
+        summaryItems.push({
+            icon: deployConfig?.type === 'goad' ? '🏰' : (deployConfig?.type === 'c2' ? '🎯' : '🔥'),
+            label: 'Deployment Type',
+            value: deployConfig?.title || deploymentType,
+            color: '#7b1fa2'
+        });
+        
+        // Project Name
+        if (config.project_name) {
+            summaryItems.push({
+                icon: '📁',
+                label: 'Project Name',
+                value: config.project_name,
+                color: '#1565c0'
+            });
+        } else {
+            warnings.push('Project name not set');
+        }
+        
+        // Environment
+        if (config.environment) {
+            summaryItems.push({
+                icon: '🏷️',
+                label: 'Environment',
+                value: config.environment.toUpperCase(),
+                color: config.environment === 'prod' ? '#c62828' : (config.environment === 'staging' ? '#f57c00' : '#2e7d32')
+            });
+        }
+        
+        // AWS Region
+        if (config.aws_region) {
+            summaryItems.push({
+                icon: '🌍',
+                label: 'AWS Region',
+                value: config.aws_region,
+                color: '#0277bd'
+            });
+        } else {
+            warnings.push('AWS region not set');
+        }
+        
+        // Management CIDR
+        const cidrBlocks = config.management_cidr_blocks || [];
+        if (cidrBlocks.length > 0) {
+            summaryItems.push({
+                icon: '🔒',
+                label: 'Management CIDR',
+                value: cidrBlocks.length === 1 ? cidrBlocks[0] : `${cidrBlocks.length} CIDR blocks`,
+                color: '#2e7d32',
+                tooltip: cidrBlocks.join(', ')
+            });
+        } else {
+            warnings.push('⚠️ Management CIDR not set - you won\'t be able to access your infrastructure!');
+        }
+        
+        // Key Pair (only for non-GOAD deployments)
+        const isGoadOnly = deployConfig?.type === 'goad';
+        if (!isGoadOnly) {
+            if (config.key_pair_name) {
+                summaryItems.push({
+                    icon: '🔑',
+                    label: 'Key Pair',
+                    value: config.key_pair_name,
+                    color: '#5d4037'
+                });
+            } else {
+                warnings.push('Key pair name not set (required for C2/Combined)');
+            }
+        } else {
+            summaryItems.push({
+                icon: '🔑',
+                label: 'SSH Keys',
+                value: 'Auto-generated',
+                color: '#4CAF50'
+            });
+        }
+        
+        // Domain (only for C2/Combined)
+        if (deployConfig?.requiresDomain) {
+            if (config.primary_domain_name) {
+                summaryItems.push({
+                    icon: '🌐',
+                    label: 'Primary Domain',
+                    value: config.primary_domain_name,
+                    color: '#1565c0'
+                });
+            } else {
+                warnings.push('Primary domain not configured (required for C2)');
+            }
+        }
+        
+        // Estimated Cost
+        if (deployConfig?.components) {
+            const costComp = deployConfig.components.find(c => c.label.includes('Cost'));
+            if (costComp) {
+                summaryItems.push({
+                    icon: '💰',
+                    label: 'Est. Monthly Cost',
+                    value: costComp.value,
+                    color: '#f57c00'
+                });
+            }
+        }
+        
+        // Render summary grid
+        summaryGrid.innerHTML = summaryItems.map(item => `
+            <div style="background: white; padding: 12px; border-radius: 8px; border-left: 4px solid ${item.color};" ${item.tooltip ? `title="${item.tooltip}"` : ''}>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                    <span style="font-size: 1.2em;">${item.icon}</span>
+                    <span style="font-size: 0.8em; color: #666; text-transform: uppercase;">${item.label}</span>
+                </div>
+                <div style="font-weight: bold; color: #333; font-size: 0.95em; word-break: break-word;">${item.value}</div>
+            </div>
+        `).join('');
+        
+        // Render warnings if any
+        if (warnings.length > 0) {
+            warningsDiv.style.display = 'block';
+            warningsDiv.innerHTML = `
+                <div style="background: #fff3e0; border: 1px solid #ff9800; border-radius: 6px; padding: 12px;">
+                    <div style="font-weight: bold; color: #e65100; margin-bottom: 8px;">⚠️ Configuration Issues:</div>
+                    <ul style="margin: 0; padding-left: 20px; color: #bf360c;">
+                        ${warnings.map(w => `<li style="margin-bottom: 4px;">${w}</li>`).join('')}
+                    </ul>
+                </div>
+            `;
+        } else {
+            warningsDiv.style.display = 'none';
+        }
+        
+    } catch (error) {
+        console.error('Error loading config summary:', error);
+        summarySection.style.display = 'none';
+    }
+}
+
 let deploymentPollInterval = null;
+let isPlanRunning = false;  // Flag to prevent polling from overwriting plan UI
 
 async function checkDeploymentStatus() {
     // First update the deploy page based on selected deployment type
@@ -959,19 +1392,40 @@ function pollDeploymentStatus() {
         deploymentPollInterval = null;
     }
     
+    // Poll every 5 seconds (5000ms) instead of 2 seconds to reduce server load
     deploymentPollInterval = setInterval(async () => {
+        // Skip polling if a plan is currently running to avoid overwriting the UI
+        if (isPlanRunning) {
+            return;
+        }
+        
         try {
             const response = await fetch(`${API_BASE}/deploy/status`);
             const data = await response.json();
             
-            if (data.success && data.status) {
+            // Only update UI if there's an ACTIVE deployment
+            // Don't overwrite the "Ready to Deploy" state when idle/no deployment
+            if (!data.success || !data.status) {
+                return; // No status data, keep current UI
+            }
+            
                 const status = data.status;
+            
+            // Skip if status is idle or not set - don't overwrite ready state
+            if (!status.status || status.status === 'idle' || status.status === 'ready') {
+                return;
+            }
+            
+            // Now we have an active deployment status to show
+            const statusDiv = document.getElementById('deployment-status');
+            const outputDiv = document.getElementById('deployment-output');
+            if (!statusDiv) return;
                 
                 // Build enhanced status display
                 let statusHtml = `
                     <div style="margin-bottom: 15px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                            <strong style="font-size: 1.1em;">${status.current_phase || status.step || 'Initializing...'}</strong>
+                        <strong style="font-size: 1.1em;">${status.current_phase || status.step || 'Deploying...'}</strong>
                             <span style="color: #666;">${status.progress_percent || 0}%</span>
                         </div>
                         
@@ -1053,30 +1507,40 @@ function pollDeploymentStatus() {
                     }
                 } else if (status.status === 'error') {
                     statusDiv.className = 'status-display error';
+                
+                // Filter logs to only show errors
+                const errorLogs = status.logs ? status.logs.filter(log => log.type === 'error') : [];
+                
                     statusDiv.innerHTML = `
                         <div style="padding: 15px;">
                             <h3 style="color: #c62828; margin: 0 0 15px 0;">❌ Deployment Failed</h3>
-                            <p style="margin-bottom: 10px;"><strong>Error:</strong> ${status.error || 'Unknown error'}</p>
-                            <p style="color: #666;">Elapsed time: ${status.elapsed_formatted}</p>
-                            ${status.logs && status.logs.length > 0 ? `
-                                <div style="margin-top: 15px; background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.85em; max-height: 200px; overflow-y: auto;">
-                                    ${status.logs.slice(-10).map(log => {
+                        <p style="color: #666; margin-bottom: 15px;">Elapsed time: ${status.elapsed_formatted}</p>
+                        ${errorLogs.length > 0 ? `
+                            <div style="background: #1a1a2e; color: #e2e8f0; padding: 16px; border-radius: 8px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.9em; max-height: 300px; overflow-y: auto; line-height: 1.6;">
+                                ${errorLogs.map(log => {
                                         const time = new Date(log.timestamp * 1000).toLocaleTimeString();
-                                        const color = log.type === 'error' ? '#f44336' : '#4ec9b0';
-                                        return `<div style="margin-bottom: 4px;"><span style="color: #888;">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
+                                    return `<div style="margin-bottom: 8px;"><span style="color: #888;">[${time}]</span> <span style="color: #ff6b6b;">${log.message}</span></div>`;
                                     }).join('')}
                                 </div>
-                            ` : ''}
+                        ` : `
+                            <div style="background: #1a1a2e; color: #ff6b6b; padding: 16px; border-radius: 8px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.9em;">
+                                ${status.error || 'Unknown error occurred'}
+                            </div>
+                        `}
+                        <div style="margin-top: 15px;">
+                            <button class="btn btn-secondary" onclick="resetPlanAndRetry()" style="margin-right: 10px;">
+                                🔄 Try Again
+                            </button>
+                        </div>
                         </div>
                     `;
                     clearInterval(deploymentPollInterval);
                     deploymentPollInterval = null;
-                }
             }
         } catch (error) {
             console.error('Error checking status:', error);
         }
-    }, 2000);
+    }, 5000);  // Poll every 5 seconds
 }
 
 async function checkDomainConfig() {
@@ -1189,13 +1653,23 @@ async function checkCobaltStrikeFile() {
                 if (fileInfoDiv) fileInfoDiv.style.display = 'none';
             }
             
-            // Check both prerequisites
+            // Check both prerequisites - but domain is only required for certain deployment types
+            const deploymentTypeSelect = document.getElementById('deployment-type');
+            const deploymentType = deploymentTypeSelect?.value || '';
+            const deployConfig = DEPLOYMENT_CONFIGS[deploymentType];
+            const requiresDomain = deployConfig?.requiresDomain || false;
+            
+            let hasDomain = true; // Default to true if domain not required
+            if (requiresDomain) {
             const domainCheck = await fetch(`${API_BASE}/health/domain-config`);
             const domainData = await domainCheck.json();
-            const hasDomain = domainData.success && domainData.configured;
+                hasDomain = domainData.success && domainData.configured;
+            }
             
             if (deployBtn) {
-                if (data.has_file && hasDomain) {
+                // For GOAD-only, just need CS file. For C2/Combined, need both.
+                const prereqsMet = requiresDomain ? (data.has_file && hasDomain) : data.has_file;
+                if (prereqsMet) {
                     deployBtn.disabled = false;
                     deployBtn.style.opacity = '1';
                 } else {
@@ -1207,7 +1681,7 @@ async function checkCobaltStrikeFile() {
             if (warningDiv) {
                 const missing = [];
                 if (!data.has_file) missing.push('Cobalt Strike file');
-                if (!hasDomain) missing.push('Domain configuration');
+                if (requiresDomain && !hasDomain) missing.push('Domain configuration');
                 
                 if (missing.length > 0) {
                     warningDiv.style.display = 'block';
@@ -1317,18 +1791,34 @@ async function handleFileDelete() {
 }
 
 async function startDeployment() {
-    const fileCheck = await fetch(`${API_BASE}/health/cobalt-strike-file`);
-    const fileData = await fileCheck.json();
+    // Get the selected deployment type to check requirements
+    const deploymentTypeSelect = document.getElementById('deployment-type');
+    const deploymentType = deploymentTypeSelect?.value || '';
+    const config = DEPLOYMENT_CONFIGS[deploymentType];
     
-    const domainCheck = await fetch(`${API_BASE}/health/domain-config`);
-    const domainData = await domainCheck.json();
+    // All deployment types include CS (GOAD has it on jumpbox, C2 has it on team servers)
+    const requiresCS = config ? config.requiresCS : true;
+    // Only C2 and Combined need domain (for redirector SSL)
+    const requiresDomain = config ? config.requiresDomain : true;
     
     const missing = [];
+    
+    // Check Cobalt Strike file - required for ALL deployments
+    if (requiresCS) {
+        const fileCheck = await fetch(`${API_BASE}/health/cobalt-strike-file`);
+        const fileData = await fileCheck.json();
     if (!fileData.success || !fileData.has_file) {
         missing.push('Cobalt Strike file');
     }
+    }
+    
+    // Only check domain for deployments that require it (C2 and Combined)
+    if (requiresDomain) {
+        const domainCheck = await fetch(`${API_BASE}/health/domain-config`);
+        const domainData = await domainCheck.json();
     if (!domainData.success || !domainData.configured) {
         missing.push('Domain configuration');
+        }
     }
     
     if (missing.length > 0) {
@@ -1336,7 +1826,9 @@ async function startDeployment() {
         return;
     }
     
-    if (!confirm('Are you sure you want to deploy the infrastructure?')) {
+    // Customize confirmation message based on deployment type
+    const deploymentName = config ? config.title : 'Infrastructure';
+    if (!confirm(`Are you sure you want to deploy ${deploymentName}?\n\nThis will create AWS resources and may incur costs.`)) {
         return;
     }
     
@@ -1361,27 +1853,285 @@ async function startDeployment() {
     }
 }
 
+/**
+ * Copy error output to clipboard
+ */
+function copyErrorOutput(button) {
+    const container = button.closest('div').parentElement;
+    const preElement = container.querySelector('pre');
+    const text = preElement ? preElement.textContent : '';
+    
+    navigator.clipboard.writeText(text).then(() => {
+        const originalText = button.textContent;
+        button.textContent = '✓ Copied!';
+        button.style.background = 'rgba(39, 202, 64, 0.3)';
+        setTimeout(() => {
+            button.textContent = originalText;
+            button.style.background = 'rgba(255,255,255,0.1)';
+        }, 2000);
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+    });
+}
+
+/**
+ * Copy plan output to clipboard
+ */
+function copyPlanOutput(button) {
+    const container = button.closest('div').parentElement;
+    const preElement = container.querySelector('pre');
+    const text = preElement ? preElement.textContent : '';
+    
+    navigator.clipboard.writeText(text).then(() => {
+        const originalText = button.textContent;
+        button.textContent = '✓ Copied!';
+        button.style.background = 'rgba(39, 202, 64, 0.3)';
+        setTimeout(() => {
+            button.textContent = originalText;
+            button.style.background = 'rgba(255,255,255,0.1)';
+        }, 2000);
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+    });
+}
+
+/**
+ * Reset plan state and retry - called when user clicks "Try Again"
+ */
+function resetPlanAndRetry() {
+    isPlanRunning = false;
+    const statusDiv = document.getElementById('deployment-status');
+    const outputDiv = document.getElementById('deployment-output');
+    
+    // Clear the output
+    if (outputDiv) outputDiv.innerHTML = '';
+    
+    // Show initial state briefly then run plan
+    if (statusDiv) {
+        statusDiv.innerHTML = '<p>Preparing to run plan...</p>';
+        statusDiv.className = 'status-display info';
+    }
+    
+    // Small delay then run plan
+    setTimeout(() => runPlan(), 500);
+}
+
 async function runPlan() {
     const statusDiv = document.getElementById('deployment-status');
-    statusDiv.innerHTML = '<div class="spinner"></div>Running Terraform plan...';
+    const outputDiv = document.getElementById('deployment-output');
+    
+    // Set flag to prevent polling from overwriting our UI
+    isPlanRunning = true;
+    
+    // Stage 1: Initial loading state
+    let currentStage = 0;
+    const stages = [
+        { icon: '🔍', text: 'Checking prerequisites...', detail: 'Verifying Terraform and configuration files' },
+        { icon: '🔄', text: 'Initializing Terraform...', detail: 'Downloading providers and modules' },
+        { icon: '🔐', text: 'Authenticating with AWS...', detail: 'Validating credentials and permissions' },
+        { icon: '📊', text: 'Analyzing infrastructure...', detail: 'Computing resource changes' },
+        { icon: '📝', text: 'Generating plan...', detail: 'Creating execution plan' }
+    ];
+    
+    function updateLoadingStage(stageIndex) {
+        const stage = stages[stageIndex] || stages[stages.length - 1];
+        const progressPercent = Math.min(((stageIndex + 1) / stages.length) * 100, 95);
+        
+        statusDiv.innerHTML = `
+            <div style="display: flex; align-items: flex-start; gap: 15px;">
+                <div class="spinner" style="flex-shrink: 0; margin-top: 3px;"></div>
+                <div style="flex: 1;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                        <span style="font-size: 1.3em;">${stage.icon}</span>
+                        <strong>${stage.text}</strong>
+                    </div>
+                    <div style="font-size: 0.85em; color: #666; margin-bottom: 12px;">${stage.detail}</div>
+                    
+                    <!-- Progress bar -->
+                    <div style="background: #e0e0e0; border-radius: 10px; height: 8px; overflow: hidden; margin-bottom: 10px;">
+                        <div style="background: linear-gradient(90deg, #4CAF50, #8BC34A); height: 100%; width: ${progressPercent}%; transition: width 0.5s ease-out; border-radius: 10px;"></div>
+                    </div>
+                    
+                    <!-- Stage indicators -->
+                    <div style="display: flex; justify-content: space-between; font-size: 0.75em; color: #888;">
+                        ${stages.map((s, i) => `
+                            <span style="color: ${i <= stageIndex ? '#4CAF50' : '#ccc'}; font-weight: ${i === stageIndex ? 'bold' : 'normal'};">
+                                ${i < stageIndex ? '✓' : (i === stageIndex ? '●' : '○')}
+                            </span>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.5); border-radius: 6px; font-size: 0.85em; color: #666;">
+                <strong>⏱️ Estimated time:</strong> 1-2 minutes depending on your network and AWS region
+            </div>
+        `;
     statusDiv.className = 'status-display info';
+    }
+    
+    // Start with first stage
+    updateLoadingStage(0);
+    if (outputDiv) outputDiv.textContent = '';
+    
+    // Simulate stage progression while waiting for response
+    const stageInterval = setInterval(() => {
+        currentStage++;
+        if (currentStage < stages.length) {
+            updateLoadingStage(currentStage);
+        }
+    }, 2500); // Advance stage every 2.5 seconds
     
     try {
         const response = await fetch(`${API_BASE}/deploy/plan`);
+        clearInterval(stageInterval);
         const data = await response.json();
         
-        const outputDiv = document.getElementById('deployment-output');
         if (data.success) {
-            statusDiv.innerHTML = '<p>Plan completed successfully</p>';
+            // Plan succeeded - keep showing the result, don't resume polling
+            // User needs to see the plan output before deploying
+            statusDiv.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="font-size: 1.5em;">✅</span>
+                    <div>
+                        <strong style="font-size: 1.1em;">Plan Completed Successfully</strong>
+                        <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">Review the output below, then click "Deploy Infrastructure" to apply.</p>
+                    </div>
+                </div>
+            `;
             statusDiv.className = 'status-display success';
-            if (outputDiv) outputDiv.textContent = data.stdout || 'No changes detected';
+            
+            // Format output - simple scrollable terminal
+            if (outputDiv) {
+                const output = data.stdout || 'No changes detected';
+                outputDiv.innerHTML = `
+                    <div style="margin-top: 15px; background: #1a1a2e; border-radius: 8px; overflow: hidden;">
+                        <div style="padding: 10px 15px; background: rgba(0,0,0,0.3); display: flex; justify-content: space-between; align-items: center;">
+                            <span style="color: #94a3b8; font-size: 0.85em;">📋 Terraform Plan Output</span>
+                            <button onclick="copyPlanOutput(this)" style="padding: 4px 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: #e2e8f0; font-size: 0.75em; cursor: pointer;">Copy</button>
+                        </div>
+                        <pre style="margin: 0; padding: 15px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.85em; line-height: 1.6; color: #4ade80; white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto;">${escapeHtml(output)}</pre>
+                    </div>
+                `;
+            }
         } else {
-            statusDiv.innerHTML = '<p>Plan failed</p>';
+            // Handle different error types with helpful messages
+            const errorType = data.error_type || 'unknown';
+            const helpText = data.help || 'Check the error details below.';
+            const errorMsg = data.error || data.stderr || 'Unknown error occurred';
+            
+            let errorIcon = '❌';
+            let errorTitle = 'Plan Failed';
+            let actionButtons = '';
+            
+            switch (errorType) {
+                case 'terraform_not_installed':
+                    errorIcon = '🔧';
+                    errorTitle = 'Terraform Not Installed';
+                    actionButtons = `
+                        <div style="margin-top: 15px;">
+                            <button class="btn btn-info" onclick="APP.navigateTo('aws-check')" style="margin-right: 10px;">
+                                Go to Prerequisites
+                            </button>
+                            <a href="https://developer.hashicorp.com/terraform/downloads" target="_blank" class="btn btn-secondary">
+                                Download Terraform
+                            </a>
+                        </div>
+                    `;
+                    break;
+                case 'config_missing':
+                    errorIcon = '⚙️';
+                    errorTitle = 'Configuration Missing';
+                    actionButtons = `
+                        <div style="margin-top: 15px;">
+                            <button class="btn btn-primary" onclick="APP.navigateTo('configuration')">
+                                Go to Configuration
+                            </button>
+                        </div>
+                    `;
+                    break;
+                case 'aws_credentials':
+                    errorIcon = '🔐';
+                    errorTitle = 'AWS Credentials Issue';
+                    actionButtons = `
+                        <div style="margin-top: 15px;">
+                            <button class="btn btn-info" onclick="APP.navigateTo('aws-check')">
+                                Check Prerequisites
+                            </button>
+                        </div>
+                        <div style="margin-top: 10px; padding: 10px; background: #fff3cd; border-radius: 6px; font-size: 0.9em;">
+                            <strong>Quick Fix:</strong> Run <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px;">aws configure</code> in your terminal
+                        </div>
+                    `;
+                    break;
+                case 'aws_permissions':
+                    errorIcon = '🔑';
+                    errorTitle = 'AWS Permissions Issue';
+                    actionButtons = `
+                        <div style="margin-top: 15px;">
+                            <button class="btn btn-info" onclick="APP.navigateTo('aws-check')">
+                                Check AWS Permissions
+                            </button>
+                        </div>
+                    `;
+                    break;
+                case 'init_failed':
+                    errorIcon = '🔄';
+                    errorTitle = 'Terraform Initialization Failed';
+                    break;
+                case 'state_lock':
+                    errorIcon = '🔒';
+                    errorTitle = 'State Locked';
+                    actionButtons = `
+                        <div style="margin-top: 10px; padding: 10px; background: #fff3cd; border-radius: 6px; font-size: 0.9em;">
+                            <strong>Note:</strong> Wait a moment and try again. If the issue persists, you may need to manually unlock the state.
+                        </div>
+                    `;
+                    break;
+            }
+            
+            statusDiv.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 15px;">
+                    <span style="font-size: 1.5em;">${errorIcon}</span>
+                    <strong style="font-size: 1.1em;">${errorTitle}</strong>
+                </div>
+                <p style="color: #666; margin: 0 0 15px 0; font-size: 0.9em;">${helpText}</p>
+                ${actionButtons}
+                <div style="margin-top: 15px; display: flex; gap: 10px;">
+                    <button class="btn btn-secondary" onclick="resetPlanAndRetry()">🔄 Try Again</button>
+                </div>
+            `;
             statusDiv.className = 'status-display error';
-            if (outputDiv) outputDiv.textContent = data.stderr || data.error || 'Unknown error';
+            
+            // Show detailed error in output - simple scrollable terminal
+            if (outputDiv && (data.stderr || data.error)) {
+                outputDiv.innerHTML = `
+                    <div style="margin-top: 15px; background: #1a1a2e; border-radius: 8px; overflow: hidden;">
+                        <div style="padding: 10px 15px; background: rgba(0,0,0,0.3); display: flex; justify-content: space-between; align-items: center;">
+                            <span style="color: #94a3b8; font-size: 0.85em;">📋 Error Output</span>
+                            <button onclick="copyErrorOutput(this)" style="padding: 4px 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: #e2e8f0; font-size: 0.75em; cursor: pointer;">Copy</button>
+                        </div>
+                        <pre style="margin: 0; padding: 15px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.85em; line-height: 1.6; color: #ff6b6b; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto;">${escapeHtml(data.stderr || data.error)}</pre>
+                    </div>
+                `;
+            }
         }
     } catch (error) {
-        statusDiv.innerHTML = '<p>Error: ' + error.message + '</p>';
+        clearInterval(stageInterval);
+        // Keep isPlanRunning = true so the error message stays visible
+        statusDiv.innerHTML = `
+            <div style="display: flex; align-items: flex-start; gap: 15px;">
+                <span style="font-size: 2em;">⚠️</span>
+                <div>
+                    <strong>Connection Error</strong>
+                    <div style="margin-top: 10px; color: #666;">
+                        Could not connect to the backend server. Make sure the server is running.
+                    </div>
+                    <div style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.5); border-radius: 6px; font-size: 0.9em;">
+                        <strong>Error:</strong> ${error.message}
+                    </div>
+                </div>
+            </div>
+        `;
         statusDiv.className = 'status-display error';
     }
 }
@@ -1538,6 +2288,100 @@ async function startInfrastructure() {
 // ============================================================================
 // AWS CHECK FUNCTIONS
 // ============================================================================
+
+/**
+ * Check if Terraform CLI is installed
+ */
+async function checkTerraform() {
+    const statusDiv = document.getElementById('terraform-status');
+    const helpDiv = document.getElementById('terraform-install-help');
+    if (!statusDiv) return;
+    
+    statusDiv.innerHTML = '<div class="spinner"></div>Checking Terraform installation...';
+    statusDiv.className = 'status-display info';
+    if (helpDiv) helpDiv.style.display = 'none';
+    
+    try {
+        const response = await fetch(`${API_BASE}/health/terraform`);
+        const data = await response.json();
+        
+        if (data.success && data.installed) {
+            statusDiv.innerHTML = `
+                <div class="status-display success">
+                    <p><strong>✅ Terraform is installed</strong></p>
+                    <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 5px;">
+                        <p><strong>Version:</strong> <code style="background: #f5f5f5; padding: 3px 6px; border-radius: 3px;">${data.version || 'Unknown'}</code></p>
+                        <p><strong>Path:</strong> <code style="background: #f5f5f5; padding: 3px 6px; border-radius: 3px; font-size: 0.85em;">${data.path || 'N/A'}</code></p>
+                    </div>
+                </div>
+            `;
+            if (helpDiv) helpDiv.style.display = 'none';
+        } else {
+            statusDiv.innerHTML = `
+                <div class="status-display error">
+                    <p><strong>❌ Terraform is NOT installed</strong></p>
+                    <p style="margin-top: 10px; color: #666;">${data.error || 'Terraform CLI was not found in your system PATH.'}</p>
+                </div>
+            `;
+            if (helpDiv) helpDiv.style.display = 'block';
+        }
+    } catch (error) {
+        statusDiv.innerHTML = `
+            <div class="status-display error">
+                <p><strong>❌ Error checking Terraform</strong></p>
+                <p>${error.message}</p>
+            </div>
+        `;
+        if (helpDiv) helpDiv.style.display = 'block';
+    }
+}
+
+/**
+ * Check if AWS CLI is installed
+ */
+async function checkAWSCLI() {
+    const statusDiv = document.getElementById('aws-cli-status');
+    if (!statusDiv) return;
+    
+    statusDiv.innerHTML = '<div class="spinner"></div>Checking AWS CLI installation...';
+    statusDiv.className = 'status-display info';
+    
+    try {
+        const response = await fetch(`${API_BASE}/health/aws-cli`);
+        const data = await response.json();
+        
+        if (data.success && data.installed) {
+            statusDiv.innerHTML = `
+                <div class="status-display success">
+                    <p><strong>✅ AWS CLI is installed</strong></p>
+                    <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 5px;">
+                        <p><strong>Version:</strong> <code style="background: #f5f5f5; padding: 3px 6px; border-radius: 3px;">${data.version || 'Unknown'}</code></p>
+                        <p><strong>Path:</strong> <code style="background: #f5f5f5; padding: 3px 6px; border-radius: 3px; font-size: 0.85em;">${data.path || 'N/A'}</code></p>
+                    </div>
+                </div>
+            `;
+        } else {
+            statusDiv.innerHTML = `
+                <div class="status-display error">
+                    <p><strong>❌ AWS CLI is NOT installed</strong></p>
+                    <p style="margin-top: 10px; color: #666;">${data.error || 'AWS CLI was not found in your system PATH.'}</p>
+                    <div style="margin-top: 15px; padding: 15px; background: white; border-radius: 5px; border-left: 4px solid #ff9800;">
+                        <p><strong>How to install:</strong></p>
+                        <p style="margin-top: 5px;"><code style="background: #1e1e1e; color: #4ec9b0; padding: 8px; border-radius: 4px; display: block;">brew install awscli</code></p>
+                        <p style="margin-top: 10px; font-size: 0.9em; color: #666;">Or download from <a href="https://aws.amazon.com/cli/" target="_blank" style="color: #ff9800;">aws.amazon.com/cli</a></p>
+                    </div>
+                </div>
+            `;
+        }
+    } catch (error) {
+        statusDiv.innerHTML = `
+            <div class="status-display error">
+                <p><strong>❌ Error checking AWS CLI</strong></p>
+                <p>${error.message}</p>
+            </div>
+        `;
+    }
+}
 
 async function checkAWSCredentials() {
     const statusDiv = document.getElementById('aws-credentials-status');
@@ -2045,8 +2889,19 @@ async function showGoadJumpbox() {
  */
 async function loadDeploymentsPage() {
     console.log('Loading Deployments page...');
-    await refreshDeployments();
-    // Note: GOAD status is already loaded by refreshDeployments()
+    
+    // Show sections immediately (they start hidden)
+    const resourceSection = document.getElementById('resource-list-section');
+    const historySection = document.getElementById('deployment-history-section');
+    if (resourceSection) resourceSection.style.display = 'block';
+    if (historySection) historySection.style.display = 'block';
+    
+    // Load all data in parallel for faster page load
+    await Promise.all([
+        refreshDeployments(),
+        loadResourceList(),
+        loadDeploymentHistory()
+    ]);
 }
 
 /**
@@ -2184,7 +3039,7 @@ async function refreshDeployments() {
             populateC2ServersSection(data.c2_servers, data.deployment_mode);
             populateRedirectorsSection(data.redirectors);
             populateNetworkSection(data.network, data.security_groups);
-            populateConnectionInfo(data);
+            await populateConnectionInfo(data);
         } else {
             hideAllInfrastructureSections();
         }
@@ -2219,6 +3074,655 @@ function hideAllInfrastructureSections() {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
     });
+}
+
+// =============================================================================
+// RESOURCE LIST FUNCTIONS
+// =============================================================================
+
+// Store all resources for filtering
+let allResources = [];
+
+/**
+ * Load and display all deployed resources
+ */
+async function loadResourceList() {
+    const section = document.getElementById('resource-list-section');
+    const tableBody = document.getElementById('resource-table-body');
+    const countDiv = document.getElementById('resource-count');
+    
+    if (!section || !tableBody) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/resources`);
+        const data = await response.json();
+        
+        if (!data.success) {
+            tableBody.innerHTML = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: #666;">No resources found or error loading resources</td></tr>`;
+            return;
+        }
+        
+        allResources = data.resources || [];
+        
+        if (allResources.length === 0) {
+            tableBody.innerHTML = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: #666;">No deployed resources</td></tr>`;
+            countDiv.textContent = '0 resources';
+            return;
+        }
+        
+        // Show section
+        section.style.display = 'block';
+        
+        // Render resources
+        renderResourceTable(allResources);
+        
+    } catch (error) {
+        console.error('Error loading resources:', error);
+        tableBody.innerHTML = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: #c62828;">Error loading resources: ${error.message}</td></tr>`;
+    }
+}
+
+/**
+ * Render resource table with given resources
+ */
+function renderResourceTable(resources) {
+    const tableBody = document.getElementById('resource-table-body');
+    const countDiv = document.getElementById('resource-count');
+    
+    if (!tableBody) return;
+    
+    const typeIcons = {
+        'ec2': '🖥️',
+        'vpc': '🌐',
+        'subnet': '📡',
+        'sg': '🔒',
+        'eip': '🔗',
+        'nat': '🚪',
+        's3': '📦',
+        'igw': '🌍',
+        'rtb': '🛣️',
+        'eni': '🔌',
+        'keypair': '🔑',
+        'pcx': '🔀',
+        'iam-role': '👤',
+        'iam-profile': '🎭',
+        'route53-zone': '🌐',
+        'acm-cert': '🔐'
+    };
+    
+    const stateColors = {
+        'running': '#4CAF50',
+        'available': '#4CAF50',
+        'active': '#4CAF50',
+        'stopped': '#ff9800',
+        'pending': '#2196F3',
+        'terminated': '#f44336',
+        'deleted': '#f44336'
+    };
+    
+    tableBody.innerHTML = resources.map((r, idx) => `
+        <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f9f9f9'};">
+            <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                <span style="font-size: 1.2em;">${typeIcons[r.type] || '📄'}</span>
+                <span style="margin-left: 5px; text-transform: uppercase; font-size: 0.8em; color: #666;">${r.type}</span>
+            </td>
+            <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: 500;">${r.name || '-'}</td>
+            <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                <code style="background: #f5f5f5; padding: 3px 8px; border-radius: 3px; font-size: 0.85em;">${r.id || '-'}</code>
+            </td>
+            <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                <span style="background: ${stateColors[r.state?.toLowerCase()] || '#9e9e9e'}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; text-transform: uppercase;">${r.state || 'unknown'}</span>
+            </td>
+            <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 0.85em; color: #666;">${r.details || '-'}</td>
+        </tr>
+    `).join('');
+    
+    countDiv.textContent = `${resources.length} resource${resources.length !== 1 ? 's' : ''} found`;
+}
+
+/**
+ * Filter resources based on type and search
+ */
+function filterResources() {
+    const typeFilter = document.getElementById('resource-type-filter')?.value || 'all';
+    const searchFilter = document.getElementById('resource-search')?.value.toLowerCase() || '';
+    
+    let filtered = allResources;
+    
+    if (typeFilter !== 'all') {
+        filtered = filtered.filter(r => r.type === typeFilter);
+    }
+    
+    if (searchFilter) {
+        filtered = filtered.filter(r => 
+            (r.name && r.name.toLowerCase().includes(searchFilter)) ||
+            (r.id && r.id.toLowerCase().includes(searchFilter)) ||
+            (r.details && r.details.toLowerCase().includes(searchFilter))
+        );
+    }
+    
+    renderResourceTable(filtered);
+}
+
+/**
+ * Refresh resource list
+ */
+async function refreshResourceList() {
+    await loadResourceList();
+    showMessage('Resource list refreshed', 'success');
+}
+
+/**
+ * Export resource list to CSV
+ */
+function exportResourceList() {
+    if (allResources.length === 0) {
+        showMessage('No resources to export', 'warning');
+        return;
+    }
+    
+    const headers = ['Type', 'Name', 'Resource ID', 'State', 'Details'];
+    const rows = allResources.map(r => [
+        r.type || '',
+        r.name || '',
+        r.id || '',
+        r.state || '',
+        r.details || ''
+    ]);
+    
+    const csv = [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aws-resources-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    showMessage('Resource list exported', 'success');
+}
+
+// =============================================================================
+// DEPLOYMENT HISTORY & LOGS FUNCTIONS
+// =============================================================================
+
+// Store deployment logs in memory and localStorage
+let deploymentLogs = [];
+let archivedLogs = [];
+const LOGS_STORAGE_KEY = 'red_team_deployment_logs';
+const ARCHIVED_LOGS_KEY = 'red_team_archived_logs';
+const MAX_LOGS = 500;
+const MAX_ARCHIVED = 2000;
+
+/**
+ * Initialize deployment logs from localStorage
+ */
+function initDeploymentLogs() {
+    try {
+        const stored = localStorage.getItem(LOGS_STORAGE_KEY);
+        if (stored) {
+            deploymentLogs = JSON.parse(stored);
+        }
+        // Also load archived logs
+        const archived = localStorage.getItem(ARCHIVED_LOGS_KEY);
+        if (archived) {
+            archivedLogs = JSON.parse(archived);
+        }
+    } catch (e) {
+        console.error('Error loading deployment logs:', e);
+        deploymentLogs = [];
+    }
+}
+
+/**
+ * Save deployment logs to localStorage
+ */
+function saveDeploymentLogs() {
+    try {
+        // Keep only last MAX_LOGS entries for current view
+        if (deploymentLogs.length > MAX_LOGS) {
+            deploymentLogs = deploymentLogs.slice(-MAX_LOGS);
+        }
+        localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(deploymentLogs));
+    } catch (e) {
+        console.error('Error saving deployment logs:', e);
+    }
+}
+
+/**
+ * Save archived logs to localStorage
+ */
+function saveArchivedLogs() {
+    try {
+        // Keep only last MAX_ARCHIVED entries
+        if (archivedLogs.length > MAX_ARCHIVED) {
+            archivedLogs = archivedLogs.slice(-MAX_ARCHIVED);
+        }
+        localStorage.setItem(ARCHIVED_LOGS_KEY, JSON.stringify(archivedLogs));
+    } catch (e) {
+        console.error('Error saving archived logs:', e);
+    }
+}
+
+/**
+ * Add a log entry (also adds to archive automatically)
+ */
+function addDeploymentLog(message, level = 'info', details = null) {
+    const entry = {
+        timestamp: new Date().toISOString(),
+        level: level,
+        message: message,
+        details: details
+    };
+    
+    // Add to current logs
+    deploymentLogs.push(entry);
+    saveDeploymentLogs();
+    
+    // Also add to archive automatically
+    archivedLogs.push(entry);
+    saveArchivedLogs();
+    
+    // Update UI if on deployments page
+    if (APP.currentPage === 'deployments') {
+        renderDeploymentLogs();
+    }
+}
+
+/**
+ * Load deployment history section
+ */
+async function loadDeploymentHistory() {
+    const section = document.getElementById('deployment-history-section');
+    if (!section) return;
+    
+    // Initialize logs from storage
+    initDeploymentLogs();
+    
+    // Show section if there are logs or active deployment
+    section.style.display = 'block';
+    
+    // Render timeline and logs
+    renderDeploymentTimeline();
+    renderDeploymentLogs();
+    
+    // Also fetch any recent deployment status from backend
+    try {
+        const response = await fetch(`${API_BASE}/deploy/history`);
+        const data = await response.json();
+        
+        if (data.success && data.history) {
+            // Merge server history with local logs AND archive
+            data.history.forEach(h => {
+                // Add to current logs if not exists
+                const existsInLogs = deploymentLogs.some(l => 
+                    l.timestamp === h.timestamp && l.message === h.message
+                );
+                if (!existsInLogs) {
+                    deploymentLogs.push(h);
+                }
+                
+                // Add to archive if not exists
+                const existsInArchive = archivedLogs.some(l => 
+                    l.timestamp === h.timestamp && l.message === h.message
+                );
+                if (!existsInArchive) {
+                    archivedLogs.push(h);
+                }
+            });
+            
+            // Sort by timestamp
+            deploymentLogs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            archivedLogs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            
+            saveDeploymentLogs();
+            saveArchivedLogs();
+            
+            renderDeploymentTimeline();
+            renderDeploymentLogs();
+        }
+    } catch (e) {
+        console.log('No server deployment history available');
+    }
+}
+
+/**
+ * Render deployment timeline
+ */
+function renderDeploymentTimeline() {
+    const timelineContent = document.getElementById('timeline-content');
+    if (!timelineContent) return;
+    
+    // Get unique deployment sessions (group by date)
+    const sessions = {};
+    deploymentLogs.forEach(log => {
+        const date = log.timestamp.split('T')[0];
+        if (!sessions[date]) {
+            sessions[date] = { date, logs: [], hasError: false, hasSuccess: false };
+        }
+        sessions[date].logs.push(log);
+        if (log.level === 'error') sessions[date].hasError = true;
+        if (log.level === 'success') sessions[date].hasSuccess = true;
+    });
+    
+    const sessionList = Object.values(sessions).reverse().slice(0, 10);
+    
+    if (sessionList.length === 0) {
+        timelineContent.innerHTML = '<div style="color: #888; text-align: center;">No deployment history yet</div>';
+        return;
+    }
+    
+    timelineContent.innerHTML = sessionList.map(s => {
+        const statusIcon = s.hasError ? '❌' : (s.hasSuccess ? '✅' : '🔄');
+        const statusColor = s.hasError ? '#f44336' : (s.hasSuccess ? '#4CAF50' : '#2196F3');
+        const logCount = s.logs.length;
+        const lastLog = s.logs[s.logs.length - 1];
+        
+        return `
+            <div style="display: flex; align-items: center; gap: 15px; padding: 10px; margin-bottom: 8px; background: white; border-radius: 6px; border-left: 4px solid ${statusColor};">
+                <span style="font-size: 1.5em;">${statusIcon}</span>
+                <div style="flex: 1;">
+                    <div style="font-weight: bold; color: #333;">${formatDate(s.date)}</div>
+                    <div style="font-size: 0.85em; color: #666;">${logCount} event${logCount !== 1 ? 's' : ''} • Last: ${lastLog.message.substring(0, 50)}${lastLog.message.length > 50 ? '...' : ''}</div>
+                </div>
+                <div style="font-size: 0.8em; color: #888;">${formatTime(lastLog.timestamp)}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * Render deployment logs
+ */
+function renderDeploymentLogs() {
+    const logsDiv = document.getElementById('deployment-logs');
+    if (!logsDiv) return;
+    
+    // Get filter states
+    const showInfo = document.getElementById('log-filter-info')?.checked ?? true;
+    const showSuccess = document.getElementById('log-filter-success')?.checked ?? true;
+    const showWarning = document.getElementById('log-filter-warning')?.checked ?? true;
+    const showError = document.getElementById('log-filter-error')?.checked ?? true;
+    
+    const filtered = deploymentLogs.filter(log => {
+        if (log.level === 'info' && !showInfo) return false;
+        if (log.level === 'success' && !showSuccess) return false;
+        if (log.level === 'warning' && !showWarning) return false;
+        if (log.level === 'error' && !showError) return false;
+        return true;
+    });
+    
+    if (filtered.length === 0) {
+        logsDiv.innerHTML = '<div style="color: #888;">No logs match the current filter</div>';
+        return;
+    }
+    
+    const levelColors = {
+        'info': '#64b5f6',
+        'success': '#81c784',
+        'warning': '#ffb74d',
+        'error': '#e57373'
+    };
+    
+    logsDiv.innerHTML = filtered.slice(-100).reverse().map(log => {
+        const time = formatTimestamp(log.timestamp);
+        const color = levelColors[log.level] || '#888';
+        const levelBadge = `<span style="color: ${color}; font-weight: bold;">[${log.level.toUpperCase()}]</span>`;
+        
+        let html = `<div style="margin-bottom: 8px;"><span style="color: #888;">${time}</span> ${levelBadge} <span style="color: #fff;">${escapeHtml(log.message)}</span></div>`;
+        
+        if (log.details) {
+            html += `<div style="margin-left: 20px; margin-bottom: 12px; padding: 8px; background: #2d2d2d; border-radius: 4px; color: #aaa; font-size: 0.9em; white-space: pre-wrap;">${escapeHtml(log.details)}</span></div>`;
+        }
+        
+        return html;
+    }).join('');
+    
+    // Scroll to bottom
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+}
+
+/**
+ * Filter logs based on checkboxes
+ */
+function filterLogs() {
+    renderDeploymentLogs();
+}
+
+/**
+ * Refresh deployment history
+ */
+async function refreshDeploymentHistory() {
+    await loadDeploymentHistory();
+    showMessage('Deployment history refreshed', 'success');
+}
+
+/**
+ * Clear deployment logs (current view only - archive is preserved)
+ */
+function clearDeploymentLogs() {
+    if (!confirm('Clear current deployment logs?\n\nNote: All logs are automatically saved to the archive and remain accessible via "View Archived" button.')) {
+        return;
+    }
+    
+    deploymentLogs = [];
+    localStorage.removeItem(LOGS_STORAGE_KEY);
+    renderDeploymentTimeline();
+    renderDeploymentLogs();
+    showMessage('Current logs cleared (archive preserved)', 'success');
+}
+
+/**
+ * View archived logs in a modal
+ */
+function viewArchivedLogs() {
+    initDeploymentLogs(); // Ensure archived logs are loaded
+    
+    if (archivedLogs.length === 0) {
+        alert('No archived logs available.');
+        return;
+    }
+    
+    // Create modal
+    const modal = document.createElement('div');
+    modal.id = 'archived-logs-modal';
+    modal.style.cssText = `
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.7); z-index: 10000;
+        display: flex; align-items: center; justify-content: center;
+        padding: 20px;
+    `;
+    
+    // Group logs by date
+    const logsByDate = {};
+    archivedLogs.forEach(log => {
+        const date = new Date(log.timestamp).toLocaleDateString();
+        if (!logsByDate[date]) logsByDate[date] = [];
+        logsByDate[date].push(log);
+    });
+    
+    // Filter state
+    let currentFilter = 'all';
+    
+    function renderArchivedContent() {
+        const filteredLogs = currentFilter === 'all' 
+            ? archivedLogs 
+            : archivedLogs.filter(l => l.level === currentFilter);
+        
+        return `
+            <div style="background: #1e293b; border-radius: 12px; max-width: 900px; width: 100%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column;">
+                <div style="padding: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
+                    <h2 style="margin: 0; color: white;">📚 Archived Logs (${archivedLogs.length} total)</h2>
+                    <button onclick="closeArchivedLogsModal()" style="background: none; border: none; color: white; font-size: 24px; cursor: pointer;">&times;</button>
+                </div>
+                
+                <!-- Filters -->
+                <div style="padding: 15px 20px; background: rgba(0,0,0,0.2); display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                    <span style="color: #94a3b8; font-size: 0.9em;">Filter:</span>
+                    <button onclick="filterArchivedLogs('all')" class="filter-btn ${currentFilter === 'all' ? 'active' : ''}" style="padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.2); background: ${currentFilter === 'all' ? '#3b82f6' : 'transparent'}; color: white; cursor: pointer; font-size: 0.85em;">
+                        All (${archivedLogs.length})
+                    </button>
+                    <button onclick="filterArchivedLogs('info')" class="filter-btn ${currentFilter === 'info' ? 'active' : ''}" style="padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.2); background: ${currentFilter === 'info' ? '#3b82f6' : 'transparent'}; color: white; cursor: pointer; font-size: 0.85em;">
+                        ℹ️ Info (${archivedLogs.filter(l => l.level === 'info').length})
+                    </button>
+                    <button onclick="filterArchivedLogs('success')" class="filter-btn ${currentFilter === 'success' ? 'active' : ''}" style="padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.2); background: ${currentFilter === 'success' ? '#22c55e' : 'transparent'}; color: white; cursor: pointer; font-size: 0.85em;">
+                        ✅ Success (${archivedLogs.filter(l => l.level === 'success').length})
+                    </button>
+                    <button onclick="filterArchivedLogs('error')" class="filter-btn ${currentFilter === 'error' ? 'active' : ''}" style="padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.2); background: ${currentFilter === 'error' ? '#ef4444' : 'transparent'}; color: white; cursor: pointer; font-size: 0.85em;">
+                        ❌ Errors (${archivedLogs.filter(l => l.level === 'error').length})
+                    </button>
+                    <button onclick="filterArchivedLogs('warning')" class="filter-btn ${currentFilter === 'warning' ? 'active' : ''}" style="padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.2); background: ${currentFilter === 'warning' ? '#f59e0b' : 'transparent'}; color: white; cursor: pointer; font-size: 0.85em;">
+                        ⚠️ Warnings (${archivedLogs.filter(l => l.level === 'warning').length})
+                    </button>
+                </div>
+                
+                <!-- Logs content -->
+                <div id="archived-logs-content" style="flex: 1; overflow-y: auto; padding: 20px;">
+                    ${filteredLogs.length === 0 ? `
+                        <p style="text-align: center; color: #94a3b8;">No logs matching filter.</p>
+                    ` : filteredLogs.slice().reverse().map(log => {
+                        const time = new Date(log.timestamp).toLocaleString();
+                        const levelColors = {
+                            info: '#3b82f6',
+                            success: '#22c55e',
+                            error: '#ef4444',
+                            warning: '#f59e0b'
+                        };
+                        const levelIcons = {
+                            info: 'ℹ️',
+                            success: '✅',
+                            error: '❌',
+                            warning: '⚠️'
+                        };
+                        return `
+                            <div style="padding: 12px; margin-bottom: 8px; background: rgba(255,255,255,0.05); border-radius: 8px; border-left: 3px solid ${levelColors[log.level] || '#666'};">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span style="color: ${levelColors[log.level] || '#fff'}; font-weight: 500;">
+                                        ${levelIcons[log.level] || ''} ${log.level.toUpperCase()}
+                                    </span>
+                                    <span style="color: #64748b; font-size: 0.85em;">${time}</span>
+                                </div>
+                                <div style="color: #e2e8f0; font-size: 0.9em;">${escapeHtml(log.message)}</div>
+                                ${log.details ? `<div style="color: #94a3b8; font-size: 0.8em; margin-top: 5px; font-family: monospace;">${escapeHtml(log.details)}</div>` : ''}
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+                
+                <!-- Footer -->
+                <div style="padding: 15px 20px; border-top: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: flex-end;">
+                    <button onclick="downloadArchivedLogs()" style="padding: 8px 16px; background: #3b82f6; border: none; border-radius: 6px; color: white; cursor: pointer; font-size: 0.9em;">
+                        📥 Download All
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+    
+    modal.innerHTML = renderArchivedContent();
+    document.body.appendChild(modal);
+    
+    // Store filter function globally for button clicks
+    window.filterArchivedLogs = (filter) => {
+        currentFilter = filter;
+        modal.innerHTML = renderArchivedContent();
+    };
+    
+    // Close on backdrop click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeArchivedLogsModal();
+    });
+}
+
+function closeArchivedLogsModal() {
+    const modal = document.getElementById('archived-logs-modal');
+    if (modal) modal.remove();
+}
+
+function clearArchivedLogs() {
+    if (!confirm('Permanently delete all archived logs? This cannot be undone.')) {
+        return;
+    }
+    archivedLogs = [];
+    localStorage.removeItem(ARCHIVED_LOGS_KEY);
+    closeArchivedLogsModal();
+    showMessage('Archived logs cleared', 'success');
+}
+
+function downloadArchivedLogs() {
+    const logText = archivedLogs.map(log => 
+        `[${log.timestamp}] [${log.level.toUpperCase()}] ${log.message}${log.details ? '\n  ' + log.details : ''}`
+    ).join('\n');
+    
+    const blob = new Blob([logText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `archived-deployment-logs-${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    showMessage('Archived logs downloaded', 'success');
+}
+
+/**
+ * Copy logs to clipboard
+ */
+function copyLogs() {
+    const logText = deploymentLogs.map(log => 
+        `[${log.timestamp}] [${log.level.toUpperCase()}] ${log.message}${log.details ? '\n  ' + log.details : ''}`
+    ).join('\n');
+    
+    navigator.clipboard.writeText(logText).then(() => {
+        showMessage('Logs copied to clipboard', 'success');
+    }).catch(err => {
+        showMessage('Failed to copy logs', 'error');
+    });
+}
+
+/**
+ * Download logs as file
+ */
+function downloadLogs() {
+    const logText = deploymentLogs.map(log => 
+        `[${log.timestamp}] [${log.level.toUpperCase()}] ${log.message}${log.details ? '\n  ' + log.details : ''}`
+    ).join('\n');
+    
+    const blob = new Blob([logText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `deployment-logs-${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    showMessage('Logs downloaded', 'success');
+}
+
+// Helper functions
+function formatDate(dateStr) {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatTime(timestamp) {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    return date.toLocaleString('en-US', { 
+        month: 'short', day: 'numeric', 
+        hour: '2-digit', minute: '2-digit', second: '2-digit' 
+    });
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 /**
@@ -2377,6 +3881,126 @@ function populateRedirectorsSection(redirectors) {
     
     html += '</div>';
     details.innerHTML = html;
+    
+    // Load SSL status for redirectors
+    loadSSLStatus(publicIps);
+}
+
+/**
+ * Load SSL status for redirectors
+ */
+async function loadSSLStatus(redirectorIps) {
+    const sslContent = document.getElementById('ssl-status-content');
+    if (!sslContent) return;
+    
+    if (!redirectorIps || redirectorIps.length === 0) {
+        sslContent.innerHTML = '<p style="color: #666;">No redirectors deployed</p>';
+        return;
+    }
+    
+    // For now, show status based on config (actual status would require SSM or API call to redirector)
+    try {
+        const configResponse = await fetch(`${API_BASE}/config/`);
+        const configData = await configResponse.json();
+        
+        if (!configData.success) {
+            sslContent.innerHTML = '<p style="color: #666;">Unable to load SSL configuration</p>';
+            return;
+        }
+        
+        const config = configData.config || {};
+        const sslProvider = config.ssl_provider || 'letsencrypt';
+        const adminEmail = config.admin_email || '';
+        const sslAutoRetry = config.ssl_auto_retry !== false;
+        const enableSsl = config.enable_ssl_certificate !== false;
+        
+        if (!enableSsl) {
+            sslContent.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: #fff3e0; border-radius: 6px;">
+                    <span style="font-size: 1.5em;">⚠️</span>
+                    <div>
+                        <strong style="color: #e65100;">SSL Disabled</strong>
+                        <p style="margin: 5px 0 0 0; font-size: 0.9em; color: #666;">HTTPS is not configured on redirectors</p>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+        
+        let statusHtml = '';
+        
+        if (sslProvider === 'letsencrypt') {
+            statusHtml = `
+                <div style="display: grid; gap: 15px;">
+                    <div style="display: flex; align-items: center; gap: 10px; padding: 12px; background: #e3f2fd; border-radius: 6px;">
+                        <span style="font-size: 1.5em;">🔒</span>
+                        <div>
+                            <strong style="color: #1565c0;">Let's Encrypt</strong>
+                            <p style="margin: 5px 0 0 0; font-size: 0.9em; color: #666;">
+                                Auto-renewal enabled • Notifications to: ${adminEmail || 'Not set'}
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div style="font-size: 0.9em;">
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                            <div style="padding: 10px; background: #f5f5f5; border-radius: 4px;">
+                                <strong>Auto-Retry:</strong> ${sslAutoRetry ? '✅ Enabled' : '❌ Disabled'}
+                            </div>
+                            <div style="padding: 10px; background: #f5f5f5; border-radius: 4px;">
+                                <strong>Certificate Validity:</strong> 90 days
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="padding: 12px; background: #fff8e1; border-radius: 6px; font-size: 0.85em;">
+                        <strong>📋 Certificate Status Check:</strong>
+                        <p style="margin: 8px 0 0 0; color: #666;">
+                            SSH into a redirector and run: <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px;">cat /opt/ssl-status.json</code>
+                        </p>
+                        <p style="margin: 5px 0 0 0; color: #666;">
+                            Or check logs: <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px;">tail -f /var/log/ssl-auto-request.log</code>
+                        </p>
+                    </div>
+                </div>
+            `;
+        } else {
+            statusHtml = `
+                <div style="display: flex; align-items: center; gap: 10px; padding: 12px; background: #fff3e0; border-radius: 6px;">
+                    <span style="font-size: 1.5em;">⚠️</span>
+                    <div>
+                        <strong style="color: #e65100;">Self-Signed Certificate</strong>
+                        <p style="margin: 5px 0 0 0; font-size: 0.9em; color: #666;">
+                            Browsers will show security warnings. Consider switching to Let's Encrypt.
+                        </p>
+                    </div>
+                </div>
+            `;
+        }
+        
+        sslContent.innerHTML = statusHtml;
+        
+    } catch (error) {
+        console.error('Error loading SSL status:', error);
+        sslContent.innerHTML = '<p style="color: #c62828;">Error loading SSL status</p>';
+    }
+}
+
+/**
+ * Refresh SSL status
+ */
+async function refreshSSLStatus() {
+    const sslContent = document.getElementById('ssl-status-content');
+    if (sslContent) {
+        sslContent.innerHTML = '<p style="color: #666; font-style: italic;">Refreshing...</p>';
+    }
+    
+    // Get redirector IPs from the page
+    const redirectorDetails = document.getElementById('redirectors-details');
+    if (redirectorDetails) {
+        const ipMatches = redirectorDetails.innerHTML.match(/\d+\.\d+\.\d+\.\d+/g) || [];
+        await loadSSLStatus(ipMatches);
+    }
 }
 
 /**
@@ -2435,7 +4059,7 @@ function populateNetworkSection(network, securityGroups) {
 /**
  * Populate connection info section
  */
-function populateConnectionInfo(data) {
+async function populateConnectionInfo(data) {
     const section = document.getElementById('connection-info-section');
     const commands = document.getElementById('connection-commands');
     
@@ -2445,6 +4069,18 @@ function populateConnectionInfo(data) {
     }
     
     section.style.display = 'block';
+    
+    // Get the configured key pair name from config
+    let keyPairName = 'your-key';
+    try {
+        const configResponse = await fetch(`${API_BASE}/config/`);
+        const configData = await configResponse.json();
+        if (configData.success && configData.config?.key_pair_name) {
+            keyPairName = configData.config.key_pair_name;
+        }
+    } catch (e) {
+        console.log('Could not fetch key pair name from config');
+    }
     
     let html = '';
     
@@ -2456,6 +4092,9 @@ function populateConnectionInfo(data) {
                 <code style="background: #1e1e1e; color: #4ec9b0; padding: 10px 15px; border-radius: 5px; display: block; overflow-x: auto;">
                     mstsc /v:${data.bastion.public_ip}
                 </code>
+                <p style="color: #666; font-size: 0.85em; margin-top: 8px;">
+                    Username: <code>Administrator</code> | Get password from AWS Console using your key pair
+                </p>
             </div>
         `;
     }
@@ -2466,11 +4105,14 @@ function populateConnectionInfo(data) {
         html += `
             <div style="margin-bottom: 20px;">
                 <h4 style="margin: 0 0 10px 0;">🎯 SSH to C2 Servers (via Bastion WSL2)</h4>
+                <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">
+                    Connect through the Windows Bastion's WSL2 environment.
+                </p>
                 ${c2Ips.map((ip, idx) => `
                     <div style="margin-bottom: 10px;">
                         <span style="color: #666;">C2 Server ${idx + 1}:</span>
                         <code style="background: #1e1e1e; color: #4ec9b0; padding: 10px 15px; border-radius: 5px; display: block; margin-top: 5px; overflow-x: auto;">
-                            ssh -J wsl@${data.bastion.public_ip} ec2-user@${ip}
+                            ssh -i ~/.ssh/${keyPairName}.pem ubuntu@${ip}
                         </code>
                     </div>
                 `).join('')}
@@ -2484,16 +4126,262 @@ function populateConnectionInfo(data) {
         html += `
             <div style="margin-bottom: 20px;">
                 <h4 style="margin: 0 0 10px 0;">🔀 SSH to Redirectors</h4>
+                <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">
+                    Direct SSH access. Redirectors run Ubuntu.
+                </p>
                 ${redirectorIps.map((ip, idx) => `
                     <div style="margin-bottom: 10px;">
                         <span style="color: #666;">Redirector ${idx + 1}:</span>
                         <code style="background: #1e1e1e; color: #4ec9b0; padding: 10px 15px; border-radius: 5px; display: block; margin-top: 5px; overflow-x: auto;">
-                            ssh ec2-user@${ip}
+                            ssh -i ~/.ssh/${keyPairName}.pem ubuntu@${ip}
                         </code>
                     </div>
                 `).join('')}
+                
+                <details style="margin-top: 15px;">
+                    <summary style="cursor: pointer; color: #1976d2; font-weight: 500;">
+                        📋 Common Redirector Commands
+                    </summary>
+                    <div style="margin-top: 10px; padding: 15px; background: #f5f5f5; border-radius: 5px; font-size: 0.9em;">
+                        <p style="margin: 0 0 10px 0;"><strong>Check SSL Status:</strong></p>
+                        <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block;">cat /opt/ssl-status.json</code>
+                        
+                        <p style="margin: 15px 0 10px 0;"><strong>View Nginx Config:</strong></p>
+                        <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block;">sudo cat /etc/nginx/sites-enabled/default</code>
+                        
+                        <p style="margin: 15px 0 10px 0;"><strong>Edit Nginx (for URI changes):</strong></p>
+                        <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block;">sudo nano /etc/nginx/sites-enabled/default</code>
+                        
+                        <p style="margin: 15px 0 10px 0;"><strong>Reload Nginx After Changes:</strong></p>
+                        <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block;">sudo nginx -t && sudo systemctl reload nginx</code>
+                        
+                        <p style="margin: 15px 0 10px 0;"><strong>View Access Logs:</strong></p>
+                        <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block;">sudo tail -f /var/log/nginx/access.log</code>
+                        
+                        <p style="margin: 15px 0 10px 0;"><strong>Manual Let's Encrypt Request:</strong></p>
+                        <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block;">sudo certbot --nginx -d yourdomain.com</code>
+                    </div>
+                </details>
             </div>
         `;
+    }
+    
+    // GOAD Jumpbox (fetch from GOAD API)
+    try {
+        const goadResponse = await fetch(`${API_BASE}/goad/jumpbox`);
+        const goadData = await goadResponse.json();
+        
+        if (goadData.success && goadData.jumpbox) {
+            const jb = goadData.jumpbox;
+            
+            // Also fetch credentials
+            let credsHtml = '';
+            try {
+                const credsResponse = await fetch(`${API_BASE}/goad/credentials`);
+                const credsData = await credsResponse.json();
+                
+                if (credsData.success && credsData.credentials) {
+                    const creds = credsData.credentials;
+                    credsHtml = `
+                        <details style="margin-top: 15px;">
+                            <summary style="cursor: pointer; color: #d32f2f; font-weight: 500;">
+                                🔑 GOAD Default Credentials
+                            </summary>
+                            <div style="margin-top: 10px; padding: 15px; background: #ffebee; border-radius: 5px; font-size: 0.9em;">
+                                <p style="margin: 0 0 15px 0; color: #c62828;">
+                                    <strong>⚠️ Intentionally Vulnerable:</strong> These are default GOAD credentials for the <strong>${creds.lab_display_name || creds.lab_name}</strong> lab.
+                                </p>
+                                
+                                <div style="background: white; padding: 12px; border-radius: 5px; margin-bottom: 10px;">
+                                    <p style="margin: 0 0 8px 0;"><strong>Default Password (All Users):</strong></p>
+                                    <code style="background: #1e1e1e; color: #f44336; padding: 8px 15px; border-radius: 4px; display: inline-block; font-size: 1.1em;">
+                                        ${creds.default_password || 'vagrant'}
+                                    </code>
+                                </div>
+                                
+                                ${creds.domains && creds.domains.length > 0 ? `
+                                    <p style="margin: 15px 0 10px 0;"><strong>Domains in this Lab:</strong></p>
+                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em; margin-bottom: 15px;">
+                                        <thead>
+                                            <tr style="background: #e3f2fd;">
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Domain</th>
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">FQDN</th>
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">DC</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${creds.domains.map(d => `
+                                                <tr>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;"><strong>${d.name}</strong></td>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;"><code>${d.fqdn}</code></td>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;">${d.dc}</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                ` : ''}
+                                
+                                ${creds.domain_admins && creds.domain_admins.length > 0 ? `
+                                    <p style="margin: 15px 0 10px 0;"><strong>Domain Administrators:</strong></p>
+                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                        <thead>
+                                            <tr style="background: #f5f5f5;">
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Domain</th>
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Username</th>
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Password</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${creds.domain_admins.map(admin => `
+                                                <tr>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;">${admin.domain}</td>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;"><code>${admin.username}</code></td>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;"><code style="color: #d32f2f;">${admin.password}</code></td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                ` : ''}
+                                
+                                ${creds.key_users && creds.key_users.length > 0 ? `
+                                    <p style="margin: 15px 0 10px 0;"><strong>Key Domain Users:</strong></p>
+                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                        <thead>
+                                            <tr style="background: #fff3e0;">
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Domain</th>
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Username</th>
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Password</th>
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Role</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${creds.key_users.map(user => `
+                                                <tr>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;">${user.domain}</td>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;"><code>${user.username}</code></td>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;"><code style="color: #d32f2f;">${user.password}</code></td>
+                                                    <td style="padding: 8px; border: 1px solid #ddd; font-size: 0.85em;">${user.role}</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                ` : ''}
+                                
+                                ${creds.trusts && creds.trusts.length > 0 ? `
+                                    <p style="margin: 15px 0 10px 0;"><strong>Domain Trusts:</strong></p>
+                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                        <thead>
+                                            <tr style="background: #f3e5f5;">
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">From</th>
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">To</th>
+                                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Type</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${creds.trusts.map(trust => `
+                                                <tr>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;">${trust.from}</td>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;">${trust.to}</td>
+                                                    <td style="padding: 8px; border: 1px solid #ddd;">${trust.type}</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                ` : ''}
+                                
+                                ${creds.special_accounts && creds.special_accounts.length > 0 ? `
+                                    <p style="margin: 15px 0 10px 0;"><strong>Special Accounts (Lab-Specific):</strong></p>
+                                    <div style="background: #fff8e1; padding: 10px; border-radius: 5px;">
+                                        ${creds.special_accounts.map(acc => `
+                                            <p style="margin: 5px 0;"><strong>${acc.name}:</strong> ${acc.note}</p>
+                                        `).join('')}
+                                    </div>
+                                ` : ''}
+                                
+                                <p style="margin: 15px 0 10px 0;"><strong>Local Accounts (All VMs):</strong></p>
+                                <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                    <thead>
+                                        <tr style="background: #f5f5f5;">
+                                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Account</th>
+                                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Username</th>
+                                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Password</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td style="padding: 8px; border: 1px solid #ddd;">Local Admin</td>
+                                            <td style="padding: 8px; border: 1px solid #ddd;"><code>Administrator</code></td>
+                                            <td style="padding: 8px; border: 1px solid #ddd;"><code style="color: #d32f2f;">vagrant</code></td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding: 8px; border: 1px solid #ddd;">Vagrant User</td>
+                                            <td style="padding: 8px; border: 1px solid #ddd;"><code>vagrant</code></td>
+                                            <td style="padding: 8px; border: 1px solid #ddd;"><code style="color: #d32f2f;">vagrant</code></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                
+                                <p style="margin: 15px 0 0 0; font-size: 0.85em; color: #666;">
+                                    📁 Full inventory: <code>${creds.inventory_path || '/opt/goad/ad/&lt;lab&gt;/data/inventory'}</code>
+                                </p>
+                            </div>
+                        </details>
+                    `;
+                }
+            } catch (e) {
+                console.log('Could not fetch GOAD credentials');
+            }
+            
+            html += `
+                <div style="margin-bottom: 20px;">
+                    <h4 style="margin: 0 0 10px 0;">🎮 GOAD Jumpbox (Ubuntu)</h4>
+                    <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">
+                        Access the GOAD lab management server. Lab: <strong>${jb.lab_name || 'GOAD'}</strong>
+                    </p>
+                    
+                    ${jb.public_ip ? `
+                        <div style="margin-bottom: 10px;">
+                            <span style="color: #666;">SSH Access:</span>
+                            <code style="background: #1e1e1e; color: #4ec9b0; padding: 10px 15px; border-radius: 5px; display: block; margin-top: 5px; overflow-x: auto;">
+                                ${jb.commands?.ssh || `ssh -i ${jb.ssh_key_path || '~/.ssh/goad-key.pem'} ubuntu@${jb.public_ip}`}
+                            </code>
+                        </div>
+                        
+                        <div style="margin-bottom: 10px;">
+                            <span style="color: #666;">SOCKS Proxy (for accessing AD network):</span>
+                            <code style="background: #1e1e1e; color: #4ec9b0; padding: 10px 15px; border-radius: 5px; display: block; margin-top: 5px; overflow-x: auto;">
+                                ${jb.commands?.socks_proxy || `ssh -D 1080 -i ${jb.ssh_key_path || '~/.ssh/goad-key.pem'} ubuntu@${jb.public_ip}`}
+                            </code>
+                        </div>
+                    ` : `
+                        <p style="color: #f57c00;">⚠️ Jumpbox IP not available yet. The lab may still be deploying.</p>
+                    `}
+                    
+                    ${credsHtml}
+                    
+                    <details style="margin-top: 15px;">
+                        <summary style="cursor: pointer; color: #1976d2; font-weight: 500;">
+                            📋 Common GOAD Commands
+                        </summary>
+                        <div style="margin-top: 10px; padding: 15px; background: #f5f5f5; border-radius: 5px; font-size: 0.9em;">
+                            <p style="margin: 0 0 10px 0;"><strong>Check Lab Status:</strong></p>
+                            <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block;">cd /opt/goad && ./goad.sh -t check -l GOAD -p aws</code>
+                            
+                            <p style="margin: 15px 0 10px 0;"><strong>Run Ansible Provisioning:</strong></p>
+                            <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block;">cd /opt/goad && ./goad.sh -t install -l GOAD -p aws</code>
+                            
+                            <p style="margin: 15px 0 10px 0;"><strong>View Ansible Inventory:</strong></p>
+                            <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block;">cat /opt/goad/ad/GOAD/providers/aws/inventory</code>
+                            
+                            <p style="margin: 15px 0 10px 0;"><strong>Test WinRM to DC:</strong></p>
+                            <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block;">evil-winrm -i DC_IP -u Administrator -p 'vagrant'</code>
+                        </div>
+                    </details>
+                </div>
+            `;
+        }
+    } catch (e) {
+        console.log('No GOAD jumpbox info available');
     }
     
     if (!html) {

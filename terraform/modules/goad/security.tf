@@ -29,7 +29,7 @@ resource "aws_vpc_security_group_ingress_rule" "goad_internal" {
 # Allow SSH from management CIDRs
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
   for_each = toset(var.management_cidr_blocks)
-  
+
   security_group_id = aws_security_group.goad.id
   cidr_ipv4         = each.value
   from_port         = 22
@@ -41,7 +41,7 @@ resource "aws_vpc_security_group_ingress_rule" "ssh" {
 # Allow RDP from management CIDRs
 resource "aws_vpc_security_group_ingress_rule" "rdp" {
   for_each = toset(var.management_cidr_blocks)
-  
+
   security_group_id = aws_security_group.goad.id
   cidr_ipv4         = each.value
   from_port         = 3389
@@ -53,7 +53,7 @@ resource "aws_vpc_security_group_ingress_rule" "rdp" {
 # Allow WinRM from management CIDRs
 resource "aws_vpc_security_group_ingress_rule" "winrm" {
   for_each = toset(var.management_cidr_blocks)
-  
+
   security_group_id = aws_security_group.goad.id
   cidr_ipv4         = each.value
   from_port         = 5985
@@ -65,7 +65,7 @@ resource "aws_vpc_security_group_ingress_rule" "winrm" {
 # Allow Cobalt Strike team server (only if CS installed on jumpbox)
 resource "aws_vpc_security_group_ingress_rule" "cobalt_strike" {
   for_each = var.install_cobalt_strike ? toset(var.management_cidr_blocks) : toset([])
-  
+
   security_group_id = aws_security_group.goad.id
   cidr_ipv4         = each.value
   from_port         = 50050

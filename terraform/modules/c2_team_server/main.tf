@@ -20,7 +20,7 @@ terraform {
 locals {
   # Determine if we should use the centralized CS script
   use_cs_script = var.cobalt_strike_s3_path != "" && var.user_data == ""
-  
+
   # Generate user_data from template if using CS script
   cs_user_data = local.use_cs_script ? templatefile("${path.root}/scripts/install_cobalt_strike.sh", {
     cs_archive_s3_path = var.cobalt_strike_s3_path
@@ -29,7 +29,7 @@ locals {
     tools_repo_branch  = var.tools_repo_branch
     server_role        = "c2_server"
   }) : null
-  
+
   # Final user_data: custom > CS script > none
   final_user_data = var.user_data != "" ? var.user_data : (
     local.use_cs_script ? local.cs_user_data : null
@@ -55,7 +55,7 @@ resource "aws_instance" "c2_team_server" {
     volume_size           = var.root_volume_size
     encrypted             = true
     delete_on_termination = true
-    
+
     tags = merge(var.tags, {
       Name = var.phase != "" ? "${var.project_name}-${var.environment}-c2-${var.phase}-root" : "${var.project_name}-${var.environment}-c2-server-${count.index + 1}-root"
     })

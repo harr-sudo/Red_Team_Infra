@@ -34,14 +34,7 @@ resource "aws_security_group" "c2_team_server_sg" {
     cidr_blocks = var.management_cidr_blocks
   }
 
-  # C2 traffic from proxy/redirectors (internal only)
-  ingress {
-    description     = "C2 traffic from proxy redirectors"
-    from_port       = var.c2_server_port
-    to_port         = var.c2_server_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.proxy_redirector_sg.id]
-  }
+  # NOTE: C2 traffic from proxy/redirectors is added via separate rule below to avoid cycle
 
   # Outbound - all traffic allowed
   egress {
@@ -55,8 +48,8 @@ resource "aws_security_group" "c2_team_server_sg" {
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-c2-team-server-sg"
-      Type = "SecurityGroup"
+      Name      = "${var.project_name}-${var.environment}-c2-team-server-sg"
+      Type      = "SecurityGroup"
       Component = "C2TeamServer"
     }
   )
@@ -94,14 +87,7 @@ resource "aws_security_group" "proxy_redirector_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Outbound to C2 servers
-  egress {
-    description     = "Traffic to C2 team servers"
-    from_port       = var.c2_server_port
-    to_port         = var.c2_server_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.c2_team_server_sg.id]
-  }
+  # NOTE: Egress to C2 servers is added via separate rule below to avoid cycle
 
   # Outbound - all traffic allowed (for pass-through)
   egress {
@@ -115,11 +101,37 @@ resource "aws_security_group" "proxy_redirector_sg" {
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-proxy-redirector-sg"
-      Type = "SecurityGroup"
+      Name      = "${var.project_name}-${var.environment}-proxy-redirector-sg"
+      Type      = "SecurityGroup"
       Component = "ProxyRedirector"
     }
   )
+}
+
+# =============================================================================
+# CROSS-REFERENCE RULES (separate to avoid circular dependency)
+# =============================================================================
+
+# Allow C2 servers to receive traffic from proxy/redirectors
+resource "aws_security_group_rule" "c2_from_proxy" {
+  type                     = "ingress"
+  from_port                = var.c2_server_port
+  to_port                  = var.c2_server_port
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.proxy_redirector_sg.id
+  security_group_id        = aws_security_group.c2_team_server_sg.id
+  description              = "C2 traffic from proxy redirectors"
+}
+
+# Allow proxy/redirectors to send traffic to C2 servers
+resource "aws_security_group_rule" "proxy_to_c2" {
+  type                     = "egress"
+  from_port                = var.c2_server_port
+  to_port                  = var.c2_server_port
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.c2_team_server_sg.id
+  security_group_id        = aws_security_group.proxy_redirector_sg.id
+  description              = "Traffic to C2 team servers"
 }
 
 # Security Group for Bastion/Jump Box
@@ -158,8 +170,8 @@ resource "aws_security_group" "bastion_sg" {
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-bastion-sg"
-      Type = "SecurityGroup"
+      Name      = "${var.project_name}-${var.environment}-bastion-sg"
+      Type      = "SecurityGroup"
       Component = "BastionHost"
     }
   )
