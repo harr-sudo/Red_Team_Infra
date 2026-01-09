@@ -24,12 +24,18 @@ resource "random_id" "bucket_suffix" {
   byte_length = 4
 }
 
+# Local to sanitize project name for S3 bucket (lowercase, no underscores)
+locals {
+  # S3 bucket names must be lowercase, 3-63 chars, only letters, numbers, hyphens
+  sanitized_name = lower(replace(var.project_name, "_", "-"))
+}
+
 # =============================================================================
 # S3 Bucket for Cobalt Strike Files
 # =============================================================================
 
 resource "aws_s3_bucket" "cs_files" {
-  bucket = "${var.project_name}-cs-files-${random_id.bucket_suffix.hex}"
+  bucket = "${local.sanitized_name}-cs-files-${random_id.bucket_suffix.hex}"
 
   tags = merge(var.tags, {
     Name      = "${var.project_name}-cs-files"
@@ -109,7 +115,7 @@ data "aws_iam_policy_document" "ec2_assume_role" {
 
 # IAM Role
 resource "aws_iam_role" "cs_download" {
-  name = "${var.project_name}-${var.environment}-cs-download-role"
+  name = "${local.sanitized_name}-${var.environment}-cs-download-role"
 
   assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
 
@@ -155,14 +161,14 @@ data "aws_iam_policy_document" "cs_download" {
 
 # Attach policy to role
 resource "aws_iam_role_policy" "cs_download" {
-  name   = "${var.project_name}-cs-download-policy"
+  name   = "${local.sanitized_name}-cs-download-policy"
   role   = aws_iam_role.cs_download.id
   policy = data.aws_iam_policy_document.cs_download.json
 }
 
 # Instance profile (required for EC2)
 resource "aws_iam_instance_profile" "cs_download" {
-  name = "${var.project_name}-${var.environment}-cs-download-profile"
+  name = "${local.sanitized_name}-${var.environment}-cs-download-profile"
   role = aws_iam_role.cs_download.name
 
   tags = merge(var.tags, {

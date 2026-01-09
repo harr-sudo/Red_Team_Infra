@@ -265,8 +265,9 @@ header h1 {
     margin: 15px 0;
     font-family: 'Courier New', monospace;
     font-size: 0.9em;
-    max-height: 400px;
-    overflow-y: auto;
+    min-height: 500px;
+    max-height: none;
+    overflow-y: visible;
     white-space: pre-wrap;
     word-wrap: break-word;
 }

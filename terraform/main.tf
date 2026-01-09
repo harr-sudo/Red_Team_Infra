@@ -298,11 +298,11 @@ module "proxy_redirector" {
   tags                       = local.enhanced_tags
 
   # Domain configuration for nginx redirector setup
-  primary_domain    = var.primary_domain_name
-  c2_subdomain      = var.c2_subdomain
-  c2_server_ip      = length(module.c2_team_server) > 0 ? module.c2_team_server[0].private_ips[0] : ""
-  c2_server_port    = var.c2_server_port
-  
+  primary_domain = var.primary_domain_name
+  c2_subdomain   = var.c2_subdomain
+  c2_server_ip   = length(module.c2_team_server) > 0 ? module.c2_team_server[0].private_ips[0] : ""
+  c2_server_port = var.c2_server_port
+
   # SSL configuration
   enable_ssl        = var.enable_ssl_certificate
   ssl_provider      = var.ssl_provider
@@ -349,7 +349,7 @@ module "goad" {
   ip_range            = split("/", var.goad_vpc_cidr)[0] != "" ? join(".", slice(split(".", split("/", var.goad_vpc_cidr)[0]), 0, 3)) : "192.168.56"
   availability_zone   = var.availability_zones[0]
 
-  # Cobalt Strike on jumpbox (only for GOAD-only mode)
+  # Attack Box with Cobalt Strike (separate from jumpbox, for GOAD-only mode)
   install_cobalt_strike  = local.install_cs_on_jumpbox
   cobalt_strike_s3_path  = var.cobalt_strike_archive_s3_path
   cs_teamserver_password = var.cs_teamserver_password

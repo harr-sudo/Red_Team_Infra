@@ -1,7 +1,7 @@
 # GOAD Module - Jumpbox Configuration
 # =============================================================================
-# Ubuntu jumpbox for GOAD lab management
-# Optionally includes Cobalt Strike for GOAD-only deployments
+# Minimal SSH Gateway (Bastion Host) for accessing internal GOAD resources
+# This is a hardened, minimal instance - NOT for running tools
 # =============================================================================
 
 # =============================================================================
@@ -36,6 +36,7 @@ resource "aws_network_interface" "jumpbox" {
   tags = merge(var.tags, {
     Name = "${var.project_name}-${local.lab_identifier}-jumpbox-nic"
     Lab  = local.lab_identifier
+    Role = "Jumpbox"
   })
 }
 
@@ -57,35 +58,31 @@ resource "aws_eip" "jumpbox" {
 }
 
 # =============================================================================
-# JUMPBOX INSTANCE
+# JUMPBOX INSTANCE (Minimal SSH Gateway)
 # =============================================================================
 
 resource "aws_instance" "jumpbox" {
   ami           = data.aws_ami.ubuntu.id
   instance_type = var.jumpbox_instance_type
-  key_name      = aws_key_pair.jumpbox.key_name
+  key_name      = aws_key_pair.jumpbox.key_name  # External key for user access
 
   network_interface {
     network_interface_id = aws_network_interface.jumpbox.id
     device_index         = 0
   }
 
-  # IAM role for S3 access (CS download)
-  iam_instance_profile = var.iam_instance_profile_name != "" ? var.iam_instance_profile_name : null
-
-  # User data - with or without Cobalt Strike
-  user_data = var.install_cobalt_strike ? templatefile("${path.root}/scripts/install_cobalt_strike.sh", {
-    cs_archive_s3_path = var.cobalt_strike_s3_path
-    cs_password        = var.cs_teamserver_password
-    tools_repo_url     = var.tools_repo_url
-    tools_repo_branch  = var.tools_repo_branch
-    server_role        = "jumpbox"
-    }) : templatefile("${path.module}/scripts/jumpbox_init.sh", {
-    username = var.jumpbox_username
+  # Minimal user data - just basic setup for SSH gateway
+  # Also installs the INTERNAL private key for accessing Team Server
+  user_data = templatefile("${path.module}/scripts/jumpbox_init.sh", {
+    username         = var.jumpbox_username
+    attackbox_ip     = var.install_cobalt_strike ? "${var.ip_range}.50" : ""
+    teamserver_ip    = var.install_cobalt_strike ? "${var.ip_range}.40" : ""
+    install_cs       = var.install_cobalt_strike
+    internal_key     = var.install_cobalt_strike ? tls_private_key.internal_ssh.private_key_pem : ""
   })
 
   root_block_device {
-    volume_size           = var.jumpbox_disk_size
+    volume_size           = 20 # Minimal disk - just SSH gateway
     volume_type           = "gp3"
     encrypted             = true
     delete_on_termination = true
@@ -97,10 +94,9 @@ resource "aws_instance" "jumpbox" {
   }
 
   tags = merge(var.tags, {
-    Name        = "${var.project_name}-${local.lab_identifier}-jumpbox"
-    Lab         = local.lab_identifier
-    Role        = var.install_cobalt_strike ? "JumpboxWithCS" : "Jumpbox"
-    CSInstalled = var.install_cobalt_strike ? "true" : "false"
+    Name = "${var.project_name}-${local.lab_identifier}-jumpbox"
+    Lab  = local.lab_identifier
+    Role = "Jumpbox"
   })
 }
 

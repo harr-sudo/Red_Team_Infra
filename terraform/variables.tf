@@ -201,7 +201,7 @@ variable "ssl_provider" {
   description = "SSL certificate provider for redirectors: 'letsencrypt' (recommended) or 'self-signed'"
   type        = string
   default     = "letsencrypt"
-  
+
   validation {
     condition     = contains(["letsencrypt", "self-signed"], var.ssl_provider)
     error_message = "ssl_provider must be 'letsencrypt' or 'self-signed'"

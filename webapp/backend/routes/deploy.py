@@ -17,7 +17,7 @@ from werkzeug.utils import secure_filename
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from webapp.backend.services.terraform_service import TerraformService
+from webapp.backend.services.terraform_service import TerraformService, get_terraform_service
 from webapp.backend.utils.goad_template_processor import get_lab_info, extract_vm_info
 
 bp = Blueprint('deploy', __name__)
@@ -33,6 +33,14 @@ SSH_KEYS_FOLDER = project_root / "ssh_keys"
 # Ensure directories exist
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 SSH_KEYS_FOLDER.mkdir(exist_ok=True)
+
+# =============================================================================
+# MULTI-PROJECT DEPLOYMENT STATE
+# =============================================================================
+
+# Track deployments by project name (workspace)
+# Structure: {"project_name": {"status": "running", "logs": [], ...}}
+deployment_states = {}
 
 # =============================================================================
 # DEPLOYMENT HISTORY HELPERS (defined early for use by add_log)
@@ -59,36 +67,62 @@ def save_deployment_history(history):
     except Exception as e:
         print(f"Error saving deployment history: {e}")
 
-def add_history_entry(message, level='info', details=None):
+def add_history_entry(message, level='info', details=None, project_name=None):
     """Add an entry to deployment history"""
     from datetime import datetime
     history = load_deployment_history()
-    history.append({
+    entry = {
         'timestamp': datetime.now().isoformat(),
         'level': level,
         'message': message,
         'details': details
-    })
+    }
+    if project_name:
+        entry['project_name'] = project_name
+    history.append(entry)
     save_deployment_history(history)
 
 # =============================================================================
+# HELPER FUNCTIONS FOR MULTI-PROJECT STATE
+# =============================================================================
 
-# Deployment state (in-memory, simple implementation)
-deployment_state = {
+def get_project_state(project_name: str) -> dict:
+    """Get or create deployment state for a project"""
+    if project_name not in deployment_states:
+        deployment_states[project_name] = create_empty_state()
+    return deployment_states[project_name]
+
+def create_empty_state() -> dict:
+    """Create a new empty deployment state"""
+    return {
     "status": "idle",  # idle, running, success, error
     "step": "",
     "output": "",
     "error": None,
     "deployment_type": None,
-    "goad_ansible_status": None,  # pending, running, complete, error
-    # Enhanced progress tracking
+        "goad_ansible_status": None,
     "started_at": None,
     "completed_at": None,
     "progress_percent": 0,
     "current_phase": "",
     "phases_completed": [],
-    "logs": []  # List of {timestamp, message, type}
-}
+        "logs": []
+    }
+
+def get_active_deployments() -> list:
+    """Get list of currently running deployments"""
+    return [
+        {"project_name": name, **state}
+        for name, state in deployment_states.items()
+        if state.get("status") == "running"
+    ]
+
+# =============================================================================
+# BACKWARD COMPATIBILITY: Single deployment state (for existing code)
+# This will be deprecated - use deployment_states[project_name] instead
+# =============================================================================
+
+deployment_state = create_empty_state()
 
 # Deployment phases with estimated times (seconds)
 DEPLOYMENT_PHASES = {
@@ -127,18 +161,30 @@ DEPLOYMENT_PHASES = {
     ]
 }
 
-def add_log(message, log_type="info"):
+def add_log(message, log_type="info", project_name=None):
     """Add a log entry to deployment state and persistent history"""
-    deployment_state["logs"].append({
+    # Use project-specific state if provided
+    if project_name and project_name in deployment_states:
+        state = deployment_states[project_name]
+    else:
+        state = deployment_state
+    
+    state["logs"].append({
         "timestamp": time.time(),
         "message": message,
         "type": log_type  # info, success, warning, error
     })
     # Also save to persistent history
-    add_history_entry(message, log_type)
+    add_history_entry(message, log_type, project_name=project_name)
 
-def update_phase(phase_name, deployment_type="c2"):
+def update_phase(phase_name, deployment_type="c2", project_name=None):
     """Update current phase and calculate progress"""
+    # Use project-specific state if provided
+    if project_name and project_name in deployment_states:
+        state = deployment_states[project_name]
+    else:
+        state = deployment_state
+    
     phases = DEPLOYMENT_PHASES.get(deployment_type, DEPLOYMENT_PHASES["c2"])
     
     # Find current phase index
@@ -150,34 +196,72 @@ def update_phase(phase_name, deployment_type="c2"):
     
     if current_idx >= 0:
         # Calculate progress percentage
-        deployment_state["progress_percent"] = int((current_idx / len(phases)) * 100)
-        deployment_state["current_phase"] = phases[current_idx]["label"]
-        deployment_state["step"] = phases[current_idx]["label"]
+        state["progress_percent"] = int((current_idx / len(phases)) * 100)
+        state["current_phase"] = phases[current_idx]["label"]
+        state["step"] = phases[current_idx]["label"]
         
         # Calculate estimated time remaining
         remaining_time = sum(p["est_time"] for p in phases[current_idx:])
-        deployment_state["est_remaining_seconds"] = remaining_time
+        state["est_remaining_seconds"] = remaining_time
         
-        add_log(f"Started: {phases[current_idx]['label']}", "info")
+        add_log(f"Started: {phases[current_idx]['label']}", "info", project_name)
 
-def complete_phase(phase_name, deployment_type="c2"):
+def complete_phase(phase_name, deployment_type="c2", project_name=None):
     """Mark a phase as completed"""
+    # Use project-specific state if provided
+    if project_name and project_name in deployment_states:
+        state = deployment_states[project_name]
+    else:
+        state = deployment_state
+    
     phases = DEPLOYMENT_PHASES.get(deployment_type, DEPLOYMENT_PHASES["c2"])
     
     for phase in phases:
         if phase["name"] == phase_name:
-            if phase_name not in deployment_state["phases_completed"]:
-                deployment_state["phases_completed"].append(phase_name)
-                add_log(f"Completed: {phase['label']}", "success")
+            if phase_name not in state["phases_completed"]:
+                state["phases_completed"].append(phase_name)
+                add_log(f"Completed: {phase['label']}", "success", project_name)
             break
 
+# Default terraform service (for backward compatibility)
 terraform_service = TerraformService(project_root)
+
+def get_service_for_project(project_name: str) -> TerraformService:
+    """Get a TerraformService instance for a specific project/workspace"""
+    return get_terraform_service(project_root, project_name)
 
 def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS or \
            filename.endswith('.tar.gz')
+
+def update_tfvars_cs_path(tfvars_file, s3_uri):
+    """Update terraform.tfvars with the Cobalt Strike S3 path"""
+    try:
+        if not tfvars_file.exists():
+            return False
+        
+        content = tfvars_file.read_text()
+        
+        # Check if cobalt_strike_archive_s3_path already exists
+        if 'cobalt_strike_archive_s3_path' in content:
+            # Update existing value
+            import re
+            content = re.sub(
+                r'cobalt_strike_archive_s3_path\s*=\s*"[^"]*"',
+                f'cobalt_strike_archive_s3_path = "{s3_uri}"',
+                content
+            )
+        else:
+            # Add new line
+            content += f'\n# Cobalt Strike S3 Path (auto-generated)\ncobalt_strike_archive_s3_path = "{s3_uri}"\n'
+        
+        tfvars_file.write_text(content)
+        return True
+    except Exception as e:
+        print(f"Error updating tfvars with CS path: {e}")
+        return False
 
 def get_file_info(filepath):
     """Get file information"""
@@ -193,28 +277,35 @@ def get_file_info(filepath):
         "path": str(filepath)
     }
 
-def run_deployment():
+def run_deployment(project_name: str = None):
     """Run deployment in background thread with enhanced progress tracking"""
     global deployment_state
     
+    # Use project-specific state if provided
+    if project_name and project_name in deployment_states:
+        state = deployment_states[project_name]
+        service = get_service_for_project(project_name)
+    else:
+        state = deployment_state
+        service = terraform_service
+        project_name = None  # For logging
+    
     try:
         # Reset state
-        deployment_state["status"] = "running"
-        deployment_state["step"] = "Initializing..."
-        deployment_state["output"] = ""
-        deployment_state["error"] = None
-        deployment_state["started_at"] = time.time()
-        deployment_state["completed_at"] = None
-        deployment_state["progress_percent"] = 0
-        deployment_state["phases_completed"] = []
-        deployment_state["logs"] = []
-        deployment_state["est_remaining_seconds"] = 0
+        state["status"] = "running"
+        state["step"] = "Initializing..."
+        state["output"] = ""
+        state["error"] = None
+        state["started_at"] = time.time()
+        state["completed_at"] = None
+        state["progress_percent"] = 0
+        state["phases_completed"] = []
+        state["logs"] = []
+        state["est_remaining_seconds"] = 0
         
         # Determine deployment type from config
         from webapp.backend.utils.config_parser import ConfigParser
-        config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        config = ConfigParser.parse_tfvars(service.tfvars_file) if service.tfvars_file.exists() else {}
         
         deploy_type = config.get('deployment_type', 'c2-adhoc')
         if 'combined' in deploy_type:
@@ -224,101 +315,461 @@ def run_deployment():
         else:
             phase_type = "c2"
         
-        deployment_state["deployment_type"] = deploy_type
-        add_log(f"Starting deployment: {deploy_type}", "info")
+        state["deployment_type"] = deploy_type
+        add_log(f"Starting deployment: {deploy_type}", "info", project_name)
         
         # Phase 1: Initialize
-        update_phase("init", phase_type)
-        result = terraform_service.init()
+        update_phase("init", phase_type, project_name)
+        result = service.init()
         if not result["success"]:
-            deployment_state["status"] = "error"
-            deployment_state["error"] = result.get("stderr", "Terraform init failed")
-            add_log(f"Error: {deployment_state['error']}", "error")
+            state["status"] = "error"
+            state["error"] = result.get("stderr", "Terraform init failed")
+            add_log(f"Error: {state['error']}", "error", project_name)
             return
-        complete_phase("init", phase_type)
+        complete_phase("init", phase_type, project_name)
+        
+        # Ensure workspace exists (for multi-project)
+        if project_name:
+            ws_result = service.ensure_workspace()
+            if not ws_result["success"]:
+                state["status"] = "error"
+                state["error"] = ws_result.get("stderr", "Failed to setup workspace")
+                add_log(f"Error: {state['error']}", "error", project_name)
+                return
+            add_log(f"Using workspace: {service.workspace_name}", "info", project_name)
         
         # Phase 2: Validate
-        update_phase("validate", phase_type)
-        result = terraform_service.validate()
+        update_phase("validate", phase_type, project_name)
+        result = service.validate()
         if not result["success"]:
-            deployment_state["status"] = "error"
-            deployment_state["error"] = result.get("stderr", "Validation failed")
-            add_log(f"Error: {deployment_state['error']}", "error")
+            state["status"] = "error"
+            state["error"] = result.get("stderr", "Validation failed")
+            add_log(f"Error: {state['error']}", "error", project_name)
             return
-        complete_phase("validate", phase_type)
+        complete_phase("validate", phase_type, project_name)
         
         # Phase 3: Plan
-        update_phase("plan", phase_type)
-        result = terraform_service.plan()
+        update_phase("plan", phase_type, project_name)
+        result = service.plan()
         if not result["success"] and result["exit_code"] != 2:  # 2 means changes detected
-            deployment_state["status"] = "error"
-            deployment_state["error"] = result.get("stderr", "Plan failed")
-            add_log(f"Error: {deployment_state['error']}", "error")
+            state["status"] = "error"
+            state["error"] = result.get("stderr", "Plan failed")
+            add_log(f"Error: {state['error']}", "error", project_name)
             return
-        complete_phase("plan", phase_type)
+        complete_phase("plan", phase_type, project_name)
         
         # Phase 4+: Apply (this is the long one)
         # Note: Terraform apply handles all resources together, but we simulate progress
         if phase_type == "c2":
-            update_phase("apply_vpc", phase_type)
+            update_phase("apply_vpc", phase_type, project_name)
         elif phase_type == "goad":
-            update_phase("apply_vpc", phase_type)
+            update_phase("apply_vpc", phase_type, project_name)
         else:
-            update_phase("apply_c2_vpc", phase_type)
+            update_phase("apply_c2_vpc", phase_type, project_name)
         
-        add_log("Applying Terraform changes (this may take 5-15 minutes)...", "info")
-        result = terraform_service.apply()
+        # Check if we need to upload Cobalt Strike to S3
+        # For GOAD or C2 deployments that use CS, we need to:
+        # 1. First create just the S3 bucket
+        # 2. Upload the CS file to S3
+        # 3. Then apply the rest (EC2 instances will have the file available)
+        needs_cs_upload = (phase_type == "goad" or phase_type == "c2" or phase_type == "combined")
+        
+        # Check if there's a local CS file to upload
+        local_cs_file = None
+        if needs_cs_upload:
+            cs_files = [f for f in UPLOAD_FOLDER.glob("*") if f.is_file() and allowed_file(f.name)]
+            if cs_files:
+                local_cs_file = max(cs_files, key=lambda f: f.stat().st_mtime)
+                add_log(f"Found Cobalt Strike file: {local_cs_file.name}", "info", project_name)
+        
+        if local_cs_file:
+            # Phase: Create S3 bucket first (targeted apply)
+            add_log("Creating S3 bucket for Cobalt Strike files...", "info", project_name)
+            result = service.apply_target("module.cs_storage")
         
         if not result["success"]:
-            deployment_state["status"] = "error"
-            deployment_state["error"] = result.get("stderr", "Apply failed")
-            add_log(f"Error: {deployment_state['error']}", "error")
+            # If bucket already exists, that's OK - continue
+            if "already exists" not in str(result.get("stderr", "")):
+                state["status"] = "error"
+                state["error"] = result.get("stderr", "Failed to create S3 bucket")
+                add_log(f"Error: {state['error']}", "error", project_name)
+                return
+            
+        add_log("S3 bucket created successfully", "success", project_name)
+        
+        # Phase: Upload CS file to S3
+        add_log("Uploading Cobalt Strike to S3...", "info", project_name)
+        try:
+            from webapp.backend.utils.s3_upload import upload_cs_file, find_cs_bucket, S3UploadError
+            
+            # Find the bucket that was just created
+            bucket_name = find_cs_bucket(project_name, config.get('aws_region', 'us-east-1'))
+            
+            if bucket_name:
+                s3_uri, _ = upload_cs_file(
+                    str(local_cs_file),
+                    project_name,
+                    config.get('aws_region', 'us-east-1'),
+                    bucket_name=bucket_name
+                )
+                add_log(f"Uploaded Cobalt Strike to {s3_uri}", "success", project_name)
+                
+                # Update tfvars with the S3 path so EC2 user_data can find it
+                update_tfvars_cs_path(service.tfvars_file, s3_uri)
+                add_log("Updated configuration with S3 path", "info", project_name)
+            else:
+                add_log("Warning: Could not find S3 bucket for CS upload", "warning", project_name)
+                
+        except Exception as e:
+            add_log(f"Warning: Failed to upload CS to S3: {str(e)}", "warning", project_name)
+            # Continue anyway - CS won't be auto-installed but deployment can proceed
+        
+        # Now apply the rest of the infrastructure
+        add_log("Applying Terraform changes (this may take 5-15 minutes)...", "info", project_name)
+        result = service.apply()
+        
+        if not result["success"]:
+            state["status"] = "error"
+            state["error"] = result.get("stderr", "Apply failed")
+            add_log(f"Error: {state['error']}", "error", project_name)
             return
         
         # Mark infrastructure phases complete
         if phase_type == "c2":
             for p in ["apply_vpc", "apply_security", "apply_instances", "apply_config"]:
-                complete_phase(p, phase_type)
+                complete_phase(p, phase_type, project_name)
         elif phase_type == "goad":
             for p in ["apply_vpc", "apply_jumpbox", "apply_windows"]:
-                complete_phase(p, phase_type)
+                complete_phase(p, phase_type, project_name)
         else:
             for p in ["apply_c2_vpc", "apply_goad_vpc", "apply_peering", "apply_c2", "apply_goad"]:
-                complete_phase(p, phase_type)
+                complete_phase(p, phase_type, project_name)
         
         # Phase: Get outputs
-        update_phase("outputs", phase_type)
-        result = terraform_service.output()
-        complete_phase("outputs", phase_type)
+        update_phase("outputs", phase_type, project_name)
+        result = service.output()
+        complete_phase("outputs", phase_type, project_name)
         
         # Success!
-        deployment_state["status"] = "success"
-        deployment_state["step"] = "Deployment complete"
-        deployment_state["progress_percent"] = 100
-        deployment_state["completed_at"] = time.time()
-        deployment_state["output"] = result.get("outputs", {})
-        deployment_state["est_remaining_seconds"] = 0
+        state["status"] = "success"
+        state["step"] = "Deployment complete"
+        state["progress_percent"] = 100
+        state["completed_at"] = time.time()
+        state["output"] = result.get("outputs", {})
+        state["est_remaining_seconds"] = 0
         
-        elapsed = int(deployment_state["completed_at"] - deployment_state["started_at"])
-        add_log(f"Deployment completed successfully in {elapsed // 60}m {elapsed % 60}s", "success")
+        elapsed = int(state["completed_at"] - state["started_at"])
+        add_log(f"Deployment completed successfully in {elapsed // 60}m {elapsed % 60}s", "success", project_name)
+        
+        # Save deployed resources to history for this project
+        save_deployment_resources(project_name, service, deploy_type)
         
     except Exception as e:
-        deployment_state["status"] = "error"
-        deployment_state["error"] = str(e)
-        deployment_state["completed_at"] = time.time()
-        add_log(f"Unexpected error: {str(e)}", "error")
+        state["status"] = "error"
+        state["error"] = str(e)
+        state["completed_at"] = time.time()
+        add_log(f"Unexpected error: {str(e)}", "error", project_name)
 
-def run_destroy():
+
+def save_deployment_resources(project_name: str, service: TerraformService, deployment_type: str):
+    """
+    Save the list of deployed resources for a project after successful deployment.
+    This allows tracking resources per deployment even with multiple concurrent deployments.
+    """
+    import boto3
+    from webapp.backend.utils.config_parser import ConfigParser
+    from datetime import datetime
+    
+    try:
+        # Get config for region
+        config = ConfigParser.parse_tfvars(service.tfvars_file) if service.tfvars_file.exists() else {}
+        aws_region = config.get('aws_region', 'us-east-1')
+        
+        # Query AWS for all resources with this project tag
+        resources = []
+        ec2 = boto3.client('ec2', region_name=aws_region)
+        
+        # EC2 Instances
+        try:
+            response = ec2.describe_instances(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for reservation in response.get('Reservations', []):
+                for instance in reservation.get('Instances', []):
+                    name = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                    role = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Role'), '')
+                    resources.append({
+                        'type': 'ec2',
+                        'id': instance['InstanceId'],
+                        'name': name,
+                        'role': role,
+                        'state': instance['State']['Name'],
+                        'instance_type': instance['InstanceType'],
+                        'private_ip': instance.get('PrivateIpAddress'),
+                        'public_ip': instance.get('PublicIpAddress')
+                    })
+        except Exception as e:
+            print(f"Error fetching EC2 instances: {e}")
+        
+        # VPCs
+        try:
+            response = ec2.describe_vpcs(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for vpc in response.get('Vpcs', []):
+                name = next((t['Value'] for t in vpc.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                resources.append({
+                    'type': 'vpc',
+                    'id': vpc['VpcId'],
+                    'name': name,
+                    'state': vpc['State'],
+                    'cidr': vpc['CidrBlock']
+                })
+        except Exception as e:
+            print(f"Error fetching VPCs: {e}")
+        
+        # Subnets
+        try:
+            response = ec2.describe_subnets(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for subnet in response.get('Subnets', []):
+                name = next((t['Value'] for t in subnet.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                resources.append({
+                    'type': 'subnet',
+                    'id': subnet['SubnetId'],
+                    'name': name,
+                    'state': subnet['State'],
+                    'cidr': subnet['CidrBlock'],
+                    'az': subnet['AvailabilityZone']
+                })
+        except Exception as e:
+            print(f"Error fetching subnets: {e}")
+        
+        # Security Groups
+        try:
+            response = ec2.describe_security_groups(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for sg in response.get('SecurityGroups', []):
+                resources.append({
+                    'type': 'security_group',
+                    'id': sg['GroupId'],
+                    'name': sg['GroupName'],
+                    'state': 'active',
+                    'description': sg.get('Description', '')[:100]
+                })
+        except Exception as e:
+            print(f"Error fetching security groups: {e}")
+        
+        # NAT Gateways
+        try:
+            response = ec2.describe_nat_gateways(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for nat in response.get('NatGateways', []):
+                name = next((t['Value'] for t in nat.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                public_ip = nat.get('NatGatewayAddresses', [{}])[0].get('PublicIp', 'N/A')
+                resources.append({
+                    'type': 'nat_gateway',
+                    'id': nat['NatGatewayId'],
+                    'name': name,
+                    'state': nat['State'],
+                    'public_ip': public_ip
+                })
+        except Exception as e:
+            print(f"Error fetching NAT gateways: {e}")
+        
+        # Elastic IPs
+        try:
+            response = ec2.describe_addresses(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for eip in response.get('Addresses', []):
+                name = next((t['Value'] for t in eip.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                resources.append({
+                    'type': 'elastic_ip',
+                    'id': eip.get('AllocationId', 'N/A'),
+                    'name': name,
+                    'state': 'associated' if eip.get('InstanceId') else 'available',
+                    'public_ip': eip.get('PublicIp')
+                })
+        except Exception as e:
+            print(f"Error fetching Elastic IPs: {e}")
+        
+        # S3 Buckets
+        try:
+            s3 = boto3.client('s3', region_name=aws_region)
+            response = s3.list_buckets()
+            project_prefix = project_name.lower().replace('_', '-')
+            for bucket in response.get('Buckets', []):
+                if bucket['Name'].lower().startswith(project_prefix):
+                    resources.append({
+                        'type': 's3_bucket',
+                        'id': bucket['Name'],
+                        'name': bucket['Name'],
+                        'state': 'available',
+                        'created': bucket['CreationDate'].isoformat()
+                    })
+        except Exception as e:
+            print(f"Error fetching S3 buckets: {e}")
+        
+        # Key Pairs
+        try:
+            response = ec2.describe_key_pairs(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for kp in response.get('KeyPairs', []):
+                resources.append({
+                    'type': 'key_pair',
+                    'id': kp.get('KeyPairId', kp['KeyName']),
+                    'name': kp['KeyName'],
+                    'state': 'available',
+                    'key_type': kp.get('KeyType', 'rsa')
+                })
+        except Exception as e:
+            print(f"Error fetching key pairs: {e}")
+        
+        # Internet Gateways
+        try:
+            response = ec2.describe_internet_gateways(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for igw in response.get('InternetGateways', []):
+                name = next((t['Value'] for t in igw.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                attached = 'attached' if igw.get('Attachments') else 'detached'
+                resources.append({
+                    'type': 'internet_gateway',
+                    'id': igw['InternetGatewayId'],
+                    'name': name,
+                    'state': attached
+                })
+        except Exception as e:
+            print(f"Error fetching Internet Gateways: {e}")
+        
+        # Route Tables
+        try:
+            response = ec2.describe_route_tables(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for rt in response.get('RouteTables', []):
+                name = next((t['Value'] for t in rt.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                route_count = len(rt.get('Routes', []))
+                resources.append({
+                    'type': 'route_table',
+                    'id': rt['RouteTableId'],
+                    'name': name,
+                    'state': 'active',
+                    'route_count': route_count
+                })
+        except Exception as e:
+            print(f"Error fetching route tables: {e}")
+        
+        # Network Interfaces (ENIs)
+        try:
+            response = ec2.describe_network_interfaces(
+                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+            )
+            for eni in response.get('NetworkInterfaces', []):
+                name = next((t['Value'] for t in eni.get('TagSet', []) if t['Key'] == 'Name'), 'Unnamed')
+                private_ip = eni.get('PrivateIpAddress', 'N/A')
+                resources.append({
+                    'type': 'network_interface',
+                    'id': eni['NetworkInterfaceId'],
+                    'name': name,
+                    'state': eni.get('Status', 'unknown'),
+                    'private_ip': private_ip
+                })
+        except Exception as e:
+            print(f"Error fetching network interfaces: {e}")
+        
+        # IAM Roles
+        try:
+            iam = boto3.client('iam', region_name=aws_region)
+            project_prefix = project_name.lower().replace('_', '-')
+            paginator = iam.get_paginator('list_roles')
+            for page in paginator.paginate():
+                for role in page.get('Roles', []):
+                    if role['RoleName'].lower().startswith(project_prefix):
+                        resources.append({
+                            'type': 'iam_role',
+                            'id': role['RoleId'],
+                            'name': role['RoleName'],
+                            'state': 'active',
+                            'created': role['CreateDate'].isoformat()
+                        })
+        except Exception as e:
+            print(f"Error fetching IAM roles: {e}")
+        
+        # IAM Instance Profiles
+        try:
+            iam = boto3.client('iam', region_name=aws_region)
+            project_prefix = project_name.lower().replace('_', '-')
+            paginator = iam.get_paginator('list_instance_profiles')
+            for page in paginator.paginate():
+                for profile in page.get('InstanceProfiles', []):
+                    if profile['InstanceProfileName'].lower().startswith(project_prefix):
+                        resources.append({
+                            'type': 'iam_instance_profile',
+                            'id': profile['InstanceProfileId'],
+                            'name': profile['InstanceProfileName'],
+                            'state': 'active',
+                            'role_count': len(profile.get('Roles', []))
+                        })
+        except Exception as e:
+            print(f"Error fetching IAM instance profiles: {e}")
+        
+        # Save to deployment resources file
+        resources_file = project_root / "logs" / "deployment_resources.json"
+        resources_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Load existing resources
+        all_deployments = {}
+        if resources_file.exists():
+            try:
+                with open(resources_file, 'r') as f:
+                    all_deployments = json.load(f)
+            except:
+                pass
+        
+        # Save this deployment's resources
+        all_deployments[project_name] = {
+            'project_name': project_name,
+            'deployment_type': deployment_type,
+            'deployed_at': datetime.now().isoformat(),
+            'region': aws_region,
+            'resource_count': len(resources),
+            'resources': resources
+        }
+        
+        with open(resources_file, 'w') as f:
+            json.dump(all_deployments, f, indent=2)
+        
+        add_log(f"Saved {len(resources)} resources for project '{project_name}'", "info", project_name)
+        
+    except Exception as e:
+        print(f"Error saving deployment resources: {e}")
+        add_log(f"Warning: Could not save resource list: {e}", "warning", project_name)
+
+def run_destroy(project_name: str = None):
     """Run destroy in background thread with phased destruction for combined mode"""
     global deployment_state
     
+    # Use project-specific state if provided
+    if project_name and project_name in deployment_states:
+        state = deployment_states[project_name]
+        service = get_service_for_project(project_name)
+    else:
+        state = deployment_state
+        service = terraform_service
+    
     try:
-        deployment_state["status"] = "running"
-        deployment_state["output"] = ""
-        deployment_state["error"] = None
+        state["status"] = "running"
+        state["output"] = ""
+        state["error"] = None
         
         # Get current deployment type
-        output_result = terraform_service.output()
+        output_result = service.output()
         outputs = output_result.get("outputs", {})
         deployment_type = outputs.get("deployment_type", {}).get("value", "")
         
@@ -327,95 +778,364 @@ def run_destroy():
         
         if is_combined:
             # Phase 1: Destroy VPC peering first
-            deployment_state["step"] = "Phase 1/3: Destroying VPC peering..."
-            result = terraform_service.destroy_target("module.vpc_peering")
+            state["step"] = "Phase 1/3: Destroying VPC peering..."
+            result = service.destroy_target("module.vpc_peering")
             if not result["success"]:
-                deployment_state["status"] = "error"
-                deployment_state["error"] = result.get("stderr", "Failed to destroy VPC peering")
+                state["status"] = "error"
+                state["error"] = result.get("stderr", "Failed to destroy VPC peering")
                 return
             
             # Phase 2: Destroy GOAD
-            deployment_state["step"] = "Phase 2/3: Destroying GOAD lab..."
-            result = terraform_service.destroy_target("module.goad")
+            state["step"] = "Phase 2/3: Destroying GOAD lab..."
+            result = service.destroy_target("module.goad")
             if not result["success"]:
-                deployment_state["status"] = "error"
-                deployment_state["error"] = result.get("stderr", "Failed to destroy GOAD")
+                state["status"] = "error"
+                state["error"] = result.get("stderr", "Failed to destroy GOAD")
                 return
             
             # Phase 3: Destroy remaining C2 infrastructure
-            deployment_state["step"] = "Phase 3/3: Destroying C2 infrastructure..."
-            result = terraform_service.destroy()
+            state["step"] = "Phase 3/3: Destroying C2 infrastructure..."
+            result = service.destroy()
             if not result["success"]:
-                deployment_state["status"] = "error"
-                deployment_state["error"] = result.get("stderr", "Failed to destroy C2 infrastructure")
+                state["status"] = "error"
+                state["error"] = result.get("stderr", "Failed to destroy C2 infrastructure")
                 return
         else:
             # Standard destroy for non-combined modes
-            deployment_state["step"] = "Destroying infrastructure..."
-        result = terraform_service.destroy()
-        if not result["success"]:
-            deployment_state["status"] = "error"
-            deployment_state["error"] = result.get("stderr", "Destroy failed")
-            return
+            state["step"] = "Destroying infrastructure..."
+            result = service.destroy()
+            if not result["success"]:
+                state["status"] = "error"
+                state["error"] = result.get("stderr", "Destroy failed")
+                return
         
-        deployment_state["status"] = "success"
-        deployment_state["step"] = "Infrastructure destroyed"
-        deployment_state["deployment_type"] = None
+        state["status"] = "success"
+        state["step"] = "Infrastructure destroyed"
+        state["deployment_type"] = None
+        add_log("Infrastructure destroyed successfully!", "success", project_name)
         
     except Exception as e:
-        deployment_state["status"] = "error"
-        deployment_state["error"] = str(e)
+        state["status"] = "error"
+        state["error"] = str(e)
 
 @bp.route('/status', methods=['GET'])
 def get_deployment_status():
     """Get current deployment status with enhanced progress info"""
+    # Check if requesting specific project status
+    project_name = request.args.get('project')
+    
+    if project_name and project_name in deployment_states:
+        state = deployment_states[project_name]
+    else:
+        state = deployment_state
+    
     # Calculate elapsed time if running
     elapsed_seconds = 0
-    if deployment_state["started_at"]:
-        if deployment_state["completed_at"]:
-            elapsed_seconds = int(deployment_state["completed_at"] - deployment_state["started_at"])
+    if state["started_at"]:
+        if state["completed_at"]:
+            elapsed_seconds = int(state["completed_at"] - state["started_at"])
         else:
-            elapsed_seconds = int(time.time() - deployment_state["started_at"])
+            elapsed_seconds = int(time.time() - state["started_at"])
     
     # Format elapsed time
     elapsed_formatted = f"{elapsed_seconds // 60}m {elapsed_seconds % 60}s"
     
     # Format estimated remaining
-    est_remaining = deployment_state.get("est_remaining_seconds", 0)
+    est_remaining = state.get("est_remaining_seconds", 0)
     est_remaining_formatted = f"{est_remaining // 60}m {est_remaining % 60}s" if est_remaining > 0 else "Calculating..."
     
     return jsonify({
         "success": True,
         "status": {
-            "status": deployment_state["status"],
-            "step": deployment_state["step"],
-            "output": deployment_state["output"],
-            "error": deployment_state["error"],
-            "deployment_type": deployment_state.get("deployment_type"),
+            "status": state["status"],
+            "step": state["step"],
+            "output": state["output"],
+            "error": state["error"],
+            "deployment_type": state.get("deployment_type"),
             # Enhanced progress info
-            "progress_percent": deployment_state.get("progress_percent", 0),
-            "current_phase": deployment_state.get("current_phase", ""),
-            "phases_completed": deployment_state.get("phases_completed", []),
+            "progress_percent": state.get("progress_percent", 0),
+            "current_phase": state.get("current_phase", ""),
+            "phases_completed": state.get("phases_completed", []),
             "elapsed_seconds": elapsed_seconds,
             "elapsed_formatted": elapsed_formatted,
             "est_remaining_seconds": est_remaining,
             "est_remaining_formatted": est_remaining_formatted,
-            "logs": deployment_state.get("logs", [])[-20:]  # Last 20 log entries
+            "logs": state.get("logs", [])[-20:],  # Last 20 log entries
+            "project_name": project_name
         }
     })
 
-@bp.route('/deploy', methods=['POST'])
-def deploy():
-    """Start deployment"""
-    global deployment_state
+
+@bp.route('/status/all', methods=['GET'])
+def get_all_deployment_status():
+    """Get status of all active deployments"""
+    active = get_active_deployments()
     
+    # Also include default deployment state if it's active
     if deployment_state["status"] == "running":
+        active.append({"project_name": "default", **deployment_state})
+    
+    return jsonify({
+        "success": True,
+        "active_deployments": active,
+        "total_active": len(active)
+    })
+
+
+@bp.route('/workspaces', methods=['GET'])
+def list_workspaces():
+    """List all Terraform workspaces"""
+    result = terraform_service.workspace_list()
+    
+    # Enhance with deployment states
+    workspaces = []
+    for ws in result.get("workspaces", []):
+        ws_info = {
+            "name": ws,
+            "is_current": ws == result.get("current"),
+            "status": "idle"
+        }
+        if ws in deployment_states:
+            ws_info["status"] = deployment_states[ws].get("status", "idle")
+        workspaces.append(ws_info)
+    
+    return jsonify({
+        "success": result["success"],
+        "workspaces": workspaces,
+        "current": result.get("current"),
+        "stderr": result.get("stderr", "")
+    })
+
+
+@bp.route('/check-project-name', methods=['GET'])
+def check_project_name():
+    """
+    Check if a project name is available (not already in use).
+    Checks both local Terraform workspaces AND AWS resources directly.
+    Returns whether the name is available and any existing resources.
+    """
+    import boto3
+    import re
+    from webapp.backend.utils.config_parser import ConfigParser
+    
+    project_name = request.args.get('name', '').strip()
+    
+    if not project_name:
         return jsonify({
             "success": False,
-            "error": "Deployment already in progress"
+            "error": "Project name is required"
         }), 400
     
-    # Load configuration to check deployment type
+    # Validate project name format
+    if not re.match(r'^[a-zA-Z][a-zA-Z0-9_-]*$', project_name):
+        return jsonify({
+            "success": True,
+            "available": False,
+            "error": "Invalid project name. Must start with a letter and contain only letters, numbers, underscores, and hyphens.",
+            "valid_format": False
+        })
+    
+    # Check if currently deploying locally
+    if project_name in deployment_states and deployment_states[project_name].get("status") == "running":
+        return jsonify({
+            "success": True,
+            "available": False,
+            "reason": "currently_deploying",
+            "message": f"Project '{project_name}' is currently being deployed"
+        })
+    
+    # Get AWS region from config
+    config_dir = project_root / "configs"
+    tfvars_file = config_dir / "terraform.tfvars"
+    aws_region = 'us-east-1'  # Default
+    if tfvars_file.exists():
+        config = ConfigParser.parse_tfvars(tfvars_file)
+        aws_region = config.get('aws_region', 'us-east-1')
+    
+    # OPTION 2: Check AWS directly for existing resources with this project tag
+    try:
+        ec2 = boto3.client('ec2', region_name=aws_region)
+        
+        # Check for VPCs with this project tag
+        vpc_response = ec2.describe_vpcs(
+            Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+        )
+        
+        if vpc_response.get('Vpcs'):
+            vpc_count = len(vpc_response['Vpcs'])
+        return jsonify({
+                "success": True,
+                "available": False,
+                "reason": "aws_resources_exist",
+                "resource_count": vpc_count,
+                "resource_type": "VPC",
+                "message": f"Project '{project_name}' already has {vpc_count} VPC(s) in AWS ({aws_region})",
+                "source": "aws"
+            })
+        
+        # Also check for EC2 instances
+        instance_response = ec2.describe_instances(
+            Filters=[
+                {'Name': 'tag:Project', 'Values': [project_name]},
+                {'Name': 'instance-state-name', 'Values': ['pending', 'running', 'stopping', 'stopped']}
+            ]
+        )
+        
+        instance_count = sum(len(r['Instances']) for r in instance_response.get('Reservations', []))
+        if instance_count > 0:
+            return jsonify({
+                "success": True,
+                "available": False,
+                "reason": "aws_resources_exist",
+                "resource_count": instance_count,
+                "resource_type": "EC2",
+                "message": f"Project '{project_name}' already has {instance_count} EC2 instance(s) in AWS ({aws_region})",
+                "source": "aws"
+            })
+        
+        # Check S3 buckets (they're globally unique)
+        s3 = boto3.client('s3', region_name=aws_region)
+        project_prefix = project_name.lower().replace('_', '-')
+        try:
+            bucket_response = s3.list_buckets()
+            matching_buckets = [
+                b['Name'] for b in bucket_response.get('Buckets', [])
+                if project_prefix in b['Name'].lower()
+            ]
+            if matching_buckets:
+                return jsonify({
+                    "success": True,
+                    "available": False,
+                    "reason": "aws_resources_exist",
+                    "resource_count": len(matching_buckets),
+                    "resource_type": "S3",
+                    "buckets": matching_buckets,
+                    "message": f"Project '{project_name}' already has S3 bucket(s): {', '.join(matching_buckets)}",
+                    "source": "aws"
+                })
+        except Exception:
+            pass  # S3 check is optional
+            
+    except Exception as e:
+        # AWS check failed - continue with local check
+        print(f"AWS check failed: {e}")
+    
+    # Check local Terraform workspaces
+    try:
+        init_result = terraform_service.init()
+        if init_result["success"]:
+            ws_list = terraform_service.workspace_list()
+            if ws_list["success"] and project_name in ws_list.get("workspaces", []):
+                terraform_service.workspace_select(project_name)
+                state_result = terraform_service.show()
+                
+                if state_result["success"]:
+                    state = state_result.get("state", {})
+                    resources = state.get("values", {}).get("root_module", {}).get("resources", [])
+                    
+                    if resources and len(resources) > 0:
+                        return jsonify({
+                            "success": True,
+                            "available": False,
+                            "reason": "has_local_resources",
+                            "resource_count": len(resources),
+                            "message": f"Project '{project_name}' exists locally with {len(resources)} resources",
+                            "source": "local"
+                        })
+                
+                # Workspace exists but is empty - allow reuse
+                return jsonify({
+                    "success": True,
+                    "available": True,
+                    "workspace_exists": True,
+                    "message": f"Project '{project_name}' workspace exists but has no resources"
+                })
+    except Exception as e:
+        print(f"Local workspace check failed: {e}")
+    
+    # Project name is available
+    return jsonify({
+        "success": True,
+        "available": True,
+        "message": f"Project name '{project_name}' is available"
+    })
+
+
+@bp.route('/generate-project-name', methods=['GET'])
+def generate_project_name():
+    """
+    Generate a unique project name with machine-specific suffix.
+    OPTION 3: Ensures uniqueness across different users/machines.
+    
+    Format: {prefix}_{env}_{hostname}
+    Example: goad_mini_dev_harris_macbook
+    """
+    import socket
+    import re
+    
+    prefix = request.args.get('prefix', 'project')
+    environment = request.args.get('env', 'dev')
+    
+    # Get hostname and sanitize it for use in project name
+    hostname = socket.gethostname()
+    # Sanitize: lowercase, replace dots/spaces with underscores, keep only valid chars
+    sanitized_hostname = re.sub(r'[^a-zA-Z0-9]', '_', hostname.lower())
+    # Remove consecutive underscores and trim
+    sanitized_hostname = re.sub(r'_+', '_', sanitized_hostname).strip('_')
+    # Limit length to keep project names reasonable
+    if len(sanitized_hostname) > 20:
+        sanitized_hostname = sanitized_hostname[:20].rstrip('_')
+    
+    # Build the project name
+    project_name = f"{prefix}_{environment}_{sanitized_hostname}"
+    
+    return jsonify({
+        "success": True,
+        "project_name": project_name,
+        "components": {
+            "prefix": prefix,
+            "environment": environment,
+            "machine_suffix": sanitized_hostname,
+            "hostname": hostname
+        },
+        "message": f"Generated unique project name based on hostname '{hostname}'"
+    })
+
+
+@bp.route('/machine-info', methods=['GET'])
+def get_machine_info():
+    """
+    Get information about the current machine for project naming.
+    """
+    import socket
+    import re
+    import platform
+    
+    hostname = socket.gethostname()
+    # Sanitize hostname for use in project names
+    sanitized_hostname = re.sub(r'[^a-zA-Z0-9]', '_', hostname.lower())
+    sanitized_hostname = re.sub(r'_+', '_', sanitized_hostname).strip('_')
+    if len(sanitized_hostname) > 20:
+        sanitized_hostname = sanitized_hostname[:20].rstrip('_')
+    
+    return jsonify({
+        "success": True,
+        "hostname": hostname,
+        "machine_suffix": sanitized_hostname,
+        "platform": platform.system(),
+        "message": f"Your machine suffix is '{sanitized_hostname}' (from hostname '{hostname}')"
+    })
+
+
+@bp.route('/deploy', methods=['POST'])
+def deploy():
+    """Start deployment for a specific project"""
+    global deployment_state
+    
+    # Get request data
+    data = request.get_json() or {}
+    
+    # Load configuration to get project name
     from webapp.backend.utils.config_parser import ConfigParser
     from webapp.backend.utils.validators import ConfigValidator
     
@@ -429,22 +1149,42 @@ def deploy():
         }), 400
     
     config = ConfigParser.parse_tfvars(tfvars_file)
+    project_name = config.get('project_name', '').strip()
     deployment_type = config.get('deployment_type', '').strip()
     
+    if not project_name:
+        return jsonify({
+            "success": False,
+            "error": "Project name not configured. Please set project_name in configuration."
+        }), 400
+    
+    # Check if THIS project is already deploying
+    if project_name in deployment_states and deployment_states[project_name].get("status") == "running":
+        return jsonify({
+            "success": False,
+            "error": f"Project '{project_name}' is already deploying"
+        }), 400
+    
+    # Also check legacy single deployment state
+    if deployment_state["status"] == "running":
+        return jsonify({
+            "success": False,
+            "error": "Another deployment is already in progress"
+        }), 400
+    
+    # Note: We skip the workspace existence check here to avoid blocking.
+    # The deployment thread will handle workspace creation/selection.
+    # If resources already exist, Terraform will detect conflicts during apply.
+    
     # Define which deployment types require what prerequisites
-    # GOAD deployments: CS on jumpbox (no redirectors), so NO domain needed but CS IS needed
-    # C2 deployments: Full C2 infra with redirectors, needs domain for SSL/routing
-    # Combined: Both GOAD + C2 infra, needs everything
     GOAD_ONLY_TYPES = ['goad-mini', 'goad-minilab', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha']
     C2_ONLY_TYPES = ['c2-adhoc', 'c2-purple', 'c2-full']
     COMBINED_TYPES = ['combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full']
     
     # All deployments with CS need the CS file uploaded
-    # GOAD has CS on jumpbox, C2 has CS on team servers, Combined has both
-    requires_cobalt_strike = True  # All our deployment types include CS
+    requires_cobalt_strike = True
     
-    # Only C2 and Combined need domain (for redirector SSL certs and routing)
-    # GOAD connects directly to jumpbox, no domain needed
+    # Only C2 and Combined need domain
     requires_domain = deployment_type in C2_ONLY_TYPES or deployment_type in COMBINED_TYPES
     
     # Check prerequisite: Cobalt Strike file
@@ -461,64 +1201,236 @@ def deploy():
                 "error": "Cobalt Strike file must be uploaded before deployment. Please upload the file first."
             }), 400
     
-    # Check prerequisite: Domain configuration (only for C2 and combined deployments)
+    # Check prerequisite: Domain configuration
     if requires_domain:
-        primary_domain = config.get('primary_domain_name', '').strip()
-        
-        if not primary_domain:
-            return jsonify({
-                "success": False,
-                "error": "Domain configuration is required for C2 deployments. Please configure primary_domain_name in terraform.tfvars."
-            }), 400
-        
-        domain_valid, domain_errors = ConfigValidator.validate_domain_config(config)
-        if not domain_valid:
-            return jsonify({
-                "success": False,
-                "error": f"Domain configuration is invalid: {', '.join(domain_errors)}"
-            }), 400
+        primary_domain = config.get("primary_domain_name", "").strip()
+    
+    if not primary_domain:
+        return jsonify({
+            "success": False,
+                "error": "Domain configuration is required for C2 deployments. Please configure primary_domain_name."
+        }), 400
+    
+    domain_valid, domain_errors = ConfigValidator.validate_domain_config(config)
+    if not domain_valid:
+        return jsonify({
+            "success": False,
+                "error": f"Domain configuration is invalid: {", ".join(domain_errors)}"
+        }), 400
+    
+    # Initialize project-specific state
+    deployment_states[project_name] = create_empty_state()
+    state = deployment_states[project_name]
+    
+    # Set initial state BEFORE starting the thread
+    state["status"] = "running"
+    state["step"] = "Initializing..."
+    state["started_at"] = time.time()
+    state["progress_percent"] = 0
+    state["error"] = None
+    state["logs"] = []
+    
+    # Copy config to project-specific tfvars
+    service = get_service_for_project(project_name)
+    service.copy_config_to_workspace(tfvars_file)
     
     # Log what we're deploying
-    add_history_entry(f"Starting deployment: {deployment_type}", "info")
+    add_history_entry(f"Starting deployment: {deployment_type} (project: {project_name})", "info", project_name=project_name)
     
     # Start deployment in background thread
-    thread = threading.Thread(target=run_deployment)
+    thread = threading.Thread(target=run_deployment, args=(project_name,))
     thread.daemon = True
     thread.start()
     
     return jsonify({
         "success": True,
-        "message": f"Deployment started for {deployment_type}"
+        "message": f"Deployment started for project '{project_name}' ({deployment_type})",
+        "project_name": project_name,
+        "deployment_type": deployment_type
     })
 
 @bp.route('/destroy', methods=['POST'])
 def destroy():
-    """Destroy infrastructure"""
+    """Destroy infrastructure for a specific project"""
     global deployment_state
     
-    if deployment_state["status"] == "running":
+    # Get request data
+    data = request.get_json() or {}
+    project_name = data.get("project_name")
+    
+    # Check if specific project is running
+    if project_name and project_name in deployment_states:
+        if deployment_states[project_name].get("status") == "running":
+            return jsonify({
+                "success": False,
+                "error": f"Operation already in progress for project '{project_name}'"
+            }), 400
+    elif deployment_state["status"] == "running":
         return jsonify({
             "success": False,
             "error": "Operation already in progress"
         }), 400
     
     # Require confirmation
-    data = request.get_json() or {}
     if data.get("confirm") != "DESTROY":
         return jsonify({
             "success": False,
             "error": "Confirmation required. Send confirm: 'DESTROY'"
         }), 400
     
+    # Initialize state for this project
+    if project_name:
+        if project_name not in deployment_states:
+            deployment_states[project_name] = create_empty_state()
+        deployment_states[project_name]["status"] = "running"
+    
     # Start destroy in background thread
-    thread = threading.Thread(target=run_destroy)
+    thread = threading.Thread(target=run_destroy, args=(project_name,))
     thread.daemon = True
     thread.start()
     
     return jsonify({
         "success": True,
-        "message": "Destruction started"
+        "message": f"Destruction started" + (f" for project '{project_name}'" if project_name else ""),
+        "project_name": project_name
     })
+
+@bp.route('/purge', methods=['POST'])
+def purge_resources():
+    """
+    Force purge all resources from a failed deployment.
+    This runs terraform destroy with -refresh=false to clean up orphaned resources.
+    """
+    global deployment_state
+    
+    # Get request data
+    data = request.get_json() or {}
+    project_name = data.get("project_name")
+    
+    # Check if specific project is running
+    if project_name and project_name in deployment_states:
+        if deployment_states[project_name].get("status") == "running":
+            return jsonify({
+                "success": False,
+                "error": f"Operation already in progress for project '{project_name}'"
+            }), 400
+    elif deployment_state["status"] == "running":
+        return jsonify({
+            "success": False,
+            "error": "Operation already in progress"
+        }), 400
+    
+    # Require confirmation
+    if data.get("confirm") != "PURGE":
+        return jsonify({
+            "success": False,
+            "error": "Confirmation required. Send confirm: 'PURGE'"
+        }), 400
+    
+    # Initialize state for this project
+    if project_name:
+        if project_name not in deployment_states:
+            deployment_states[project_name] = create_empty_state()
+        state = deployment_states[project_name]
+    else:
+        state = deployment_state
+    
+    # Set initial state before starting thread
+    state["status"] = "running"
+    state["step"] = "Purging resources..."
+    state["started_at"] = time.time()
+    state["progress_percent"] = 0
+    state["error"] = None
+    state["logs"] = []
+    
+    # Start purge in background thread
+    thread = threading.Thread(target=run_purge, args=(project_name,))
+    thread.daemon = True
+    thread.start()
+    
+    return jsonify({
+        "success": True,
+        "message": "Purge started - cleaning up all resources" + (f" for project '{project_name}'" if project_name else ""),
+        "project_name": project_name
+    })
+
+def run_purge(project_name: str = None):
+    """Run purge in background thread - force destroy all resources"""
+    global deployment_state
+    
+    # Use project-specific state if provided
+    if project_name and project_name in deployment_states:
+        state = deployment_states[project_name]
+        service = get_service_for_project(project_name)
+    else:
+        state = deployment_state
+        service = terraform_service
+    
+    try:
+        add_log("Starting resource purge...", "warning", project_name)
+        
+        # First, try to refresh state to see what exists
+        state["step"] = "Refreshing Terraform state..."
+        add_log("Refreshing Terraform state to detect existing resources...", "info", project_name)
+        
+        # Run terraform refresh to update state with actual AWS resources
+        refresh_result = service.refresh()
+        if refresh_result.get("success"):
+            add_log("State refreshed successfully", "success", project_name)
+        else:
+            add_log("State refresh had issues, continuing with destroy...", "warning", project_name)
+        
+        # Now run destroy
+        state["step"] = "Destroying all resources..."
+        state["progress_percent"] = 30
+        add_log("Running terraform destroy to remove all resources...", "info", project_name)
+        
+        result = service.destroy()
+        
+        if result["success"]:
+            state["status"] = "success"
+            state["step"] = "Resources purged"
+            state["progress_percent"] = 100
+            add_log("All resources have been purged successfully!", "success", project_name)
+            
+            # Also clear the terraform state to start fresh
+            add_log("Clearing Terraform state for clean slate...", "info", project_name)
+            
+            # If using workspace, optionally delete it
+            if project_name and service.workspace_name != "default":
+                add_log(f"Cleaning up workspace '{service.workspace_name}'...", "info", project_name)
+            
+        else:
+            # Log the first destroy error
+            first_error = result.get("stderr", "Unknown error")
+            add_log(f"Standard destroy failed: {first_error[:500]}", "error", project_name)
+            
+            # If normal destroy fails, try with -refresh=false
+            add_log("Trying force destroy with -refresh=false...", "warning", project_name)
+            state["step"] = "Force destroying resources..."
+            state["progress_percent"] = 60
+            
+            result = service.force_destroy()
+            
+            if result["success"]:
+                state["status"] = "success"
+                state["step"] = "Resources force-purged"
+                state["progress_percent"] = 100
+                add_log("Resources force-purged successfully!", "success", project_name)
+            else:
+                state["status"] = "error"
+                error_msg = result.get("stderr", "Purge failed")
+                state["error"] = error_msg
+                # Log the full error (truncated for readability)
+                add_log(f"Purge failed: {error_msg[:1000]}", "error", project_name)
+        
+        state["completed_at"] = time.time()
+        
+    except Exception as e:
+        state["status"] = "error"
+        state["error"] = str(e)
+        state["completed_at"] = time.time()
+        add_log(f"Purge error: {str(e)}", "error", project_name)
 
 @bp.route('/plan', methods=['GET'])
 def plan():
@@ -1111,10 +2023,14 @@ def _get_ansible_status_message(status: str) -> str:
 def download_ssh_key(key_type: str):
     """
     Get SSH private key for jumpbox or Windows VMs.
-    Keys are retrieved from Terraform outputs and saved locally.
+    Keys are retrieved from Terraform outputs and saved to ~/.ssh directory.
     
     Args:
         key_type: 'jumpbox' or 'windows'
+    
+    Query params:
+        project: project name to get key for (uses workspace)
+        save_to_ssh: if 'true', saves to ~/.ssh directory
     """
     try:
         if key_type not in ['jumpbox', 'windows']:
@@ -1123,25 +2039,54 @@ def download_ssh_key(key_type: str):
                 "error": "Invalid key type. Use 'jumpbox' or 'windows'"
             }), 400
         
+        # Get project name from query params
+        project_name = request.args.get('project')
+        save_to_ssh = request.args.get('save_to_ssh', 'true').lower() == 'true'
+        
+        # Use project-specific service if provided
+        if project_name:
+            service = get_service_for_project(project_name)
+            # Ensure workspace is selected
+            service.init()
+            service.ensure_workspace()
+        else:
+            service = terraform_service
+        
         # Get key from Terraform outputs
-        output_result = terraform_service.output()
+        output_result = service.output()
         outputs = output_result.get("outputs", {})
         
         if key_type == 'jumpbox':
             key_content = outputs.get("goad_jumpbox_ssh_private_key", {}).get("value")
-            filename = "goad-jumpbox.pem"
+            # Use project-specific filename if project name is provided
+            if project_name:
+                filename = f"{project_name}-goadmini-jumpbox-key.pem"
+            else:
+                filename = "goad-jumpbox.pem"
         else:
             key_content = outputs.get("goad_windows_ssh_private_key", {}).get("value")
-            filename = "goad-windows.pem"
+            if project_name:
+                filename = f"{project_name}-goadmini-windows-key.pem"
+            else:
+                filename = "goad-windows.pem"
         
         if not key_content:
             return jsonify({
                 "success": False,
-                "error": f"SSH key not found. GOAD may not be deployed."
+                "error": f"SSH key not found. GOAD may not be deployed or Terraform outputs are not available."
             }), 404
         
+        # Determine save location
+        if save_to_ssh:
+            # Save to user's ~/.ssh directory
+            ssh_dir = Path.home() / ".ssh"
+            ssh_dir.mkdir(mode=0o700, exist_ok=True)
+            key_path = ssh_dir / filename
+        else:
+            # Save to project ssh_keys folder
+            key_path = SSH_KEYS_FOLDER / filename
+        
         # Save key to file
-        key_path = SSH_KEYS_FOLDER / filename
         with open(key_path, 'w') as f:
             f.write(key_content)
         os.chmod(key_path, 0o600)
@@ -1151,7 +2096,84 @@ def download_ssh_key(key_type: str):
             "message": f"SSH key saved to {key_path}",
             "path": str(key_path),
             "filename": filename,
-            "chmod_command": f"chmod 600 {key_path}"
+            "chmod_command": f"chmod 600 {key_path}",
+            "key_content": key_content if not save_to_ssh else None  # Only return content if not saving
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@bp.route('/ssh-key/download', methods=['POST'])
+def save_ssh_key_to_disk():
+    """
+    Save SSH key to user's ~/.ssh directory.
+    This endpoint is called from the UI to download and save the key.
+    """
+    try:
+        data = request.get_json() or {}
+        project_name = data.get('project_name')
+        key_type = data.get('key_type', 'jumpbox')
+        
+        if not project_name:
+            return jsonify({
+                "success": False,
+                "error": "Project name is required"
+            }), 400
+        
+        # Get the service for this project
+        service = get_service_for_project(project_name)
+        
+        # Initialize and ensure workspace
+        init_result = service.init()
+        if not init_result.get("success"):
+            return jsonify({
+                "success": False,
+                "error": "Failed to initialize Terraform"
+            }), 500
+        
+        ws_result = service.ensure_workspace()
+        if not ws_result.get("success"):
+            return jsonify({
+                "success": False,
+                "error": f"Failed to select workspace: {ws_result.get('stderr', '')}"
+            }), 500
+        
+        # Get outputs
+        output_result = service.output()
+        outputs = output_result.get("outputs", {})
+        
+        if key_type == 'jumpbox':
+            key_content = outputs.get("goad_jumpbox_ssh_private_key", {}).get("value")
+            filename = f"{project_name}-goadmini-jumpbox-key.pem"
+        else:
+            key_content = outputs.get("goad_windows_ssh_private_key", {}).get("value")
+            filename = f"{project_name}-goadmini-windows-key.pem"
+        
+        if not key_content:
+            return jsonify({
+                "success": False,
+                "error": f"SSH key not found in Terraform outputs. The deployment may not include GOAD or the key was not generated."
+            }), 404
+        
+        # Save to ~/.ssh
+        ssh_dir = Path.home() / ".ssh"
+        ssh_dir.mkdir(mode=0o700, exist_ok=True)
+        key_path = ssh_dir / filename
+        
+        with open(key_path, 'w') as f:
+            f.write(key_content)
+        os.chmod(key_path, 0o600)
+        
+        return jsonify({
+            "success": True,
+            "message": f"SSH key saved successfully",
+            "path": str(key_path),
+            "filename": filename,
+            "ssh_command": f"ssh -i {key_path} ubuntu@<IP_ADDRESS>"
         })
         
     except Exception as e:
@@ -1251,24 +2273,25 @@ def stop_infrastructure():
         import boto3
         from webapp.backend.utils.config_parser import ConfigParser
         
-        # Get config for project name and region
+        # Get project name from request body or config
+        data = request.get_json() or {}
+        project_name = data.get('project_name')
+        
+        # Get config for region (and fallback project name)
         config_dir = project_root / "configs"
         tfvars_file = config_dir / "terraform.tfvars"
         
-        if not tfvars_file.exists():
-            return jsonify({
-                "success": False,
-                "error": "Configuration not found"
-            }), 400
-        
-        config = ConfigParser.parse_tfvars(tfvars_file)
-        project_name = config.get('project_name', '')
+        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
         aws_region = config.get('aws_region', 'us-east-1')
+        
+        # Use config project name as fallback
+        if not project_name:
+            project_name = config.get('project_name', '')
         
         if not project_name:
             return jsonify({
                 "success": False,
-                "error": "Project name not configured"
+                "error": "Project name not specified"
             }), 400
         
         # Connect to EC2
@@ -1321,24 +2344,25 @@ def start_infrastructure():
         import boto3
         from webapp.backend.utils.config_parser import ConfigParser
         
-        # Get config for project name and region
+        # Get project name from request body or config
+        data = request.get_json() or {}
+        project_name = data.get('project_name')
+        
+        # Get config for region (and fallback project name)
         config_dir = project_root / "configs"
         tfvars_file = config_dir / "terraform.tfvars"
         
-        if not tfvars_file.exists():
-            return jsonify({
-                "success": False,
-                "error": "Configuration not found"
-            }), 400
-        
-        config = ConfigParser.parse_tfvars(tfvars_file)
-        project_name = config.get('project_name', '')
+        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
         aws_region = config.get('aws_region', 'us-east-1')
+        
+        # Use config project name as fallback
+        if not project_name:
+            project_name = config.get('project_name', '')
         
         if not project_name:
             return jsonify({
                 "success": False,
-                "error": "Project name not configured"
+                "error": "Project name not specified"
             }), 400
         
         # Connect to EC2
@@ -1464,32 +2488,510 @@ def get_instance_status():
 # RESOURCE LIST ENDPOINT
 # =============================================================================
 
-@bp.route('/resources', methods=['GET'])
-def get_all_resources():
+@bp.route('/resources/project/<project_name>', methods=['GET'])
+def get_project_resources(project_name: str):
     """
-    Get a comprehensive list of ALL deployed AWS resources for this project.
-    Uses boto3 to query AWS directly for accurate resource information.
+    Get resources for a specific project/deployment.
+    When refresh=true, does a full AWS query for all resource types.
+    Otherwise returns saved resources from deployment history.
+    """
+    try:
+        import boto3
+        from webapp.backend.utils.config_parser import ConfigParser
+        from datetime import datetime
+        
+        # Load saved deployment resources for metadata
+        resources_file = project_root / "logs" / "deployment_resources.json"
+        deployment_data = {}
+        
+        if resources_file.exists():
+            with open(resources_file, 'r') as f:
+                all_deployments = json.load(f)
+            deployment_data = all_deployments.get(project_name, {})
+        
+        aws_region = deployment_data.get('region', 'us-east-1')
+        
+        # Check if we should do a full AWS refresh
+        refresh = request.args.get('refresh', 'false').lower() == 'true'
+        
+        if refresh:
+            # Do a FULL AWS query for all resource types (same as save_deployment_resources)
+            resources = []
+            ec2 = boto3.client('ec2', region_name=aws_region)
+            project_prefix = project_name.lower().replace('_', '-')
+            
+            # EC2 Instances (by tag)
+            try:
+                response = ec2.describe_instances(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for reservation in response.get('Reservations', []):
+                    for instance in reservation.get('Instances', []):
+                        # Skip terminated instances
+                        if instance['State']['Name'] == 'terminated':
+                            continue
+                        name = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                        role = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Role'), '')
+                        resources.append({
+                            'type': 'ec2',
+                            'id': instance['InstanceId'],
+                            'name': name,
+                            'role': role,
+                            'state': instance['State']['Name'],
+                            'instance_type': instance['InstanceType'],
+                            'private_ip': instance.get('PrivateIpAddress'),
+                            'public_ip': instance.get('PublicIpAddress')
+                        })
+            except Exception as e:
+                print(f"Error fetching EC2 instances: {e}")
+            
+            # VPCs (by tag)
+            try:
+                response = ec2.describe_vpcs(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for vpc in response.get('Vpcs', []):
+                    name = next((t['Value'] for t in vpc.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                    resources.append({
+                        'type': 'vpc',
+                        'id': vpc['VpcId'],
+                        'name': name,
+                        'state': vpc['State'],
+                        'cidr': vpc['CidrBlock']
+                    })
+            except Exception as e:
+                print(f"Error fetching VPCs: {e}")
+            
+            # Subnets (by tag)
+            try:
+                response = ec2.describe_subnets(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for subnet in response.get('Subnets', []):
+                    name = next((t['Value'] for t in subnet.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                    resources.append({
+                        'type': 'subnet',
+                        'id': subnet['SubnetId'],
+                        'name': name,
+                        'state': subnet['State'],
+                        'cidr': subnet['CidrBlock'],
+                        'az': subnet['AvailabilityZone']
+                    })
+            except Exception as e:
+                print(f"Error fetching subnets: {e}")
+            
+            # Security Groups (by tag)
+            try:
+                response = ec2.describe_security_groups(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for sg in response.get('SecurityGroups', []):
+                    resources.append({
+                        'type': 'security_group',
+                        'id': sg['GroupId'],
+                        'name': sg['GroupName'],
+                        'state': 'active',
+                        'description': sg.get('Description', '')[:100]
+                    })
+            except Exception as e:
+                print(f"Error fetching security groups: {e}")
+            
+            # NAT Gateways (by tag)
+            try:
+                response = ec2.describe_nat_gateways(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for nat in response.get('NatGateways', []):
+                    if nat['State'] == 'deleted':
+                        continue
+                    name = next((t['Value'] for t in nat.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                    public_ip = nat.get('NatGatewayAddresses', [{}])[0].get('PublicIp', 'N/A')
+                    resources.append({
+                        'type': 'nat_gateway',
+                        'id': nat['NatGatewayId'],
+                        'name': name,
+                        'state': nat['State'],
+                        'public_ip': public_ip
+                    })
+            except Exception as e:
+                print(f"Error fetching NAT gateways: {e}")
+            
+            # Elastic IPs (by tag)
+            try:
+                response = ec2.describe_addresses(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for eip in response.get('Addresses', []):
+                    name = next((t['Value'] for t in eip.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                    resources.append({
+                        'type': 'elastic_ip',
+                        'id': eip.get('AllocationId', 'N/A'),
+                        'name': name,
+                        'state': 'associated' if eip.get('InstanceId') else 'available',
+                        'public_ip': eip.get('PublicIp')
+                    })
+            except Exception as e:
+                print(f"Error fetching Elastic IPs: {e}")
+            
+            # Internet Gateways (by tag)
+            try:
+                response = ec2.describe_internet_gateways(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for igw in response.get('InternetGateways', []):
+                    name = next((t['Value'] for t in igw.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                    attached = 'attached' if igw.get('Attachments') else 'detached'
+                    resources.append({
+                        'type': 'internet_gateway',
+                        'id': igw['InternetGatewayId'],
+                        'name': name,
+                        'state': attached
+                    })
+            except Exception as e:
+                print(f"Error fetching Internet Gateways: {e}")
+            
+            # Key Pairs (by tag)
+            try:
+                response = ec2.describe_key_pairs(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for kp in response.get('KeyPairs', []):
+                    resources.append({
+                        'type': 'key_pair',
+                        'id': kp.get('KeyPairId', kp['KeyName']),
+                        'name': kp['KeyName'],
+                        'state': 'available',
+                        'key_type': kp.get('KeyType', 'rsa')
+                    })
+            except Exception as e:
+                print(f"Error fetching key pairs: {e}")
+            
+            # Route Tables (by tag)
+            try:
+                response = ec2.describe_route_tables(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for rt in response.get('RouteTables', []):
+                    name = next((t['Value'] for t in rt.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                    route_count = len(rt.get('Routes', []))
+                    resources.append({
+                        'type': 'route_table',
+                        'id': rt['RouteTableId'],
+                        'name': name,
+                        'state': 'active',
+                        'route_count': route_count
+                    })
+            except Exception as e:
+                print(f"Error fetching route tables: {e}")
+            
+            # Network Interfaces (by tag)
+            try:
+                response = ec2.describe_network_interfaces(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for eni in response.get('NetworkInterfaces', []):
+                    name = next((t['Value'] for t in eni.get('TagSet', []) if t['Key'] == 'Name'), 'Unnamed')
+                    private_ip = eni.get('PrivateIpAddress', 'N/A')
+                    resources.append({
+                        'type': 'network_interface',
+                        'id': eni['NetworkInterfaceId'],
+                        'name': name,
+                        'state': eni.get('Status', 'unknown'),
+                        'private_ip': private_ip
+                    })
+            except Exception as e:
+                print(f"Error fetching network interfaces: {e}")
+            
+            # S3 Buckets (by name prefix - no tags)
+            try:
+                s3 = boto3.client('s3', region_name=aws_region)
+                response = s3.list_buckets()
+                for bucket in response.get('Buckets', []):
+                    if bucket['Name'].lower().startswith(project_prefix):
+                        resources.append({
+                            'type': 's3_bucket',
+                            'id': bucket['Name'],
+                            'name': bucket['Name'],
+                            'state': 'available',
+                            'created': bucket['CreationDate'].isoformat()
+                        })
+            except Exception as e:
+                print(f"Error fetching S3 buckets: {e}")
+            
+            # IAM Roles (by name prefix - no tags)
+            try:
+                iam = boto3.client('iam', region_name=aws_region)
+                paginator = iam.get_paginator('list_roles')
+                for page in paginator.paginate():
+                    for role in page.get('Roles', []):
+                        if role['RoleName'].lower().startswith(project_prefix):
+                            resources.append({
+                                'type': 'iam_role',
+                                'id': role['RoleId'],
+                                'name': role['RoleName'],
+                                'state': 'active',
+                                'created': role['CreateDate'].isoformat()
+                            })
+            except Exception as e:
+                print(f"Error fetching IAM roles: {e}")
+            
+            # IAM Instance Profiles (by name prefix - no tags)
+            try:
+                iam = boto3.client('iam', region_name=aws_region)
+                paginator = iam.get_paginator('list_instance_profiles')
+                for page in paginator.paginate():
+                    for profile in page.get('InstanceProfiles', []):
+                        if profile['InstanceProfileName'].lower().startswith(project_prefix):
+                            resources.append({
+                                'type': 'iam_instance_profile',
+                                'id': profile['InstanceProfileId'],
+                                'name': profile['InstanceProfileName'],
+                                'state': 'active',
+                                'role_count': len(profile.get('Roles', []))
+                            })
+            except Exception as e:
+                print(f"Error fetching IAM instance profiles: {e}")
+            
+            # Update the saved resources file with the refreshed data
+            if resources:
+                try:
+                    all_deployments = {}
+                    if resources_file.exists():
+                        with open(resources_file, 'r') as f:
+                            all_deployments = json.load(f)
+                    
+                    if project_name not in all_deployments:
+                        all_deployments[project_name] = {}
+                    
+                    all_deployments[project_name].update({
+                        'project_name': project_name,
+                        'deployed_at': all_deployments.get(project_name, {}).get('deployed_at', datetime.now().isoformat()),
+                        'region': aws_region,
+                        'resource_count': len(resources),
+                        'resources': resources,
+                        'last_refreshed': datetime.now().isoformat()
+                    })
+                    
+                    with open(resources_file, 'w') as f:
+                        json.dump(all_deployments, f, indent=2)
+                except Exception as e:
+                    print(f"Error saving refreshed resources: {e}")
+        else:
+            # Return saved resources
+            resources = deployment_data.get('resources', [])
+        
+        # Group resources by type
+        grouped = {}
+        for r in resources:
+            rtype = r['type']
+            if rtype not in grouped:
+                grouped[rtype] = []
+            grouped[rtype].append(r)
+        
+        return jsonify({
+            "success": True,
+            "project_name": project_name,
+            "deployment_type": deployment_data.get('deployment_type'),
+            "deployed_at": deployment_data.get('deployed_at'),
+            "region": aws_region,
+            "resource_count": len(resources),
+            "resources": resources,
+            "resources_grouped": grouped
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@bp.route('/resources/all-projects', methods=['GET'])
+def get_all_project_resources():
+    """
+    Get a summary of resources for all deployed projects.
+    """
+    try:
+        resources_file = project_root / "logs" / "deployment_resources.json"
+        
+        if not resources_file.exists():
+            return jsonify({
+                "success": True,
+                "projects": [],
+                "message": "No deployments found"
+            })
+        
+        with open(resources_file, 'r') as f:
+            all_deployments = json.load(f)
+        
+        projects = []
+        for project_name, data in all_deployments.items():
+            projects.append({
+                "project_name": project_name,
+                "deployment_type": data.get('deployment_type'),
+                "deployed_at": data.get('deployed_at'),
+                "region": data.get('region'),
+                "resource_count": data.get('resource_count', len(data.get('resources', [])))
+            })
+        
+        # Sort by deployment time (newest first)
+        projects.sort(key=lambda x: x.get('deployed_at', ''), reverse=True)
+        
+        return jsonify({
+            "success": True,
+            "projects": projects,
+            "total_projects": len(projects)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@bp.route('/outputs', methods=['GET'])
+def get_terraform_outputs():
+    """
+    Get Terraform outputs for a specific project.
+    Returns connection info like IPs, key names, etc.
     """
     try:
         import boto3
         from webapp.backend.utils.config_parser import ConfigParser
         
-        # Get config
+        # Get project name from query params
+        project_name = request.args.get('project')
+        
+        # Get config for region and fallback project name
         config_dir = project_root / "configs"
         tfvars_file = config_dir / "terraform.tfvars"
         
-        if not tfvars_file.exists():
-            return jsonify({
-                "success": True,
-                "resources": [],
-                "message": "No configuration found"
-            })
-        
-        config = ConfigParser.parse_tfvars(tfvars_file)
-        project_name = config.get('project_name', '')
+        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
         aws_region = config.get('aws_region', 'us-east-1')
         
         if not project_name:
+            project_name = config.get('project_name', '')
+        
+        if not project_name:
+            return jsonify({
+                "success": False,
+                "error": "Project name not specified"
+            }), 400
+        
+        # Query AWS for instance details
+        ec2 = boto3.client('ec2', region_name=aws_region)
+        
+        response = ec2.describe_instances(
+            Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+        )
+        
+        outputs = {
+            'project_name': project_name,
+            'region': aws_region
+        }
+        
+        # Extract instance info
+        for reservation in response.get('Reservations', []):
+            for instance in reservation.get('Instances', []):
+                tags = {t['Key']: t['Value'] for t in instance.get('Tags', [])}
+                role = tags.get('Role', '').lower()
+                name = tags.get('Name', '')
+                
+                # Identify instance type by role or name
+                if 'jumpbox' in role.lower() or 'jumpbox' in name.lower():
+                    outputs['jumpbox_public_ip'] = instance.get('PublicIpAddress')
+                    outputs['jumpbox_private_ip'] = instance.get('PrivateIpAddress')
+                    outputs['jumpbox_instance_id'] = instance['InstanceId']
+                    outputs['jumpbox_key_name'] = instance.get('KeyName')
+                    outputs['jumpbox_state'] = instance['State']['Name']
+                    
+                elif 'dc01' in name.lower() or 'dc' in role.lower():
+                    outputs['dc01_private_ip'] = instance.get('PrivateIpAddress')
+                    outputs['dc01_instance_id'] = instance['InstanceId']
+                    outputs['dc01_state'] = instance['State']['Name']
+                    
+                elif 'dc02' in name.lower():
+                    outputs['dc02_private_ip'] = instance.get('PrivateIpAddress')
+                    outputs['dc02_instance_id'] = instance['InstanceId']
+                    outputs['dc02_state'] = instance['State']['Name']
+                    
+                elif 'team' in role.lower() or 'teamserver' in name.lower():
+                    outputs['team_server_public_ip'] = instance.get('PublicIpAddress')
+                    outputs['team_server_private_ip'] = instance.get('PrivateIpAddress')
+                    outputs['team_server_instance_id'] = instance['InstanceId']
+                    outputs['team_server_state'] = instance['State']['Name']
+                    
+                elif 'redirector' in role.lower() or 'redirector' in name.lower():
+                    outputs['redirector_public_ip'] = instance.get('PublicIpAddress')
+                    outputs['redirector_private_ip'] = instance.get('PrivateIpAddress')
+                    outputs['redirector_instance_id'] = instance['InstanceId']
+                    outputs['redirector_state'] = instance['State']['Name']
+        
+        # Get domain from config if available
+        outputs['redirector_domain'] = config.get('primary_domain_name', '')
+        
+        return jsonify({
+            "success": True,
+            "outputs": outputs
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@bp.route('/resources', methods=['GET'])
+def get_all_resources():
+    """
+    Get a comprehensive list of ALL deployed AWS resources.
+    Uses boto3 to query AWS directly for accurate resource information.
+    
+    Query params:
+    - project: specific project name to filter by (optional)
+    - all_projects: if 'true', fetch resources from all known projects
+    """
+    try:
+        import boto3
+        from webapp.backend.utils.config_parser import ConfigParser
+        
+        # Check query params
+        specific_project = request.args.get('project')
+        all_projects_flag = request.args.get('all_projects', 'false').lower() == 'true'
+        
+        # Get config for region
+        config_dir = project_root / "configs"
+        tfvars_file = config_dir / "terraform.tfvars"
+        
+        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        aws_region = config.get('aws_region', 'us-east-1')
+        
+        # Determine which project names to query
+        project_names = []
+        
+        if specific_project:
+            # Query specific project
+            project_names = [specific_project]
+        elif all_projects_flag:
+            # Get all known project names from deployment history
+            history = load_deployment_history()
+            project_names = list(set(
+                h.get('project_name') for h in history 
+                if h.get('project_name')
+            ))
+            # Also include current config project
+            current_project = config.get('project_name', '')
+            if current_project and current_project not in project_names:
+                project_names.append(current_project)
+        else:
+            # Default: use current config project
+            project_name = config.get('project_name', '')
+            if project_name:
+                project_names = [project_name]
+        
+        if not project_names:
             return jsonify({
                 "success": True,
                 "resources": [],
@@ -1501,286 +3003,318 @@ def get_all_resources():
         # EC2 Client
         ec2 = boto3.client('ec2', region_name=aws_region)
         
-        # 1. EC2 Instances
-        try:
-            response = ec2.describe_instances(
-                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-            )
-            for reservation in response.get('Reservations', []):
-                for instance in reservation.get('Instances', []):
-                    name = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
-                    role = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Role'), '')
+        # Query resources for each project
+        for project_name in project_names:
+            # 1. EC2 Instances
+            try:
+                response = ec2.describe_instances(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for reservation in response.get('Reservations', []):
+                    for instance in reservation.get('Instances', []):
+                        name = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
+                        role = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Role'), '')
+                        resources.append({
+                            'type': 'ec2',
+                            'name': name,
+                            'id': instance['InstanceId'],
+                            'state': instance['State']['Name'],
+                            'details': f"{instance['InstanceType']} | {role}" if role else instance['InstanceType'],
+                            'project': project_name
+                        })
+            except Exception as e:
+                print(f"Error fetching EC2 instances for {project_name}: {e}")
+            
+            # 2. VPCs
+            try:
+                response = ec2.describe_vpcs(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for vpc in response.get('Vpcs', []):
+                    name = next((t['Value'] for t in vpc.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed VPC')
                     resources.append({
-                        'type': 'ec2',
+                        'type': 'vpc',
                         'name': name,
-                        'id': instance['InstanceId'],
-                        'state': instance['State']['Name'],
-                        'details': f"{instance['InstanceType']} | {role}" if role else instance['InstanceType']
+                        'id': vpc['VpcId'],
+                        'state': vpc['State'],
+                        'details': vpc['CidrBlock'],
+                        'project': project_name
                     })
-        except Exception as e:
-            print(f"Error fetching EC2 instances: {e}")
-        
-        # 2. VPCs
-        try:
-            response = ec2.describe_vpcs(
-                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-            )
-            for vpc in response.get('Vpcs', []):
-                name = next((t['Value'] for t in vpc.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed VPC')
-                resources.append({
-                    'type': 'vpc',
-                    'name': name,
-                    'id': vpc['VpcId'],
-                    'state': vpc['State'],
-                    'details': vpc['CidrBlock']
-                })
-        except Exception as e:
-            print(f"Error fetching VPCs: {e}")
-        
-        # 3. Subnets
-        try:
-            response = ec2.describe_subnets(
-                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-            )
-            for subnet in response.get('Subnets', []):
-                name = next((t['Value'] for t in subnet.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Subnet')
-                resources.append({
-                    'type': 'subnet',
-                    'name': name,
-                    'id': subnet['SubnetId'],
-                    'state': subnet['State'],
-                    'details': f"{subnet['CidrBlock']} | AZ: {subnet['AvailabilityZone']}"
-                })
-        except Exception as e:
-            print(f"Error fetching subnets: {e}")
-        
-        # 4. Security Groups
-        try:
-            response = ec2.describe_security_groups(
-                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-            )
-            for sg in response.get('SecurityGroups', []):
-                resources.append({
-                    'type': 'sg',
-                    'name': sg['GroupName'],
-                    'id': sg['GroupId'],
-                    'state': 'active',
-                    'details': sg.get('Description', '')[:50]
-                })
-        except Exception as e:
-            print(f"Error fetching security groups: {e}")
-        
-        # 5. Elastic IPs
-        try:
-            response = ec2.describe_addresses(
-                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-            )
-            for eip in response.get('Addresses', []):
-                name = next((t['Value'] for t in eip.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed EIP')
-                resources.append({
-                    'type': 'eip',
-                    'name': name,
-                    'id': eip.get('AllocationId', 'N/A'),
-                    'state': 'associated' if eip.get('InstanceId') else 'available',
-                    'details': eip.get('PublicIp', 'N/A')
-                })
-        except Exception as e:
-            print(f"Error fetching Elastic IPs: {e}")
-        
-        # 6. NAT Gateways
-        try:
-            response = ec2.describe_nat_gateways(
-                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-            )
-            for nat in response.get('NatGateways', []):
-                name = next((t['Value'] for t in nat.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed NAT')
-                public_ip = nat.get('NatGatewayAddresses', [{}])[0].get('PublicIp', 'N/A')
-                resources.append({
-                    'type': 'nat',
-                    'name': name,
-                    'id': nat['NatGatewayId'],
-                    'state': nat['State'],
-                    'details': f"Public IP: {public_ip}"
-                })
-        except Exception as e:
-            print(f"Error fetching NAT Gateways: {e}")
-        
-        # 7. Internet Gateways
-        try:
-            response = ec2.describe_internet_gateways(
-                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-            )
-            for igw in response.get('InternetGateways', []):
-                name = next((t['Value'] for t in igw.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed IGW')
-                attached = 'attached' if igw.get('Attachments') else 'detached'
-                resources.append({
-                    'type': 'igw',
-                    'name': name,
-                    'id': igw['InternetGatewayId'],
-                    'state': attached,
-                    'details': ''
-                })
-        except Exception as e:
-            print(f"Error fetching Internet Gateways: {e}")
-        
-        # 8. S3 Buckets (check for project-named buckets)
-        try:
-            s3 = boto3.client('s3', region_name=aws_region)
-            response = s3.list_buckets()
-            project_prefix = project_name.lower().replace('_', '-')
-            for bucket in response.get('Buckets', []):
-                if project_prefix in bucket['Name'].lower():
+            except Exception as e:
+                print(f"Error fetching VPCs for {project_name}: {e}")
+            
+            # 3. Subnets
+            try:
+                response = ec2.describe_subnets(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for subnet in response.get('Subnets', []):
+                    name = next((t['Value'] for t in subnet.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Subnet')
                     resources.append({
-                        'type': 's3',
-                        'name': bucket['Name'],
-                        'id': bucket['Name'],
-                        'state': 'available',
-                        'details': f"Created: {bucket['CreationDate'].strftime('%Y-%m-%d')}"
+                        'type': 'subnet',
+                        'name': name,
+                        'id': subnet['SubnetId'],
+                        'state': subnet['State'],
+                        'details': f"{subnet['CidrBlock']} | AZ: {subnet['AvailabilityZone']}",
+                        'project': project_name
                     })
-        except Exception as e:
-            print(f"Error fetching S3 buckets: {e}")
-        
-        # 9. Key Pairs
-        try:
-            response = ec2.describe_key_pairs(
-                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-            )
-            for kp in response.get('KeyPairs', []):
-                resources.append({
-                    'type': 'keypair',
-                    'name': kp['KeyName'],
-                    'id': kp.get('KeyPairId', kp['KeyName']),
-                    'state': 'available',
-                    'details': f"Type: {kp.get('KeyType', 'rsa')}"
-                })
-        except Exception as e:
-            print(f"Error fetching key pairs: {e}")
-        
-        # 10. Route Tables
-        try:
-            response = ec2.describe_route_tables(
-                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-            )
-            for rt in response.get('RouteTables', []):
-                name = next((t['Value'] for t in rt.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Route Table')
-                route_count = len(rt.get('Routes', []))
-                resources.append({
-                    'type': 'rtb',
-                    'name': name,
-                    'id': rt['RouteTableId'],
-                    'state': 'active',
-                    'details': f"{route_count} routes"
-                })
-        except Exception as e:
-            print(f"Error fetching route tables: {e}")
-        
-        # 11. VPC Peering Connections
-        try:
-            response = ec2.describe_vpc_peering_connections(
-                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-            )
-            for pcx in response.get('VpcPeeringConnections', []):
-                name = next((t['Value'] for t in pcx.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Peering')
-                requester = pcx.get('RequesterVpcInfo', {}).get('VpcId', 'N/A')
-                accepter = pcx.get('AccepterVpcInfo', {}).get('VpcId', 'N/A')
-                resources.append({
-                    'type': 'pcx',
-                    'name': name,
-                    'id': pcx['VpcPeeringConnectionId'],
-                    'state': pcx.get('Status', {}).get('Code', 'unknown'),
-                    'details': f"{requester} ↔ {accepter}"
-                })
-        except Exception as e:
-            print(f"Error fetching VPC peering connections: {e}")
-        
-        # 12. Network Interfaces (ENIs)
-        try:
-            response = ec2.describe_network_interfaces(
-                Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-            )
-            for eni in response.get('NetworkInterfaces', []):
-                name = next((t['Value'] for t in eni.get('TagSet', []) if t['Key'] == 'Name'), 'Unnamed ENI')
-                private_ip = eni.get('PrivateIpAddress', 'N/A')
-                resources.append({
-                    'type': 'eni',
-                    'name': name,
-                    'id': eni['NetworkInterfaceId'],
-                    'state': eni.get('Status', 'unknown'),
-                    'details': f"Private IP: {private_ip}"
-                })
-        except Exception as e:
-            print(f"Error fetching network interfaces: {e}")
-        
-        # 13. IAM Roles (for CS download)
-        try:
-            iam = boto3.client('iam', region_name=aws_region)
-            # List roles and filter by project name prefix
-            paginator = iam.get_paginator('list_roles')
-            for page in paginator.paginate():
-                for role in page.get('Roles', []):
-                    if project_prefix in role['RoleName'].lower() or 'cs-download' in role['RoleName'].lower():
-                        resources.append({
-                            'type': 'iam-role',
-                            'name': role['RoleName'],
-                            'id': role['RoleId'],
-                            'state': 'active',
-                            'details': f"Created: {role['CreateDate'].strftime('%Y-%m-%d')}"
-                        })
-        except Exception as e:
-            print(f"Error fetching IAM roles: {e}")
-        
-        # 14. IAM Instance Profiles
-        try:
-            iam = boto3.client('iam', region_name=aws_region)
-            paginator = iam.get_paginator('list_instance_profiles')
-            for page in paginator.paginate():
-                for profile in page.get('InstanceProfiles', []):
-                    if project_prefix in profile['InstanceProfileName'].lower() or 'cs-download' in profile['InstanceProfileName'].lower():
-                        resources.append({
-                            'type': 'iam-profile',
-                            'name': profile['InstanceProfileName'],
-                            'id': profile['InstanceProfileId'],
-                            'state': 'active',
-                            'details': f"Roles: {len(profile.get('Roles', []))}"
-                        })
-        except Exception as e:
-            print(f"Error fetching IAM instance profiles: {e}")
-        
-        # 15. Route 53 Hosted Zones
-        try:
-            route53 = boto3.client('route53', region_name=aws_region)
-            response = route53.list_hosted_zones()
-            for zone in response.get('HostedZones', []):
-                # Check if zone name matches any configured domain
-                zone_name = zone['Name'].rstrip('.')
-                if project_prefix in zone_name.lower() or zone.get('Config', {}).get('Comment', '').find(project_name) != -1:
+            except Exception as e:
+                print(f"Error fetching subnets for {project_name}: {e}")
+            
+            # 4. Security Groups
+            try:
+                response = ec2.describe_security_groups(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for sg in response.get('SecurityGroups', []):
                     resources.append({
-                        'type': 'route53-zone',
-                        'name': zone_name,
-                        'id': zone['Id'].split('/')[-1],
+                        'type': 'sg',
+                        'name': sg['GroupName'],
+                        'id': sg['GroupId'],
                         'state': 'active',
-                        'details': f"Records: {zone.get('ResourceRecordSetCount', 0)}"
+                        'details': sg.get('Description', '')[:50],
+                        'project': project_name
                     })
-        except Exception as e:
-            print(f"Error fetching Route 53 hosted zones: {e}")
-        
-        # 16. ACM Certificates
-        try:
-            acm = boto3.client('acm', region_name=aws_region)
-            response = acm.list_certificates()
-            for cert in response.get('CertificateSummaryList', []):
-                domain = cert.get('DomainName', '')
-                # Check if certificate is for a project domain
-                if project_prefix in domain.lower():
+            except Exception as e:
+                print(f"Error fetching security groups for {project_name}: {e}")
+            
+            # 5. Elastic IPs
+            try:
+                response = ec2.describe_addresses(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for eip in response.get('Addresses', []):
+                    name = next((t['Value'] for t in eip.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed EIP')
                     resources.append({
-                        'type': 'acm-cert',
-                        'name': domain,
-                        'id': cert['CertificateArn'].split('/')[-1],
-                        'state': cert.get('Status', 'unknown').lower(),
-                        'details': f"Type: {cert.get('Type', 'N/A')}"
+                        'type': 'eip',
+                        'name': name,
+                        'id': eip.get('AllocationId', 'N/A'),
+                        'state': 'associated' if eip.get('InstanceId') else 'available',
+                        'details': eip.get('PublicIp', 'N/A'),
+                        'project': project_name
                     })
-        except Exception as e:
-            print(f"Error fetching ACM certificates: {e}")
+            except Exception as e:
+                print(f"Error fetching Elastic IPs for {project_name}: {e}")
+            
+            # 6. NAT Gateways
+            try:
+                response = ec2.describe_nat_gateways(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for nat in response.get('NatGateways', []):
+                    name = next((t['Value'] for t in nat.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed NAT')
+                    public_ip = nat.get('NatGatewayAddresses', [{}])[0].get('PublicIp', 'N/A')
+                    resources.append({
+                        'type': 'nat',
+                        'name': name,
+                        'id': nat['NatGatewayId'],
+                        'state': nat['State'],
+                        'details': f"Public IP: {public_ip}",
+                        'project': project_name
+                    })
+            except Exception as e:
+                print(f"Error fetching NAT Gateways for {project_name}: {e}")
+            
+            # 7. Internet Gateways
+            try:
+                response = ec2.describe_internet_gateways(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for igw in response.get('InternetGateways', []):
+                    name = next((t['Value'] for t in igw.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed IGW')
+                    attached = 'attached' if igw.get('Attachments') else 'detached'
+                    resources.append({
+                        'type': 'igw',
+                        'name': name,
+                        'id': igw['InternetGatewayId'],
+                        'state': attached,
+                        'details': '',
+                        'project': project_name
+                    })
+            except Exception as e:
+                print(f"Error fetching Internet Gateways for {project_name}: {e}")
+            
+            # 8. S3 Buckets (check for project-named buckets)
+            try:
+                s3 = boto3.client('s3', region_name=aws_region)
+                response = s3.list_buckets()
+                project_prefix = project_name.lower().replace('_', '-')
+                for bucket in response.get('Buckets', []):
+                    bucket_name_lower = bucket['Name'].lower()
+                    # Must start with the project prefix to avoid matching longer project names
+                    if bucket_name_lower.startswith(project_prefix):
+                        resources.append({
+                            'type': 's3',
+                            'name': bucket['Name'],
+                            'id': bucket['Name'],
+                            'state': 'available',
+                            'details': f"Created: {bucket['CreationDate'].strftime('%Y-%m-%d')}",
+                            'project': project_name
+                        })
+            except Exception as e:
+                print(f"Error fetching S3 buckets for {project_name}: {e}")
+            
+            # 9. Key Pairs
+            try:
+                response = ec2.describe_key_pairs(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for kp in response.get('KeyPairs', []):
+                    resources.append({
+                        'type': 'keypair',
+                        'name': kp['KeyName'],
+                        'id': kp.get('KeyPairId', kp['KeyName']),
+                        'state': 'available',
+                        'details': f"Type: {kp.get('KeyType', 'rsa')}",
+                        'project': project_name
+                    })
+            except Exception as e:
+                print(f"Error fetching key pairs for {project_name}: {e}")
+            
+            # 10. Route Tables
+            try:
+                response = ec2.describe_route_tables(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for rt in response.get('RouteTables', []):
+                    name = next((t['Value'] for t in rt.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Route Table')
+                    route_count = len(rt.get('Routes', []))
+                    resources.append({
+                        'type': 'rtb',
+                        'name': name,
+                        'id': rt['RouteTableId'],
+                        'state': 'active',
+                        'details': f"{route_count} routes",
+                        'project': project_name
+                    })
+            except Exception as e:
+                print(f"Error fetching route tables for {project_name}: {e}")
+            
+            # 11. VPC Peering Connections
+            try:
+                response = ec2.describe_vpc_peering_connections(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for pcx in response.get('VpcPeeringConnections', []):
+                    name = next((t['Value'] for t in pcx.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Peering')
+                    requester = pcx.get('RequesterVpcInfo', {}).get('VpcId', 'N/A')
+                    accepter = pcx.get('AccepterVpcInfo', {}).get('VpcId', 'N/A')
+                    resources.append({
+                        'type': 'pcx',
+                        'name': name,
+                        'id': pcx['VpcPeeringConnectionId'],
+                        'state': pcx.get('Status', {}).get('Code', 'unknown'),
+                        'details': f"{requester} ↔ {accepter}",
+                        'project': project_name
+                    })
+            except Exception as e:
+                print(f"Error fetching VPC peering connections for {project_name}: {e}")
+            
+            # 12. Network Interfaces (ENIs)
+            try:
+                response = ec2.describe_network_interfaces(
+                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                )
+                for eni in response.get('NetworkInterfaces', []):
+                    name = next((t['Value'] for t in eni.get('TagSet', []) if t['Key'] == 'Name'), 'Unnamed ENI')
+                    private_ip = eni.get('PrivateIpAddress', 'N/A')
+                    resources.append({
+                        'type': 'eni',
+                        'name': name,
+                        'id': eni['NetworkInterfaceId'],
+                        'state': eni.get('Status', 'unknown'),
+                        'details': f"Private IP: {private_ip}",
+                        'project': project_name
+                    })
+            except Exception as e:
+                print(f"Error fetching network interfaces for {project_name}: {e}")
+            
+            # 13. IAM Roles (for CS download)
+            try:
+                iam = boto3.client('iam', region_name=aws_region)
+                project_prefix = project_name.lower().replace('_', '-')
+                # List roles and filter by project name prefix - must START with prefix to avoid substring matches
+                paginator = iam.get_paginator('list_roles')
+                for page in paginator.paginate():
+                    for role in page.get('Roles', []):
+                        role_name_lower = role['RoleName'].lower()
+                        # Must start with the project prefix to avoid matching longer project names
+                        if role_name_lower.startswith(project_prefix):
+                            resources.append({
+                                'type': 'iam-role',
+                                'name': role['RoleName'],
+                                'id': role['RoleId'],
+                                'state': 'active',
+                                'details': f"Created: {role['CreateDate'].strftime('%Y-%m-%d')}",
+                                'project': project_name
+                            })
+            except Exception as e:
+                print(f"Error fetching IAM roles for {project_name}: {e}")
+            
+            # 14. IAM Instance Profiles
+            try:
+                iam = boto3.client('iam', region_name=aws_region)
+                project_prefix = project_name.lower().replace('_', '-')
+                paginator = iam.get_paginator('list_instance_profiles')
+                for page in paginator.paginate():
+                    for profile in page.get('InstanceProfiles', []):
+                        profile_name_lower = profile['InstanceProfileName'].lower()
+                        # Must start with the project prefix to avoid matching longer project names
+                        if profile_name_lower.startswith(project_prefix):
+                            resources.append({
+                                'type': 'iam-profile',
+                                'name': profile['InstanceProfileName'],
+                                'id': profile['InstanceProfileId'],
+                                'state': 'active',
+                                'details': f"Roles: {len(profile.get('Roles', []))}",
+                                'project': project_name
+                            })
+            except Exception as e:
+                print(f"Error fetching IAM instance profiles for {project_name}: {e}")
+            
+            # 15. Route 53 Hosted Zones
+            try:
+                route53 = boto3.client('route53', region_name=aws_region)
+                project_prefix = project_name.lower().replace('_', '-')
+                response = route53.list_hosted_zones()
+                for zone in response.get('HostedZones', []):
+                    # Check if zone name matches any configured domain
+                    zone_name = zone['Name'].rstrip('.')
+                    zone_name_lower = zone_name.lower()
+                    comment = zone.get('Config', {}).get('Comment', '')
+                    # Must start with project prefix or have exact project name in comment
+                    if zone_name_lower.startswith(project_prefix) or comment == project_name:
+                        resources.append({
+                            'type': 'route53-zone',
+                            'name': zone_name,
+                            'id': zone['Id'].split('/')[-1],
+                            'state': 'active',
+                            'details': f"Records: {zone.get('ResourceRecordSetCount', 0)}",
+                            'project': project_name
+                        })
+            except Exception as e:
+                print(f"Error fetching Route 53 hosted zones for {project_name}: {e}")
+            
+            # 16. ACM Certificates
+            try:
+                acm = boto3.client('acm', region_name=aws_region)
+                project_prefix = project_name.lower().replace('_', '-')
+                response = acm.list_certificates()
+                for cert in response.get('CertificateSummaryList', []):
+                    domain = cert.get('DomainName', '')
+                    domain_lower = domain.lower()
+                    # Check if certificate is for a project domain - must start with prefix
+                    if domain_lower.startswith(project_prefix):
+                        resources.append({
+                            'type': 'acm-cert',
+                            'name': domain,
+                            'id': cert['CertificateArn'].split('/')[-1],
+                            'state': cert.get('Status', 'unknown').lower(),
+                            'details': f"Type: {cert.get('Type', 'N/A')}",
+                            'project': project_name
+                        })
+            except Exception as e:
+                print(f"Error fetching ACM certificates for {project_name}: {e}")
         
         return jsonify({
             "success": True,

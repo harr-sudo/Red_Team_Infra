@@ -1,16 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# Cobalt Strike Installation Script (Legacy/C2-Only Mode)
+# Team Server Initialization Script (Cobalt Strike ONLY)
 # =============================================================================
-# This script is used ONLY for standalone C2 infrastructure deployments
-# (without GOAD lab). For GOAD deployments, use teamserver_init.sh instead.
-#
-# Variables passed via Terraform templatefile():
-#   - cs_archive_s3_path: S3 path to Cobalt Strike archive
-#   - cs_password: Team server password
-#   - tools_repo_url: Git URL for tools repository (optional)
-#   - tools_repo_branch: Branch to clone (optional)
-#   - server_role: "c2_server" (legacy) - always treated as team server only
+# This script sets up a MINIMAL Cobalt Strike Team Server
+# NO other tools - just Java + CS teamserver daemon
 # =============================================================================
 
 set -e
@@ -18,24 +11,16 @@ set -e
 # Variables from Terraform templatefile()
 CS_ARCHIVE_S3_PATH="${cs_archive_s3_path}"
 CS_PASSWORD="${cs_password}"
-TOOLS_REPO_URL="${tools_repo_url}"
-TOOLS_REPO_BRANCH="${tools_repo_branch}"
-SERVER_ROLE="${server_role}"
 
 # Logging
-LOG_FILE="/var/log/cs-install.log"
+LOG_FILE="/var/log/teamserver-init.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "=============================================="
-echo "Cobalt Strike Team Server Installation"
+echo "Cobalt Strike Team Server Initialization"
 echo "Started: $(date)"
-echo "Role: Team Server ONLY"
+echo "This is a MINIMAL server - CS teamserver ONLY"
 echo "=============================================="
-
-# =============================================================================
-# 1. System Updates and Dependencies
-# =============================================================================
-echo "[1/6] Installing dependencies..."
 
 # Wait for cloud-init to complete
 while [ ! -f /var/lib/cloud/instance/boot-finished ]; do
@@ -43,38 +28,35 @@ while [ ! -f /var/lib/cloud/instance/boot-finished ]; do
     sleep 5
 done
 
-# Update system
+# =============================================================================
+# 1. System Updates and Minimal Dependencies
+# =============================================================================
+echo "[1/5] Installing minimal dependencies..."
+
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get upgrade -y
 
-# Install required packages (minimal for team server)
+# Install ONLY what's needed for Cobalt Strike
 apt-get install -y \
     openjdk-11-jdk \
-    git \
-    unzip \
-    curl \
-    wget \
     awscli \
     net-tools \
-    htop \
-    tmux \
-    vim
+    curl \
+    wget \
+    unzip
 
-echo "Dependencies installed successfully"
+echo "Dependencies installed"
 
 # =============================================================================
 # 2. Create Directories
 # =============================================================================
-echo "[2/6] Creating directories..."
+echo "[2/5] Creating directories..."
 
 mkdir -p /opt/cobaltstrike
-mkdir -p /opt/tools
 mkdir -p /opt/logs
 
-# Set ownership
 chown -R ubuntu:ubuntu /opt/cobaltstrike
-chown -R ubuntu:ubuntu /opt/tools
 chown -R ubuntu:ubuntu /opt/logs
 
 echo "Directories created"
@@ -82,7 +64,7 @@ echo "Directories created"
 # =============================================================================
 # 3. Download and Extract Cobalt Strike
 # =============================================================================
-echo "[3/6] Downloading Cobalt Strike from S3..."
+echo "[3/5] Downloading Cobalt Strike from S3..."
 
 if [ -n "$CS_ARCHIVE_S3_PATH" ] && [ "$CS_ARCHIVE_S3_PATH" != "" ]; then
     # Download from S3
@@ -113,30 +95,9 @@ else
 fi
 
 # =============================================================================
-# 4. Clone Tools Repository (Optional)
+# 4. Create Systemd Service for Team Server
 # =============================================================================
-echo "[4/6] Cloning tools repository..."
-
-if [ -n "$TOOLS_REPO_URL" ] && [ "$TOOLS_REPO_URL" != "" ]; then
-    cd /opt/tools
-    
-    # Clone the repository
-    if git clone --branch "$TOOLS_REPO_BRANCH" "$TOOLS_REPO_URL" . 2>/dev/null; then
-        echo "Tools repository cloned successfully"
-        chown -R ubuntu:ubuntu /opt/tools
-    else
-        echo "WARNING: Failed to clone tools repository"
-        echo "URL: $TOOLS_REPO_URL"
-        echo "Branch: $TOOLS_REPO_BRANCH"
-    fi
-else
-    echo "No tools repository URL provided, skipping"
-fi
-
-# =============================================================================
-# 5. Create Systemd Service for Team Server
-# =============================================================================
-echo "[5/6] Creating systemd service..."
+echo "[4/5] Creating systemd service..."
 
 if [ -n "$CS_PASSWORD" ] && [ "$CS_PASSWORD" != "" ] && [ -f /opt/cobaltstrike/teamserver ]; then
     # Create systemd service file
@@ -175,9 +136,113 @@ else
 fi
 
 # =============================================================================
-# 6. Create Helper Scripts
+# 5. Create Helper Scripts and README
 # =============================================================================
-echo "[6/6] Creating helper scripts..."
+echo "[5/5] Creating helper scripts..."
+
+# Create comprehensive README
+cat > /home/ubuntu/README.txt << 'README'
+================================================================================
+                    TEAM SERVER - QUICK START GUIDE
+================================================================================
+
+ROLE: Cobalt Strike Team Server ONLY
+
+This is a MINIMAL server. It runs ONLY the CS teamserver daemon.
+NO offensive tools are installed here - use the Attack Box for tools.
+
+================================================================================
+                              SSH KEY INFORMATION
+================================================================================
+
+This server uses the INTERNAL SSH key for access.
+
+Who can access this server:
+  ✅ Jumpbox (has internal key at ~/.ssh/internal_key)
+  ✅ Attack Box WSL (has internal key at ~/.ssh/teamserver_key)
+  ❌ Your local machine (external key doesn't work here!)
+
+IMPORTANT SECURITY NOTE:
+  - This server has NO outbound SSH keys
+  - It cannot initiate connections to other hosts
+  - Compromise here is contained - no lateral movement possible
+
+================================================================================
+                              TEAM SERVER STATUS
+================================================================================
+
+Check if team server is running:
+  /opt/cobaltstrike/check-status.sh
+
+Restart team server:
+  /opt/cobaltstrike/restart-teamserver.sh
+
+View live logs:
+  /opt/cobaltstrike/view-logs.sh
+
+Check listening ports:
+  netstat -tlnp | grep -E '(50050|443|80)'
+
+================================================================================
+                              CONNECTING CS CLIENT
+================================================================================
+
+FROM ATTACK BOX (Windows):
+  1. RDP to Attack Box
+  2. Run CS Client: java -jar C:\Tools\cobaltstrike\cobaltstrike.jar
+  3. Connect to: 192.168.56.40:50050
+
+FROM YOUR LOCAL MACHINE:
+  1. Create SSH tunnel through Jumpbox:
+     ssh -i ~/.ssh/<jumpbox-key>.pem -L 50050:192.168.56.40:50050 ubuntu@<JUMPBOX_IP>
+  2. Run your local CS Client
+  3. Connect to: localhost:50050
+
+FROM ATTACK BOX WSL:
+  ssh teamserver   # Pre-configured alias
+
+================================================================================
+                              NETWORK ACCESS
+================================================================================
+
+This Team Server:
+  - Private IP: 192.168.56.40
+  - CS Port: 50050
+  - NO public IP (private subnet only)
+
+Can reach:
+  - GOAD AD VMs (192.168.56.10-25) for beacons
+  - Outbound internet (via NAT) for staged payloads
+
+Cannot reach:
+  - Jumpbox (no SSH key)
+  - Your local machine (no route)
+
+================================================================================
+                              TROUBLESHOOTING
+================================================================================
+
+Team server not starting?
+  - Check logs: cat /opt/logs/teamserver.log
+  - Check Java: java -version
+  - Check files: ls -la /opt/cobaltstrike/
+
+Port 50050 not listening?
+  - Restart: sudo systemctl restart teamserver
+  - Check: sudo systemctl status teamserver
+
+Can't connect from CS Client?
+  - Verify SSH tunnel is active
+  - Check password is correct
+  - Verify firewall allows 50050
+
+================================================================================
+Created by Red Team Infrastructure Deployment Tool
+================================================================================
+README
+
+chown ubuntu:ubuntu /home/ubuntu/README.txt
+chmod 644 /home/ubuntu/README.txt
 
 # Script to check team server status
 cat > /opt/cobaltstrike/check-status.sh << 'EOF'
@@ -213,23 +278,28 @@ chmod +x /opt/cobaltstrike/view-logs.sh
 chown -R ubuntu:ubuntu /opt/cobaltstrike
 
 # =============================================================================
-# Installation Complete
+# Complete
 # =============================================================================
 echo ""
 echo "=============================================="
-echo "Installation Complete!"
+echo "Team Server Installation Complete!"
 echo "Finished: $(date)"
 echo "=============================================="
 echo ""
-echo "=== Cobalt Strike ==="
+echo "This server runs ONLY the Cobalt Strike Team Server"
+echo "No other tools are installed here."
+echo ""
+echo "=== Commands ==="
 echo "  Check status:  /opt/cobaltstrike/check-status.sh"
 echo "  Restart:       /opt/cobaltstrike/restart-teamserver.sh"
 echo "  View logs:     /opt/cobaltstrike/view-logs.sh"
-echo "  Team server:   Port 50050"
 echo ""
-echo "=== Tools ==="
-echo "  Tools repo:    /opt/tools"
+echo "=== Connection ==="
+echo "  Team Server Port: 50050"
+echo "  Connect via SSH tunnel from your local machine:"
+echo "    ssh -L 50050:192.168.56.40:50050 ubuntu@<JUMPBOX_IP>"
 echo ""
 
 # Create completion marker
 touch /opt/cobaltstrike/.install-complete
+

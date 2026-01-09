@@ -302,22 +302,42 @@ locals {
 }
 
 # =============================================================================
-# SSH KEYS
+# SSH KEYS - Separate keys for different trust boundaries
+# =============================================================================
+# Security Architecture:
+#   - jumpbox_ssh: External access (User's machine → Jumpbox)
+#   - internal_ssh: Internal access (Jumpbox/Attack Box → Team Server)
+#   - windows_ssh: Windows VM access
+#
+# This separation ensures:
+#   - Compromise of external key doesn't grant internal access
+#   - Compromise of internal key doesn't grant external access
+#   - Clear audit trail per trust boundary
 # =============================================================================
 
-# SSH key for jumpbox
+# SSH key for EXTERNAL access (User's machine → Jumpbox only)
 resource "tls_private_key" "jumpbox_ssh" {
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
-# SSH key for Windows VMs
+# SSH key for INTERNAL access (Jumpbox → Team Server, Attack Box → Team Server)
+resource "tls_private_key" "internal_ssh" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+# SSH key for Windows VMs (RDP/WinRM access)
 resource "tls_private_key" "windows_ssh" {
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
+# =============================================================================
 # AWS Key Pairs
+# =============================================================================
+
+# External key pair - for Jumpbox access from internet
 resource "aws_key_pair" "jumpbox" {
   key_name   = "${var.project_name}-${local.lab_identifier}-jumpbox-key"
   public_key = tls_private_key.jumpbox_ssh.public_key_openssh
@@ -325,9 +345,23 @@ resource "aws_key_pair" "jumpbox" {
   tags = merge(var.tags, {
     Name = "${var.project_name}-${local.lab_identifier}-jumpbox-key"
     Lab  = local.lab_identifier
+    Type = "External"
   })
 }
 
+# Internal key pair - for Team Server access from private subnet
+resource "aws_key_pair" "internal" {
+  key_name   = "${var.project_name}-${local.lab_identifier}-internal-key"
+  public_key = tls_private_key.internal_ssh.public_key_openssh
+
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-${local.lab_identifier}-internal-key"
+    Lab  = local.lab_identifier
+    Type = "Internal"
+  })
+}
+
+# Windows key pair
 resource "aws_key_pair" "windows" {
   key_name   = "${var.project_name}-${local.lab_identifier}-windows-key"
   public_key = tls_private_key.windows_ssh.public_key_openssh
@@ -335,6 +369,7 @@ resource "aws_key_pair" "windows" {
   tags = merge(var.tags, {
     Name = "${var.project_name}-${local.lab_identifier}-windows-key"
     Lab  = local.lab_identifier
+    Type = "Windows"
   })
 }
 

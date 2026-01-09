@@ -19,7 +19,7 @@ terraform {
 locals {
   # Determine if we should use the domain redirector script
   use_redirector_script = var.primary_domain != "" && var.c2_server_ip != "" && var.user_data == ""
-  
+
   # Determine SSL provider (support both new and legacy variable)
   effective_ssl_provider = var.ssl_provider != "letsencrypt" ? var.ssl_provider : (var.use_letsencrypt ? "letsencrypt" : var.ssl_provider)
 

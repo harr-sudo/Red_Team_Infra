@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "README.md",
+                "file": "SpeakView_Setup_Redesign_Mockups.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "README"
+              "title": "SpeakView_Setup_Redesign_Mockups"
             }
           }
         ]
@@ -183,30 +183,31 @@
       "bases:Create new base": false
     }
   },
-  "active": "51417db149edd2e5",
+  "active": "68d0f2e9330e48f3",
   "lastOpenFiles": [
-    "webapp/backend/routes/health.py",
-    "webapp/backend/routes/__pycache__/aws_check.cpython-313.pyc",
-    "webapp/backend/routes/aws_check.py",
+    "terraform/terraform.tfstate.d/goad_mini_dev_harriss_macbook_pro_001/terraform.tfstate.backup",
+    "terraform/modules/goad/scripts/attackbox_init.ps1",
+    "terraform/modules/goad/scripts/teamserver_init.sh",
+    "terraform/modules/goad/teamserver.tf",
+    "terraform/modules/goad/attackbox.tf",
+    "logs/deployment_resources.json",
+    "terraform/terraform.tfstate.d/goad_mini_dev_harriss_macbook_pro_001/terraform.tfstate",
+    "terraform/terraform.tfstate.d/goad_mini_dev_harriss_macbook_pro_001",
+    "terraform/terraform.tfstate.d",
+    "configs/goad_mini_dev_harriss_macbook_pro_001.tfvars",
+    "terraform/terraform.tfstate.backup",
+    "README.md",
     "docs/STATUS_TAB_UI_ENHANCEMENT_PLAN.md",
     "docs/WEBAPP_GITHUB_AUTH_PLAN.md",
-    "webapp/backend/routes/__pycache__/docs.cpython-313.pyc",
-    "webapp/backend/routes/docs.py",
     "docs/TOOLS_REPOSITORY_QUICK_START.md",
-    "scripts/setup/create-tools-repo.sh",
-    "scripts/setup",
     "docs/TOOLS_REPOSITORY_SETUP.md",
     "docs/TOOLS_REPOSITORY_ACCESS.md",
-    "ansible/playbooks/deploy-tools-repo.yml",
     "docs/TOOLS_REPOSITORY_PLAN.md",
-    "uploads",
     "docs/WEBAPP_FILE_UPLOAD.md",
     "docs/COBALT_STRIKE_DEPLOYMENT.md",
     "docs/DEPLOYMENT_MODE_SCALING.md",
     "docs/QUICK_START_SSH_KEYS.md",
     "docs/ANSIBLE_SSH_KEYS.md",
-    "ansible/ansible.cfg",
-    "scripts/utilities/setup-ssh-keys.sh",
     "docs/SSH_KEY_MANAGEMENT.md",
     "docs/BASTION_JUMPBOX.md",
     "docs/ACCESS_METHODS.md",
@@ -223,7 +224,6 @@
     "venv/lib/python3.13/site-packages/ansible_collections/ovirt/ovirt/roles/infra/roles/permissions/README.md",
     "venv/lib/python3.13/site-packages/ansible_collections/ovirt/ovirt/roles/infra/roles/networks/README.md",
     "venv/lib/python3.13/site-packages/ansible_collections/ovirt/ovirt/roles/infra/roles/mac_pools/README.md",
-    "venv/lib/python3.13/site-packages/ansible_collections/ovirt/ovirt/roles/infra/roles/hosts/README.md",
     "venv/lib/python3.13/site-packages/ansible_collections/awx/awx/images/completeness_test_output.png",
     "venv/lib/python3.13/site-packages/ansible_collections/netapp_eseries/santricity/eseries-ansible-collections-diagram.png"
   ]

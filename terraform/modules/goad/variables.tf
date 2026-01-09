@@ -57,11 +57,11 @@ variable "availability_zone" {
 }
 
 # =============================================================================
-# Cobalt Strike Configuration (for GOAD-only mode)
+# Cobalt Strike / Attack Box Configuration
 # =============================================================================
 
 variable "install_cobalt_strike" {
-  description = "Install Cobalt Strike on jumpbox (for GOAD-only mode)"
+  description = "Deploy Attack Box with Cobalt Strike (separate from jumpbox)"
   type        = bool
   default     = false
 }
@@ -135,21 +135,60 @@ variable "aws_region" {
 # =============================================================================
 
 variable "jumpbox_instance_type" {
-  description = "Instance type for jumpbox"
+  description = "Instance type for jumpbox (minimal SSH gateway)"
   type        = string
-  default     = "t2.medium"
+  default     = "t2.micro"  # Minimal - just SSH gateway
 }
 
 variable "jumpbox_disk_size" {
   description = "Root disk size for jumpbox in GB"
   type        = number
-  default     = 30
+  default     = 20  # Minimal disk
 }
 
 variable "jumpbox_username" {
   description = "Username for jumpbox SSH access"
   type        = string
   default     = "goad"
+}
+
+# =============================================================================
+# Team Server Configuration (Ubuntu - CS Only)
+# =============================================================================
+
+variable "teamserver_instance_type" {
+  description = "Instance type for team server (CS Team Server only)"
+  type        = string
+  default     = "t2.medium"  # 4GB RAM for CS
+}
+
+variable "teamserver_disk_size" {
+  description = "Root disk size for team server in GB"
+  type        = number
+  default     = 30
+}
+
+# =============================================================================
+# Attack Box Configuration (Windows - CS Client + Tools)
+# =============================================================================
+
+variable "attackbox_instance_type" {
+  description = "Instance type for Windows attack box (CS Client + Tools)"
+  type        = string
+  default     = "t2.large"  # 8GB RAM for Windows + tools
+}
+
+variable "attackbox_disk_size" {
+  description = "Root disk size for Windows attack box in GB"
+  type        = number
+  default     = 100  # Windows needs more space
+}
+
+variable "attackbox_admin_password" {
+  description = "Administrator password for Windows attack box"
+  type        = string
+  default     = "AttackB0x!2024"
+  sensitive   = true
 }
 
 variable "windows_admin_username" {

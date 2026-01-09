@@ -162,6 +162,13 @@ const APP = {
             deleteBtn.addEventListener('click', handleFileDelete);
         }
         
+        // Project name input - validate on input with debounce
+        const projectNameInput = document.getElementById('project-name');
+        if (projectNameInput) {
+            projectNameInput.addEventListener('input', debouncedProjectNameCheck);
+            projectNameInput.addEventListener('blur', () => validateProjectName(true));
+        }
+        
         // SSL configuration handlers
         this.setupSSLHandlers();
     },
@@ -454,7 +461,7 @@ const DEPLOYMENT_CONFIGS = {
         phases: ['🚀 Staging', '⚡ Post-Ex', '🔒 Long-Haul'],
         architectureNote: 'Full C2 infrastructure with redirectors for internet-facing operations.'
     },
-    // GOAD Lab options (Simplified: Jumpbox + CS combined, no redirectors)
+    // GOAD Lab options (Proper architecture: Jumpbox → Team Server + Windows Attack Box)
     'goad-mini': {
         title: 'GOAD Mini + Cobalt Strike',
         color: 'linear-gradient(135deg, #e65100 0%, #ff9800 100%)',
@@ -466,14 +473,15 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '1' },
-            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🌲', label: 'Domain', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$145/mo' }
+            { icon: '🚪', label: 'Jumpbox', value: '1' },
+            { icon: '🔴', label: 'Team Server', value: '1' },
+            { icon: '🖥️', label: 'Attack Box', value: '1 (Win)' },
+            { icon: '💰', label: 'Est. Cost', value: '~$195/mo' }
         ],
-        details: 'Single DC (sevenkingdoms.local) with Cobalt Strike on jumpbox.',
+        details: 'Single DC (sevenkingdoms.local) with Team Server + Windows Attack Box.',
         bestFor: 'Learning AD attacks, quick testing',
         attacks: ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Pass-the-Hash'],
-        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
+        architectureNote: '🔒 Training Lab: Jumpbox (SSH) → Team Server (CS only) + Windows Attack Box (CS Client + PowerSploit)'
     },
     'goad-minilab': {
         title: 'GOAD MiniLab + Cobalt Strike',
@@ -486,14 +494,15 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '2' },
-            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🌲', label: 'Domain', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$225/mo' }
+            { icon: '🚪', label: 'Jumpbox', value: '1' },
+            { icon: '🔴', label: 'Team Server', value: '1' },
+            { icon: '🖥️', label: 'Attack Box', value: '1 (Win)' },
+            { icon: '💰', label: 'Est. Cost', value: '~$275/mo' }
         ],
         details: 'DC (Win2019) + Workstation (Win10). 1 forest, 1 domain.',
         bestFor: 'Attack chains, lateral movement practice',
         attacks: ['Kerberoasting', 'AS-REP Roasting', 'Lateral Movement', 'Credential Dumping'],
-        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
+        architectureNote: '🔒 Training Lab: Jumpbox (SSH) → Team Server (CS only) + Windows Attack Box (CS Client + PowerSploit)'
     },
     'goad-light': {
         title: 'GOAD Light + Cobalt Strike',
@@ -506,14 +515,15 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '3' },
-            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🌲', label: 'Domains', value: '2' },
-            { icon: '💰', label: 'Est. Cost', value: '~$310/mo' }
+            { icon: '🚪', label: 'Jumpbox', value: '1' },
+            { icon: '🔴', label: 'Team Server', value: '1' },
+            { icon: '🖥️', label: 'Attack Box', value: '1 (Win)' },
+            { icon: '💰', label: 'Est. Cost', value: '~$360/mo' }
         ],
         details: '3 VMs, 1 forest, 2 domains. Smaller version of full GOAD.',
         bestFor: 'Trust attacks, cross-domain techniques',
         attacks: ['Trust Attacks', 'Constrained Delegation', 'Cross-domain attacks', 'Kerberoasting'],
-        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
+        architectureNote: '🔒 Training Lab: Jumpbox (SSH) → Team Server (CS only) + Windows Attack Box (CS Client + PowerSploit)'
     },
     'goad-sccm': {
         title: 'GOAD SCCM + Cobalt Strike',
@@ -526,14 +536,15 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '4' },
-            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
-            { icon: '⚙️', label: 'SCCM', value: '✓' },
-            { icon: '💰', label: 'Est. Cost', value: '~$765/mo' }
+            { icon: '🚪', label: 'Jumpbox', value: '1' },
+            { icon: '🔴', label: 'Team Server', value: '1' },
+            { icon: '🖥️', label: 'Attack Box', value: '1 (Win)' },
+            { icon: '💰', label: 'Est. Cost', value: '~$815/mo' }
         ],
         details: '4 VMs (t3.xlarge), 1 forest, 1 domain with Microsoft Configuration Manager.',
         bestFor: 'SCCM attacks, enterprise environments',
         attacks: ['NAA Credentials', 'PXE Boot Attacks', 'Task Sequence Attacks', 'SCCM Client Attacks'],
-        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
+        architectureNote: '🔒 Training Lab: Jumpbox (SSH) → Team Server (CS only) + Windows Attack Box (CS Client + PowerSploit)'
     },
     'goad-full': {
         title: 'GOAD Full + Cobalt Strike',
@@ -546,14 +557,15 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '5' },
-            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🌲', label: 'Domains', value: '3' },
-            { icon: '💰', label: 'Est. Cost', value: '~$470/mo' }
+            { icon: '🚪', label: 'Jumpbox', value: '1' },
+            { icon: '🔴', label: 'Team Server', value: '1' },
+            { icon: '🖥️', label: 'Attack Box', value: '1 (Win)' },
+            { icon: '💰', label: 'Est. Cost', value: '~$520/mo' }
         ],
         details: '5 VMs, 2 forests, 3 domains. Complete AD training environment.',
         bestFor: 'Comprehensive AD training, forest attacks',
         attacks: ['Forest Attacks', 'Golden/Silver Tickets', 'DCShadow', 'ACL Abuse', 'Trust Attacks'],
-        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
+        architectureNote: '🔒 Training Lab: Jumpbox (SSH) → Team Server (CS only) + Windows Attack Box (CS Client + PowerSploit)'
     },
     'goad-nha': {
         title: 'GOAD NHA + Cobalt Strike',
@@ -566,14 +578,15 @@ const DEPLOYMENT_CONFIGS = {
         architecture: 'goad-only',
         components: [
             { icon: '🏰', label: 'AD VMs', value: '5' },
-            { icon: '🎯', label: 'Jumpbox+CS', value: '1' },
-            { icon: '🌲', label: 'Domains', value: '2' },
-            { icon: '💰', label: 'Est. Cost', value: '~$470/mo' }
+            { icon: '🚪', label: 'Jumpbox', value: '1' },
+            { icon: '🔴', label: 'Team Server', value: '1' },
+            { icon: '🖥️', label: 'Attack Box', value: '1 (Win)' },
+            { icon: '💰', label: 'Est. Cost', value: '~$520/mo' }
         ],
         details: '5 VMs, 2 domains. Challenge lab - no schema provided!',
         bestFor: 'CTF practice, skill assessment',
         attacks: ['Unknown - Challenge Mode!'],
-        architectureNote: '🔒 Training Lab: CS on jumpbox, no redirectors. Connect directly to jumpbox:50050.'
+        architectureNote: '🔒 Training Lab: Jumpbox (SSH) → Team Server (CS only) + Windows Attack Box (CS Client + PowerSploit)'
     },
     // Combined options (Full C2 infrastructure + GOAD lab with VPC peering)
     'combined-adhoc-mini': {
@@ -682,9 +695,38 @@ const DEPLOYMENT_TIMES = {
 };
 
 /**
- * Update project name based on deployment type and environment
+ * Machine suffix for unique project names (cached)
  */
-function updateProjectName() {
+let machineSuffix = null;
+
+/**
+ * Fetch machine suffix from backend
+ */
+async function fetchMachineSuffix() {
+    if (machineSuffix) return machineSuffix;
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/machine-info`);
+        const data = await response.json();
+        if (data.success) {
+            machineSuffix = data.machine_suffix;
+            console.log(`🖥️ Machine suffix: ${machineSuffix} (from ${data.hostname})`);
+            return machineSuffix;
+        }
+    } catch (error) {
+        console.error('Failed to fetch machine suffix:', error);
+    }
+    
+    // Fallback: generate random suffix
+    machineSuffix = Math.random().toString(36).substring(2, 8);
+    return machineSuffix;
+}
+
+/**
+ * Update project name based on deployment type and environment
+ * Now includes machine-specific suffix for uniqueness across users
+ */
+async function updateProjectName() {
     const deploymentType = document.getElementById('deployment-type')?.value || '';
     const environment = document.getElementById('environment')?.value || 'dev';
     const projectNameInput = document.getElementById('project-name');
@@ -692,7 +734,10 @@ function updateProjectName() {
     if (!projectNameInput || !deploymentType) return;
     
     const prefix = PROJECT_NAME_PREFIXES[deploymentType] || 'project';
-    const newName = `${prefix}_${environment}_XXX`;
+    
+    // Get machine suffix for uniqueness
+    const suffix = await fetchMachineSuffix();
+    const newName = `${prefix}_${environment}_${suffix}`;
     
     // Get current value
     const currentName = projectNameInput.value;
@@ -710,33 +755,119 @@ function updateProjectName() {
     
     if (isAutoGenerated) {
         projectNameInput.value = newName;
-        projectNameInput.placeholder = newName.replace('XXX', 'yourname');
+        projectNameInput.placeholder = newName;
+        
+        // Trigger validation to check availability
+        debouncedProjectNameCheck();
     }
 }
 
 /**
- * Validate project name format
+ * Validate project name format and check availability
+ * @param {boolean} checkBackend - Whether to check backend for existing projects
  */
-function validateProjectName() {
+async function validateProjectName(checkBackend = false) {
     const projectNameInput = document.getElementById('project-name');
-    if (!projectNameInput) return;
+    const statusSpan = document.getElementById('project-name-status');
     
-    const name = projectNameInput.value;
+    if (!projectNameInput) return false;
+    
+    const name = projectNameInput.value.trim();
+    
+    // Clear previous status
+    if (statusSpan) {
+        statusSpan.innerHTML = '';
+        statusSpan.style.display = 'none';
+    }
+    
+    // Check if empty
+    if (!name) {
+        projectNameInput.style.borderColor = '#ccc';
+        return false;
+    }
     
     // Check if still contains XXX placeholder
     if (name.includes('XXX')) {
         projectNameInput.style.borderColor = '#ff9800';
+        if (statusSpan) {
+            statusSpan.innerHTML = '<span style="color: #ff9800;">⚠️ Replace XXX with a unique identifier</span>';
+            statusSpan.style.display = 'block';
+        }
         return false;
     }
     
-    // Check for valid characters (lowercase, numbers, underscores, hyphens)
-    if (!/^[a-z0-9_-]+$/.test(name)) {
+    // Check for valid characters (letters, numbers, underscores, hyphens, must start with letter)
+    if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(name)) {
         projectNameInput.style.borderColor = '#f44336';
+        if (statusSpan) {
+            statusSpan.innerHTML = '<span style="color: #f44336;">❌ Must start with letter, use only letters/numbers/_/-</span>';
+            statusSpan.style.display = 'block';
+        }
         return false;
     }
     
+    // Basic format is valid
     projectNameInput.style.borderColor = '#4CAF50';
+    
+    // Optionally check backend for availability
+    if (checkBackend) {
+        try {
+            if (statusSpan) {
+                statusSpan.innerHTML = '<span style="color: #666;">🔍 Checking availability...</span>';
+                statusSpan.style.display = 'block';
+            }
+            
+            const response = await fetch(`${API_BASE}/deploy/check-project-name?name=${encodeURIComponent(name)}`);
+            const data = await response.json();
+            
+            if (data.success) {
+                if (data.available) {
+                    projectNameInput.style.borderColor = '#4CAF50';
+                    if (statusSpan) {
+                        statusSpan.innerHTML = '<span style="color: #4CAF50;">✅ Available</span>';
+                        statusSpan.style.display = 'block';
+                    }
     return true;
+                } else {
+                    projectNameInput.style.borderColor = '#f44336';
+                    if (statusSpan) {
+                        let reason = '';
+                        if (data.reason === 'currently_deploying') {
+                            reason = '🚀 Currently deploying';
+                        } else if (data.reason === 'aws_resources_exist') {
+                            // AWS resources found - likely from another user/machine
+                            reason = `☁️ Already in AWS: ${data.resource_count} ${data.resource_type}(s)`;
+                        } else if (data.reason === 'has_local_resources') {
+                            reason = `📁 Local: ${data.resource_count} resources`;
+                        } else if (data.reason === 'has_resources') {
+                            reason = `⚠️ Exists (${data.resource_count} resources)`;
+                        } else {
+                            reason = data.message || 'Not available';
+                        }
+                        statusSpan.innerHTML = `<span style="color: #f44336;">❌ ${reason}</span>`;
+                        statusSpan.style.display = 'block';
+                    }
+                    return false;
+                }
+            }
+        } catch (error) {
+            console.error('Error checking project name:', error);
+            // On error, allow proceeding (backend will validate again)
+        }
+    }
+    
+    return true;
+}
+
+// Debounced version for input events
+let projectNameCheckTimeout = null;
+function debouncedProjectNameCheck() {
+    if (projectNameCheckTimeout) {
+        clearTimeout(projectNameCheckTimeout);
+    }
+    projectNameCheckTimeout = setTimeout(() => {
+        validateProjectName(true);
+    }, 500);
 }
 
 /**
@@ -1321,7 +1452,176 @@ let isPlanRunning = false;  // Flag to prevent polling from overwriting plan UI
 async function checkDeploymentStatus() {
     // First update the deploy page based on selected deployment type
     updateDeployPageForType();
+    
+    // Immediately check if there's an active deployment
+    await checkForActiveDeployment();
+    
+    // Then start polling
     pollDeploymentStatus();
+}
+
+/**
+ * Check for active deployment and update UI immediately
+ */
+async function checkForActiveDeployment() {
+    try {
+        const response = await fetch(`${API_BASE}/deploy/status`);
+        const data = await response.json();
+        
+        if (data.success && data.status) {
+            const status = data.status;
+            
+            // If there's an active deployment, update UI immediately
+            if (status.status === 'running') {
+                updateDeploymentUI(status);
+                disableDeployButton(true, 'Deployment in progress...');
+            } else if (status.status === 'success') {
+                updateDeploymentUI(status);
+                disableDeployButton(false);
+            } else if (status.status === 'error') {
+                updateDeploymentUI(status);
+                disableDeployButton(false);
+            } else {
+                // Idle/ready - enable button
+                disableDeployButton(false);
+            }
+        }
+    } catch (error) {
+        console.error('Error checking deployment status:', error);
+    }
+}
+
+/**
+ * Enable/disable the deploy button
+ */
+function disableDeployButton(disabled, message = '') {
+    const deployBtn = document.querySelector('button[onclick="startDeployment()"]');
+    const runPlanBtn = document.querySelector('button[onclick="runPlan()"]');
+    
+    if (deployBtn) {
+        deployBtn.disabled = disabled;
+        if (disabled) {
+            deployBtn.style.opacity = '0.5';
+            deployBtn.style.cursor = 'not-allowed';
+            if (message) {
+                deployBtn.title = message;
+            }
+        } else {
+            deployBtn.style.opacity = '1';
+            deployBtn.style.cursor = 'pointer';
+            deployBtn.title = '';
+        }
+    }
+    
+    if (runPlanBtn) {
+        runPlanBtn.disabled = disabled;
+        if (disabled) {
+            runPlanBtn.style.opacity = '0.5';
+            runPlanBtn.style.cursor = 'not-allowed';
+        } else {
+            runPlanBtn.style.opacity = '1';
+            runPlanBtn.style.cursor = 'pointer';
+        }
+    }
+}
+
+/**
+ * Update deployment UI with status
+ */
+function updateDeploymentUI(status) {
+    const statusDiv = document.getElementById('deployment-status');
+    const outputDiv = document.getElementById('deployment-output');
+    if (!statusDiv) return;
+    
+    if (status.status === 'running') {
+        // Build enhanced status display
+        let statusHtml = `
+            <div style="margin-bottom: 15px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <strong style="font-size: 1.1em;">🚀 ${status.current_phase || status.step || 'Deploying...'}</strong>
+                    <span style="color: #666;">${status.progress_percent || 0}%</span>
+                </div>
+                
+                <!-- Progress Bar -->
+                <div style="background: #e0e0e0; border-radius: 10px; height: 8px; overflow: hidden;">
+                    <div style="background: linear-gradient(90deg, #4CAF50, #8BC34A); height: 100%; width: ${status.progress_percent || 0}%; transition: width 0.5s ease;"></div>
+                </div>
+                
+                <div style="margin-top: 10px; color: #666; font-size: 0.9em;">
+                    ⏱️ Elapsed: ${status.elapsed_formatted || '0m 0s'}
+                </div>
+            </div>
+        `;
+        
+        // Recent logs
+        if (status.logs && status.logs.length > 0) {
+            const recentLogs = status.logs.slice(-5);
+            statusHtml += `
+                <div style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.85em;">
+                    ${recentLogs.map(log => {
+                        const time = new Date(log.timestamp * 1000).toLocaleTimeString();
+                        const color = log.type === 'error' ? '#f44336' : 
+                                      log.type === 'success' ? '#4CAF50' : 
+                                      log.type === 'warning' ? '#ff9800' : '#4ec9b0';
+                        return `<div style="margin-bottom: 4px;"><span style="color: #888;">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
+                    }).join('')}
+                </div>
+            `;
+        }
+        
+        statusDiv.innerHTML = statusHtml;
+        statusDiv.className = 'status-display info';
+        
+    } else if (status.status === 'success') {
+        statusDiv.className = 'status-display success';
+        statusDiv.innerHTML = `
+            <div style="text-align: center; padding: 20px;">
+                <div style="font-size: 3em; margin-bottom: 10px;">🎉</div>
+                <h3 style="color: #2e7d32; margin: 0 0 10px 0;">Deployment Complete!</h3>
+                <p style="color: #666;">Infrastructure has been successfully deployed.</p>
+                <p style="color: #666; font-size: 0.9em;">Elapsed time: ${status.elapsed_formatted || 'Unknown'}</p>
+                <div style="margin-top: 15px;">
+                    <button class="btn btn-primary" onclick="APP.navigateTo('deployments')">
+                        View Deployment Details →
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        // Show post-deployment steps
+        const postDeploySteps = document.getElementById('post-deployment-steps');
+        if (postDeploySteps) {
+            postDeploySteps.style.display = 'block';
+        }
+        
+    } else if (status.status === 'error') {
+        const errorLogs = status.logs ? status.logs.filter(log => log.type === 'error') : [];
+        
+        statusDiv.innerHTML = `
+            <div style="padding: 15px;">
+                <h3 style="color: #c62828; margin: 0 0 15px 0;">❌ Deployment Failed</h3>
+                <p style="color: #666; margin-bottom: 15px;">Elapsed time: ${status.elapsed_formatted}</p>
+                ${errorLogs.length > 0 ? `
+                    <div style="background: #1a1a2e; color: #e2e8f0; padding: 16px; border-radius: 8px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.9em; line-height: 1.6;">
+                        ${errorLogs.map(log => {
+                            const time = new Date(log.timestamp * 1000).toLocaleTimeString();
+                            return `<div style="margin-bottom: 8px;"><span style="color: #888;">[${time}]</span> <span style="color: #ff6b6b;">${log.message}</span></div>`;
+                        }).join('')}
+                    </div>
+                ` : `
+                    <div style="background: #1a1a2e; color: #ff6b6b; padding: 16px; border-radius: 8px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.9em;">
+                        ${status.error || 'Unknown error occurred'}
+                    </div>
+                `}
+                <div style="margin-top: 15px;">
+                    <button class="btn btn-secondary" onclick="resetPlanAndRetry()" style="margin-right: 10px;">
+                        🔄 Try Again
+                    </button>
+                </div>
+            </div>
+        `;
+        statusDiv.className = 'status-display error';
+    }
 }
 
 /**
@@ -1380,7 +1680,7 @@ function updateDeployPageForType() {
     }
 }
 
-function pollDeploymentStatus() {
+function pollDeploymentStatus(projectName = null) {
     const statusDiv = document.getElementById('deployment-status');
     const outputDiv = document.getElementById('deployment-output');
     
@@ -1392,155 +1692,73 @@ function pollDeploymentStatus() {
         deploymentPollInterval = null;
     }
     
-    // Poll every 5 seconds (5000ms) instead of 2 seconds to reduce server load
-    deploymentPollInterval = setInterval(async () => {
-        // Skip polling if a plan is currently running to avoid overwriting the UI
-        if (isPlanRunning) {
+    // Store project name for polling
+    if (projectName) {
+        window.currentDeploymentProject = projectName;
+    }
+    
+    // Immediately fetch status once before starting interval
+    fetchAndUpdateDeploymentStatus();
+    
+    // Then poll every 3 seconds
+    deploymentPollInterval = setInterval(fetchAndUpdateDeploymentStatus, 3000);
+}
+
+/**
+ * Fetch deployment status and update UI
+ */
+async function fetchAndUpdateDeploymentStatus() {
+    // Skip polling if a plan is currently running to avoid overwriting the UI
+    if (isPlanRunning) {
+        return;
+    }
+    
+    try {
+        // Build URL with project parameter if we have one
+        let url = `${API_BASE}/deploy/status`;
+        if (window.currentDeploymentProject) {
+            url += `?project=${encodeURIComponent(window.currentDeploymentProject)}`;
+        }
+        
+        const response = await fetch(url);
+        const data = await response.json();
+            
+        // Only update UI if there's an ACTIVE deployment
+        // Don't overwrite the "Ready to Deploy" state when idle/no deployment
+        if (!data.success || !data.status) {
+            disableDeployButton(false);
+            return; // No status data, keep current UI
+        }
+        
+        const status = data.status;
+                
+        // Skip if status is idle or not set - don't overwrite ready state
+        if (!status.status || status.status === 'idle' || status.status === 'ready') {
+            disableDeployButton(false);
             return;
         }
         
-        try {
-            const response = await fetch(`${API_BASE}/deploy/status`);
-            const data = await response.json();
-            
-            // Only update UI if there's an ACTIVE deployment
-            // Don't overwrite the "Ready to Deploy" state when idle/no deployment
-            if (!data.success || !data.status) {
-                return; // No status data, keep current UI
-            }
-            
-                const status = data.status;
-            
-            // Skip if status is idle or not set - don't overwrite ready state
-            if (!status.status || status.status === 'idle' || status.status === 'ready') {
-                return;
-            }
-            
-            // Now we have an active deployment status to show
-            const statusDiv = document.getElementById('deployment-status');
-            const outputDiv = document.getElementById('deployment-output');
-            if (!statusDiv) return;
-                
-                // Build enhanced status display
-                let statusHtml = `
-                    <div style="margin-bottom: 15px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <strong style="font-size: 1.1em;">${status.current_phase || status.step || 'Deploying...'}</strong>
-                            <span style="color: #666;">${status.progress_percent || 0}%</span>
-                        </div>
-                        
-                        <!-- Progress Bar -->
-                        <div style="background: #e0e0e0; border-radius: 10px; height: 20px; overflow: hidden;">
-                            <div style="background: linear-gradient(90deg, #4CAF50, #8BC34A); height: 100%; width: ${status.progress_percent || 0}%; transition: width 0.5s ease; display: flex; align-items: center; justify-content: center;">
-                                ${status.progress_percent > 10 ? `<span style="color: white; font-size: 0.8em; font-weight: bold;">${status.progress_percent}%</span>` : ''}
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Time Info -->
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
-                        <div style="background: #f5f5f5; padding: 10px; border-radius: 6px; text-align: center;">
-                            <div style="font-size: 1.5em; font-weight: bold; color: #1976D2;">⏱️ ${status.elapsed_formatted || '0m 0s'}</div>
-                            <div style="color: #666; font-size: 0.85em;">Elapsed</div>
-                        </div>
-                        <div style="background: #f5f5f5; padding: 10px; border-radius: 6px; text-align: center;">
-                            <div style="font-size: 1.5em; font-weight: bold; color: #FF9800;">⏳ ${status.est_remaining_formatted || 'Calculating...'}</div>
-                            <div style="color: #666; font-size: 0.85em;">Est. Remaining</div>
-                        </div>
-                    </div>
-                `;
-                
-                // Completed phases checklist
-                if (status.phases_completed && status.phases_completed.length > 0) {
-                    statusHtml += `
-                        <div style="margin-bottom: 15px;">
-                            <strong style="font-size: 0.9em; color: #666;">Completed Steps:</strong>
-                            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;">
-                                ${status.phases_completed.map(p => `
-                                    <span style="background: #e8f5e9; color: #2e7d32; padding: 4px 10px; border-radius: 15px; font-size: 0.8em;">
-                                        ✅ ${p.replace(/_/g, ' ')}
-                                    </span>
-                                `).join('')}
-                            </div>
-                        </div>
-                    `;
-                }
-                
-                // Recent logs
-                if (status.logs && status.logs.length > 0) {
-                    const recentLogs = status.logs.slice(-5);
-                    statusHtml += `
-                        <div style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.85em; max-height: 150px; overflow-y: auto;">
-                            ${recentLogs.map(log => {
-                                const time = new Date(log.timestamp * 1000).toLocaleTimeString();
-                                const color = log.type === 'error' ? '#f44336' : 
-                                              log.type === 'success' ? '#4CAF50' : 
-                                              log.type === 'warning' ? '#ff9800' : '#4ec9b0';
-                                return `<div style="margin-bottom: 4px;"><span style="color: #888;">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
-                            }).join('')}
-                        </div>
-                    `;
-                }
-                
-                statusDiv.innerHTML = statusHtml;
-                
+        // Update button state based on deployment status
                 if (status.status === 'running') {
-                    statusDiv.className = 'status-display info';
-                } else if (status.status === 'success') {
-                    statusDiv.className = 'status-display success';
-                    statusDiv.innerHTML = `
-                        <div style="text-align: center; padding: 20px;">
-                            <div style="font-size: 3em; margin-bottom: 10px;">🎉</div>
-                            <h3 style="color: #2e7d32; margin: 0 0 10px 0;">Deployment Complete!</h3>
-                            <p style="color: #666;">Total time: ${status.elapsed_formatted}</p>
-                            <p style="margin-top: 15px;">
-                                <a href="#" onclick="showTab('deployments'); return false;" class="btn btn-success">
-                                    View Deployment Details →
-                                </a>
-                            </p>
-                        </div>
-                    `;
-                    clearInterval(deploymentPollInterval);
-                    deploymentPollInterval = null;
-                    if (status.output && outputDiv) {
-                        outputDiv.textContent = JSON.stringify(status.output, null, 2);
-                    }
-                } else if (status.status === 'error') {
-                    statusDiv.className = 'status-display error';
-                
-                // Filter logs to only show errors
-                const errorLogs = status.logs ? status.logs.filter(log => log.type === 'error') : [];
-                
-                    statusDiv.innerHTML = `
-                        <div style="padding: 15px;">
-                            <h3 style="color: #c62828; margin: 0 0 15px 0;">❌ Deployment Failed</h3>
-                        <p style="color: #666; margin-bottom: 15px;">Elapsed time: ${status.elapsed_formatted}</p>
-                        ${errorLogs.length > 0 ? `
-                            <div style="background: #1a1a2e; color: #e2e8f0; padding: 16px; border-radius: 8px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.9em; max-height: 300px; overflow-y: auto; line-height: 1.6;">
-                                ${errorLogs.map(log => {
-                                        const time = new Date(log.timestamp * 1000).toLocaleTimeString();
-                                    return `<div style="margin-bottom: 8px;"><span style="color: #888;">[${time}]</span> <span style="color: #ff6b6b;">${log.message}</span></div>`;
-                                    }).join('')}
-                                </div>
-                        ` : `
-                            <div style="background: #1a1a2e; color: #ff6b6b; padding: 16px; border-radius: 8px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.9em;">
-                                ${status.error || 'Unknown error occurred'}
-                            </div>
-                        `}
-                        <div style="margin-top: 15px;">
-                            <button class="btn btn-secondary" onclick="resetPlanAndRetry()" style="margin-right: 10px;">
-                                🔄 Try Again
-                            </button>
-                        </div>
-                        </div>
-                    `;
-                    clearInterval(deploymentPollInterval);
-                    deploymentPollInterval = null;
-            }
-        } catch (error) {
-            console.error('Error checking status:', error);
+            disableDeployButton(true, 'Deployment in progress...');
+        } else {
+            disableDeployButton(false);
         }
-    }, 5000);  // Poll every 5 seconds
+        
+        // Use the shared UI update function
+        updateDeploymentUI(status);
+        
+        // Stop polling on completion
+        if (status.status === 'success' || status.status === 'error') {
+                    clearInterval(deploymentPollInterval);
+                    deploymentPollInterval = null;
+            // Clear the project tracking
+            window.currentDeploymentProject = null;
+                }
+        
+        } catch (error) {
+        console.error('Error polling deployment status:', error);
+        }
 }
 
 async function checkDomainConfig() {
@@ -1796,6 +2014,15 @@ async function startDeployment() {
     const deploymentType = deploymentTypeSelect?.value || '';
     const config = DEPLOYMENT_CONFIGS[deploymentType];
     
+    // Get project name from config
+    const projectNameInput = document.getElementById('project-name');
+    const projectName = projectNameInput?.value || '';
+    
+    if (!projectName) {
+        alert('⚠️ Project name is required!\n\nPlease set a project name in the Configuration page.');
+        return;
+    }
+    
     // All deployment types include CS (GOAD has it on jumpbox, C2 has it on team servers)
     const requiresCS = config ? config.requiresCS : true;
     // Only C2 and Combined need domain (for redirector SSL)
@@ -1828,28 +2055,65 @@ async function startDeployment() {
     
     // Customize confirmation message based on deployment type
     const deploymentName = config ? config.title : 'Infrastructure';
-    if (!confirm(`Are you sure you want to deploy ${deploymentName}?\n\nThis will create AWS resources and may incur costs.`)) {
+    if (!confirm(`Are you sure you want to deploy ${deploymentName}?\n\nProject: ${projectName}\n\nThis will create AWS resources and may incur costs.`)) {
         return;
     }
     
     const statusDiv = document.getElementById('deployment-status');
-    statusDiv.innerHTML = '<div class="spinner"></div>Starting deployment...';
+    const outputDiv = document.getElementById('deployment-output');
+    
+    // Clear the plan output area when starting deployment
+    if (outputDiv) {
+        outputDiv.innerHTML = '';
+    }
+    
+    // Show immediate feedback
+    statusDiv.innerHTML = `
+        <div style="text-align: center; padding: 20px;">
+            <div class="spinner" style="margin: 0 auto 15px auto;"></div>
+            <p><strong>🚀 Starting Deployment...</strong></p>
+            <p style="color: #666; font-size: 0.9em;">Project: ${projectName}</p>
+            <p style="color: #666; font-size: 0.9em;">Initializing Terraform workspace and preparing resources...</p>
+        </div>
+    `;
     statusDiv.className = 'status-display info';
     
+    // Disable buttons during deployment
+    disableDeployButton(true, 'Deployment starting...');
+    
+    // Store current project name for polling
+    window.currentDeploymentProject = projectName;
+    
     try {
-        const response = await fetch(`${API_BASE}/deploy/deploy`, { method: 'POST' });
+        const response = await fetch(`${API_BASE}/deploy/deploy`, { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_name: projectName })
+        });
         const data = await response.json();
         
         if (data.success) {
-            statusDiv.innerHTML = '<p>Deployment started. Checking status...</p>';
-            pollDeploymentStatus();
+            // Start polling immediately with project name
+            pollDeploymentStatus(projectName);
         } else {
-            statusDiv.innerHTML = '<p>Error: ' + (data.error || 'Unknown error') + '</p>';
+            statusDiv.innerHTML = `
+                <div style="padding: 15px;">
+                    <h3 style="color: #c62828; margin: 0 0 10px 0;">❌ Deployment Failed to Start</h3>
+                    <p style="color: #666;">${data.error || 'Unknown error'}</p>
+                </div>
+            `;
             statusDiv.className = 'status-display error';
+            disableDeployButton(false);
         }
     } catch (error) {
-        statusDiv.innerHTML = '<p>Error: ' + error.message + '</p>';
+        statusDiv.innerHTML = `
+            <div style="padding: 15px;">
+                <h3 style="color: #c62828; margin: 0 0 10px 0;">❌ Connection Error</h3>
+                <p style="color: #666;">${error.message}</p>
+            </div>
+        `;
         statusDiv.className = 'status-display error';
+        disableDeployButton(false);
     }
 }
 
@@ -2009,7 +2273,7 @@ async function runPlan() {
                             <span style="color: #94a3b8; font-size: 0.85em;">📋 Terraform Plan Output</span>
                             <button onclick="copyPlanOutput(this)" style="padding: 4px 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: #e2e8f0; font-size: 0.75em; cursor: pointer;">Copy</button>
                         </div>
-                        <pre style="margin: 0; padding: 15px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.85em; line-height: 1.6; color: #4ade80; white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto;">${escapeHtml(output)}</pre>
+                        <pre style="margin: 0; padding: 15px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.85em; line-height: 1.6; color: #4ade80; white-space: pre-wrap; word-break: break-word;">${escapeHtml(output)}</pre>
                     </div>
                 `;
             }
@@ -2110,7 +2374,7 @@ async function runPlan() {
                             <span style="color: #94a3b8; font-size: 0.85em;">📋 Error Output</span>
                             <button onclick="copyErrorOutput(this)" style="padding: 4px 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: #e2e8f0; font-size: 0.75em; cursor: pointer;">Copy</button>
                         </div>
-                        <pre style="margin: 0; padding: 15px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.85em; line-height: 1.6; color: #ff6b6b; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto;">${escapeHtml(data.stderr || data.error)}</pre>
+                        <pre style="margin: 0; padding: 15px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.85em; line-height: 1.6; color: #ff6b6b; white-space: pre-wrap; word-break: break-word;">${escapeHtml(data.stderr || data.error)}</pre>
                     </div>
                 `;
             }
@@ -2136,36 +2400,318 @@ async function runPlan() {
     }
 }
 
-async function destroyInfrastructure() {
-    const confirmText = prompt('Type "DESTROY" to confirm infrastructure destruction:');
+async function destroyInfrastructure(projectName = null) {
+    // Try to get project name from various sources if not provided
+    if (!projectName) {
+        const projectNameInput = document.getElementById('project-name');
+        projectName = projectNameInput?.value || null;
+    }
+    
+    const projectInfo = projectName ? `\n\nProject: ${projectName}` : '';
+    const confirmText = prompt(`Type "DESTROY" to confirm infrastructure destruction:${projectInfo}`);
     if (confirmText !== 'DESTROY') {
         return;
     }
     
-    const statusDiv = document.getElementById('deployment-status');
-    statusDiv.innerHTML = '<div class="spinner"></div>Destroying infrastructure...';
-    statusDiv.className = 'status-display warning';
+    // Use the overview div on the Deployment Manager page
+    const overviewDiv = document.getElementById('deployments-overview');
+    if (overviewDiv) {
+        overviewDiv.innerHTML = `
+            <div class="status-display warning">
+                <div class="spinner"></div>
+                <p><strong>🗑️ Destroying Infrastructure${projectName ? ` (${projectName})` : ''}...</strong></p>
+                <p style="font-size: 0.9em; color: #666;">This may take several minutes. Please wait.</p>
+            </div>
+        `;
+    }
+    
+    // Disable buttons during destruction
+    disableDeployButton(true, 'Destruction in progress...');
+    
+    // Store project name for polling
+    if (projectName) {
+        window.currentDeploymentProject = projectName;
+    }
     
     try {
+        const requestBody = { confirm: 'DESTROY' };
+        if (projectName) {
+            requestBody.project_name = projectName;
+        }
+        
         const response = await fetch(`${API_BASE}/deploy/destroy`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ confirm: 'DESTROY' })
+            body: JSON.stringify(requestBody)
         });
         
         const data = await response.json();
         
         if (data.success) {
-            statusDiv.innerHTML = '<p>Destruction started. Checking status...</p>';
-            pollDeploymentStatus();
+            if (overviewDiv) {
+                overviewDiv.innerHTML = `
+                    <div class="status-display info">
+                        <div class="spinner"></div>
+                        <p><strong>🗑️ Destruction in progress${projectName ? ` for ${projectName}` : ''}...</strong></p>
+                        <p style="font-size: 0.9em; color: #666;">Terraform is removing all resources. This page will update automatically.</p>
+                    </div>
+                `;
+            }
+            // Start polling for destruction status
+            pollDestructionStatus(projectName);
         } else {
-            statusDiv.innerHTML = '<p>Error: ' + (data.error || 'Unknown error') + '</p>';
-            statusDiv.className = 'status-display error';
+            if (overviewDiv) {
+                overviewDiv.innerHTML = `
+                    <div class="status-display error">
+                        <p><strong>Error:</strong> ${data.error || 'Unknown error'}</p>
+                    </div>
+                `;
+            }
+            disableDeployButton(false);
         }
     } catch (error) {
-        statusDiv.innerHTML = '<p>Error: ' + error.message + '</p>';
-        statusDiv.className = 'status-display error';
+        if (overviewDiv) {
+            overviewDiv.innerHTML = `
+                <div class="status-display error">
+                    <p><strong>Error:</strong> ${error.message}</p>
+                </div>
+            `;
+        }
+        disableDeployButton(false);
     }
+}
+
+/**
+ * Purge all resources from a failed deployment
+ * This is used when deployment fails but leaves resources behind
+ * @param {string} projectName - Optional project name to purge (for multi-project support)
+ */
+async function purgeFailedDeployment(projectName = null) {
+    // Get resource count for confirmation message
+    const resourceCount = allResources ? allResources.length : 0;
+    
+    // Try to get project name from various sources if not provided
+    if (!projectName) {
+        // Check if we have a current deployment project
+        projectName = window.currentDeploymentProject;
+        
+        // If not, try to get from the project name input
+        if (!projectName) {
+            const projectNameInput = document.getElementById('project-name');
+            projectName = projectNameInput?.value || null;
+        }
+    }
+    
+    const projectInfo = projectName ? `\nProject: ${projectName}` : '';
+    
+    const confirmText = prompt(
+        `⚠️ PURGE ALL PROJECT RESOURCES?${projectInfo}\n\n` +
+        `This will PERMANENTLY DELETE all ${resourceCount} AWS resources associated with this project.\n\n` +
+        `Resources to be deleted:\n` +
+        `• VPCs, Subnets, Security Groups\n` +
+        `• EC2 Instances, EBS Volumes\n` +
+        `• NAT Gateways, Elastic IPs\n` +
+        `• IAM Roles, S3 Buckets\n` +
+        `• All other project resources\n\n` +
+        `This CANNOT be undone!\n\n` +
+        `Type "PURGE" to confirm:`
+    );
+    
+    if (confirmText !== 'PURGE') {
+        return;
+    }
+    
+    const overviewDiv = document.getElementById('deployments-overview');
+    
+    if (overviewDiv) {
+        overviewDiv.innerHTML = `
+            <div class="status-display warning" style="padding: 20px;">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <div class="spinner"></div>
+                    <div>
+                        <p style="margin: 0; font-weight: bold;">🧹 Starting Purge${projectName ? ` for ${projectName}` : ''}...</p>
+                        <p style="margin: 5px 0 0 0; font-size: 0.9em; color: #666;">Initializing Terraform to remove all resources...</p>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Disable buttons during purge
+    disableDeployButton(true, 'Purge in progress...');
+    
+    // Store project name for polling
+    if (projectName) {
+        window.currentDeploymentProject = projectName;
+    }
+    
+    try {
+        const requestBody = { confirm: 'PURGE' };
+        if (projectName) {
+            requestBody.project_name = projectName;
+        }
+        
+        const response = await fetch(`${API_BASE}/deploy/purge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Start polling for purge status
+            pollDestructionStatus(projectName);
+        } else {
+            if (overviewDiv) {
+                overviewDiv.innerHTML = `
+                    <div class="status-display error">
+                        <p><strong>Error:</strong> ${data.error || 'Unknown error'}</p>
+                    </div>
+                `;
+            }
+            disableDeployButton(false);
+        }
+    } catch (error) {
+        if (overviewDiv) {
+            overviewDiv.innerHTML = `
+                <div class="status-display error">
+                    <p><strong>Error:</strong> ${error.message}</p>
+                </div>
+            `;
+        }
+        disableDeployButton(false);
+    }
+}
+
+/**
+ * Poll for destruction status
+ * @param {string} projectName - Optional project name for multi-project support
+ */
+function pollDestructionStatus(projectName = null) {
+    const pollInterval = setInterval(async () => {
+        try {
+            // Build URL with project parameter if we have one
+            let url = `${API_BASE}/deploy/status`;
+            if (projectName || window.currentDeploymentProject) {
+                const project = projectName || window.currentDeploymentProject;
+                url += `?project=${encodeURIComponent(project)}`;
+            }
+            
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            if (data.success && data.status) {
+                const status = data.status;
+                const overviewDiv = document.getElementById('deployments-overview');
+                
+                if (status.status === 'running') {
+                    // Still destroying - show progress with logs
+                    if (overviewDiv) {
+                        // Build logs HTML
+                        let logsHtml = '';
+                        if (status.logs && status.logs.length > 0) {
+                            const recentLogs = status.logs.slice(-8);
+                            logsHtml = `
+                                <div style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.85em; margin-top: 15px; max-height: 200px; overflow-y: auto;">
+                                    ${recentLogs.map(log => {
+                                        const time = new Date(log.timestamp * 1000).toLocaleTimeString();
+                                        const color = log.type === 'error' ? '#f44336' : 
+                                                      log.type === 'success' ? '#4CAF50' : 
+                                                      log.type === 'warning' ? '#ff9800' : '#4ec9b0';
+                                        return `<div style="margin-bottom: 4px;"><span style="color: #888;">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
+                                    }).join('')}
+                                </div>
+                            `;
+                        }
+                        
+                        overviewDiv.innerHTML = `
+                            <div class="status-display warning" style="padding: 20px;">
+                                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
+                                    <div class="spinner"></div>
+                                    <div>
+                                        <p style="margin: 0; font-weight: bold;">🧹 ${status.step || 'Purging resources...'}</p>
+                                        <p style="margin: 5px 0 0 0; font-size: 0.9em; color: #666;">
+                                            Progress: ${status.progress_percent || 0}% • Elapsed: ${status.elapsed_formatted || '0m 0s'}
+                                        </p>
+                                    </div>
+                                </div>
+                                ${logsHtml}
+                            </div>
+                        `;
+                    }
+                } else if (status.status === 'success') {
+                    // Destruction complete
+                    clearInterval(pollInterval);
+                    disableDeployButton(false);
+                    if (overviewDiv) {
+                        overviewDiv.innerHTML = `
+                            <div class="status-display success">
+                                <p><strong>✅ Resources Purged Successfully</strong></p>
+                                <p style="font-size: 0.9em; color: #666;">All resources have been removed. You can now deploy fresh infrastructure.</p>
+                                <p style="margin-top: 15px;">
+                                    <button class="btn btn-success" onclick="APP.navigateTo('deployment')">
+                                        Deploy New Infrastructure →
+                                    </button>
+                                </p>
+                            </div>
+                        `;
+                    }
+                    // Refresh the page to update all sections
+                    setTimeout(() => {
+                        refreshDeployments();
+                        loadResourceList();
+                        renderDeploymentTimeline();
+                    }, 2000);
+                } else if (status.status === 'error') {
+                    // Destruction failed
+                    clearInterval(pollInterval);
+                    disableDeployButton(false);
+                    
+                    // Build ALL logs (not just errors) to show full context
+                    let allLogsHtml = '';
+                    if (status.logs && status.logs.length > 0) {
+                        allLogsHtml = `
+                            <div style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.85em; margin-top: 15px; max-height: 300px; overflow-y: auto;">
+                                ${status.logs.map(log => {
+                                    const time = new Date(log.timestamp * 1000).toLocaleTimeString();
+                                    const color = log.type === 'error' ? '#ff6b6b' : 
+                                                  log.type === 'success' ? '#4CAF50' : 
+                                                  log.type === 'warning' ? '#ff9800' : '#4ec9b0';
+                                    return `<div style="margin-bottom: 4px; ${log.type === 'error' ? 'background: #3d1f1f; padding: 4px; border-radius: 3px;' : ''}"><span style="color: #888;">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
+                                }).join('')}
+                            </div>
+                        `;
+                    }
+                    
+                    if (overviewDiv) {
+                        overviewDiv.innerHTML = `
+                            <div class="status-display error" style="padding: 20px;">
+                                <p><strong>❌ Purge Failed</strong></p>
+                                <p style="font-size: 0.9em; color: #666;">${status.error || 'Unknown error occurred'}</p>
+                                ${allLogsHtml}
+                                <p style="margin-top: 15px;">
+                                    <button class="btn btn-secondary" onclick="refreshDeployments()" style="margin-right: 10px;">
+                                        🔄 Refresh Status
+                                    </button>
+                                    <button class="btn" onclick="purgeFailedDeployment()" style="background: #ff5722; color: white;">
+                                        🧹 Try Again
+                                    </button>
+                                </p>
+                            </div>
+                        `;
+                    }
+                } else {
+                    // Idle or unknown - stop polling
+                    clearInterval(pollInterval);
+                    disableDeployButton(false);
+                    refreshDeployments();
+                }
+            }
+        } catch (error) {
+            console.error('Error polling destruction status:', error);
+        }
+    }, 3000); // Poll every 3 seconds
 }
 
 /**
@@ -2283,6 +2829,702 @@ async function startInfrastructure() {
             </div>
         `;
     }
+}
+
+/**
+ * Stop EC2 instances for a specific project
+ */
+async function stopDeploymentResources(projectName) {
+    if (!projectName) {
+        alert('Project name is required');
+        return;
+    }
+    
+    const confirmStop = confirm(
+        `⏸️ Stop EC2 Instances for "${projectName}"?\n\n` +
+        'This will STOP all EC2 instances for this project.\n\n' +
+        '✅ Saves ~90% on compute costs\n' +
+        '⚠️ Storage, Elastic IPs, NAT Gateway still billed\n' +
+        '💾 All data and configuration preserved\n\n' +
+        'You can restart anytime.'
+    );
+    
+    if (!confirmStop) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/stop`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_name: projectName })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert(`✅ Stopped ${data.stopped_count || 'all'} EC2 instances for project "${projectName}"`);
+            // Refresh resources
+            refreshDeployments();
+        } else {
+            alert(`❌ Error stopping instances: ${data.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Make stopDeploymentResources available globally for onclick handlers
+window.stopDeploymentResources = stopDeploymentResources;
+
+/**
+ * Start EC2 instances for a specific project
+ */
+async function startDeploymentResources(projectName) {
+    if (!projectName) {
+        alert('Project name is required');
+        return;
+    }
+    
+    const confirmStart = confirm(
+        `▶️ Start EC2 Instances for "${projectName}"?\n\n` +
+        'This will START all stopped EC2 instances.\n\n' +
+        '🔄 All instances will be brought online\n' +
+        '⏱️ Takes ~2-5 minutes to fully boot\n' +
+        '💰 Compute charges will resume'
+    );
+    
+    if (!confirmStart) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_name: projectName })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert(`✅ Started ${data.started_count || 'all'} EC2 instances for project "${projectName}"`);
+            // Refresh resources
+            refreshDeployments();
+        } else {
+            alert(`❌ Error starting instances: ${data.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Make startDeploymentResources available globally for onclick handlers
+window.startDeploymentResources = startDeploymentResources;
+
+/**
+ * Destroy infrastructure for a specific project
+ */
+async function destroyDeployment(projectName) {
+    if (!projectName) {
+        alert('Project name is required');
+        return;
+    }
+    
+    const confirmDestroy = confirm(
+        `🗑️ DESTROY Infrastructure for "${projectName}"?\n\n` +
+        '⚠️ WARNING: This will PERMANENTLY DELETE:\n' +
+        '• All EC2 instances\n' +
+        '• All VPCs and networking\n' +
+        '• All storage (S3 buckets)\n' +
+        '• All security groups\n' +
+        '• All other AWS resources\n\n' +
+        '❌ This action CANNOT be undone!\n\n' +
+        'Type "DESTROY" in the next prompt to confirm.'
+    );
+    
+    if (!confirmDestroy) return;
+    
+    const confirmText = prompt('Type "DESTROY" to confirm:');
+    if (confirmText !== 'DESTROY') {
+        alert('Destruction cancelled.');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/destroy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                project_name: projectName,
+                confirm: 'DESTROY'
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert(`🗑️ Destruction started for project "${projectName}". This may take several minutes.`);
+            // Start polling for destruction status
+            pollDestructionStatus(projectName);
+        } else {
+            alert(`❌ Error: ${data.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Make destroyDeployment available globally for onclick handlers
+window.destroyDeployment = destroyDeployment;
+
+/**
+ * Load connection info for a specific project
+ */
+async function loadConnectionInfo(projectName, sessionId) {
+    if (!projectName) return;
+    
+    const contentDiv = document.getElementById(`${sessionId}-connection-content`);
+    if (!contentDiv) return;
+    
+    contentDiv.innerHTML = '<div class="spinner" style="margin: 10px auto;"></div> Loading connection details...';
+    
+    try {
+        // Fetch Terraform outputs for this project
+        const response = await fetch(`${API_BASE}/deploy/outputs?project=${encodeURIComponent(projectName)}`);
+        const data = await response.json();
+        
+        if (data.success && data.outputs) {
+            const outputs = data.outputs;
+            const keyName = outputs.jumpbox_key_name || `${projectName}-goadmini-jumpbox-key`;
+            
+            // Build connection info HTML
+            let html = '<div style="font-size: 0.95em;">';
+            
+            // SSH Key Download Button (always show first)
+            html += `
+                <div style="margin-bottom: 15px; padding: 12px; background: #fff8e1; border-radius: 6px; border-left: 4px solid #ffc107;">
+                    <div style="font-weight: 600; color: #f57c00; margin-bottom: 8px;">🔑 SSH Key Setup</div>
+                    <div style="margin-bottom: 10px; font-size: 0.9em; color: #666;">
+                        Before connecting, you need to download the SSH key to your <code>~/.ssh</code> directory.
+                    </div>
+                    <button onclick="downloadSSHKey('${projectName}', 'jumpbox')" 
+                            style="background: #ff9800; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 500; margin-right: 10px;">
+                        📥 Download SSH Key to ~/.ssh
+                    </button>
+                    <span id="ssh-key-status-${sessionId}" style="font-size: 0.85em; color: #666;"></span>
+                </div>
+            `;
+            
+            // Jumpbox SSH
+            if (outputs.jumpbox_public_ip) {
+                const sshCommand = `ssh -i ~/.ssh/${keyName}.pem ubuntu@${outputs.jumpbox_public_ip}`;
+                const escapedSshCommand = sshCommand.replace(/'/g, "\\'");
+                html += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: #e8f5e9; border-radius: 6px; border-left: 4px solid #4CAF50;">
+                        <div style="font-weight: 600; color: #2e7d32; margin-bottom: 8px;">🖥️ Jumpbox SSH Access</div>
+                        <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.jumpbox_public_ip}</code></div>
+                        <div style="margin-bottom: 8px;"><strong>User:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">ubuntu</code></div>
+                        <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden;">
+                            <button onclick="copyToClipboard('${escapedSshCommand}', this)" 
+                                    style="position: absolute; top: 8px; right: 8px; background: #333; color: #ccc; border: 1px solid #555; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
+                                📋 Copy
+                            </button>
+                            <div style="color: #4ec9b0; padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.95em; overflow-x: auto; white-space: nowrap;">
+                                ${sshCommand}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Windows RDP via Jumpbox
+            if (outputs.dc01_private_ip) {
+                const tunnelCommand = `ssh -i ~/.ssh/${keyName}.pem -L 3389:${outputs.dc01_private_ip}:3389 ubuntu@${outputs.jumpbox_public_ip}`;
+                const escapedTunnelCommand = tunnelCommand.replace(/'/g, "\\'");
+                html += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: #e3f2fd; border-radius: 6px; border-left: 4px solid #2196F3;">
+                        <div style="font-weight: 600; color: #1565c0; margin-bottom: 8px;">🪟 Windows DC01 (via Jumpbox)</div>
+                        <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.dc01_private_ip}</code></div>
+                        <div style="margin-bottom: 8px;"><strong>Access:</strong> RDP through SSH tunnel</div>
+                        <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden;">
+                            <button onclick="copyToClipboard('${escapedTunnelCommand}', this)" 
+                                    style="position: absolute; top: 8px; right: 8px; background: #333; color: #ccc; border: 1px solid #555; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
+                                📋 Copy
+                            </button>
+                            <div style="color: #4ec9b0; padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.95em; overflow-x: auto;">
+                                <div style="color: #6a9955; margin-bottom: 4px;"># SSH tunnel for RDP</div>
+                                <div style="white-space: nowrap;">${tunnelCommand}</div>
+                            </div>
+                        </div>
+                        <div style="margin-top: 8px; font-size: 0.9em; color: #666;">Then connect RDP to <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px;">localhost:3389</code></div>
+                    </div>
+                `;
+            }
+            
+            // Team Server (if exists - Full C2 mode with public team server)
+            if (outputs.team_server_public_ip) {
+                html += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: #fce4ec; border-radius: 6px; border-left: 4px solid #e91e63;">
+                        <div style="font-weight: 600; color: #c2185b; margin-bottom: 8px;">🎯 Cobalt Strike Team Server (Direct)</div>
+                        <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.team_server_public_ip}</code></div>
+                        <div style="margin-bottom: 8px;"><strong>Port:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">50050</code></div>
+                        <div style="font-size: 0.9em; color: #666;">Connect your CS Client directly to this IP:port</div>
+                    </div>
+                `;
+            }
+            
+            // Team Server (GOAD mode - internal Team Server)
+            if (outputs.teamserver_private_ip) {
+                const teamserverSshCommand = `ssh ubuntu@${outputs.teamserver_private_ip}`;
+                const escapedTeamserverSshCommand = teamserverSshCommand.replace(/'/g, "\\'");
+                
+                html += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: #ffebee; border-radius: 6px; border-left: 4px solid #f44336;">
+                        <div style="font-weight: 600; color: #c62828; margin-bottom: 8px;">🔴 CS Team Server (Ubuntu)</div>
+                        <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.teamserver_private_ip}</code></div>
+                        <div style="margin-bottom: 5px;"><strong>CS Port:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">50050</code></div>
+                        <div style="margin-bottom: 10px; font-size: 0.9em; color: #666;">
+                            Runs Cobalt Strike Team Server ONLY. Access via Jumpbox or from Windows Attack Box.
+                        </div>
+                        
+                        <div style="font-weight: 500; color: #333; margin-bottom: 6px; font-size: 0.9em;">SSH to Team Server (from Jumpbox):</div>
+                        <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden;">
+                            <button onclick="copyToClipboard('${escapedTeamserverSshCommand}', this)" 
+                                    style="position: absolute; top: 8px; right: 8px; background: #333; color: #ccc; border: 1px solid #555; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
+                                📋 Copy
+                            </button>
+                            <div style="color: #4ec9b0; padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.95em;">
+                                ${teamserverSshCommand}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Windows Attack Box (GOAD + CS mode - Windows workstation with CS Client + Tools)
+            if (outputs.attackbox_private_ip) {
+                const rdpTunnelCommand = `ssh -i ~/.ssh/${keyName}.pem -L 3389:${outputs.attackbox_private_ip}:3389 ubuntu@${outputs.jumpbox_public_ip}`;
+                const escapedRdpTunnelCommand = rdpTunnelCommand.replace(/'/g, "\\'");
+                const localCsTunnelCommand = `ssh -i ~/.ssh/${keyName}.pem -L 50050:192.168.56.40:50050 ubuntu@${outputs.jumpbox_public_ip}`;
+                const escapedLocalCsTunnelCommand = localCsTunnelCommand.replace(/'/g, "\\'");
+                
+                html += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: #e8f5e9; border-radius: 6px; border-left: 4px solid #4CAF50;">
+                        <div style="font-weight: 600; color: #2e7d32; margin-bottom: 8px;">🖥️ Windows Attack Box (CS Client + Tools)</div>
+                        <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.attackbox_private_ip}</code></div>
+                        <div style="margin-bottom: 5px;"><strong>OS:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">Windows Server 2019</code></div>
+                        <div style="margin-bottom: 5px;"><strong>Login:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">Administrator / AttackB0x!2024</code></div>
+                        <div style="margin-bottom: 10px; font-size: 0.9em; color: #666;">
+                            Your attack workstation with CS Client, PowerSploit, and WSL2 for SSH.
+                        </div>
+                        
+                        <div style="font-weight: 500; color: #333; margin-bottom: 6px; font-size: 0.9em;">🔗 RDP to Attack Box (SSH Tunnel from your machine):</div>
+                        <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden; margin-bottom: 12px;">
+                            <button onclick="copyToClipboard('${escapedRdpTunnelCommand}', this)" 
+                                    style="position: absolute; top: 8px; right: 8px; background: #333; color: #ccc; border: 1px solid #555; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
+                                📋 Copy
+                            </button>
+                            <div style="color: #4ec9b0; padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em; overflow-x: auto;">
+                                <div style="color: #6a9955; margin-bottom: 4px;"># Step 1: Create RDP tunnel (run on your local machine)</div>
+                                <div style="white-space: nowrap; margin-bottom: 8px;">${rdpTunnelCommand}</div>
+                                <div style="color: #6a9955; margin-bottom: 4px;"># Step 2: RDP to localhost:3389</div>
+                                <div style="color: #6a9955;"># Login: Administrator / AttackB0x!2024</div>
+                            </div>
+                        </div>
+                        
+                        <div style="padding: 10px; background: #fff; border-radius: 4px; font-size: 0.85em;">
+                            <div style="font-weight: 500; margin-bottom: 8px;">📦 Pre-installed Tools:</div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; color: #666;">
+                                <div>• PowerSploit (C:\\Tools\\PowerSploit)</div>
+                                <div>• WSL2 Ubuntu (ssh teamserver)</div>
+                                <div>• PowerView, PowerUp</div>
+                                <div>• Git, VS Code, Python</div>
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top: 10px; padding: 8px; background: #e3f2fd; border-radius: 4px; font-size: 0.85em; color: #1565c0;">
+                            <strong>💡 Workflow:</strong> RDP to Attack Box → Open WSL → <code>ssh teamserver</code> to connect to CS Team Server
+                        </div>
+                    </div>
+                `;
+                
+                // LOCAL CS Client option (run CS from user's local machine)
+                html += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: #f3e5f5; border-radius: 6px; border-left: 4px solid #9c27b0;">
+                        <div style="font-weight: 600; color: #7b1fa2; margin-bottom: 8px;">💻 Run CS Client from YOUR Local Machine</div>
+                        <div style="margin-bottom: 10px; font-size: 0.9em; color: #666;">
+                            Prefer to run Cobalt Strike Client on your own machine? Use SSH tunneling:
+                        </div>
+                        
+                        <div style="font-weight: 500; color: #333; margin-bottom: 6px; font-size: 0.9em;">🔗 Option 1: SSH Tunnel to Team Server (Recommended)</div>
+                        <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden; margin-bottom: 12px;">
+                            <button onclick="copyToClipboard('${escapedLocalCsTunnelCommand}', this)" 
+                                    style="position: absolute; top: 8px; right: 8px; background: #333; color: #ccc; border: 1px solid #555; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
+                                📋 Copy
+                            </button>
+                            <div style="color: #4ec9b0; padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em; overflow-x: auto;">
+                                <div style="color: #6a9955; margin-bottom: 4px;"># Step 1: Create SSH tunnel to Team Server (run on your local machine)</div>
+                                <div style="white-space: nowrap; margin-bottom: 8px;">${localCsTunnelCommand}</div>
+                                <div style="color: #6a9955; margin-bottom: 4px;"># Step 2: Keep terminal open, then launch your local CS Client</div>
+                                <div style="color: #6a9955;"># Step 3: Connect CS Client to: localhost:50050</div>
+                            </div>
+                        </div>
+                        
+                        <div style="padding: 10px; background: #fff; border-radius: 4px; font-size: 0.85em; margin-bottom: 10px;">
+                            <div style="font-weight: 500; margin-bottom: 6px; color: #333;">📋 Quick Steps:</div>
+                            <ol style="margin: 0; padding-left: 20px; color: #666; line-height: 1.6;">
+                                <li>Run the SSH tunnel command above (keep terminal open)</li>
+                                <li>Launch Cobalt Strike on your local machine</li>
+                                <li>Connect to: <code style="background: #f5f5f5; padding: 1px 4px; border-radius: 2px;">localhost:50050</code></li>
+                                <li>Use the team server password you configured</li>
+                            </ol>
+                        </div>
+                        
+                        <div style="padding: 8px; background: #fff3e0; border-radius: 4px; font-size: 0.8em; color: #e65100;">
+                            <strong>⚠️ Note:</strong> You must have Cobalt Strike installed locally. The tunnel forwards port 50050 from the Team Server through the Jumpbox to your machine.
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Redirector (if exists)
+            if (outputs.redirector_public_ip) {
+                html += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: #fff3e0; border-radius: 6px; border-left: 4px solid #ff9800;">
+                        <div style="font-weight: 600; color: #e65100; margin-bottom: 8px;">🔀 HTTPS Redirector</div>
+                        <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.redirector_public_ip}</code></div>
+                        <div style="margin-bottom: 5px;"><strong>Domain:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.redirector_domain || 'N/A'}</code></div>
+                    </div>
+                `;
+            }
+            
+            // Key file location info
+            html += `
+                <div style="padding: 10px; background: #f5f5f5; border-radius: 6px; margin-top: 10px;">
+                    <div style="font-weight: 500; margin-bottom: 5px;">📁 Key Files Location</div>
+                    <code style="font-size: 0.9em; color: #666;">~/.ssh/${keyName}.pem</code>
+                    <div style="margin-top: 5px; font-size: 0.85em; color: #888;">
+                        The key file permissions are automatically set to 600 when downloaded.
+                    </div>
+                </div>
+            `;
+            
+            html += '</div>';
+            contentDiv.innerHTML = html;
+        } else {
+            contentDiv.innerHTML = `<div style="color: #666;">No connection details available. ${data.error || ''}</div>`;
+        }
+    } catch (error) {
+        contentDiv.innerHTML = `<div style="color: #f44336;">Error loading connection info: ${error.message}</div>`;
+    }
+}
+
+// Make loadConnectionInfo available globally for onclick handlers
+window.loadConnectionInfo = loadConnectionInfo;
+
+/**
+ * Copy text to clipboard
+ */
+function copyToClipboard(text, button) {
+    // Handle both direct text and event-based calls
+    let textToCopy = text;
+    let buttonElement = button;
+    
+    // If called from onclick with just text, button will be the element
+    if (typeof text === 'string' && button && button.tagName) {
+        textToCopy = text;
+        buttonElement = button;
+    }
+    
+    navigator.clipboard.writeText(textToCopy).then(() => {
+        if (buttonElement && buttonElement.innerHTML !== undefined) {
+            const originalText = buttonElement.innerHTML;
+            buttonElement.innerHTML = '✅ Copied!';
+            buttonElement.style.background = '#4CAF50';
+            buttonElement.style.color = 'white';
+            setTimeout(() => {
+                buttonElement.innerHTML = originalText;
+                buttonElement.style.background = '#333';
+                buttonElement.style.color = '#ccc';
+            }, 2000);
+        }
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+        alert('Failed to copy to clipboard. Please copy manually.');
+    });
+}
+
+// Make copyToClipboard available globally for onclick handlers
+window.copyToClipboard = copyToClipboard;
+
+/**
+ * Download SSH key to ~/.ssh directory
+ */
+async function downloadSSHKey(projectName, keyType = 'jumpbox') {
+    try {
+        const response = await fetch(`${API_BASE}/deploy/ssh-key/download`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                project_name: projectName,
+                key_type: keyType
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert(`✅ SSH Key saved successfully!\n\nPath: ${data.path}\n\nYou can now use the SSH commands above.`);
+        } else {
+            alert(`❌ Failed to download SSH key:\n${data.error}`);
+        }
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+/**
+ * Copy GOAD step 1 command with project-specific key name
+ */
+function copyGoadStep1(projectName) {
+    const command = `ssh -i ~/.ssh/${projectName}-goadmini-jumpbox-key.pem ubuntu@<JUMPBOX_IP>`;
+    navigator.clipboard.writeText(command).then(() => {
+        alert('✅ Copied! Remember to replace <JUMPBOX_IP> with the actual IP from Connection Info.');
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+        alert('Failed to copy to clipboard');
+    });
+}
+
+// Make functions available globally for onclick handlers
+window.copyGoadStep1 = copyGoadStep1;
+window.downloadSSHKey = downloadSSHKey;
+
+/**
+ * Load credentials for a specific project
+ */
+async function loadCredentials(projectName, sessionId) {
+    if (!projectName) return;
+    
+    const contentDiv = document.getElementById(`${sessionId}-credentials-content`);
+    if (!contentDiv) return;
+    
+    contentDiv.innerHTML = '<div class="spinner" style="margin: 10px auto;"></div> Loading credentials...';
+    
+    try {
+        const response = await fetch(`${API_BASE}/goad/credentials`);
+        const data = await response.json();
+        
+        let creds;
+        
+        if (data.success && data.credentials) {
+            creds = data.credentials;
+        } else {
+            // If no deployment marker found, show default GOAD-Mini credentials
+            // This is common when infrastructure is deployed but Ansible hasn't run yet
+            creds = getDefaultGoadCredentials(projectName);
+        }
+        
+        let html = '<div style="font-size: 0.95em;">';
+        
+        // Lab Info
+        if (creds.lab_name) {
+            html += `
+                <div style="margin-bottom: 10px; padding: 8px 12px; background: #e8eaf6; border-radius: 6px;">
+                    <strong>Lab:</strong> ${creds.lab_display_name || creds.lab_name}
+                </div>
+            `;
+        }
+        
+        // Default Password
+        if (creds.default_password) {
+            html += `
+                <div style="margin-bottom: 15px; padding: 12px; background: #fff3e0; border-radius: 6px; border-left: 4px solid #ff9800;">
+                    <div style="font-weight: 600; color: #e65100; margin-bottom: 8px;">🔐 Default Password</div>
+                    <code style="background: #1e1e1e; color: #4ec9b0; padding: 10px 14px; border-radius: 4px; display: inline-block; font-size: 1.2em; font-family: 'SF Mono', Monaco, Consolas, monospace;">${creds.default_password}</code>
+                    <div style="margin-top: 8px; font-size: 0.85em; color: #666;">Used for most AD accounts unless specified otherwise</div>
+                </div>
+            `;
+        }
+        
+        // Default Users (Local Admin)
+        if (creds.default_users && creds.default_users.length > 0) {
+            html += `
+                <div style="margin-bottom: 15px; padding: 12px; background: #ffebee; border-radius: 6px; border-left: 4px solid #f44336;">
+                    <div style="font-weight: 600; color: #c62828; margin-bottom: 8px;">👤 Local Accounts</div>
+                    <div style="display: grid; gap: 6px;">
+            `;
+            for (const user of creds.default_users) {
+                html += `
+                    <div style="background: white; padding: 8px; border-radius: 4px;">
+                        <div><strong>${user.domain}:</strong> <code style="font-size: 1em;">${user.username}</code> / <code style="font-size: 1em;">${user.password}</code></div>
+                        ${user.note ? `<div style="font-size: 0.85em; color: #666;">${user.note}</div>` : ''}
+                    </div>
+                `;
+            }
+            html += '</div></div>';
+        }
+        
+        // Domain Admins
+        if (creds.domain_admins && creds.domain_admins.length > 0) {
+            html += `
+                <div style="margin-bottom: 15px; padding: 12px; background: #e8f5e9; border-radius: 6px; border-left: 4px solid #4CAF50;">
+                    <div style="font-weight: 600; color: #2e7d32; margin-bottom: 8px;">👑 Domain Admins</div>
+                    <div style="display: grid; gap: 8px;">
+            `;
+            for (const admin of creds.domain_admins) {
+                html += `
+                    <div style="background: white; padding: 8px; border-radius: 4px;">
+                        <div><strong>${admin.domain}\\${admin.username}</strong></div>
+                        <div style="font-size: 0.9em; color: #666;">
+                            Password: <code style="font-size: 1em;">${admin.password}</code>
+                            ${admin.fqdn ? ` • FQDN: <code>${admin.fqdn}</code>` : ''}
+                            ${admin.dc ? ` • DC: ${admin.dc}` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+            html += '</div></div>';
+        }
+        
+        // Key Users
+        if (creds.key_users && creds.key_users.length > 0) {
+            html += `
+                <div style="margin-bottom: 15px; padding: 12px; background: #e3f2fd; border-radius: 6px; border-left: 4px solid #2196F3;">
+                    <div style="font-weight: 600; color: #1565c0; margin-bottom: 8px;">🎯 Key Users (Attack Paths)</div>
+                    <div style="display: grid; gap: 6px; font-size: 0.95em;">
+            `;
+            for (const user of creds.key_users) {
+                html += `
+                    <div style="background: white; padding: 6px 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <code style="font-size: 1em;">${user.domain ? user.domain + '\\\\' : ''}${user.username}</code>
+                            <span style="color: #888; margin-left: 8px;">${user.password || creds.default_password}</span>
+                        </div>
+                        <span style="color: #666; font-size: 0.9em;">${user.role || ''}</span>
+                    </div>
+                `;
+            }
+            html += '</div></div>';
+        }
+        
+        // Domain Trusts
+        if (creds.trusts && creds.trusts.length > 0) {
+            html += `
+                <div style="margin-bottom: 15px; padding: 12px; background: #f3e5f5; border-radius: 6px; border-left: 4px solid #9c27b0;">
+                    <div style="font-weight: 600; color: #7b1fa2; margin-bottom: 8px;">🔗 Domain Trusts</div>
+                    <div style="font-size: 0.95em;">
+                        ${creds.trusts.map(t => `<div style="margin-bottom: 4px;">${t.from} → ${t.to} <span style="color: #888;">(${t.type})</span></div>`).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Special Accounts
+        if (creds.special_accounts && creds.special_accounts.length > 0) {
+            html += `
+                <div style="margin-bottom: 15px; padding: 12px; background: #fce4ec; border-radius: 6px; border-left: 4px solid #e91e63;">
+                    <div style="font-weight: 600; color: #c2185b; margin-bottom: 8px;">⚠️ Special Accounts</div>
+                    <div style="font-size: 0.95em;">
+                        ${creds.special_accounts.map(a => `<div style="margin-bottom: 4px;"><strong>${a.name}:</strong> ${a.note}</div>`).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Note
+        if (creds.note) {
+            html += `
+                <div style="padding: 10px; background: #f5f5f5; border-radius: 6px; font-size: 0.9em; color: #666;">
+                    💡 ${creds.note}
+                </div>
+            `;
+        }
+        
+        html += '</div>';
+        contentDiv.innerHTML = html;
+        
+    } catch (error) {
+        // On error, still show default credentials
+        const creds = getDefaultGoadCredentials(projectName);
+        contentDiv.innerHTML = buildCredentialsHtml(creds);
+    }
+}
+
+// Make loadCredentials available globally for onclick handlers
+window.loadCredentials = loadCredentials;
+
+/**
+ * Get default GOAD credentials based on project name
+ */
+function getDefaultGoadCredentials(projectName) {
+    // Detect lab type from project name
+    let labName = 'GOAD-Mini';
+    let labDisplayName = 'GOAD Mini (Seven Kingdoms)';
+    
+    if (projectName) {
+        const pn = projectName.toLowerCase();
+        if (pn.includes('light')) {
+            labName = 'GOAD-Light';
+            labDisplayName = 'GOAD Light (Seven Kingdoms + North)';
+        } else if (pn.includes('full') || pn.includes('goad_full')) {
+            labName = 'GOAD';
+            labDisplayName = 'GOAD Full (All Domains)';
+        } else if (pn.includes('sccm')) {
+            labName = 'SCCM';
+            labDisplayName = 'GOAD SCCM Lab';
+        } else if (pn.includes('nha')) {
+            labName = 'NHA';
+            labDisplayName = 'NHA Challenge Lab';
+        }
+    }
+    
+    // Default credentials for GOAD-Mini
+    const credentials = {
+        lab_name: labName,
+        lab_display_name: labDisplayName,
+        default_password: 'vagrant',
+        default_users: [
+            { username: 'Administrator', password: 'vagrant', domain: 'Local Admin', note: 'Local admin on all Windows VMs' },
+            { username: 'vagrant', password: 'vagrant', domain: 'Local User', note: 'Default vagrant user (SSH/RDP)' }
+        ],
+        domain_admins: [
+            { username: 'Administrator', password: 'vagrant', domain: 'SEVENKINGDOMS', fqdn: 'sevenkingdoms.local', dc: 'DC01' }
+        ],
+        key_users: [
+            { username: 'cersei.lannister', password: 'vagrant', domain: 'SEVENKINGDOMS', role: 'Domain User' },
+            { username: 'jaime.lannister', password: 'vagrant', domain: 'SEVENKINGDOMS', role: 'Domain User' },
+            { username: 'tywin.lannister', password: 'vagrant', domain: 'SEVENKINGDOMS', role: 'Domain User' }
+        ],
+        trusts: [],
+        special_accounts: [],
+        note: 'Standard GOAD password is "vagrant" for all users. Run Ansible provisioning to fully configure the lab.'
+    };
+    
+    // Add more domains for larger labs
+    if (labName === 'GOAD-Light' || labName === 'GOAD') {
+        credentials.domain_admins.push(
+            { username: 'Administrator', password: 'vagrant', domain: 'NORTH', fqdn: 'north.sevenkingdoms.local', dc: 'DC02' }
+        );
+        credentials.key_users.push(
+            { username: 'eddard.stark', password: 'vagrant', domain: 'NORTH', role: 'Domain User' },
+            { username: 'robb.stark', password: 'vagrant', domain: 'NORTH', role: 'Domain User' }
+        );
+        credentials.trusts.push(
+            { from: 'NORTH', to: 'SEVENKINGDOMS', type: 'Parent-Child' }
+        );
+    }
+    
+    if (labName === 'GOAD') {
+        credentials.domain_admins.push(
+            { username: 'Administrator', password: 'vagrant', domain: 'ESSOS', fqdn: 'essos.local', dc: 'DC03' }
+        );
+        credentials.key_users.push(
+            { username: 'daenerys.targaryen', password: 'vagrant', domain: 'ESSOS', role: 'Domain User' }
+        );
+        credentials.trusts.push(
+            { from: 'ESSOS', to: 'SEVENKINGDOMS', type: 'External (Bidirectional)' }
+        );
+    }
+    
+    return credentials;
 }
 
 // ============================================================================
@@ -3094,7 +4336,8 @@ async function loadResourceList() {
     if (!section || !tableBody) return;
     
     try {
-        const response = await fetch(`${API_BASE}/deploy/resources`);
+        // Fetch resources from ALL known projects
+        const response = await fetch(`${API_BASE}/deploy/resources?all_projects=true`);
         const data = await response.json();
         
         if (!data.success) {
@@ -3131,6 +4374,12 @@ function renderResourceTable(resources) {
     
     if (!tableBody) return;
     
+    // Filter out deleted/terminated resources - they no longer exist
+    const activeResources = resources.filter(r => {
+        const state = (r.state || '').toLowerCase();
+        return state !== 'deleted' && state !== 'terminated' && state !== 'deleting';
+    });
+    
     const typeIcons = {
         'ec2': '🖥️',
         'vpc': '🌐',
@@ -3160,7 +4409,13 @@ function renderResourceTable(resources) {
         'deleted': '#f44336'
     };
     
-    tableBody.innerHTML = resources.map((r, idx) => `
+    if (activeResources.length === 0) {
+        tableBody.innerHTML = `<tr><td colspan="6" style="padding: 20px; text-align: center; color: #666;">No active resources</td></tr>`;
+        countDiv.textContent = '0 resources';
+        return;
+    }
+    
+    tableBody.innerHTML = activeResources.map((r, idx) => `
         <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f9f9f9'};">
             <td style="padding: 10px; border-bottom: 1px solid #eee;">
                 <span style="font-size: 1.2em;">${typeIcons[r.type] || '📄'}</span>
@@ -3173,11 +4428,14 @@ function renderResourceTable(resources) {
             <td style="padding: 10px; border-bottom: 1px solid #eee;">
                 <span style="background: ${stateColors[r.state?.toLowerCase()] || '#9e9e9e'}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; text-transform: uppercase;">${r.state || 'unknown'}</span>
             </td>
+            <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 0.8em; color: #1565c0;">
+                ${r.project ? `<span style="background: #e3f2fd; padding: 3px 8px; border-radius: 4px;">${r.project}</span>` : '-'}
+            </td>
             <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 0.85em; color: #666;">${r.details || '-'}</td>
         </tr>
     `).join('');
     
-    countDiv.textContent = `${resources.length} resource${resources.length !== 1 ? 's' : ''} found`;
+    countDiv.textContent = `${activeResources.length} resource${activeResources.length !== 1 ? 's' : ''} found`;
 }
 
 /**
@@ -3390,20 +4648,76 @@ async function loadDeploymentHistory() {
 /**
  * Render deployment timeline
  */
+// Track expanded deployment sessions
+let expandedSessions = new Set();
+
 function renderDeploymentTimeline() {
     const timelineContent = document.getElementById('timeline-content');
     if (!timelineContent) return;
     
-    // Get unique deployment sessions (group by date)
+    // Get unique deployment sessions (group by date + project_name)
+    // This allows multiple deployments on the same day to be shown separately
     const sessions = {};
     deploymentLogs.forEach(log => {
         const date = log.timestamp.split('T')[0];
-        if (!sessions[date]) {
-            sessions[date] = { date, logs: [], hasError: false, hasSuccess: false };
+        // Use project_name from log if available, otherwise use date as fallback
+        const projectName = log.project_name || null;
+        const sessionKey = projectName ? `${date}-${projectName}` : date;
+        
+        if (!sessions[sessionKey]) {
+            sessions[sessionKey] = { 
+                date,
+                sessionKey,
+                logs: [], 
+                hasError: false, 
+                hasSuccess: false,
+                projectName: projectName,
+                deploymentType: null,
+                firstTime: null,
+                lastTime: null
+            };
         }
-        sessions[date].logs.push(log);
-        if (log.level === 'error') sessions[date].hasError = true;
-        if (log.level === 'success') sessions[date].hasSuccess = true;
+        sessions[sessionKey].logs.push(log);
+        if (log.level === 'error') sessions[sessionKey].hasError = true;
+        if (log.level === 'success') sessions[sessionKey].hasSuccess = true;
+        
+        // Extract deployment type from log messages like "Starting deployment: goad-mini"
+        if (log.message && log.message.includes('Starting deployment:')) {
+            const match = log.message.match(/Starting deployment:\s*(\S+)/);
+            if (match) {
+                sessions[sessionKey].deploymentType = match[1];
+            }
+        }
+        
+        // If project_name wasn't in log, try to extract from message
+        if (!sessions[sessionKey].projectName && log.message) {
+            // Pattern: project_name-component (e.g., "goad_mini_dev_001-goadmini-vpc")
+            const projectMatch = log.message.match(/([a-z0-9_]+_[a-z0-9_]+_[a-z0-9_]+)-/i);
+            if (projectMatch) {
+                sessions[sessionKey].projectName = projectMatch[1];
+            }
+            
+            // Also check for "Project:" or "project_name" patterns
+            const projectNameMatch = log.message.match(/project[_\s]*name[:\s]+["']?([^"'\s,]+)/i);
+            if (projectNameMatch) {
+                sessions[sessionKey].projectName = projectNameMatch[1];
+            }
+            
+            // Check for patterns like "project 'name'" or "for project 'name'"
+            const quotedProjectMatch = log.message.match(/project\s+['"]([^'"]+)['"]/i);
+            if (quotedProjectMatch) {
+                sessions[sessionKey].projectName = quotedProjectMatch[1];
+            }
+        }
+        
+        // Track first and last times
+        const logTime = new Date(log.timestamp);
+        if (!sessions[sessionKey].firstTime || logTime < sessions[sessionKey].firstTime) {
+            sessions[sessionKey].firstTime = logTime;
+        }
+        if (!sessions[sessionKey].lastTime || logTime > sessions[sessionKey].lastTime) {
+            sessions[sessionKey].lastTime = logTime;
+        }
     });
     
     const sessionList = Object.values(sessions).reverse().slice(0, 10);
@@ -3413,23 +4727,857 @@ function renderDeploymentTimeline() {
         return;
     }
     
-    timelineContent.innerHTML = sessionList.map(s => {
-        const statusIcon = s.hasError ? '❌' : (s.hasSuccess ? '✅' : '🔄');
-        const statusColor = s.hasError ? '#f44336' : (s.hasSuccess ? '#4CAF50' : '#2196F3');
+    timelineContent.innerHTML = sessionList.map((s, index) => {
+        const sessionId = `session-${s.sessionKey}`;
+        const isExpanded = expandedSessions.has(sessionId);
+        
+        // Check if this deployment was destroyed (look for destroy/purge success messages)
+        const wasDestroyed = s.logs.some(log => 
+            (log.message && (
+                log.message.includes('Resources purged successfully') ||
+                log.message.includes('Resources force-purged successfully') ||
+                log.message.includes('All resources have been purged') ||
+                log.message.includes('Infrastructure destroyed') ||
+                log.message.includes('terraform destroy') && log.level === 'success'
+            ))
+        );
+        
+        // Determine status - destroyed takes precedence over success
+        let statusIcon, statusColor, statusText;
+        if (wasDestroyed) {
+            statusIcon = '🗑️';
+            statusColor = '#9e9e9e';
+            statusText = 'Destroyed';
+        } else if (s.hasError) {
+            statusIcon = '❌';
+            statusColor = '#f44336';
+            statusText = 'Failed';
+        } else if (s.hasSuccess) {
+            statusIcon = '✅';
+            statusColor = '#4CAF50';
+            statusText = 'Success';
+        } else {
+            statusIcon = '🔄';
+            statusColor = '#2196F3';
+            statusText = 'In Progress';
+        }
+        
         const logCount = s.logs.length;
         const lastLog = s.logs[s.logs.length - 1];
         
+        // Format time range
+        const startTime = s.firstTime ? s.firstTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
+        const endTime = s.lastTime ? s.lastTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
+        const timeRange = startTime === endTime ? startTime : `${startTime} - ${endTime}`;
+        
+        // Calculate duration
+        let duration = '';
+        if (s.firstTime && s.lastTime) {
+            const durationMs = s.lastTime - s.firstTime;
+            const durationMin = Math.floor(durationMs / 60000);
+            const durationSec = Math.floor((durationMs % 60000) / 1000);
+            duration = durationMin > 0 ? `${durationMin}m ${durationSec}s` : `${durationSec}s`;
+        }
+        
+        // Project name - the actual project name (e.g., goad_mini_dev_001)
+        const projectName = s.projectName || 'Unknown Project';
+        
+        // Deployment type badge (e.g., goad-mini, c2-full)
+        const deploymentTypeBadge = s.deploymentType ? `<span style="background: #e3f2fd; color: #1565c0; padding: 3px 8px; border-radius: 4px; font-size: 0.75em; font-weight: 500;">${s.deploymentType}</span>` : '';
+        
+        // Show purge button for failed deployments (but not if already destroyed)
+        const purgeButton = (s.hasError && !wasDestroyed) ? `
+            <button onclick="event.stopPropagation(); purgeFailedDeployment('${projectName}')" class="btn" style="background: #ff5722; color: white; font-size: 0.75em; padding: 6px 12px; margin-left: 10px;" title="Clean up resources from this failed deployment">
+                🧹 Purge
+            </button>
+        ` : '';
+        
+        // Build expanded content
+        const expandedContent = isExpanded ? buildSessionDetails(s, sessionId) : '';
+        
+        // Last log message - show more characters
+        const lastLogMessage = lastLog.message.replace(/\x1b\[[0-9;]*m/g, ''); // Clean ANSI codes
+        const truncatedMessage = lastLogMessage.length > 80 ? lastLogMessage.substring(0, 80) + '...' : lastLogMessage;
+        
         return `
-            <div style="display: flex; align-items: center; gap: 15px; padding: 10px; margin-bottom: 8px; background: white; border-radius: 6px; border-left: 4px solid ${statusColor};">
-                <span style="font-size: 1.5em;">${statusIcon}</span>
-                <div style="flex: 1;">
-                    <div style="font-weight: bold; color: #333;">${formatDate(s.date)}</div>
-                    <div style="font-size: 0.85em; color: #666;">${logCount} event${logCount !== 1 ? 's' : ''} • Last: ${lastLog.message.substring(0, 50)}${lastLog.message.length > 50 ? '...' : ''}</div>
+            <div style="margin-bottom: 16px;">
+                <!-- Clickable Header -->
+                <div onclick="toggleSessionExpand('${sessionId}')" style="display: flex; align-items: center; gap: 15px; padding: 16px 20px; background: white; border-radius: ${isExpanded ? '8px 8px 0 0' : '8px'}; border-left: 5px solid ${statusColor}; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.05);" onmouseover="this.style.background='#f8f9fa'; this.style.boxShadow='0 4px 8px rgba(0,0,0,0.1)'" onmouseout="this.style.background='white'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.05)'">
+                    <span style="font-size: 1em; transition: transform 0.2s; transform: rotate(${isExpanded ? '90deg' : '0deg'}); color: #666;">▶</span>
+                    <span style="font-size: 1.8em;">${statusIcon}</span>
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px;">
+                            <span style="font-weight: 700; color: #1a1a2e; font-size: 1.1em;">${projectName}</span>
+                            ${deploymentTypeBadge}
+                            <span style="background: ${statusColor}15; color: ${statusColor}; padding: 3px 10px; border-radius: 4px; font-size: 0.75em; font-weight: 600; text-transform: uppercase;">${statusText}</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 12px; color: #666; font-size: 0.85em;">
+                            <span>📅 ${formatDate(s.date)}</span>
+                            <span>🕐 ${timeRange}</span>
+                            <span>⏱️ ${duration || 'N/A'}</span>
+                            <span>📊 ${logCount} events</span>
+                        </div>
+                        <div style="font-size: 0.85em; color: #888; margin-top: 8px; font-style: italic;">
+                            Last: ${truncatedMessage}
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center;">
+                        ${purgeButton}
+                    </div>
                 </div>
-                <div style="font-size: 0.8em; color: #888;">${formatTime(lastLog.timestamp)}</div>
+                
+                <!-- Expanded Details -->
+                ${expandedContent}
             </div>
         `;
     }).join('');
+}
+
+/**
+ * Build detailed session content when expanded
+ */
+function buildSessionDetails(session, sessionId) {
+    // Extract resources from logs
+    const deployedResources = extractResourcesFromLogs(session.logs, 'created');
+    const purgedResources = extractResourcesFromLogs(session.logs, 'destroyed');
+    
+    // Group logs by phase/step
+    const phases = [];
+    let currentPhase = { name: 'Initialization', logs: [], status: 'info' };
+    
+    session.logs.forEach(log => {
+        // Detect phase changes
+        if (log.message.includes('Started:') || log.message.includes('Starting')) {
+            if (currentPhase.logs.length > 0) {
+                phases.push(currentPhase);
+            }
+            const phaseName = log.message.replace('Started:', '').replace('Starting', '').trim();
+            currentPhase = { name: phaseName || 'Processing', logs: [], status: 'info' };
+        }
+        
+        currentPhase.logs.push(log);
+        
+        if (log.level === 'error') currentPhase.status = 'error';
+        else if (log.level === 'success' && currentPhase.status !== 'error') currentPhase.status = 'success';
+    });
+    
+    if (currentPhase.logs.length > 0) {
+        phases.push(currentPhase);
+    }
+    
+    // Build phase timeline
+    const phaseHtml = phases.map((phase, idx) => {
+        const phaseIcon = phase.status === 'error' ? '❌' : (phase.status === 'success' ? '✅' : '🔄');
+        const phaseColor = phase.status === 'error' ? '#f44336' : (phase.status === 'success' ? '#4CAF50' : '#2196F3');
+        
+        return `
+            <div style="display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; ${idx < phases.length - 1 ? 'border-bottom: 1px solid #eee;' : ''}">
+                <span style="font-size: 1em;">${phaseIcon}</span>
+                <div style="flex: 1;">
+                    <div style="font-weight: 500; color: #333; font-size: 0.9em;">${phase.name}</div>
+                    <div style="font-size: 0.8em; color: #666; margin-top: 2px;">${phase.logs.length} log entries</div>
+                </div>
+                <span style="font-size: 0.75em; color: ${phaseColor}; text-transform: uppercase; font-weight: 500;">${phase.status}</span>
+            </div>
+        `;
+    }).join('');
+    
+    // Get error logs for display
+    const errorLogs = session.logs.filter(l => l.level === 'error');
+    const errorSection = errorLogs.length > 0 ? `
+        <div style="margin-top: 15px;">
+            <div style="font-weight: 600; color: #c62828; margin-bottom: 8px; font-size: 0.9em;">⚠️ Errors (${errorLogs.length})</div>
+            <div style="background: #1e1e1e; color: #ff6b6b; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.8em; max-height: 150px; overflow-y: auto;">
+                ${errorLogs.map(log => {
+                    const time = new Date(log.timestamp).toLocaleTimeString();
+                    // Clean ANSI codes from message
+                    const cleanMsg = log.message.replace(/\x1b\[[0-9;]*m/g, '').substring(0, 200);
+                    return `<div style="margin-bottom: 6px;"><span style="color: #888;">[${time}]</span> ${cleanMsg}</div>`;
+                }).join('')}
+            </div>
+        </div>
+    ` : '';
+    
+    // Summary stats
+    const successCount = session.logs.filter(l => l.level === 'success').length;
+    const warningCount = session.logs.filter(l => l.level === 'warning').length;
+    const infoCount = session.logs.filter(l => l.level === 'info').length;
+    
+    // Build deployed resources section (from logs - fallback)
+    const deployedSection = buildResourcesSection(deployedResources, 'Deployed Resources (from logs)', '🚀', '#4CAF50', 'created');
+    
+    // Build purged resources section
+    const purgedSection = buildResourcesSection(purgedResources, 'Purged Resources', '🗑️', '#f44336', 'destroyed');
+    
+    // Project name for fetching actual resources
+    const projectName = session.projectName || '';
+    
+    // Only show management buttons for successful deployments
+    const isSuccess = session.hasSuccess && !session.hasError;
+    const managementButtons = isSuccess ? `
+        <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #e0e0e0;">
+            <div style="font-weight: 600; color: #333; margin-bottom: 12px; font-size: 0.95em;">⚙️ Deployment Management</div>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button onclick="stopDeploymentResources('${projectName}')" class="btn" style="background: #ff9800; color: white; font-size: 0.85em; padding: 8px 16px;">
+                    ⏸️ Stop EC2 Instances
+                </button>
+                <button onclick="startDeploymentResources('${projectName}')" class="btn" style="background: #4CAF50; color: white; font-size: 0.85em; padding: 8px 16px;">
+                    ▶️ Start EC2 Instances
+                </button>
+                <button onclick="destroyDeployment('${projectName}')" class="btn" style="background: #f44336; color: white; font-size: 0.85em; padding: 8px 16px;">
+                    🗑️ Destroy Infrastructure
+                </button>
+            </div>
+            <div style="margin-top: 10px; font-size: 0.8em; color: #666; background: #fff3e0; padding: 8px 12px; border-radius: 4px; border-left: 3px solid #ff9800;">
+                ⚠️ <strong>Note:</strong> Stop/Start only affects EC2 instances. Other resources (VPC, S3, NAT Gateway, etc.) remain active and may still incur charges.
+            </div>
+        </div>
+    ` : '';
+    
+    // Connection info section for successful deployments
+    const connectionSection = isSuccess ? `
+        <div id="${sessionId}-connection" style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #e0e0e0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <div style="font-weight: 600; color: #333; font-size: 0.95em;">🔗 Connection Info</div>
+                <button onclick="loadConnectionInfo('${projectName}', '${sessionId}')" class="btn btn-secondary" style="font-size: 0.75em; padding: 4px 10px;">
+                    🔄 Load Connection Details
+                </button>
+            </div>
+            <div id="${sessionId}-connection-content" style="color: #666; font-size: 0.9em;">
+                Click "Load Connection Details" to fetch SSH commands and access information
+            </div>
+        </div>
+    ` : '';
+    
+    // Credentials section for successful deployments
+    const credentialsSection = isSuccess ? `
+        <div id="${sessionId}-credentials" style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #e0e0e0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <div style="font-weight: 600; color: #333; font-size: 0.95em;">🔐 Credentials</div>
+                <button onclick="loadCredentials('${projectName}', '${sessionId}')" class="btn btn-secondary" style="font-size: 0.75em; padding: 4px 10px;">
+                    🔄 Load Credentials
+                </button>
+            </div>
+            <div id="${sessionId}-credentials-content" style="color: #666; font-size: 0.9em;">
+                Click "Load Credentials" to fetch GOAD lab credentials and access details
+            </div>
+        </div>
+    ` : '';
+    
+    // GOAD Provisioning Instructions (for GOAD deployments)
+    const isGoadDeployment = projectName.toLowerCase().includes('goad') || 
+                             projectName.toLowerCase().includes('mini') ||
+                             projectName.toLowerCase().includes('nha') ||
+                             projectName.toLowerCase().includes('sccm');
+    
+    const goadProvisioningSection = (isSuccess && isGoadDeployment) ? `
+        <div style="background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); padding: 20px; border-radius: 8px; margin-bottom: 15px; border: 2px solid #ff9800;">
+            <div style="font-weight: 700; color: #e65100; margin-bottom: 15px; font-size: 1.1em; display: flex; align-items: center; gap: 8px;">
+                ⚠️ IMPORTANT: Active Directory Not Yet Configured!
+            </div>
+            
+            <div style="background: white; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+                <p style="margin: 0 0 10px 0; color: #333; font-size: 0.9em;">
+                    <strong>What's deployed:</strong> AWS infrastructure (VMs, networking, Jumpbox, Team Server, Windows Attack Box) is ready.<br>
+                    <strong>What's NOT deployed:</strong> Active Directory configuration, domain controllers, users, groups, GPOs, and vulnerabilities.
+                </p>
+                <p style="margin: 0; color: #666; font-size: 0.85em;">
+                    The GOAD lab requires <strong>Ansible provisioning</strong> from your <strong>local machine</strong> or a Linux box with Ansible installed. This takes approximately <strong>30-60 minutes</strong>.
+                </p>
+            </div>
+            
+            <div style="font-weight: 600; color: #333; margin-bottom: 10px; font-size: 0.95em;">📋 Manual Steps Required:</div>
+            
+            <div style="background: #1e1e1e; border-radius: 6px; overflow: hidden; margin-bottom: 15px;">
+                <div style="background: #333; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: #4ec9b0; font-size: 0.8em; font-weight: 500;">Step 1: Clone GOAD Repository (on your local machine)</span>
+                    <button onclick="copyToClipboard('git clone https://github.com/Orange-Cyberdefense/GOAD.git && cd GOAD', this)" style="background: #555; color: #ccc; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 0.7em;">📋 Copy</button>
+                </div>
+                <div style="padding: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em; color: #d4d4d4; line-height: 1.6;">
+                    <div style="color: #6a9955;"># Clone the official GOAD repository</div>
+                    <div style="color: #4ec9b0;">git clone https://github.com/Orange-Cyberdefense/GOAD.git</div>
+                    <div style="color: #4ec9b0;">cd GOAD</div>
+                </div>
+            </div>
+            
+            <div style="background: #1e1e1e; border-radius: 6px; overflow: hidden; margin-bottom: 15px;">
+                <div style="background: #333; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: #4ec9b0; font-size: 0.8em; font-weight: 500;">Step 2: Install Ansible Requirements</span>
+                    <button onclick="copyToClipboard('pip install ansible pywinrm && ansible-galaxy install -r ansible/requirements.yml', this)" style="background: #555; color: #ccc; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 0.7em;">📋 Copy</button>
+                </div>
+                <div style="padding: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em; color: #d4d4d4; line-height: 1.6;">
+                    <div style="color: #6a9955;"># Install Ansible and dependencies</div>
+                    <div style="color: #4ec9b0;">pip install ansible pywinrm</div>
+                    <div style="color: #4ec9b0;">ansible-galaxy install -r ansible/requirements.yml</div>
+                </div>
+            </div>
+            
+            <div style="background: #1e1e1e; border-radius: 6px; overflow: hidden; margin-bottom: 15px;">
+                <div style="background: #333; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: #4ec9b0; font-size: 0.8em; font-weight: 500;">Step 3: Create SSH Tunnel for WinRM Access</span>
+                    <button onclick="copyGoadStep1('${projectName}')" style="background: #555; color: #ccc; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 0.7em;">📋 Copy</button>
+                </div>
+                <div style="padding: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em; color: #d4d4d4; line-height: 1.6;">
+                    <div style="color: #6a9955;"># Create SSH tunnel to access Windows VMs via WinRM</div>
+                    <div style="color: #4ec9b0;">ssh -i ~/.ssh/${projectName}-goadmini-jumpbox-key.pem -L 5985:192.168.56.10:5985 ubuntu@&lt;JUMPBOX_IP&gt;</div>
+                    <div style="color: #6a9955; margin-top: 8px;"># Keep this terminal open while running Ansible</div>
+                </div>
+            </div>
+            
+            <div style="background: #1e1e1e; border-radius: 6px; overflow: hidden; margin-bottom: 15px;">
+                <div style="background: #333; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: #4ec9b0; font-size: 0.8em; font-weight: 500;">Step 4: Run Ansible Provisioning (30-60 min)</span>
+                    <button onclick="copyToClipboard('cd ansible && ansible-playbook -i ../ad/GOAD-Mini/data/inventory -i ../ad/GOAD-Mini/providers/aws/inventory goad.yml', this)" style="background: #555; color: #ccc; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 0.7em;">📋 Copy</button>
+                </div>
+                <div style="padding: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em; color: #d4d4d4; line-height: 1.6;">
+                    <div style="color: #6a9955;"># Run Ansible to configure Active Directory</div>
+                    <div style="color: #6a9955;"># This will take 30-60 minutes</div>
+                    <div style="color: #4ec9b0;">cd ansible</div>
+                    <div style="color: #4ec9b0;">ansible-playbook -i ../ad/GOAD-Mini/data/inventory -i ../ad/GOAD-Mini/providers/aws/inventory goad.yml</div>
+                </div>
+            </div>
+            
+            <div style="background: #e8f5e9; padding: 12px; border-radius: 6px; border-left: 4px solid #4CAF50;">
+                <div style="font-weight: 600; color: #2e7d32; margin-bottom: 5px; font-size: 0.85em;">✅ After Ansible Completes:</div>
+                <ul style="margin: 0; padding-left: 20px; color: #333; font-size: 0.85em; line-height: 1.6;">
+                    <li>Active Directory domains will be configured</li>
+                    <li>Domain controllers will be promoted</li>
+                    <li>Users, groups, and GPOs will be created</li>
+                    <li>Vulnerabilities will be configured for attack practice</li>
+                    <li>RDP to Windows Attack Box and use PowerSploit to attack!</li>
+                </ul>
+            </div>
+            
+            <div style="margin-top: 15px; padding: 10px; background: #e3f2fd; border-radius: 6px; font-size: 0.8em; color: #1565c0;">
+                💡 <strong>Tip:</strong> See the official <a href="https://orange-cyberdefense.github.io/GOAD/providers/aws/" target="_blank" style="color: #1565c0;">GOAD AWS Documentation</a> for detailed provisioning instructions.
+            </div>
+        </div>
+    ` : '';
+
+    return `
+        <div id="${sessionId}-details" style="background: #fafafa; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px; padding: 20px;">
+            <!-- Summary Stats -->
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px;">
+                <div style="background: white; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #e0e0e0;">
+                    <div style="font-size: 1.5em; font-weight: bold; color: #2196F3;">${infoCount}</div>
+                    <div style="font-size: 0.75em; color: #666;">Info</div>
+                </div>
+                <div style="background: white; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #e0e0e0;">
+                    <div style="font-size: 1.5em; font-weight: bold; color: #4CAF50;">${successCount}</div>
+                    <div style="font-size: 0.75em; color: #666;">Success</div>
+                </div>
+                <div style="background: white; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #e0e0e0;">
+                    <div style="font-size: 1.5em; font-weight: bold; color: #ff9800;">${warningCount}</div>
+                    <div style="font-size: 0.75em; color: #666;">Warnings</div>
+                </div>
+                <div style="background: white; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #e0e0e0;">
+                    <div style="font-size: 1.5em; font-weight: bold; color: #f44336;">${errorLogs.length}</div>
+                    <div style="font-size: 0.75em; color: #666;">Errors</div>
+                </div>
+            </div>
+            
+            <!-- Management Buttons (for successful deployments) -->
+            ${managementButtons}
+            
+            <!-- Deployment Info -->
+            <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #e0e0e0;">
+                <div style="font-weight: 600; color: #333; margin-bottom: 12px; font-size: 0.95em;">📋 Deployment Details</div>
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 0.85em;">
+                    <div><span style="color: #666;">Project:</span> <strong>${session.projectName || 'Unknown'}</strong></div>
+                    <div><span style="color: #666;">Date:</span> <strong>${formatDate(session.date)}</strong></div>
+                    <div><span style="color: #666;">Started:</span> <strong>${session.firstTime ? session.firstTime.toLocaleTimeString() : 'N/A'}</strong></div>
+                    <div><span style="color: #666;">Ended:</span> <strong>${session.lastTime ? session.lastTime.toLocaleTimeString() : 'N/A'}</strong></div>
+                </div>
+            </div>
+            
+            <!-- Connection Info (for successful deployments) -->
+            ${connectionSection}
+            
+            <!-- Credentials (for successful deployments) -->
+            ${credentialsSection}
+            
+            <!-- GOAD Provisioning Instructions (for GOAD deployments) -->
+            ${goadProvisioningSection}
+            
+            <!-- AWS Resources Section (loaded dynamically) -->
+            <div id="${sessionId}-resources" style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #e0e0e0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div style="font-weight: 600; color: #333; font-size: 0.95em;">☁️ AWS Resources</div>
+                    <button onclick="loadProjectResources('${projectName}', '${sessionId}')" class="btn btn-secondary" style="font-size: 0.75em; padding: 4px 10px;">
+                        🔄 Load Resources
+                    </button>
+                </div>
+                <div id="${sessionId}-resources-content" style="color: #666; font-size: 0.9em;">
+                    Click "Load Resources" to fetch live resource status from AWS
+                </div>
+            </div>
+            
+            <!-- Purged Resources -->
+            ${purgedSection}
+            
+            <!-- Phase Timeline -->
+            <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0; margin-bottom: 15px;">
+                <div style="font-weight: 600; color: #333; margin-bottom: 12px; font-size: 0.95em;">📊 Deployment Phases</div>
+                ${phaseHtml}
+            </div>
+            
+            ${errorSection}
+            
+            <!-- View Full Logs Button -->
+            <div style="margin-top: 20px; text-align: center;">
+                <button onclick="showSessionLogs('${session.sessionKey}')" class="btn btn-secondary" style="font-size: 0.85em;">
+                    📜 View Full Log Output
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Extract resources from log messages
+ */
+function extractResourcesFromLogs(logs, action) {
+    const resources = [];
+    const resourcePatterns = [
+        // Terraform create patterns
+        { regex: /module\.(\w+)\.aws_(\w+)\.(\w+).*Creating/i, action: 'created' },
+        { regex: /module\.(\w+)\.aws_(\w+)\.(\w+).*Creation complete/i, action: 'created' },
+        { regex: /aws_(\w+)\.(\w+).*Creating/i, action: 'created' },
+        { regex: /aws_(\w+)\.(\w+).*Creation complete/i, action: 'created' },
+        // Terraform destroy patterns
+        { regex: /module\.(\w+)\.aws_(\w+)\.(\w+).*Destroying/i, action: 'destroyed' },
+        { regex: /module\.(\w+)\.aws_(\w+)\.(\w+).*Destruction complete/i, action: 'destroyed' },
+        { regex: /aws_(\w+)\.(\w+).*Destroying/i, action: 'destroyed' },
+        { regex: /aws_(\w+)\.(\w+).*Destruction complete/i, action: 'destroyed' },
+        // Resource ID patterns
+        { regex: /(vpc-[a-z0-9]+)/i, type: 'vpc' },
+        { regex: /(subnet-[a-z0-9]+)/i, type: 'subnet' },
+        { regex: /(sg-[a-z0-9]+)/i, type: 'security_group' },
+        { regex: /(i-[a-z0-9]+)/i, type: 'ec2' },
+        { regex: /(nat-[a-z0-9]+)/i, type: 'nat_gateway' },
+        { regex: /(igw-[a-z0-9]+)/i, type: 'internet_gateway' },
+        { regex: /(eipalloc-[a-z0-9]+)/i, type: 'elastic_ip' },
+        { regex: /(rtb-[a-z0-9]+)/i, type: 'route_table' },
+        { regex: /(eni-[a-z0-9]+)/i, type: 'network_interface' },
+        { regex: /(key-[a-z0-9]+)/i, type: 'key_pair' },
+    ];
+    
+    const seenResources = new Set();
+    
+    logs.forEach(log => {
+        const msg = log.message.replace(/\x1b\[[0-9;]*m/g, ''); // Clean ANSI codes
+        
+        // Check for resource creation/destruction
+        resourcePatterns.forEach(pattern => {
+            if (pattern.action === action) {
+                const match = msg.match(pattern.regex);
+                if (match) {
+                    let resourceType, resourceName;
+                    if (match.length >= 4) {
+                        // module.X.aws_Y.Z pattern
+                        resourceType = match[2];
+                        resourceName = `${match[1]}.${match[3]}`;
+                    } else if (match.length >= 3) {
+                        // aws_X.Y pattern
+                        resourceType = match[1];
+                        resourceName = match[2];
+                    }
+                    
+                    if (resourceType && resourceName) {
+                        const key = `${resourceType}:${resourceName}`;
+                        if (!seenResources.has(key)) {
+                            seenResources.add(key);
+                            resources.push({
+                                type: resourceType,
+                                name: resourceName,
+                                status: action === 'created' ? 'active' : 'deleted',
+                                timestamp: log.timestamp
+                            });
+                        }
+                    }
+                }
+            }
+            
+            // Also extract resource IDs
+            if (pattern.type && !pattern.action) {
+                const match = msg.match(pattern.regex);
+                if (match && match[1]) {
+                    const key = `${pattern.type}:${match[1]}`;
+                    if (!seenResources.has(key)) {
+                        // Determine if this is create or destroy based on context
+                        const isDestroy = msg.toLowerCase().includes('destroy') || msg.toLowerCase().includes('deleted');
+                        const isCreate = msg.toLowerCase().includes('creat') || msg.toLowerCase().includes('complete');
+                        
+                        if ((action === 'destroyed' && isDestroy) || (action === 'created' && isCreate)) {
+                            seenResources.add(key);
+                            resources.push({
+                                type: pattern.type,
+                                name: match[1],
+                                id: match[1],
+                                status: action === 'created' ? 'active' : 'deleted',
+                                timestamp: log.timestamp
+                            });
+                        }
+                    }
+                }
+            }
+        });
+    });
+    
+    return resources;
+}
+
+/**
+ * Load and display resources for a specific project
+ */
+async function loadProjectResources(projectName, sessionId) {
+    const contentDiv = document.getElementById(`${sessionId}-resources-content`);
+    if (!contentDiv) return;
+    
+    if (!projectName) {
+        contentDiv.innerHTML = '<span style="color: #f44336;">❌ No project name available</span>';
+        return;
+    }
+    
+    contentDiv.innerHTML = '<div style="display: flex; align-items: center; gap: 10px;"><div class="spinner" style="width: 20px; height: 20px;"></div> Loading resources from AWS...</div>';
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/resources/project/${encodeURIComponent(projectName)}?refresh=true`);
+        const data = await response.json();
+        
+        if (!data.success) {
+            contentDiv.innerHTML = `<span style="color: #f44336;">❌ ${data.error || 'Failed to load resources'}</span>`;
+            return;
+        }
+        
+        if (!data.resources || data.resources.length === 0) {
+            contentDiv.innerHTML = '<span style="color: #666;">No resources found for this project</span>';
+            return;
+        }
+        
+        // Build resources display
+        contentDiv.innerHTML = buildProjectResourcesHTML(data);
+        
+    } catch (error) {
+        contentDiv.innerHTML = `<span style="color: #f44336;">❌ Error: ${error.message}</span>`;
+    }
+}
+
+// Make loadProjectResources available globally for onclick handlers
+window.loadProjectResources = loadProjectResources;
+
+/**
+ * Build HTML for project resources display
+ */
+function buildProjectResourcesHTML(data) {
+    const resources = data.resources;
+    const grouped = data.resources_grouped || {};
+    
+    // Resource type icons and labels
+    const typeConfig = {
+        'ec2': { icon: '🖥️', label: 'EC2 Instances' },
+        'vpc': { icon: '🌐', label: 'VPCs' },
+        'subnet': { icon: '📦', label: 'Subnets' },
+        'security_group': { icon: '🔒', label: 'Security Groups' },
+        'nat_gateway': { icon: '🚪', label: 'NAT Gateways' },
+        'elastic_ip': { icon: '📍', label: 'Elastic IPs' },
+        's3_bucket': { icon: '🪣', label: 'S3 Buckets' },
+        'internet_gateway': { icon: '🌍', label: 'Internet Gateways' },
+        'route_table': { icon: '🛣️', label: 'Route Tables' },
+        'key_pair': { icon: '🔑', label: 'Key Pairs' },
+        'network_interface': { icon: '🔌', label: 'Network Interfaces' },
+        'iam_role': { icon: '👤', label: 'IAM Roles' },
+        'iam_instance_profile': { icon: '🎭', label: 'IAM Instance Profiles' }
+    };
+    
+    // State colors
+    const stateColors = {
+        'running': '#4CAF50',
+        'stopped': '#ff9800',
+        'terminated': '#f44336',
+        'available': '#4CAF50',
+        'active': '#4CAF50',
+        'associated': '#4CAF50',
+        'pending': '#2196F3',
+        'deleted': '#9e9e9e',
+        'deleting': '#ff9800'
+    };
+    
+    let html = `
+        <div style="margin-bottom: 10px; font-size: 0.85em; color: #666;">
+            <strong>${resources.length}</strong> resources • 
+            Deployed: ${data.deployed_at ? new Date(data.deployed_at).toLocaleString() : 'Unknown'} •
+            Region: ${data.region || 'Unknown'}
+        </div>
+    `;
+    
+    // Build sections for each resource type
+    const typeOrder = ['ec2', 'vpc', 'subnet', 'security_group', 'nat_gateway', 'elastic_ip', 's3_bucket', 'internet_gateway', 'route_table', 'key_pair', 'network_interface', 'iam_role', 'iam_instance_profile'];
+    
+    for (const type of typeOrder) {
+        const typeResources = grouped[type];
+        if (!typeResources || typeResources.length === 0) continue;
+        
+        const config = typeConfig[type] || { icon: '📦', label: type };
+        
+        html += `
+            <div style="margin-bottom: 15px;">
+                <div style="font-weight: 500; color: #333; margin-bottom: 8px; font-size: 0.9em;">
+                    ${config.icon} ${config.label} (${typeResources.length})
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+        `;
+        
+        for (const resource of typeResources) {
+            const stateColor = stateColors[resource.state] || '#666';
+            const stateIcon = resource.state === 'running' ? '🟢' : 
+                             resource.state === 'stopped' ? '🟠' : 
+                             resource.state === 'terminated' ? '🔴' :
+                             resource.state === 'available' || resource.state === 'active' ? '🟢' : '⚪';
+            
+            // Build details string
+            let details = [];
+            if (resource.role) details.push(resource.role);
+            if (resource.instance_type) details.push(resource.instance_type);
+            if (resource.public_ip) details.push(`Public: ${resource.public_ip}`);
+            if (resource.private_ip) details.push(`Private: ${resource.private_ip}`);
+            if (resource.cidr) details.push(resource.cidr);
+            if (resource.az) details.push(resource.az);
+            if (resource.key_type) details.push(`Type: ${resource.key_type}`);
+            if (resource.route_count) details.push(`${resource.route_count} routes`);
+            if (resource.role_count) details.push(`${resource.role_count} roles`);
+            
+            html += `
+                <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #f5f5f5; border-radius: 6px; font-size: 0.85em;">
+                    <span>${stateIcon}</span>
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="font-weight: 500; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            ${resource.name || resource.id}
+                        </div>
+                        <div style="font-size: 0.85em; color: #888; font-family: monospace;">
+                            ${resource.id}
+                        </div>
+                        ${details.length > 0 ? `
+                            <div style="font-size: 0.8em; color: #666; margin-top: 2px;">
+                                ${details.join(' • ')}
+                            </div>
+                        ` : ''}
+                    </div>
+                    <span style="font-size: 0.75em; padding: 2px 8px; border-radius: 4px; background: ${stateColor}20; color: ${stateColor}; font-weight: 500; text-transform: uppercase;">
+                        ${resource.state}
+                    </span>
+                </div>
+            `;
+        }
+        
+        html += `
+                </div>
+            </div>
+        `;
+    }
+    
+    // Add any remaining types not in the order
+    for (const type of Object.keys(grouped)) {
+        if (typeOrder.includes(type)) continue;
+        
+        const typeResources = grouped[type];
+        if (!typeResources || typeResources.length === 0) continue;
+        
+        const config = typeConfig[type] || { icon: '📦', label: type };
+        
+        html += `
+            <div style="margin-bottom: 15px;">
+                <div style="font-weight: 500; color: #333; margin-bottom: 8px; font-size: 0.9em;">
+                    ${config.icon} ${config.label} (${typeResources.length})
+                </div>
+                <div style="font-size: 0.85em; color: #666;">
+                    ${typeResources.map(r => r.name || r.id).join(', ')}
+                </div>
+            </div>
+        `;
+    }
+    
+    return html;
+}
+
+/**
+ * Build resources section HTML
+ */
+function buildResourcesSection(resources, title, icon, color, action) {
+    if (resources.length === 0) {
+        return '';
+    }
+    
+    const typeIcons = {
+        'vpc': '🌐',
+        'subnet': '📡',
+        'security_group': '🔒',
+        'sg': '🔒',
+        'ec2': '🖥️',
+        'instance': '🖥️',
+        'nat_gateway': '🚪',
+        'nat': '🚪',
+        'internet_gateway': '🌍',
+        'igw': '🌍',
+        'elastic_ip': '🔗',
+        'eip': '🔗',
+        'route_table': '🛣️',
+        'rtb': '🛣️',
+        'network_interface': '🔌',
+        'eni': '🔌',
+        'key_pair': '🔑',
+        's3_bucket': '📦',
+        'iam_role': '👤',
+        'iam_instance_profile': '🎭',
+        'default': '📄'
+    };
+    
+    // Group resources by type
+    const grouped = {};
+    resources.forEach(r => {
+        const type = r.type.replace(/_/g, ' ');
+        if (!grouped[type]) grouped[type] = [];
+        grouped[type].push(r);
+    });
+    
+    const resourceRows = Object.entries(grouped).map(([type, items]) => {
+        const typeIcon = typeIcons[type.replace(/ /g, '_')] || typeIcons['default'];
+        return items.map(item => `
+            <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: ${action === 'created' ? '#e8f5e9' : '#ffebee'}; border-radius: 6px; margin-bottom: 6px;">
+                <span style="font-size: 1.1em;">${typeIcon}</span>
+                <div style="flex: 1; min-width: 0;">
+                    <div style="font-weight: 500; color: #333; font-size: 0.85em; text-transform: capitalize;">${type.replace(/_/g, ' ')}</div>
+                    <div style="font-size: 0.8em; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.name || item.id || 'Unknown'}</div>
+                </div>
+                <span style="background: ${action === 'created' ? '#4CAF50' : '#f44336'}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.7em; text-transform: uppercase;">${item.status}</span>
+            </div>
+        `).join('');
+    }).join('');
+    
+    return `
+        <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0; margin-bottom: 15px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                <div style="font-weight: 600; color: ${color}; font-size: 0.95em;">${icon} ${title}</div>
+                <span style="background: ${color}15; color: ${color}; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 500;">${resources.length} resources</span>
+            </div>
+            <div style="max-height: 250px; overflow-y: auto;">
+                ${resourceRows}
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Toggle session expansion
+ */
+function toggleSessionExpand(sessionId) {
+    if (expandedSessions.has(sessionId)) {
+        expandedSessions.delete(sessionId);
+    } else {
+        expandedSessions.add(sessionId);
+    }
+    renderDeploymentTimeline();
+}
+
+/**
+ * Show full logs for a specific session in a modal
+ */
+function showSessionLogs(sessionKey) {
+    // sessionKey is either "date" or "date-projectName"
+    const parts = sessionKey.split('-');
+    const date = parts.slice(0, 3).join('-'); // YYYY-MM-DD
+    const projectName = parts.length > 3 ? parts.slice(3).join('-') : null;
+    
+    // Filter logs by date and optionally by project name
+    const sessionLogs = deploymentLogs.filter(log => {
+        const matchesDate = log.timestamp.startsWith(date);
+        if (!matchesDate) return false;
+        if (projectName) {
+            return log.project_name === projectName;
+        }
+        return true;
+    });
+    
+    if (sessionLogs.length === 0) {
+        alert('No logs found for this session.');
+        return;
+    }
+    
+    // Create modal
+    const modal = document.createElement('div');
+    modal.id = 'session-logs-modal';
+    modal.style.cssText = `
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.8); z-index: 10000;
+        display: flex; align-items: center; justify-content: center;
+        padding: 20px;
+    `;
+    
+    const levelColors = {
+        'info': '#4ec9b0',
+        'success': '#4CAF50',
+        'warning': '#ff9800',
+        'error': '#f44336'
+    };
+    
+    modal.innerHTML = `
+        <div style="background: #1e1e1e; border-radius: 12px; max-width: 900px; width: 100%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="padding: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
+                <h2 style="margin: 0; color: white;">📜 Full Deployment Logs - ${formatDate(date)}</h2>
+                <button onclick="closeSessionLogsModal()" style="background: none; border: none; color: white; font-size: 24px; cursor: pointer;">&times;</button>
+            </div>
+            <div style="flex: 1; overflow-y: auto; padding: 15px; font-family: 'SF Mono', Monaco, monospace; font-size: 0.85em; line-height: 1.6;">
+                ${sessionLogs.map(log => {
+                    const time = new Date(log.timestamp).toLocaleTimeString();
+                    const color = levelColors[log.level] || '#d4d4d4';
+                    // Clean ANSI codes
+                    const cleanMsg = log.message.replace(/\x1b\[[0-9;]*m/g, '');
+                    return `<div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <span style="color: #888;">[${time}]</span>
+                        <span style="color: ${color}; background: ${color}20; padding: 1px 6px; border-radius: 3px; font-size: 0.8em; margin: 0 8px;">${log.level.toUpperCase()}</span>
+                        <span style="color: #d4d4d4;">${cleanMsg}</span>
+                    </div>`;
+                }).join('')}
+            </div>
+            <div style="padding: 15px; border-top: 1px solid rgba(255,255,255,0.1); text-align: right;">
+                <button onclick="copySessionLogs('${date}')" class="btn btn-secondary" style="margin-right: 10px;">📋 Copy All</button>
+                <button onclick="closeSessionLogsModal()" class="btn btn-primary">Close</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Close on backdrop click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeSessionLogsModal();
+    });
+}
+
+/**
+ * Close session logs modal
+ */
+function closeSessionLogsModal() {
+    const modal = document.getElementById('session-logs-modal');
+    if (modal) modal.remove();
+}
+
+/**
+ * Copy session logs to clipboard
+ */
+function copySessionLogs(date) {
+    const sessionLogs = deploymentLogs.filter(log => log.timestamp.startsWith(date));
+    const text = sessionLogs.map(log => {
+        const time = new Date(log.timestamp).toLocaleTimeString();
+        const cleanMsg = log.message.replace(/\x1b\[[0-9;]*m/g, '');
+        return `[${time}] [${log.level.toUpperCase()}] ${cleanMsg}`;
+    }).join('\n');
+    
+    navigator.clipboard.writeText(text).then(() => {
+        showMessage('Logs copied to clipboard!', 'success');
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+    });
 }
 
 /**
@@ -4559,7 +6707,7 @@ function populateInfrastructureIPs(data) {
                     <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
                         <span>Redirector ${i + 1}:</span>
                         <code id="redirector-${i}">${ip}</code>
-                        <button onclick="copyToClipboard('redirector-${i}')" style="padding: 2px 8px;">📋</button>
+                        <button onclick="copyElementToClipboard('redirector-${i}')" style="padding: 2px 8px;">📋</button>
                     </div>
                 `).join('');
             }
@@ -4654,9 +6802,9 @@ function populateAccessInstructions(data) {
 }
 
 /**
- * Copy text to clipboard
+ * Copy text to clipboard (for element-based copying)
  */
-function copyToClipboard(elementId) {
+function copyElementToClipboard(elementId) {
     const element = document.getElementById(elementId);
     if (!element) return;
     

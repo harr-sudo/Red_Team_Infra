@@ -1,6 +1,10 @@
 # GOAD Module - Security Groups
 # =============================================================================
-# Security groups for GOAD lab VMs
+# Security groups for GOAD lab VMs with proper architecture:
+# - Jumpbox: SSH Gateway (public subnet, SSH from internet)
+# - Team Server: CS Team Server (private subnet, SSH via jumpbox)
+# - Attack Box: Windows workstation (private subnet, RDP via jumpbox)
+# - AD VMs: Domain controllers (private subnet, internal access only)
 # =============================================================================
 
 # =============================================================================
@@ -18,7 +22,16 @@ resource "aws_security_group" "goad" {
   })
 }
 
-# Allow all traffic within GOAD VPC
+# =============================================================================
+# Ingress Rules
+# =============================================================================
+
+# Allow all traffic within GOAD VPC (for internal communication)
+# This covers:
+# - Jumpbox -> Team Server (SSH)
+# - Jumpbox -> Attack Box (RDP)
+# - Attack Box -> Team Server (CS Client on port 50050)
+# - Attack Box -> AD VMs (WinRM, RDP, AD protocols)
 resource "aws_vpc_security_group_ingress_rule" "goad_internal" {
   security_group_id = aws_security_group.goad.id
   cidr_ipv4         = var.vpc_cidr
@@ -26,7 +39,7 @@ resource "aws_vpc_security_group_ingress_rule" "goad_internal" {
   description       = "Allow all traffic within GOAD VPC"
 }
 
-# Allow SSH from management CIDRs
+# Allow SSH from management CIDRs (to Jumpbox only - it has public IP)
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
   for_each = toset(var.management_cidr_blocks)
 
@@ -38,7 +51,8 @@ resource "aws_vpc_security_group_ingress_rule" "ssh" {
   description       = "SSH from management"
 }
 
-# Allow RDP from management CIDRs
+# Allow RDP from management CIDRs (direct access if needed)
+# Note: Typically accessed via SSH tunnel through jumpbox
 resource "aws_vpc_security_group_ingress_rule" "rdp" {
   for_each = toset(var.management_cidr_blocks)
 
@@ -50,7 +64,7 @@ resource "aws_vpc_security_group_ingress_rule" "rdp" {
   description       = "RDP from management"
 }
 
-# Allow WinRM from management CIDRs
+# Allow WinRM from management CIDRs (for Ansible provisioning)
 resource "aws_vpc_security_group_ingress_rule" "winrm" {
   for_each = toset(var.management_cidr_blocks)
 
@@ -62,19 +76,11 @@ resource "aws_vpc_security_group_ingress_rule" "winrm" {
   description       = "WinRM from management"
 }
 
-# Allow Cobalt Strike team server (only if CS installed on jumpbox)
-resource "aws_vpc_security_group_ingress_rule" "cobalt_strike" {
-  for_each = var.install_cobalt_strike ? toset(var.management_cidr_blocks) : toset([])
+# =============================================================================
+# Egress Rules
+# =============================================================================
 
-  security_group_id = aws_security_group.goad.id
-  cidr_ipv4         = each.value
-  from_port         = 50050
-  to_port           = 50050
-  ip_protocol       = "tcp"
-  description       = "Cobalt Strike team server"
-}
-
-# Egress - Allow HTTP (for Windows updates)
+# Egress - Allow HTTP (for Windows updates, package downloads, Chocolatey)
 resource "aws_vpc_security_group_egress_rule" "http" {
   security_group_id = aws_security_group.goad.id
   cidr_ipv4         = "0.0.0.0/0"
@@ -84,7 +90,7 @@ resource "aws_vpc_security_group_egress_rule" "http" {
   description       = "HTTP outbound"
 }
 
-# Egress - Allow HTTPS (for Windows updates)
+# Egress - Allow HTTPS (for Windows updates, S3 access, GitHub, Chocolatey)
 resource "aws_vpc_security_group_egress_rule" "https" {
   security_group_id = aws_security_group.goad.id
   cidr_ipv4         = "0.0.0.0/0"
@@ -94,17 +100,27 @@ resource "aws_vpc_security_group_egress_rule" "https" {
   description       = "HTTPS outbound"
 }
 
-# Egress - Allow DNS
-resource "aws_vpc_security_group_egress_rule" "dns" {
+# Egress - Allow DNS (UDP)
+resource "aws_vpc_security_group_egress_rule" "dns_udp" {
   security_group_id = aws_security_group.goad.id
   cidr_ipv4         = "0.0.0.0/0"
   from_port         = 53
   to_port           = 53
   ip_protocol       = "udp"
-  description       = "DNS outbound"
+  description       = "DNS outbound (UDP)"
 }
 
-# Egress - Allow all to GOAD VPC
+# Egress - Allow DNS (TCP)
+resource "aws_vpc_security_group_egress_rule" "dns_tcp" {
+  security_group_id = aws_security_group.goad.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "tcp"
+  description       = "DNS outbound (TCP)"
+}
+
+# Egress - Allow all to GOAD VPC (internal communication)
 resource "aws_vpc_security_group_egress_rule" "goad_internal" {
   security_group_id = aws_security_group.goad.id
   cidr_ipv4         = var.vpc_cidr
@@ -112,7 +128,7 @@ resource "aws_vpc_security_group_egress_rule" "goad_internal" {
   description       = "All traffic within GOAD VPC"
 }
 
-# Egress - Allow ICMP
+# Egress - Allow ICMP (for ping/traceroute)
 resource "aws_vpc_security_group_egress_rule" "icmp" {
   security_group_id = aws_security_group.goad.id
   cidr_ipv4         = "0.0.0.0/0"
@@ -121,4 +137,3 @@ resource "aws_vpc_security_group_egress_rule" "icmp" {
   ip_protocol       = "icmp"
   description       = "ICMP outbound"
 }
-

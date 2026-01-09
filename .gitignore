@@ -7,6 +7,8 @@ terraform.tfvars
 *.tfvars
 !terraform.tfvars.example
 !*.tfvars.example
+*.tfplan
+tfplan
 
 # Ansible
 *.retry

@@ -258,6 +258,7 @@ output "goad_windows_vm_ips" {
 output "goad_credentials" {
   description = "GOAD lab credentials information"
   value       = local.deploy_goad && length(module.goad) > 0 ? module.goad[0].credentials : null
+  sensitive   = true
 }
 
 output "goad_domain_info" {
