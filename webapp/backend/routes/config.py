@@ -21,6 +21,24 @@ config_dir = project_root / "configs"
 tfvars_file = config_dir / "terraform.tfvars"
 tfvars_example = config_dir / "terraform.tfvars.example"
 
+# SSH public key file (shared with deploy.py)
+SSH_KEY_FILE = Path(__file__).parent / ".." / "data" / "ssh_public_key.txt"
+
+def get_user_public_key_for_tfvars() -> str:
+    """
+    Get the user's SSH public key for inclusion in terraform.tfvars.
+    Returns empty string if not configured (Terraform will handle the fallback).
+    """
+    try:
+        key_file = SSH_KEY_FILE.resolve()
+        if key_file.exists():
+            key_content = key_file.read_text().strip()
+            if key_content:
+                return key_content
+    except Exception as e:
+        print(f"Warning: Could not read SSH public key: {e}")
+    return ""
+
 @bp.route('/', methods=['GET'])
 def get_config():
     """Get current configuration"""
@@ -85,6 +103,12 @@ def update_config():
                 "errors": errors
             }), 400
         
+        # Add user's SSH public key if available (for GOAD deployments)
+        # This enables the new secure SSH key architecture
+        user_public_key = get_user_public_key_for_tfvars()
+        if user_public_key:
+            config['user_public_key'] = user_public_key
+        
         # Generate terraform.tfvars content
         content = ConfigParser.generate_tfvars(config)
         
@@ -97,7 +121,8 @@ def update_config():
         
         return jsonify({
             "success": True,
-            "message": "Configuration saved successfully"
+            "message": "Configuration saved successfully",
+            "ssh_key_included": bool(user_public_key)
         })
     except Exception as e:
         return jsonify({

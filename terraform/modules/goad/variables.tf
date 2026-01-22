@@ -67,7 +67,13 @@ variable "install_cobalt_strike" {
 }
 
 variable "cobalt_strike_s3_path" {
-  description = "S3 path to Cobalt Strike archive"
+  description = "S3 path to Cobalt Strike archive (for Team Server)"
+  type        = string
+  default     = ""
+}
+
+variable "cs_client_s3_path" {
+  description = "S3 path to Cobalt Strike Client archive (for Attack Box)"
   type        = string
   default     = ""
 }
@@ -93,6 +99,26 @@ variable "key_pair_name" {
   description = "AWS key pair name for SSH access (optional - will generate if not provided)"
   type        = string
   default     = ""
+}
+
+# =============================================================================
+# User SSH Public Key (Secure Key Management)
+# =============================================================================
+# Users must provide their own public key for jumpbox access.
+# This follows SSH security best practices:
+#   - Private keys are generated locally by the user
+#   - Only public keys are shared with the infrastructure
+#   - Private keys never leave the user's machine
+
+variable "user_public_key" {
+  description = "User's SSH public key for jumpbox access (Ed25519 or RSA format). User generates key locally with: ssh-keygen -t ed25519 -f ~/.ssh/goad_key"
+  type        = string
+  default     = ""
+  
+  validation {
+    condition     = var.user_public_key == "" || can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)\\s+[A-Za-z0-9+/=]+", var.user_public_key))
+    error_message = "user_public_key must be a valid SSH public key (ssh-ed25519, ssh-rsa, or ecdsa format) or empty"
+  }
 }
 
 # =============================================================================
@@ -185,9 +211,9 @@ variable "attackbox_disk_size" {
 }
 
 variable "attackbox_admin_password" {
-  description = "Administrator password for Windows attack box"
+  description = "Administrator password for Windows attack box. If empty, a random password is generated."
   type        = string
-  default     = "AttackB0x!2024"
+  default     = ""  # Empty = use random_password.attackbox
   sensitive   = true
 }
 
@@ -203,6 +229,22 @@ variable "windows_admin_username" {
 
 variable "iam_instance_profile_name" {
   description = "IAM instance profile for jumpbox (for S3 access)"
+  type        = string
+  default     = ""
+}
+
+# =============================================================================
+# Secure Key Exchange Configuration (S3-based)
+# =============================================================================
+
+variable "deployment_bucket" {
+  description = "S3 bucket name for deployment artifacts and key exchange"
+  type        = string
+  default     = ""
+}
+
+variable "deployment_id" {
+  description = "Unique deployment identifier for S3 key paths"
   type        = string
   default     = ""
 }

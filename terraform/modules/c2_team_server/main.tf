@@ -28,6 +28,7 @@ locals {
     tools_repo_url     = var.tools_repo_url
     tools_repo_branch  = var.tools_repo_branch
     server_role        = "c2_server"
+    hostname           = var.phase != "" ? "c2-${var.phase}-ubuntu" : "c2-teamserver-ubuntu"
   }) : null
 
   # Final user_data: custom > CS script > none
@@ -57,7 +58,7 @@ resource "aws_instance" "c2_team_server" {
     delete_on_termination = true
 
     tags = merge(var.tags, {
-      Name = var.phase != "" ? "${var.project_name}-${var.environment}-c2-${var.phase}-root" : "${var.project_name}-${var.environment}-c2-server-${count.index + 1}-root"
+      Name = var.phase != "" ? "${var.project_name}-${var.environment}-c2-${var.phase}-ubuntu-root" : "${var.project_name}-${var.environment}-c2-server-ubuntu-${count.index + 1}-root"
     })
   }
 
@@ -73,7 +74,7 @@ resource "aws_instance" "c2_team_server" {
   tags = merge(
     var.tags,
     {
-      Name         = var.phase != "" ? "${var.project_name}-${var.environment}-c2-${var.phase}-server" : "${var.project_name}-${var.environment}-c2-team-server-${count.index + 1}"
+      Name         = var.phase != "" ? "${var.project_name}-${var.environment}-c2-${var.phase}-ubuntu" : "${var.project_name}-${var.environment}-c2-teamserver-ubuntu-${count.index + 1}"
       Type         = "C2TeamServer"
       Component    = "C2Infrastructure"
       ServerNumber = count.index + 1
@@ -101,7 +102,7 @@ resource "aws_eip" "c2_team_server_eip" {
   tags = merge(
     var.tags,
     {
-      Name      = var.phase != "" ? "${var.project_name}-${var.environment}-c2-${var.phase}-server-eip" : "${var.project_name}-${var.environment}-c2-team-server-${count.index + 1}-eip"
+      Name      = var.phase != "" ? "${var.project_name}-${var.environment}-c2-${var.phase}-ubuntu-eip" : "${var.project_name}-${var.environment}-c2-teamserver-ubuntu-${count.index + 1}-eip"
       Type      = "ElasticIP"
       Component = "C2Infrastructure"
       Phase     = var.phase != "" ? var.phase : "generic"

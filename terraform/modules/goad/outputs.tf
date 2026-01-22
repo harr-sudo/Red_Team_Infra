@@ -102,50 +102,61 @@ output "attackbox_rdp_tunnel" {
   value       = var.install_cobalt_strike ? "ssh -i goad-jumpbox.pem -L 3389:${var.ip_range}.50:3389 ubuntu@${aws_eip.jumpbox.public_ip}" : null
 }
 
-# =============================================================================
-# SSH Key Outputs - Separate keys for different trust boundaries
-# =============================================================================
-
-# EXTERNAL KEY - For user's machine to access Jumpbox
-output "jumpbox_ssh_private_key" {
-  description = "SSH private key for EXTERNAL access (User → Jumpbox only)"
-  value       = tls_private_key.jumpbox_ssh.private_key_pem
+output "attackbox_admin_password" {
+  description = "Administrator password for the Windows attack box (randomly generated per deployment)"
+  value       = var.install_cobalt_strike ? local.attackbox_password : null
   sensitive   = true
 }
+
+# =============================================================================
+# SSH Key Outputs - Secure Key Management (Phase 1)
+# =============================================================================
+# SECURITY NOTE: Private keys are NO LONGER output from Terraform.
+# 
+# New Architecture:
+#   - User provides their own public key (var.user_public_key)
+#   - Internal keys are generated ON THE HOSTS during bootstrap
+#   - Private keys never leave the host that generates them
+#   - Only public keys are exchanged via S3
+#
+# What users need:
+#   - Their own private key (generated locally before deployment)
+#   - Jumpbox IP address (output below)
+#   - Connection command: ssh -i ~/.ssh/your_key ubuntu@<jumpbox_ip>
+# =============================================================================
 
 output "jumpbox_ssh_public_key" {
-  description = "SSH public key for Jumpbox"
-  value       = tls_private_key.jumpbox_ssh.public_key_openssh
+  description = "SSH public key configured on Jumpbox (user-provided)"
+  value       = var.user_public_key
 }
 
-# INTERNAL KEY - For Jumpbox/Attack Box to access Team Server
-output "internal_ssh_private_key" {
-  description = "SSH private key for INTERNAL access (Jumpbox/AttackBox → TeamServer)"
-  value       = var.install_cobalt_strike ? tls_private_key.internal_ssh.private_key_pem : null
-  sensitive   = true
+output "jumpbox_connection_info" {
+  description = "Connection information for jumpbox access"
+  value = {
+    ip       = aws_eip.jumpbox.public_ip
+    user     = "ubuntu"
+    command  = "ssh -i ~/.ssh/your_key ubuntu@${aws_eip.jumpbox.public_ip}"
+    note     = "Use your own private key (the one matching the public key you provided)"
+  }
 }
 
-output "internal_ssh_public_key" {
-  description = "SSH public key for internal hosts"
-  value       = var.install_cobalt_strike ? tls_private_key.internal_ssh.public_key_openssh : null
-}
-
-# WINDOWS KEY - For Windows VM access
-output "windows_ssh_private_key" {
-  description = "SSH private key for Windows VMs"
-  value       = tls_private_key.windows_ssh.private_key_pem
-  sensitive   = true
+# Internal key info - keys are generated on hosts, not in Terraform
+output "internal_key_info" {
+  description = "Information about internal SSH key management"
+  value = var.install_cobalt_strike ? {
+    note           = "Internal keys are generated on jumpbox during bootstrap"
+    key_location   = "/home/ubuntu/.ssh/jumpbox_internal_key"
+    s3_public_key  = "s3://<deployment-bucket>/keys/<deployment-id>/jumpbox_internal.pub"
+    access_method  = "SSH to jumpbox first, then use 'ssh teamserver' or 'ssh attackbox'"
+  } : null
 }
 
 output "key_pair_name" {
-  description = "Name of the external SSH key pair (for Jumpbox)"
-  value       = aws_key_pair.jumpbox.key_name
+  description = "Name of the SSH key pair (for Jumpbox)"
+  value       = length(aws_key_pair.jumpbox) > 0 ? aws_key_pair.jumpbox[0].key_name : null
 }
 
-output "internal_key_pair_name" {
-  description = "Name of the internal SSH key pair (for Team Server)"
-  value       = var.install_cobalt_strike ? aws_key_pair.internal.key_name : null
-}
+# Note: internal_key_pair_name output removed - internal keys are now generated on hosts
 
 # =============================================================================
 # Windows VM Outputs
@@ -216,7 +227,7 @@ output "credentials" {
     } : null
     attackbox = var.install_cobalt_strike ? {
       username = "Administrator"
-      password = var.attackbox_admin_password
+      password = local.attackbox_password
       note     = "Windows attack box - RDP via jumpbox tunnel"
       ip       = "${var.ip_range}.50"
     } : null
@@ -264,7 +275,7 @@ output "access_instructions" {
     "Step 1: Create RDP tunnel through jumpbox:",
     "   ssh -i goad-jumpbox.pem -L 3389:${var.ip_range}.50:3389 ubuntu@${aws_eip.jumpbox.public_ip}",
     "Step 2: RDP to localhost:3389",
-    "Step 3: Login: Administrator / ${var.attackbox_admin_password}",
+    "Step 3: Login: Administrator / ${local.attackbox_password}",
     "Step 4: On Windows, open WSL terminal and type: ssh teamserver",
     "Step 5: Or launch CS Client GUI and connect to: ${var.ip_range}.40:50050",
     "",

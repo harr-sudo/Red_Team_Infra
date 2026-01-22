@@ -239,10 +239,13 @@ output "goad_jumpbox_ssh_command" {
   value       = local.deploy_goad && length(module.goad) > 0 ? module.goad[0].jumpbox_ssh_command : null
 }
 
-output "goad_jumpbox_ssh_private_key" {
-  description = "SSH private key for GOAD jumpbox"
-  value       = local.deploy_goad && length(module.goad) > 0 ? module.goad[0].jumpbox_ssh_private_key : null
-  sensitive   = true
+# SECURITY: Private key output REMOVED - users provide their own key
+# Old output "goad_jumpbox_ssh_private_key" has been removed for security.
+# Users must use their own private key (matching the public key they provided).
+
+output "goad_jumpbox_connection_info" {
+  description = "GOAD jumpbox connection information (use your own private key)"
+  value       = local.deploy_goad && length(module.goad) > 0 ? module.goad[0].jumpbox_connection_info : null
 }
 
 output "goad_lab_vms" {
@@ -264,6 +267,22 @@ output "goad_credentials" {
 output "goad_domain_info" {
   description = "GOAD domain information"
   value       = local.deploy_goad && length(module.goad) > 0 ? module.goad[0].domain_info : null
+}
+
+output "goad_attackbox_private_ip" {
+  description = "GOAD Attack Box private IP"
+  value       = local.deploy_goad && length(module.goad) > 0 ? module.goad[0].attackbox_private_ip : null
+}
+
+output "goad_attackbox_password" {
+  description = "GOAD Attack Box Administrator password (randomly generated)"
+  value       = local.deploy_goad && length(module.goad) > 0 ? module.goad[0].attackbox_admin_password : null
+  sensitive   = true
+}
+
+output "goad_teamserver_private_ip" {
+  description = "GOAD Team Server private IP"
+  value       = local.deploy_goad && length(module.goad) > 0 ? module.goad[0].teamserver_private_ip : null
 }
 
 # =============================================================================

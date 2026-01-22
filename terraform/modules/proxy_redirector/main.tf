@@ -34,6 +34,7 @@ locals {
     ssl_auto_retry    = var.ssl_auto_retry ? "true" : "false"
     admin_email       = var.admin_email
     malleable_profile = var.malleable_profile
+    hostname          = "redirector-ubuntu"
   }) : null
 
   # Final user_data: custom > redirector script > none
@@ -73,7 +74,7 @@ resource "aws_instance" "proxy_redirector" {
   tags = merge(
     var.tags,
     {
-      Name         = "${var.project_name}-${var.environment}-proxy-redirector-${count.index + 1}"
+      Name         = "${var.project_name}-${var.environment}-redirector-ubuntu-${count.index + 1}"
       Type         = "ProxyRedirector"
       Component    = "ProxyInfrastructure"
       ServerNumber = count.index + 1
@@ -94,7 +95,7 @@ resource "aws_eip" "proxy_redirector_eip" {
   tags = merge(
     var.tags,
     {
-      Name      = "${var.project_name}-${var.environment}-proxy-redirector-${count.index + 1}-eip"
+      Name      = "${var.project_name}-${var.environment}-redirector-ubuntu-${count.index + 1}-eip"
       Type      = "ElasticIP"
       Component = "ProxyInfrastructure"
     }

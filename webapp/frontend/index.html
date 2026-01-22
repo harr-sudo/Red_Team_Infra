@@ -37,6 +37,7 @@
                         <button class="btn btn-info" onclick="APP.navigateTo('aws-check')">Check Prerequisites</button>
                         <button class="btn btn-primary" onclick="APP.navigateTo('configuration')">Configure</button>
                         <button class="btn btn-success" onclick="APP.navigateTo('deployment')">Deploy</button>
+                        <a href="architecture.html" class="btn" style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); color: white; text-decoration: none; display: inline-block;">📐 Architecture Docs</a>
                     </div>
                 </div>
             </div>
@@ -433,49 +434,189 @@
                         </div>
                         
                         <!-- Cobalt Strike File Upload Section -->
-                        <div class="upload-section" style="margin-bottom: 20px; padding: 20px; border: 2px solid #4CAF50; border-radius: 8px; background-color: #f0f8f0;">
+                        <div class="upload-section" id="cs-upload-section" style="margin-bottom: 20px; padding: 20px; border: 2px solid #4CAF50; border-radius: 8px; background-color: #f0f8f0;">
                             <h4>📦 Cobalt Strike File Upload (Required)</h4>
-                            <p style="color: #666; margin-bottom: 15px;">
-                                Upload your Cobalt Strike archive file before deployment. File will be stored locally on your machine.
-                            </p>
                             
-                            <div id="cs-file-status" class="status-display" style="margin-bottom: 15px;">
-                                <p>Checking for uploaded file...</p>
+                            <!-- Status when file is uploaded (compact view) -->
+                            <div id="cs-file-status" class="status-display" style="display: none;"></div>
+                            
+                            <!-- Upload form (hidden when file exists) -->
+                            <div id="cs-upload-form-container">
+                                <p style="color: #666; margin-bottom: 15px;">
+                                    Upload your Cobalt Strike archive file before deployment. File will be stored locally on your machine.
+                                </p>
+                                
+                                <form id="upload-cs-form" enctype="multipart/form-data" style="margin-bottom: 15px;">
+                                    <div style="margin-bottom: 10px;">
+                                        <label for="cs-file-input" style="display: block; margin-bottom: 5px; font-weight: bold;">
+                                            Select Cobalt Strike Archive:
+                                        </label>
+                                        <input type="file" id="cs-file-input" name="file" 
+                                               accept=".tar.gz,.tgz,.zip,.tar,application/gzip,application/x-gzip,application/x-tar,application/zip,application/x-compressed-tar" 
+                                               style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 100%; max-width: 400px;">
+                                        <small style="display: block; color: #666; margin-top: 5px;">
+                                            Supported formats: .tar.gz, .tgz, .tar, .zip (Max: 500MB)<br>
+                                            <span style="color: #888; font-size: 0.9em;">💡 If your file doesn't appear, select "All Files" in the file picker</span>
+                                        </small>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary" id="upload-btn">
+                                        Upload File
+                                    </button>
+                                </form>
+                                
+                                <div id="upload-progress" style="display: none; margin-top: 10px;">
+                                    <div class="progress-bar" style="width: 100%; height: 20px; background-color: #f0f0f0; border-radius: 10px; overflow: hidden;">
+                                        <div class="progress-fill" id="progress-fill" style="height: 100%; background-color: #4CAF50; width: 0%; transition: width 0.3s;"></div>
+                                    </div>
+                                    <p id="progress-text" style="text-align: center; margin-top: 5px;">Uploading...</p>
+                                </div>
                             </div>
-                        
-                        <form id="upload-cs-form" enctype="multipart/form-data" style="margin-bottom: 15px;">
-                            <div style="margin-bottom: 10px;">
-                                <label for="cs-file-input" style="display: block; margin-bottom: 5px; font-weight: bold;">
-                                    Select Cobalt Strike Archive:
-                                </label>
-                                <input type="file" id="cs-file-input" name="file" 
-                                       accept=".tar.gz,.tgz,.zip,.tar,application/gzip,application/x-gzip,application/x-tar,application/zip,application/x-compressed-tar" 
-                                       style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 100%; max-width: 400px;">
-                                <small style="display: block; color: #666; margin-top: 5px;">
-                                    Supported formats: .tar.gz, .tgz, .tar, .zip (Max: 500MB)<br>
-                                    <span style="color: #888; font-size: 0.9em;">💡 If your file doesn't appear, select "All Files" in the file picker</span>
-                                </small>
+                            
+                            <!-- Compact file info (shown when file exists) -->
+                            <div id="cs-file-info" style="display: none;">
+                                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+                                    <span style="font-size: 1.5em;">✅</span>
+                                    <span style="font-weight: bold; color: #2e7d32;">File Ready</span>
+                                </div>
+                                <div id="file-details" style="font-family: monospace; font-size: 0.9em; background: #e8f5e9; padding: 12px; border-radius: 4px; border-left: 3px solid #4CAF50;"></div>
+                                <button class="btn btn-danger" id="delete-file-btn" style="margin-top: 12px; font-size: 0.85em;">
+                                    🗑️ Delete File
+                                </button>
                             </div>
-                            <button type="submit" class="btn btn-primary" id="upload-btn">
-                                Upload File
-                            </button>
-                        </form>
-                        
-                        <div id="upload-progress" style="display: none; margin-top: 10px;">
-                            <div class="progress-bar" style="width: 100%; height: 20px; background-color: #f0f0f0; border-radius: 10px; overflow: hidden;">
-                                <div class="progress-fill" id="progress-fill" style="height: 100%; background-color: #4CAF50; width: 0%; transition: width 0.3s;"></div>
-                            </div>
-                            <p id="progress-text" style="text-align: center; margin-top: 5px;">Uploading...</p>
                         </div>
                         
-                        <div id="cs-file-info" style="margin-top: 15px; padding: 10px; background-color: #e8f5e9; border-radius: 4px; display: none;">
-                            <h4>Uploaded File:</h4>
-                            <p id="file-details"></p>
-                            <button class="btn btn-danger" id="delete-file-btn" style="margin-top: 10px;">
-                                Delete File
-                            </button>
+                        <!-- Cobalt Strike CLIENT Upload Section (Optional - for Attack Box) -->
+                        <div class="upload-section" id="cs-client-upload-section" style="margin-bottom: 20px; padding: 20px; border: 2px solid #2196F3; border-radius: 8px; background-color: #e3f2fd;">
+                            <h4>🖥️ Cobalt Strike Client (Optional - for Attack Box)</h4>
+                            
+                            <!-- Status when file is uploaded (compact view) -->
+                            <div id="cs-client-file-status" class="status-display" style="display: none;"></div>
+                            
+                            <!-- Upload form (hidden when file exists) -->
+                            <div id="cs-client-upload-form-container">
+                                <p style="color: #666; margin-bottom: 15px;">
+                                    Upload your Cobalt Strike <strong>client</strong> archive to have it pre-installed on the Windows Attack Box.
+                                    This is optional - you can also manually install the client later.
+                                </p>
+                                
+                                <details style="margin-bottom: 15px; background: #bbdefb; border-radius: 8px; border-left: 4px solid #1976d2;">
+                                    <summary style="padding: 12px; cursor: pointer; font-weight: bold; color: #1565c0;">
+                                        📋 What to Upload
+                                    </summary>
+                                    <div style="padding: 0 15px 15px 15px;">
+                                        <p style="margin: 10px 0; font-size: 0.9em; color: #555;">
+                                            Upload the same Cobalt Strike archive or a client-only package. The client will be extracted to <code>C:\Tools\CobaltStrike\</code> on the Attack Box.
+                                        </p>
+                                        <p style="margin: 0; font-size: 0.85em; color: #666;">
+                                            💡 The Attack Box connects to the Team Server at <code>192.168.56.40:50050</code> via the internal network.
+                                        </p>
+                                    </div>
+                                </details>
+                                
+                                <form id="upload-cs-client-form" enctype="multipart/form-data" style="margin-bottom: 15px;">
+                                    <div style="margin-bottom: 10px;">
+                                        <label for="cs-client-file-input" style="display: block; margin-bottom: 5px; font-weight: bold;">
+                                            Select Cobalt Strike Client Archive:
+                                        </label>
+                                        <input type="file" id="cs-client-file-input" name="file" 
+                                               accept=".tar.gz,.tgz,.zip,.tar,application/gzip,application/x-gzip,application/x-tar,application/zip,application/x-compressed-tar" 
+                                               style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 100%; max-width: 400px;">
+                                        <small style="display: block; color: #666; margin-top: 5px;">
+                                            Supported formats: .tar.gz, .tgz, .tar, .zip (Max: 500MB)
+                                        </small>
+                                    </div>
+                                    <button type="submit" class="btn" style="background: #2196F3; color: white;" id="upload-cs-client-btn">
+                                        Upload Client
+                                    </button>
+                                </form>
+                                
+                                <div id="cs-client-upload-progress" style="display: none; margin-top: 10px;">
+                                    <div class="progress-bar" style="width: 100%; height: 20px; background-color: #f0f0f0; border-radius: 10px; overflow: hidden;">
+                                        <div class="progress-fill" id="cs-client-progress-fill" style="height: 100%; background-color: #2196F3; width: 0%; transition: width 0.3s;"></div>
+                                    </div>
+                                    <p id="cs-client-progress-text" style="text-align: center; margin-top: 5px;">Uploading...</p>
+                                </div>
+                            </div>
+                            
+                            <!-- Compact file info (shown when file exists) -->
+                            <div id="cs-client-file-info" style="display: none;">
+                                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+                                    <span style="font-size: 1.5em;">✅</span>
+                                    <span style="font-weight: bold; color: #1565c0;">Client Ready for Attack Box</span>
+                                </div>
+                                <div id="cs-client-file-details" style="font-family: monospace; font-size: 0.9em; background: #bbdefb; padding: 12px; border-radius: 4px; border-left: 3px solid #2196F3;"></div>
+                                <button class="btn btn-danger" id="delete-cs-client-file-btn" style="margin-top: 12px; font-size: 0.85em;">
+                                    🗑️ Delete Client File
+                                </button>
+                            </div>
                         </div>
-                    </div>
+                        
+                        <!-- SSH Public Key Section (Required for Lab Access) -->
+                        <div class="upload-section" id="ssh-key-section" style="margin-bottom: 20px; padding: 20px; border: 2px solid #9c27b0; border-radius: 8px; background-color: #f3e5f5;">
+                            <h4>🔑 SSH Public Key (Required for Lab Access)</h4>
+                            
+                            <!-- Status (hidden by default) -->
+                            <div id="ssh-key-status" class="status-display" style="display: none;"></div>
+                            
+                            <!-- Input form (hidden when key exists) -->
+                            <div id="ssh-key-form-container">
+                                <p style="color: #666; margin-bottom: 15px;">
+                                    Generate a key pair on your local machine and paste the <strong>public key</strong> below.
+                                </p>
+                                
+                                <!-- Key Generation Instructions (collapsible) -->
+                                <details style="margin-bottom: 15px; background: #ede7f6; border-radius: 8px; border-left: 4px solid #7b1fa2;">
+                                    <summary style="padding: 12px; cursor: pointer; font-weight: bold; color: #7b1fa2;">
+                                        📋 How to Generate Your SSH Key
+                                    </summary>
+                                    <div style="padding: 0 15px 15px 15px;">
+                                        <p style="margin: 10px 0; font-size: 0.9em; color: #555;">
+                                            Run this command in your terminal:
+                                        </p>
+                                        <code style="display: block; background: #1e1e1e; color: #4ec9b0; padding: 12px; border-radius: 4px; font-size: 0.9em; margin-bottom: 10px;">
+                                            ssh-keygen -t ed25519 -f ~/.ssh/goad_key -C "your-email@example.com"
+                                        </code>
+                                        <p style="margin: 0; font-size: 0.85em; color: #666;">
+                                            Then copy your <strong>public key</strong>: <code style="background: #e0e0e0; padding: 2px 6px; border-radius: 3px;">cat ~/.ssh/goad_key.pub</code>
+                                        </p>
+                                    </div>
+                                </details>
+                                
+                                <div style="margin-bottom: 15px;">
+                                    <label for="ssh-public-key-input" style="display: block; margin-bottom: 5px; font-weight: bold;">
+                                        Paste Your SSH Public Key:
+                                    </label>
+                                    <textarea id="ssh-public-key-input" 
+                                              placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... your-email@example.com"
+                                              style="width: 100%; height: 80px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.85em; resize: vertical;"></textarea>
+                                    <small style="display: block; color: #666; margin-top: 5px;">
+                                        Supported: <code>ssh-ed25519</code> (recommended), <code>ssh-rsa</code>, <code>ecdsa-sha2-*</code>
+                                        <span style="color: #c62828;"> · ⚠️ PUBLIC key only!</span>
+                                    </small>
+                                </div>
+                                
+                                <button type="button" class="btn" style="background: #9c27b0; color: white;" onclick="saveSSHPublicKey()" id="save-ssh-key-btn">
+                                    💾 Save SSH Public Key
+                                </button>
+                            </div>
+                            
+                            <!-- Compact key info (shown when key exists) -->
+                            <div id="ssh-key-info" style="display: none;">
+                                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+                                    <span style="font-size: 1.5em;">✅</span>
+                                    <span style="font-weight: bold; color: #7b1fa2;">SSH Key Configured</span>
+                                </div>
+                                <div id="ssh-key-details" style="font-family: monospace; font-size: 0.9em; background: #e1bee7; padding: 12px; border-radius: 4px; border-left: 3px solid #9c27b0;"></div>
+                                <div style="margin-top: 12px; display: flex; gap: 10px;">
+                                    <button class="btn btn-secondary" onclick="editSSHKey()" style="font-size: 0.85em;">
+                                        ✏️ Edit Key
+                                    </button>
+                                    <button class="btn btn-danger" onclick="deleteSSHKey()" style="font-size: 0.85em;">
+                                        🗑️ Delete Key
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     
                     <div id="deployment-status" class="status-display">
@@ -556,7 +697,7 @@
                     </div>
                     
                     <div id="deployment-prereq-warning" class="status-display warning" style="display: none; margin-top: 15px;">
-                        <p><strong>⚠️ Prerequisites Missing:</strong> Domain configuration and Cobalt Strike file are required before deployment.</p>
+                        <p><strong>⚠️ Prerequisites Missing:</strong> SSH public key, domain configuration, and Cobalt Strike file are required before deployment.</p>
                     </div>
 
                     <div id="deployment-output" class="output-display"></div>

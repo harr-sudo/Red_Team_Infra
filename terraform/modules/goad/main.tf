@@ -20,7 +20,26 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
+}
+
+# =============================================================================
+# RANDOM PASSWORD FOR ATTACK BOX
+# =============================================================================
+# Generate a unique password per deployment for better security
+# Note: Avoid $, `, \, ', " which cause shell escaping issues through SSH tunnels
+resource "random_password" "attackbox" {
+  length           = 30
+  special          = true
+  override_special = "!@#%^&*"  # Shell-safe special chars (no $ ` \ ' ")
+  min_lower        = 4
+  min_upper        = 4
+  min_numeric      = 4
+  min_special      = 2
 }
 
 # =============================================================================
@@ -75,6 +94,9 @@ data "aws_ami" "windows_2016" {
 
 locals {
   lab_identifier = var.lab_identifier != "" ? var.lab_identifier : lower(replace(var.lab_type, "-", ""))
+
+  # Attack box password - use provided or generated
+  attackbox_password = var.attackbox_admin_password != "" ? var.attackbox_admin_password : random_password.attackbox.result
 
   # Dynamic AMI references
   ami_windows_2019 = data.aws_ami.windows_2019.id
@@ -302,74 +324,42 @@ locals {
 }
 
 # =============================================================================
-# SSH KEYS - Separate keys for different trust boundaries
+# SSH KEYS - Secure Key Management Architecture
 # =============================================================================
-# Security Architecture:
-#   - jumpbox_ssh: External access (User's machine → Jumpbox)
-#   - internal_ssh: Internal access (Jumpbox/Attack Box → Team Server)
-#   - windows_ssh: Windows VM access
+# Security Architecture (Phase 1 - Secure Key Management):
+#   - User provides their own public key for jumpbox access
+#   - Internal keys are generated ON THE HOSTS during bootstrap (not in Terraform)
+#   - Private keys NEVER leave the host that generates them
+#   - Only public keys are exchanged via S3
 #
-# This separation ensures:
-#   - Compromise of external key doesn't grant internal access
-#   - Compromise of internal key doesn't grant external access
-#   - Clear audit trail per trust boundary
+# Key Flow:
+#   1. User generates key locally: ssh-keygen -t ed25519 -f ~/.ssh/goad_key
+#   2. User provides public key via var.user_public_key
+#   3. Jumpbox generates internal key on first boot, uploads PUBLIC key to S3
+#   4. Team Server/Attack Box download jumpbox's PUBLIC key from S3
+#
+# This ensures:
+#   - No private keys in Terraform state
+#   - No private keys transmitted via API
+#   - Each host controls its own private key
 # =============================================================================
 
-# SSH key for EXTERNAL access (User's machine → Jumpbox only)
-resource "tls_private_key" "jumpbox_ssh" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-# SSH key for INTERNAL access (Jumpbox → Team Server, Attack Box → Team Server)
-resource "tls_private_key" "internal_ssh" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-# SSH key for Windows VMs (RDP/WinRM access)
-resource "tls_private_key" "windows_ssh" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-# =============================================================================
-# AWS Key Pairs
-# =============================================================================
-
-# External key pair - for Jumpbox access from internet
+# AWS Key Pair for Jumpbox - uses USER's public key (not Terraform-generated)
+# Only created if user has provided their public key
 resource "aws_key_pair" "jumpbox" {
-  key_name   = "${var.project_name}-${local.lab_identifier}-jumpbox-key"
-  public_key = tls_private_key.jumpbox_ssh.public_key_openssh
+  count = var.user_public_key != "" ? 1 : 0
+  
+  key_name   = "${var.project_name}-${local.lab_identifier}-jumpbox-ubuntu-key"
+  public_key = var.user_public_key  # User's own public key
 
   tags = merge(var.tags, {
-    Name = "${var.project_name}-${local.lab_identifier}-jumpbox-key"
+    Name = "${var.project_name}-${local.lab_identifier}-jumpbox-ubuntu-key"
     Lab  = local.lab_identifier
-    Type = "External"
+    Type = "External-UserProvided"
   })
 }
 
-# Internal key pair - for Team Server access from private subnet
-resource "aws_key_pair" "internal" {
-  key_name   = "${var.project_name}-${local.lab_identifier}-internal-key"
-  public_key = tls_private_key.internal_ssh.public_key_openssh
-
-  tags = merge(var.tags, {
-    Name = "${var.project_name}-${local.lab_identifier}-internal-key"
-    Lab  = local.lab_identifier
-    Type = "Internal"
-  })
-}
-
-# Windows key pair
-resource "aws_key_pair" "windows" {
-  key_name   = "${var.project_name}-${local.lab_identifier}-windows-key"
-  public_key = tls_private_key.windows_ssh.public_key_openssh
-
-  tags = merge(var.tags, {
-    Name = "${var.project_name}-${local.lab_identifier}-windows-key"
-    Lab  = local.lab_identifier
-    Type = "Windows"
-  })
-}
+# Note: Internal and Windows key pairs are NO LONGER created in Terraform.
+# These keys are generated on the hosts during bootstrap and exchanged via S3.
+# See: scripts/jumpbox_init.sh, scripts/teamserver_init.sh, scripts/windows_init.ps1
 

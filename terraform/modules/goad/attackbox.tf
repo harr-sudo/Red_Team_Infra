@@ -1,31 +1,34 @@
 # GOAD Module - Windows Attack Box Configuration
 # =============================================================================
-# Windows 10 Attack Box for Red Team Operations
+# Windows Server 2022 Attack Box for Red Team Operations
 # - Cobalt Strike Client (GUI)
 # - PowerShell offensive tools (PowerSploit, etc.)
 # - WSL2 with SSH access to Team Server
-# - Ansible for GOAD provisioning
+# - Windows Terminal for better shell experience
+# - Optimized for workstation use (server bloat removed)
 # =============================================================================
 
 # =============================================================================
-# WINDOWS 10 AMI DATA SOURCE
+# WINDOWS SERVER 2022 AMI DATA SOURCE
 # =============================================================================
 
-data "aws_ami" "windows_10" {
+data "aws_ami" "windows_2022" {
   most_recent = true
   owners      = ["amazon"]
 
   filter {
     name   = "name"
-    values = ["Windows_Server-2019-English-Full-Base-*"]
-    # Note: Using Windows Server 2019 as Windows 10 AMIs are not directly
-    # available on AWS. For true Windows 10, use a custom AMI or BYOL.
-    # Windows Server 2019 provides similar functionality for attack operations.
+    values = ["Windows_Server-2022-English-Full-Base-*"]
   }
 
   filter {
     name   = "virtualization-type"
     values = ["hvm"]
+  }
+  
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
   }
 }
 
@@ -41,7 +44,7 @@ resource "aws_network_interface" "attackbox" {
   security_groups = [aws_security_group.goad.id]
 
   tags = merge(var.tags, {
-    Name = "${var.project_name}-${local.lab_identifier}-attackbox-nic"
+    Name = "${var.project_name}-${local.lab_identifier}-attackbox-windows-nic"
     Lab  = local.lab_identifier
     Role = "AttackBox"
   })
@@ -54,22 +57,26 @@ resource "aws_network_interface" "attackbox" {
 resource "aws_instance" "attackbox" {
   count = var.install_cobalt_strike ? 1 : 0
 
-  ami           = data.aws_ami.windows_10.id
+  ami           = data.aws_ami.windows_2022.id
   instance_type = var.attackbox_instance_type
-  key_name      = aws_key_pair.windows.key_name
+  # Note: Windows instances don't use SSH key pairs in the same way
+  # The attack box will download jumpbox's public key from S3 during bootstrap
 
   network_interface {
     network_interface_id = aws_network_interface.attackbox[0].id
     device_index         = 0
   }
 
-  # User data - PowerShell script for tools installation
-  # Uses INTERNAL key for SSH to Team Server (not jumpbox key!)
-  user_data = templatefile("${path.module}/scripts/attackbox_init.ps1", {
-    teamserver_ip      = "${var.ip_range}.40"
-    teamserver_port    = "50050"
-    admin_password     = var.attackbox_admin_password
-    internal_key       = tls_private_key.internal_ssh.private_key_pem  # Internal key, not jumpbox!
+  # IAM role for S3 access (key exchange)
+  iam_instance_profile = var.iam_instance_profile_name != "" ? var.iam_instance_profile_name : null
+
+  # User data - Lightweight bootstrap that downloads full init script from S3
+  # This avoids the 16KB EC2 user_data size limit
+  # The full initialization script is stored in S3 (see attackbox_scripts.tf)
+  user_data = templatefile("${path.module}/scripts/attackbox_bootstrap.ps1", {
+    deployment_bucket  = var.deployment_bucket
+    deployment_id      = var.deployment_id
+    aws_region         = var.aws_region
   })
 
   root_block_device {
@@ -79,18 +86,21 @@ resource "aws_instance" "attackbox" {
     delete_on_termination = true
 
     tags = merge(var.tags, {
-      Name = "${var.project_name}-${local.lab_identifier}-attackbox-root"
+      Name = "${var.project_name}-${local.lab_identifier}-attackbox-windows-root"
       Lab  = local.lab_identifier
     })
   }
 
   tags = merge(var.tags, {
-    Name = "${var.project_name}-${local.lab_identifier}-attackbox"
+    Name = "${var.project_name}-${local.lab_identifier}-attackbox-windows"
     Lab  = local.lab_identifier
     Role = "AttackBox"
     OS   = "Windows"
   })
 
-  # Ensure team server is created first
-  depends_on = [aws_instance.teamserver]
+  # Ensure team server is created first and init script is uploaded to S3
+  depends_on = [
+    aws_instance.teamserver,
+    aws_s3_object.attackbox_init_script
+  ]
 }

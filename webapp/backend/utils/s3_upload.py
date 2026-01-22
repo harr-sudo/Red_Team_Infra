@@ -52,8 +52,12 @@ def find_cs_bucket(project_name: str, region: str = 'us-east-1', profile: Option
         s3 = get_s3_client(region, profile)
         response = s3.list_buckets()
         
+        # Sanitize project name the same way Terraform does:
+        # S3 bucket names must be lowercase, only letters, numbers, hyphens
+        sanitized_name = project_name.lower().replace('_', '-')
+        
         # Look for bucket with our naming pattern
-        prefix = f"{project_name.lower()}-cs-files-"
+        prefix = f"{sanitized_name}-cs-files-"
         for bucket in response.get('Buckets', []):
             if bucket['Name'].startswith(prefix):
                 return bucket['Name']
@@ -68,7 +72,8 @@ def upload_cs_file(
     project_name: str,
     region: str = 'us-east-1',
     profile: Optional[str] = None,
-    bucket_name: Optional[str] = None
+    bucket_name: Optional[str] = None,
+    s3_key_prefix: str = ""
 ) -> Tuple[str, str]:
     """
     Upload Cobalt Strike archive to S3.
@@ -79,6 +84,7 @@ def upload_cs_file(
         region: AWS region
         profile: AWS profile name (optional)
         bucket_name: Override bucket name (optional)
+        s3_key_prefix: Optional prefix for the S3 key (e.g., "cs-client/")
     
     Returns:
         Tuple of (S3 URI, bucket name)
@@ -108,10 +114,21 @@ def upload_cs_file(
         
         # Generate unique key with timestamp
         timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-        key = f"cobaltstrike-{timestamp}.tar.gz"
+        # Preserve original file extension
+        original_ext = ''.join(file_path.suffixes) or '.tar.gz'
+        base_name = "cobaltstrike" if not s3_key_prefix else "cs-client"
+        key = f"{s3_key_prefix}{base_name}-{timestamp}{original_ext}"
         
-        # Upload file
-        s3.upload_file(str(file_path), bucket_name, key)
+        # Upload file with server-side encryption
+        # Uses AES256 (SSE-S3) - AWS manages encryption keys
+        s3.upload_file(
+            str(file_path), 
+            bucket_name, 
+            key,
+            ExtraArgs={
+                'ServerSideEncryption': 'AES256'
+            }
+        )
         
         s3_uri = f"s3://{bucket_name}/{key}"
         return s3_uri, bucket_name

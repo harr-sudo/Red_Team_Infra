@@ -30,7 +30,8 @@ resource "aws_instance" "windows_vm" {
 
   ami           = each.value.ami
   instance_type = each.value.instance_type
-  key_name      = aws_key_pair.windows.key_name
+  # Windows VMs don't use SSH key pairs - they use WinRM/RDP with password auth
+  # Access is via jumpbox tunnel
 
   network_interface {
     network_interface_id = aws_network_interface.windows_vm[each.key].id
@@ -38,12 +39,12 @@ resource "aws_instance" "windows_vm" {
   }
 
   # Windows initialization script
+  # Note: No private keys passed - Windows VMs use password authentication
   user_data = templatefile("${path.module}/scripts/windows_init.ps1", {
-    username    = var.windows_admin_username
-    password    = each.value.password
-    domain      = each.value.domain
-    hostname    = each.value.hostname
-    private_key = tls_private_key.windows_ssh.private_key_pem
+    username = var.windows_admin_username
+    password = each.value.password
+    domain   = each.value.domain
+    hostname = each.value.hostname
   })
 
   root_block_device {

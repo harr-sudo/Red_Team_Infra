@@ -37,10 +37,23 @@ provider "aws" {
 }
 
 # =============================================================================
+# DATA SOURCES - Get Available Availability Zones
+# =============================================================================
+
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+# =============================================================================
 # LOCAL VALUES - Deployment Mode Detection
 # =============================================================================
 
 locals {
+  # -------------------------------------------------------------------------
+  # Availability Zones - Auto-detect if not specified
+  # -------------------------------------------------------------------------
+  availability_zones = length(var.availability_zones) > 0 ? var.availability_zones : data.aws_availability_zones.available.names
+
   # -------------------------------------------------------------------------
   # Deployment Type Detection
   # -------------------------------------------------------------------------
@@ -120,9 +133,7 @@ locals {
 # DATA SOURCES
 # =============================================================================
 
-data "aws_availability_zones" "available" {
-  state = "available"
-}
+# Note: aws_availability_zones.available is defined earlier in the file (line ~43)
 
 # Ubuntu 22.04 LTS AMI (for C2 servers and redirectors)
 data "aws_ami" "ubuntu" {
@@ -154,6 +165,11 @@ data "aws_ami" "amazon_linux" {
 # =============================================================================
 # CS STORAGE MODULE - S3 bucket for Cobalt Strike files
 # =============================================================================
+# Option C: Separate IAM Roles Per VPC (Maximum Security)
+# - C2 VPC instances use cs_download_c2 role
+# - GOAD VPC instances use cs_download_goad role
+# - Each role is restricted to its specific VPC
+# - Confused deputy attack: BLOCKED
 
 module "cs_storage" {
   count  = var.cobalt_strike_archive_s3_path != "" || local.deploy_c2_infra || local.is_goad_only ? 1 : 0
@@ -162,6 +178,21 @@ module "cs_storage" {
   project_name = var.project_name
   environment  = var.environment
   tags         = local.enhanced_tags
+  aws_region   = var.aws_region
+
+  # ==========================================================================
+  # SECURITY: Option C - Separate IAM Roles Per VPC
+  # ==========================================================================
+  # C2 VPC Role (for C2-only and Combined modes)
+  enable_c2_role = local.deploy_c2_infra
+  c2_vpc_id      = local.deploy_c2_infra ? module.vpc[0].vpc_id : ""
+
+  # GOAD VPC Role (for GOAD-only and Combined modes)
+  enable_goad_role = local.deploy_goad
+  goad_vpc_id      = local.deploy_goad ? module.goad[0].vpc_id : ""
+
+  # Note: In Combined mode, BOTH roles are created, each restricted to its VPC
+  # This provides maximum security - no cross-VPC access possible
 }
 
 # =============================================================================
@@ -173,7 +204,7 @@ module "vpc" {
   source = "./modules/vpc"
 
   vpc_cidr             = var.vpc_cidr
-  availability_zones   = var.availability_zones
+  availability_zones   = local.availability_zones
   public_subnet_cidrs  = var.public_subnet_cidrs
   private_subnet_cidrs = var.private_subnet_cidrs
   project_name         = var.project_name
@@ -224,9 +255,10 @@ module "c2_team_server" {
   root_volume_size           = var.c2_server_root_volume_size
   enable_detailed_monitoring = var.enable_detailed_monitoring
   enable_elastic_ips         = var.c2_server_enable_elastic_ips
-  iam_instance_profile_name  = length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name : var.c2_server_iam_instance_profile_name
-  phase                      = "" # No phase for single/redundancy mode
-  tags                       = local.enhanced_tags
+  # SECURITY: Use C2-specific instance profile (Option C - VPC-restricted)
+  iam_instance_profile_name = length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name_c2 : var.c2_server_iam_instance_profile_name
+  phase                     = "" # No phase for single/redundancy mode
+  tags                      = local.enhanced_tags
 
   # Cobalt Strike configuration
   cobalt_strike_s3_path  = var.cobalt_strike_archive_s3_path
@@ -261,9 +293,10 @@ module "c2_phase_servers" {
   root_volume_size           = each.value.root_volume_size
   enable_detailed_monitoring = var.enable_detailed_monitoring
   enable_elastic_ips         = false
-  iam_instance_profile_name  = each.value.iam_instance_profile_name != "" ? each.value.iam_instance_profile_name : (length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name : null)
-  phase                      = each.key # Phase name (staging, post-ex, long-haul)
-  tags                       = local.enhanced_tags
+  # SECURITY: Use C2-specific instance profile (Option C - VPC-restricted)
+  iam_instance_profile_name = each.value.iam_instance_profile_name != "" ? each.value.iam_instance_profile_name : (length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name_c2 : null)
+  phase                     = each.key # Phase name (staging, post-ex, long-haul)
+  tags                      = local.enhanced_tags
 
   # Cobalt Strike configuration
   cobalt_strike_s3_path  = var.cobalt_strike_archive_s3_path
@@ -347,7 +380,7 @@ module "goad" {
   public_subnet_cidr  = var.goad_public_subnet_cidr
   private_subnet_cidr = var.goad_private_subnet_cidr
   ip_range            = split("/", var.goad_vpc_cidr)[0] != "" ? join(".", slice(split(".", split("/", var.goad_vpc_cidr)[0]), 0, 3)) : "192.168.56"
-  availability_zone   = var.availability_zones[0]
+  availability_zone   = local.availability_zones[0]
 
   # Attack Box with Cobalt Strike (separate from jumpbox, for GOAD-only mode)
   install_cobalt_strike  = local.install_cs_on_jumpbox
@@ -358,6 +391,9 @@ module "goad" {
   management_cidr_blocks = var.management_cidr_blocks
   key_pair_name          = var.key_pair_name
 
+  # User's SSH public key (for jumpbox access)
+  user_public_key = var.user_public_key
+
   # Tools
   tools_repo_url    = var.tools_repo_url
   tools_repo_branch = var.tools_repo_branch
@@ -367,8 +403,14 @@ module "goad" {
   environment  = var.environment
   aws_region   = var.aws_region
 
-  # IAM (for S3 access)
-  iam_instance_profile_name = length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name : ""
+  # IAM (for S3 access - CS download + key exchange)
+  # SECURITY: Use GOAD-specific instance profile (Option C - VPC-restricted)
+  iam_instance_profile_name = length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name_goad : ""
+
+  # S3 Key Exchange (Phase 5 - Secure Key Management)
+  # Jumpbox uploads its PUBLIC key to S3, Team Server/Attack Box download it
+  deployment_bucket = length(module.cs_storage) > 0 ? module.cs_storage[0].bucket_name : ""
+  deployment_id     = var.project_name # Use project name as unique deployment ID
 
   tags = local.enhanced_tags
 }

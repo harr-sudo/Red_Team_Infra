@@ -5,6 +5,18 @@
 # Set execution policy
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force
 
+# Set hostname
+$Hostname = "${hostname}"
+if ($Hostname) {
+    Write-Host "Setting hostname to: $Hostname"
+    try {
+        Rename-Computer -NewName $Hostname -Force -ErrorAction SilentlyContinue
+        Write-Host "Hostname set successfully (will apply after reboot)"
+    } catch {
+        Write-Host "Error setting hostname: $_"
+    }
+}
+
 # Enable WSL feature
 Write-Host "Enabling WSL feature..."
 Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart

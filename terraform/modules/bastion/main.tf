@@ -50,7 +50,9 @@ resource "aws_instance" "bastion" {
   iam_instance_profile = var.iam_instance_profile_name != "" ? var.iam_instance_profile_name : null
 
   # User data script to configure Windows and install WSL2
-  user_data = base64encode(file("${path.module}/user_data.ps1"))
+  user_data = base64encode(templatefile("${path.module}/user_data.ps1", {
+    hostname = "bastion-windows"
+  }))
 
   # Get Windows password from AWS Systems Manager Parameter Store
   get_password_data = var.windows_admin_password == "" ? true : false
@@ -58,7 +60,7 @@ resource "aws_instance" "bastion" {
   tags = merge(
     var.tags,
     {
-      Name      = "${var.project_name}-${var.environment}-bastion-jumpbox"
+      Name      = "${var.project_name}-${var.environment}-bastion-windows"
       Type      = "BastionHost"
       Component = "Management"
       OS        = "WindowsServer"
@@ -75,7 +77,7 @@ resource "aws_eip" "bastion_eip" {
   tags = merge(
     var.tags,
     {
-      Name      = "${var.project_name}-${var.environment}-bastion-eip"
+      Name      = "${var.project_name}-${var.environment}-bastion-windows-eip"
       Type      = "ElasticIP"
       Component = "Management"
     }

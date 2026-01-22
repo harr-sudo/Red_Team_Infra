@@ -17,7 +17,7 @@ frontend_path = Path(__file__).parent.parent / 'frontend'
 
 from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_cors import CORS
-from webapp.backend.routes import config, deploy, aws_check, health, goad
+from webapp.backend.routes import config, deploy, aws_check, health, goad, architecture
 
 # Initialize Flask app
 app = Flask(__name__, 
@@ -35,6 +35,7 @@ app.register_blueprint(deploy.bp, url_prefix='/api/deploy')
 app.register_blueprint(aws_check.bp, url_prefix='/api/aws')
 app.register_blueprint(health.bp, url_prefix='/api/health')
 app.register_blueprint(goad.bp)  # GOAD routes at /api/goad
+app.register_blueprint(architecture.bp)  # Architecture docs at /api/architecture
 
 # Serve frontend
 @app.route('/')
@@ -50,7 +51,12 @@ def serve_css(filename):
 @app.route('/js/<path:filename>')
 def serve_js(filename):
     """Serve JavaScript files"""
-    return send_from_directory(str(frontend_path / 'js'), filename)
+    response = send_from_directory(str(frontend_path / 'js'), filename)
+    # Disable caching for development
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/assets/<path:filename>')
 def serve_assets(filename):

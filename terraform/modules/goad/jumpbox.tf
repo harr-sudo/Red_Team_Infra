@@ -34,7 +34,7 @@ resource "aws_network_interface" "jumpbox" {
   security_groups = [aws_security_group.goad.id]
 
   tags = merge(var.tags, {
-    Name = "${var.project_name}-${local.lab_identifier}-jumpbox-nic"
+    Name = "${var.project_name}-${local.lab_identifier}-jumpbox-ubuntu-nic"
     Lab  = local.lab_identifier
     Role = "Jumpbox"
   })
@@ -50,7 +50,7 @@ resource "aws_eip" "jumpbox" {
   associate_with_private_ip = "${var.ip_range}.100"
 
   tags = merge(var.tags, {
-    Name = "${var.project_name}-${local.lab_identifier}-jumpbox-eip"
+    Name = "${var.project_name}-${local.lab_identifier}-jumpbox-ubuntu-eip"
     Lab  = local.lab_identifier
   })
 
@@ -64,21 +64,29 @@ resource "aws_eip" "jumpbox" {
 resource "aws_instance" "jumpbox" {
   ami           = data.aws_ami.ubuntu.id
   instance_type = var.jumpbox_instance_type
-  key_name      = aws_key_pair.jumpbox.key_name  # External key for user access
+  key_name      = length(aws_key_pair.jumpbox) > 0 ? aws_key_pair.jumpbox[0].key_name : null  # User's public key (if provided)
 
   network_interface {
     network_interface_id = aws_network_interface.jumpbox.id
     device_index         = 0
   }
 
-  # Minimal user data - just basic setup for SSH gateway
-  # Also installs the INTERNAL private key for accessing Team Server
+  # IAM role for S3 access (key exchange)
+  iam_instance_profile = var.iam_instance_profile_name != "" ? var.iam_instance_profile_name : null
+
+  # User data - generates internal key ON THE HOST (not from Terraform)
+  # Internal key is uploaded to S3 for Team Server/Attack Box to download
   user_data = templatefile("${path.module}/scripts/jumpbox_init.sh", {
     username         = var.jumpbox_username
     attackbox_ip     = var.install_cobalt_strike ? "${var.ip_range}.50" : ""
     teamserver_ip    = var.install_cobalt_strike ? "${var.ip_range}.40" : ""
     install_cs       = var.install_cobalt_strike
-    internal_key     = var.install_cobalt_strike ? tls_private_key.internal_ssh.private_key_pem : ""
+    # SECURITY: internal_key is NO LONGER passed from Terraform
+    # The jumpbox generates its own key during bootstrap
+    deployment_bucket = var.deployment_bucket
+    deployment_id     = var.deployment_id
+    aws_region        = var.aws_region
+    hostname          = "jumpbox-ubuntu"
   })
 
   root_block_device {
@@ -88,13 +96,13 @@ resource "aws_instance" "jumpbox" {
     delete_on_termination = true
 
     tags = merge(var.tags, {
-      Name = "${var.project_name}-${local.lab_identifier}-jumpbox-root"
+      Name = "${var.project_name}-${local.lab_identifier}-jumpbox-ubuntu-root"
       Lab  = local.lab_identifier
     })
   }
 
   tags = merge(var.tags, {
-    Name = "${var.project_name}-${local.lab_identifier}-jumpbox"
+    Name = "${var.project_name}-${local.lab_identifier}-jumpbox-ubuntu"
     Lab  = local.lab_identifier
     Role = "Jumpbox"
   })

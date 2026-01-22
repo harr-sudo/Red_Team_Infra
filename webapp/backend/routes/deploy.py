@@ -24,6 +24,7 @@ bp = Blueprint('deploy', __name__)
 
 # File storage directory (local to user's machine)
 UPLOAD_FOLDER = project_root / "uploads"
+CS_CLIENT_FOLDER = project_root / "uploads_client"  # Separate folder for CS Client
 ALLOWED_EXTENSIONS = {'tar', 'gz', 'zip', 'tar.gz'}
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
 
@@ -32,6 +33,7 @@ SSH_KEYS_FOLDER = project_root / "ssh_keys"
 
 # Ensure directories exist
 UPLOAD_FOLDER.mkdir(exist_ok=True)
+CS_CLIENT_FOLDER.mkdir(exist_ok=True)
 SSH_KEYS_FOLDER.mkdir(exist_ok=True)
 
 # =============================================================================
@@ -67,8 +69,16 @@ def save_deployment_history(history):
     except Exception as e:
         print(f"Error saving deployment history: {e}")
 
-def add_history_entry(message, level='info', details=None, project_name=None):
-    """Add an entry to deployment history"""
+def add_history_entry(message, level='info', details=None, project_name=None, entry_type=None):
+    """Add an entry to deployment history
+    
+    Args:
+        message: Log message
+        level: Log level (info, success, error, warning)
+        details: Additional details
+        project_name: Project/workspace name
+        entry_type: Type of entry ('plan', 'deployment', etc.) - used to filter in UI
+    """
     from datetime import datetime
     history = load_deployment_history()
     entry = {
@@ -79,6 +89,8 @@ def add_history_entry(message, level='info', details=None, project_name=None):
     }
     if project_name:
         entry['project_name'] = project_name
+    if entry_type:
+        entry['entry_type'] = entry_type
     history.append(entry)
     save_deployment_history(history)
 
@@ -263,6 +275,33 @@ def update_tfvars_cs_path(tfvars_file, s3_uri):
         print(f"Error updating tfvars with CS path: {e}")
         return False
 
+def update_tfvars_cs_client_path(tfvars_file, s3_uri):
+    """Update terraform.tfvars with the Cobalt Strike Client S3 path (for Attack Box)"""
+    try:
+        if not tfvars_file.exists():
+            return False
+        
+        content = tfvars_file.read_text()
+        
+        # Check if cs_client_s3_path already exists
+        if 'cs_client_s3_path' in content:
+            # Update existing value
+            import re
+            content = re.sub(
+                r'cs_client_s3_path\s*=\s*"[^"]*"',
+                f'cs_client_s3_path = "{s3_uri}"',
+                content
+            )
+        else:
+            # Add new line
+            content += f'\n# Cobalt Strike Client S3 Path for Attack Box (auto-generated)\ncs_client_s3_path = "{s3_uri}"\n'
+        
+        tfvars_file.write_text(content)
+        return True
+    except Exception as e:
+        print(f"Error updating tfvars with CS Client path: {e}")
+        return False
+
 def get_file_info(filepath):
     """Get file information"""
     if not filepath.exists():
@@ -374,7 +413,7 @@ def run_deployment(project_name: str = None):
         # 3. Then apply the rest (EC2 instances will have the file available)
         needs_cs_upload = (phase_type == "goad" or phase_type == "c2" or phase_type == "combined")
         
-        # Check if there's a local CS file to upload
+        # Check if there's a local CS file to upload (Team Server archive)
         local_cs_file = None
         if needs_cs_upload:
             cs_files = [f for f in UPLOAD_FOLDER.glob("*") if f.is_file() and allowed_file(f.name)]
@@ -382,7 +421,15 @@ def run_deployment(project_name: str = None):
                 local_cs_file = max(cs_files, key=lambda f: f.stat().st_mtime)
                 add_log(f"Found Cobalt Strike file: {local_cs_file.name}", "info", project_name)
         
-        if local_cs_file:
+        # Check if there's a CS Client file to upload (for Attack Box)
+        local_cs_client_file = None
+        if needs_cs_upload:
+            cs_client_files = [f for f in CS_CLIENT_FOLDER.glob("*") if f.is_file() and allowed_file(f.name)]
+            if cs_client_files:
+                local_cs_client_file = max(cs_client_files, key=lambda f: f.stat().st_mtime)
+                add_log(f"Found CS Client file: {local_cs_client_file.name}", "info", project_name)
+        
+        if local_cs_file or local_cs_client_file:
             # Phase: Create S3 bucket first (targeted apply)
             add_log("Creating S3 bucket for Cobalt Strike files...", "info", project_name)
             result = service.apply_target("module.cs_storage")
@@ -397,36 +444,69 @@ def run_deployment(project_name: str = None):
             
         add_log("S3 bucket created successfully", "success", project_name)
         
-        # Phase: Upload CS file to S3
-        add_log("Uploading Cobalt Strike to S3...", "info", project_name)
-        try:
-            from webapp.backend.utils.s3_upload import upload_cs_file, find_cs_bucket, S3UploadError
-            
-            # Find the bucket that was just created
-            bucket_name = find_cs_bucket(project_name, config.get('aws_region', 'us-east-1'))
-            
-            if bucket_name:
-                s3_uri, _ = upload_cs_file(
-                    str(local_cs_file),
-                    project_name,
-                    config.get('aws_region', 'us-east-1'),
-                    bucket_name=bucket_name
-                )
-                add_log(f"Uploaded Cobalt Strike to {s3_uri}", "success", project_name)
+        # Phase: Upload CS file to S3 (Team Server archive)
+        if local_cs_file:
+            add_log("Uploading Cobalt Strike to S3...", "info", project_name)
+            try:
+                from webapp.backend.utils.s3_upload import upload_cs_file, find_cs_bucket, S3UploadError
                 
-                # Update tfvars with the S3 path so EC2 user_data can find it
-                update_tfvars_cs_path(service.tfvars_file, s3_uri)
-                add_log("Updated configuration with S3 path", "info", project_name)
-            else:
-                add_log("Warning: Could not find S3 bucket for CS upload", "warning", project_name)
+                # Find the bucket that was just created
+                bucket_name = find_cs_bucket(project_name, config.get('aws_region', 'us-east-1'))
                 
-        except Exception as e:
-            add_log(f"Warning: Failed to upload CS to S3: {str(e)}", "warning", project_name)
-            # Continue anyway - CS won't be auto-installed but deployment can proceed
+                if bucket_name:
+                    s3_uri, _ = upload_cs_file(
+                        str(local_cs_file),
+                        project_name,
+                        config.get('aws_region', 'us-east-1'),
+                        bucket_name=bucket_name
+                    )
+                    add_log(f"Uploaded Cobalt Strike to {s3_uri}", "success", project_name)
+                    
+                    # Update tfvars with the S3 path so EC2 user_data can find it
+                    update_tfvars_cs_path(service.tfvars_file, s3_uri)
+                    add_log("Updated configuration with S3 path", "info", project_name)
+                else:
+                    add_log("Warning: Could not find S3 bucket for CS upload", "warning", project_name)
+                    
+            except Exception as e:
+                add_log(f"Warning: Failed to upload CS to S3: {str(e)}", "warning", project_name)
+                # Continue anyway - CS won't be auto-installed but deployment can proceed
+        
+        # Phase: Upload CS Client file to S3 (for Attack Box)
+        if local_cs_client_file:
+            add_log("Uploading CS Client to S3...", "info", project_name)
+            try:
+                from webapp.backend.utils.s3_upload import upload_cs_file, find_cs_bucket, S3UploadError
+                
+                # Find the bucket
+                bucket_name = find_cs_bucket(project_name, config.get('aws_region', 'us-east-1'))
+                
+                if bucket_name:
+                    # Upload with a different key prefix for the client
+                    s3_client_uri, _ = upload_cs_file(
+                        str(local_cs_client_file),
+                        project_name,
+                        config.get('aws_region', 'us-east-1'),
+                        bucket_name=bucket_name,
+                        s3_key_prefix="cs-client/"
+                    )
+                    add_log(f"Uploaded CS Client to {s3_client_uri}", "success", project_name)
+                    
+                    # Update tfvars with the CS Client S3 path
+                    update_tfvars_cs_client_path(service.tfvars_file, s3_client_uri)
+                    add_log("Updated configuration with CS Client S3 path", "info", project_name)
+                else:
+                    add_log("Warning: Could not find S3 bucket for CS Client upload", "warning", project_name)
+                    
+            except Exception as e:
+                add_log(f"Warning: Failed to upload CS Client to S3: {str(e)}", "warning", project_name)
+                # Continue anyway - CS Client won't be auto-installed but deployment can proceed
         
         # Now apply the rest of the infrastructure
+        # Use apply_fresh() instead of apply() because the targeted apply above
+        # changed the state, making the saved plan file stale
         add_log("Applying Terraform changes (this may take 5-15 minutes)...", "info", project_name)
-        result = service.apply()
+        result = service.apply_fresh()
         
         if not result["success"]:
             state["status"] = "error"
@@ -768,6 +848,8 @@ def run_destroy(project_name: str = None):
         state["output"] = ""
         state["error"] = None
         
+        add_log("Starting infrastructure destruction...", "warning", project_name)
+        
         # Get current deployment type
         output_result = service.output()
         outputs = output_result.get("outputs", {})
@@ -779,44 +861,55 @@ def run_destroy(project_name: str = None):
         if is_combined:
             # Phase 1: Destroy VPC peering first
             state["step"] = "Phase 1/3: Destroying VPC peering..."
+            add_log("Phase 1/3: Destroying VPC peering...", "info", project_name)
             result = service.destroy_target("module.vpc_peering")
             if not result["success"]:
                 state["status"] = "error"
                 state["error"] = result.get("stderr", "Failed to destroy VPC peering")
+                add_log(f"Failed to destroy VPC peering: {state['error'][:500]}", "error", project_name)
                 return
             
             # Phase 2: Destroy GOAD
             state["step"] = "Phase 2/3: Destroying GOAD lab..."
+            add_log("Phase 2/3: Destroying GOAD lab...", "info", project_name)
             result = service.destroy_target("module.goad")
             if not result["success"]:
                 state["status"] = "error"
                 state["error"] = result.get("stderr", "Failed to destroy GOAD")
+                add_log(f"Failed to destroy GOAD: {state['error'][:500]}", "error", project_name)
                 return
             
             # Phase 3: Destroy remaining C2 infrastructure
             state["step"] = "Phase 3/3: Destroying C2 infrastructure..."
+            add_log("Phase 3/3: Destroying C2 infrastructure...", "info", project_name)
             result = service.destroy()
             if not result["success"]:
                 state["status"] = "error"
                 state["error"] = result.get("stderr", "Failed to destroy C2 infrastructure")
+                add_log(f"Failed to destroy C2 infrastructure: {state['error'][:500]}", "error", project_name)
                 return
         else:
             # Standard destroy for non-combined modes
             state["step"] = "Destroying infrastructure..."
+            add_log("Running terraform destroy...", "info", project_name)
             result = service.destroy()
             if not result["success"]:
                 state["status"] = "error"
                 state["error"] = result.get("stderr", "Destroy failed")
+                add_log(f"Destroy failed: {state['error'][:500]}", "error", project_name)
                 return
         
         state["status"] = "success"
         state["step"] = "Infrastructure destroyed"
         state["deployment_type"] = None
+        state["completed_at"] = time.time()
         add_log("Infrastructure destroyed successfully!", "success", project_name)
         
     except Exception as e:
         state["status"] = "error"
         state["error"] = str(e)
+        state["completed_at"] = time.time()
+        add_log(f"Destroy error: {str(e)}", "error", project_name)
 
 @bp.route('/status', methods=['GET'])
 def get_deployment_status():
@@ -944,6 +1037,28 @@ def check_project_name():
             "message": f"Project '{project_name}' is currently being deployed"
         })
     
+    # Check deployment history for previously used names
+    history = load_deployment_history()
+    project_history = [h for h in history if h.get('project_name') == project_name]
+    if project_history:
+        # Check if there were any errors or if it was purged
+        has_errors = any(h.get('level') == 'error' for h in project_history)
+        was_purged = any('purge' in h.get('message', '').lower() for h in project_history)
+        last_entry = project_history[-1] if project_history else None
+        last_time = last_entry.get('timestamp', 'unknown') if last_entry else 'unknown'
+        
+        # This is a warning, not a block - user can still proceed
+        # We'll return available=True but with a warning
+        history_warning = {
+            "previously_used": True,
+            "entry_count": len(project_history),
+            "had_errors": has_errors,
+            "was_purged": was_purged,
+            "last_activity": last_time
+        }
+    else:
+        history_warning = None
+    
     # Get AWS region from config
     config_dir = project_root / "configs"
     tfvars_file = config_dir / "terraform.tfvars"
@@ -963,7 +1078,7 @@ def check_project_name():
         
         if vpc_response.get('Vpcs'):
             vpc_count = len(vpc_response['Vpcs'])
-        return jsonify({
+            return jsonify({
                 "success": True,
                 "available": False,
                 "reason": "aws_resources_exist",
@@ -1043,22 +1158,30 @@ def check_project_name():
                             "source": "local"
                         })
                 
-                # Workspace exists but is empty - allow reuse
-                return jsonify({
+                # Workspace exists but is empty - allow reuse with warning
+                response = {
                     "success": True,
                     "available": True,
                     "workspace_exists": True,
                     "message": f"Project '{project_name}' workspace exists but has no resources"
-                })
+                }
+                if history_warning:
+                    response["history"] = history_warning
+                    response["message"] += " (previously used)"
+                return jsonify(response)
     except Exception as e:
         print(f"Local workspace check failed: {e}")
     
     # Project name is available
-    return jsonify({
+    response = {
         "success": True,
         "available": True,
         "message": f"Project name '{project_name}' is available"
-    })
+    }
+    if history_warning:
+        response["history"] = history_warning
+        response["warning"] = f"This name was previously used ({history_warning['entry_count']} history entries)"
+    return jsonify(response)
 
 
 @bp.route('/generate-project-name', methods=['GET'])
@@ -1204,19 +1327,19 @@ def deploy():
     # Check prerequisite: Domain configuration
     if requires_domain:
         primary_domain = config.get("primary_domain_name", "").strip()
-    
-    if not primary_domain:
-        return jsonify({
-            "success": False,
+        
+        if not primary_domain:
+            return jsonify({
+                "success": False,
                 "error": "Domain configuration is required for C2 deployments. Please configure primary_domain_name."
-        }), 400
-    
-    domain_valid, domain_errors = ConfigValidator.validate_domain_config(config)
-    if not domain_valid:
-        return jsonify({
-            "success": False,
-                "error": f"Domain configuration is invalid: {", ".join(domain_errors)}"
-        }), 400
+            }), 400
+        
+        domain_valid, domain_errors = ConfigValidator.validate_domain_config(config)
+        if not domain_valid:
+            return jsonify({
+                "success": False,
+                "error": f"Domain configuration is invalid: {', '.join(domain_errors)}"
+            }), 400
     
     # Initialize project-specific state
     deployment_states[project_name] = create_empty_state()
@@ -1283,6 +1406,12 @@ def destroy():
         if project_name not in deployment_states:
             deployment_states[project_name] = create_empty_state()
         deployment_states[project_name]["status"] = "running"
+        deployment_states[project_name]["step"] = "Destroying infrastructure..."
+        deployment_states[project_name]["started_at"] = time.time()
+        deployment_states[project_name]["logs"] = []  # Clear previous logs
+    
+    # Log the start of destroy to history
+    add_history_entry(f"Starting destroy for project: {project_name or 'default'}", "warning", project_name=project_name)
     
     # Start destroy in background thread
     thread = threading.Thread(target=run_destroy, args=(project_name,))
@@ -1340,6 +1469,10 @@ def purge_resources():
     state["step"] = "Purging resources..."
     state["started_at"] = time.time()
     state["progress_percent"] = 0
+    state["logs"] = []  # Clear previous logs
+    
+    # Log the start of purge to history (like deployment does)
+    add_history_entry(f"Starting purge/destroy for project: {project_name or 'default'}", "warning", project_name=project_name)
     state["error"] = None
     state["logs"] = []
     
@@ -1463,7 +1596,7 @@ def plan():
         terraform_dir = terraform_service.terraform_dir
         if not (terraform_dir / ".terraform").exists():
             # Auto-initialize terraform
-            add_history_entry("Auto-initializing Terraform...", "info")
+            add_history_entry("Auto-initializing Terraform...", "info", entry_type='plan')
             init_result = terraform_service.init()
             if not init_result.get("success"):
                 init_error = init_result.get("stderr", "") or init_result.get("stdout", "") or "Unknown initialization error"
@@ -1477,7 +1610,7 @@ def plan():
                 })
         
         # Run the plan
-        add_history_entry("Running Terraform plan...", "info")
+        add_history_entry("Running Terraform plan...", "info", entry_type='plan')
         result = terraform_service.plan()
         
         # Get combined output
@@ -1486,7 +1619,7 @@ def plan():
         stderr = result.get("stderr", "")
         
         if result["success"]:
-            add_history_entry("Terraform plan completed successfully", "success")
+            add_history_entry("Terraform plan completed successfully", "success", entry_type='plan')
             return jsonify({
                 "success": True,
                 "exit_code": result.get("exit_code"),
@@ -1533,7 +1666,7 @@ def plan():
             # Create a helpful error message
             error_display = all_output if all_output else "No error details available. Exit code: " + str(result.get("exit_code", "unknown"))
             
-            add_history_entry(f"Terraform plan failed: {error_type}", "error")
+            add_history_entry(f"Terraform plan failed: {error_type}", "error", entry_type='plan')
             
             return jsonify({
                 "success": False,
@@ -1556,7 +1689,7 @@ def plan():
             help_text = "Terraform CLI is not installed. Please install it first."
             detailed_error = "Terraform CLI is not installed on this system.\n\nTo install:\n  macOS: brew install terraform\n  Linux: See https://terraform.io/downloads"
         
-        add_history_entry(f"Plan error: {error_msg}", "error")
+        add_history_entry(f"Plan error: {error_msg}", "error", entry_type='plan')
         
         return jsonify({
             "success": False,
@@ -1692,6 +1825,701 @@ def delete_cobalt_strike_file():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+
+# =============================================================================
+# COBALT STRIKE CLIENT UPLOAD (for Attack Box)
+# =============================================================================
+# These endpoints manage the CS Client archive that gets deployed to the
+# Windows Attack Box. This is separate from the Team Server archive.
+# =============================================================================
+
+@bp.route('/upload-cs-client', methods=['POST'])
+def upload_cs_client():
+    """Upload Cobalt Strike Client archive file for Attack Box"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({"success": False, "error": "No file provided"}), 400
+        
+        file = request.files['file']
+        
+        if file.filename == '':
+            return jsonify({"success": False, "error": "No file selected"}), 400
+        
+        if not allowed_file(file.filename):
+            return jsonify({
+                "success": False,
+                "error": f"Invalid file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
+            }), 400
+        
+        # Check file size
+        file.seek(0, os.SEEK_END)
+        file_size = file.tell()
+        file.seek(0)
+        
+        if file_size > MAX_FILE_SIZE:
+            return jsonify({
+                "success": False,
+                "error": f"File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024)}MB"
+            }), 400
+        
+        # Secure filename
+        filename = secure_filename(file.filename)
+        filepath = CS_CLIENT_FOLDER / filename
+        
+        # Save file
+        file.save(str(filepath))
+        
+        # Get file info
+        file_info = get_file_info(filepath)
+        
+        return jsonify({
+            "success": True,
+            "message": "CS Client file uploaded successfully",
+            "file": file_info
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@bp.route('/cs-client-file', methods=['GET'])
+def get_cs_client_file():
+    """Get information about uploaded CS Client file"""
+    try:
+        # Look for CS Client files in upload directory
+        files = list(CS_CLIENT_FOLDER.glob("*"))
+        cs_client_files = [
+            get_file_info(f) for f in files 
+            if f.is_file() and allowed_file(f.name)
+        ]
+        
+        # Sort by modified time (newest first)
+        cs_client_files.sort(key=lambda x: x['modified'] if x else 0, reverse=True)
+        
+        return jsonify({
+            "success": True,
+            "files": cs_client_files,
+            "has_file": len(cs_client_files) > 0,
+            "latest_file": cs_client_files[0] if cs_client_files else None
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@bp.route('/cs-client-file', methods=['DELETE'])
+def delete_cs_client_file():
+    """Delete uploaded CS Client file"""
+    try:
+        data = request.get_json() or {}
+        filename = data.get('filename')
+        
+        if filename and filename != 'latest':
+            # Delete specific file
+            filepath = CS_CLIENT_FOLDER / secure_filename(filename)
+        else:
+            # Delete latest file (most recent)
+            files = list(CS_CLIENT_FOLDER.glob("*"))
+            cs_client_files = [
+                f for f in files 
+                if f.is_file() and allowed_file(f.name)
+            ]
+            
+            if not cs_client_files:
+                return jsonify({"success": False, "error": "No files found"}), 404
+            
+            # Get most recent file
+            filepath = max(cs_client_files, key=lambda f: f.stat().st_mtime)
+        
+        if not filepath.exists():
+            return jsonify({"success": False, "error": "File not found"}), 404
+        
+        if not filepath.is_file():
+            return jsonify({"success": False, "error": "Not a file"}), 400
+        
+        filepath.unlink()
+        
+        return jsonify({
+            "success": True,
+            "message": "CS Client file deleted successfully"
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# =============================================================================
+# SSH PUBLIC KEY MANAGEMENT
+# =============================================================================
+# These endpoints manage the user's SSH public key for secure lab access.
+# The public key is stored locally and passed to Terraform during deployment.
+# Private keys are NEVER handled by this application - they stay on the user's machine.
+# =============================================================================
+
+# SSH key storage file
+SSH_KEY_FILE = Path(__file__).parent.parent / "data" / "ssh_public_key.txt"
+
+def validate_ssh_public_key(key: str) -> dict:
+    """
+    Validate an SSH public key format.
+    Returns dict with 'valid', 'key_type', 'fingerprint', and 'comment' fields.
+    """
+    import re
+    import hashlib
+    import base64
+    
+    key = key.strip()
+    
+    # Supported key types
+    valid_types = [
+        'ssh-ed25519',
+        'ssh-rsa', 
+        'ecdsa-sha2-nistp256',
+        'ecdsa-sha2-nistp384',
+        'ecdsa-sha2-nistp521'
+    ]
+    
+    # Basic format check: type base64-data [comment]
+    pattern = r'^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp\d+)\s+([A-Za-z0-9+/=]+)(\s+.*)?$'
+    match = re.match(pattern, key)
+    
+    if not match:
+        return {
+            'valid': False,
+            'error': 'Invalid SSH public key format. Expected: ssh-ed25519 AAAA... or ssh-rsa AAAA...'
+        }
+    
+    key_type = match.group(1)
+    key_data = match.group(2)
+    comment = match.group(3).strip() if match.group(3) else ''
+    
+    # Validate base64 encoding
+    try:
+        decoded = base64.b64decode(key_data)
+        # Calculate fingerprint (SHA256)
+        fingerprint = hashlib.sha256(decoded).digest()
+        fingerprint_b64 = base64.b64encode(fingerprint).decode('utf-8').rstrip('=')
+        fingerprint_str = f"SHA256:{fingerprint_b64}"
+    except Exception:
+        return {
+            'valid': False,
+            'error': 'Invalid base64 encoding in key data'
+        }
+    
+    # Check minimum key length
+    if key_type == 'ssh-rsa' and len(decoded) < 256:
+        return {
+            'valid': False,
+            'error': 'RSA key is too short. Use at least 2048 bits (preferably 4096)'
+        }
+    
+    return {
+        'valid': True,
+        'key_type': key_type,
+        'fingerprint': fingerprint_str,
+        'comment': comment,
+        'key_preview': f"{key_type} {key_data[:20]}...{key_data[-10:]}" if len(key_data) > 30 else key
+    }
+
+
+@bp.route('/ssh-public-key', methods=['GET'])
+def get_ssh_public_key():
+    """Get the stored SSH public key"""
+    try:
+        # Ensure data directory exists
+        SSH_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        if not SSH_KEY_FILE.exists():
+            return jsonify({
+                "success": True,
+                "has_key": False,
+                "message": "No SSH public key configured"
+            })
+        
+        key_content = SSH_KEY_FILE.read_text().strip()
+        
+        if not key_content:
+            return jsonify({
+                "success": True,
+                "has_key": False,
+                "message": "SSH public key file is empty"
+            })
+        
+        # Validate and get key info
+        validation = validate_ssh_public_key(key_content)
+        
+        if not validation['valid']:
+            return jsonify({
+                "success": True,
+                "has_key": True,
+                "valid": False,
+                "error": validation['error'],
+                "key_preview": key_content[:50] + "..." if len(key_content) > 50 else key_content
+            })
+        
+        return jsonify({
+            "success": True,
+            "has_key": True,
+            "valid": True,
+            "key_type": validation['key_type'],
+            "fingerprint": validation['fingerprint'],
+            "comment": validation['comment'],
+            "key_preview": validation['key_preview']
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@bp.route('/ssh-public-key', methods=['POST'])
+def save_ssh_public_key():
+    """Save the user's SSH public key"""
+    try:
+        data = request.get_json() or {}
+        public_key = data.get('public_key', '').strip()
+        
+        if not public_key:
+            return jsonify({
+                "success": False,
+                "error": "No public key provided"
+            }), 400
+        
+        # Validate the key
+        validation = validate_ssh_public_key(public_key)
+        
+        if not validation['valid']:
+            return jsonify({
+                "success": False,
+                "error": validation['error']
+            }), 400
+        
+        # Warn if using RSA (recommend Ed25519)
+        warning = None
+        if validation['key_type'] == 'ssh-rsa':
+            warning = "Consider using Ed25519 keys for better security and performance: ssh-keygen -t ed25519"
+        
+        # Ensure data directory exists
+        SSH_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save the key
+        SSH_KEY_FILE.write_text(public_key + '\n')
+        
+        return jsonify({
+            "success": True,
+            "message": "SSH public key saved successfully",
+            "key_type": validation['key_type'],
+            "fingerprint": validation['fingerprint'],
+            "comment": validation['comment'],
+            "key_preview": validation['key_preview'],
+            "warning": warning
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@bp.route('/ssh-public-key', methods=['DELETE'])
+def delete_ssh_public_key():
+    """Delete the stored SSH public key"""
+    try:
+        if SSH_KEY_FILE.exists():
+            SSH_KEY_FILE.unlink()
+        
+        return jsonify({
+            "success": True,
+            "message": "SSH public key deleted successfully"
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def get_user_public_key() -> str:
+    """
+    Get the user's SSH public key for Terraform.
+    Returns the key content or raises an exception if not configured.
+    """
+    if not SSH_KEY_FILE.exists():
+        raise ValueError("SSH public key not configured. Please add your public key in the Deploy tab.")
+    
+    key_content = SSH_KEY_FILE.read_text().strip()
+    
+    if not key_content:
+        raise ValueError("SSH public key file is empty. Please add your public key in the Deploy tab.")
+    
+    validation = validate_ssh_public_key(key_content)
+    
+    if not validation['valid']:
+        raise ValueError(f"Invalid SSH public key: {validation['error']}")
+    
+    return key_content
+
+
+# =============================================================================
+# SECURE CONNECTION INFO ENDPOINTS (Phase 4)
+# =============================================================================
+# These endpoints provide connection information WITHOUT exposing private keys.
+# Private keys are generated on the hosts themselves and never transmitted.
+# Users connect using their own SSH key that they uploaded before deployment.
+# =============================================================================
+
+@bp.route('/connection-info', methods=['GET'])
+def get_connection_info():
+    """
+    Get secure connection information for deployed infrastructure.
+    
+    SECURITY: This endpoint NEVER returns private keys.
+    - User's private key stays on their machine
+    - Internal keys are generated on hosts and never transmitted
+    - Only public information (IPs, ports, commands) is returned
+    
+    Query params:
+        project: project name (optional, uses default workspace if not provided)
+    """
+    try:
+        project_name = request.args.get('project')
+        
+        # Use project-specific service if provided
+        if project_name:
+            service = get_service_for_project(project_name)
+            service.init()
+            service.ensure_workspace()
+        else:
+            service = terraform_service
+        
+        # Get Terraform outputs
+        output_result = service.output()
+        
+        if not output_result.get("success"):
+            return jsonify({
+                "success": False,
+                "error": "Failed to get deployment outputs. Infrastructure may not be deployed.",
+                "has_deployment": False
+            })
+        
+        outputs = output_result.get("outputs", {})
+        
+        # Check if there's an active deployment
+        deployment_type = outputs.get("deployment_type", {}).get("value", "")
+        if not deployment_type:
+            return jsonify({
+                "success": False,
+                "error": "No active deployment found",
+                "has_deployment": False
+            })
+        
+        # Get deployment mode
+        deployment_mode = outputs.get("deployment_mode", {}).get("value", {})
+        is_goad = deployment_mode.get("is_goad_only", False) or deployment_mode.get("is_combined", False)
+        
+        # Build secure connection info (NO PRIVATE KEYS!)
+        connection_info = {
+            "success": True,
+            "has_deployment": True,
+            "deployment_type": deployment_type,
+            "project_name": project_name or "default",
+            
+            # Security notice
+            "security_notice": {
+                "message": "Private keys are NOT provided by this API.",
+                "user_key": "Use the SSH key you generated locally (~/.ssh/goad_key)",
+                "internal_keys": "Internal keys are generated on hosts and never transmitted"
+            },
+            
+            # SSH connection commands (using user's own key)
+            "ssh_commands": {},
+            
+            # Host information
+            "hosts": {},
+            
+            # Network information
+            "network": {}
+        }
+        
+        # GOAD Lab connection info
+        if is_goad:
+            jumpbox_ip = outputs.get("goad_jumpbox_public_ip", {}).get("value")
+            jumpbox_private_ip = outputs.get("goad_jumpbox_private_ip", {}).get("value")
+            
+            if jumpbox_ip:
+                connection_info["hosts"]["jumpbox"] = {
+                    "public_ip": jumpbox_ip,
+                    "private_ip": jumpbox_private_ip,
+                    "user": "ubuntu",
+                    "role": "SSH Gateway / Bastion Host"
+                }
+                
+                # SSH command using user's own key
+                connection_info["ssh_commands"]["jumpbox"] = {
+                    "command": f"ssh -i ~/.ssh/goad_key ubuntu@{jumpbox_ip}",
+                    "description": "Connect to jumpbox using YOUR SSH key"
+                }
+                
+                # Team Server (via jumpbox)
+                teamserver_ip = outputs.get("goad_teamserver_private_ip", {}).get("value")
+                if teamserver_ip:
+                    connection_info["hosts"]["teamserver"] = {
+                        "private_ip": teamserver_ip,
+                        "user": "ubuntu",
+                        "role": "Cobalt Strike Team Server",
+                        "access": "Via jumpbox only"
+                    }
+                    
+                    connection_info["ssh_commands"]["teamserver"] = {
+                        "command": f"ssh teamserver  # From jumpbox",
+                        "description": "Connect to Team Server FROM the jumpbox (internal key is on jumpbox)",
+                        "tunnel_command": f"ssh -i ~/.ssh/goad_key -L 50050:{teamserver_ip}:50050 ubuntu@{jumpbox_ip}",
+                        "tunnel_description": "Create tunnel for Cobalt Strike client"
+                    }
+                
+                # Attack Box
+                attackbox_ip = outputs.get("goad_attackbox_private_ip", {}).get("value")
+                if attackbox_ip:
+                    connection_info["hosts"]["attackbox"] = {
+                        "private_ip": attackbox_ip,
+                        "role": "Windows Attack Workstation",
+                        "access": "Via jumpbox tunnel (RDP)"
+                    }
+                    
+                    connection_info["ssh_commands"]["attackbox_rdp"] = {
+                        "command": f"ssh -i ~/.ssh/goad_key -L 3389:{attackbox_ip}:3389 ubuntu@{jumpbox_ip}",
+                        "description": "Create RDP tunnel to Attack Box, then RDP to localhost:3389"
+                    }
+                
+                # Windows AD VMs
+                goad_vms = outputs.get("goad_lab_vms", {}).get("value", [])
+                if goad_vms:
+                    connection_info["hosts"]["windows_vms"] = {
+                        "vms": goad_vms,
+                        "access": "Via jumpbox tunnel (RDP/WinRM)"
+                    }
+                    
+                    # Example RDP tunnel for first VM
+                    if goad_vms and len(goad_vms) > 0:
+                        first_vm = goad_vms[0] if isinstance(goad_vms[0], dict) else {"ip": goad_vms[0]}
+                        vm_ip = first_vm.get("ip", first_vm.get("private_ip", "192.168.56.10"))
+                        connection_info["ssh_commands"]["windows_rdp_example"] = {
+                            "command": f"ssh -i ~/.ssh/goad_key -L 3389:{vm_ip}:3389 ubuntu@{jumpbox_ip}",
+                            "description": f"Create RDP tunnel to Windows VM ({vm_ip})"
+                        }
+        
+        # C2-only or combined mode - bastion info
+        bastion_ip = outputs.get("bastion_public_ip", {}).get("value")
+        if bastion_ip:
+            connection_info["hosts"]["bastion"] = {
+                "public_ip": bastion_ip,
+                "user": "ubuntu",
+                "role": "C2 Bastion Host"
+            }
+            
+            connection_info["ssh_commands"]["bastion"] = {
+                "command": f"ssh -i ~/.ssh/goad_key ubuntu@{bastion_ip}",
+                "description": "Connect to C2 bastion using YOUR SSH key"
+            }
+        
+        # C2 server info
+        c2_ip = outputs.get("c2_server_primary_ip", {}).get("value")
+        if c2_ip:
+            connection_info["hosts"]["c2_server"] = {
+                "private_ip": c2_ip,
+                "role": "C2 Team Server",
+                "access": "Via bastion only"
+            }
+        
+        # Redirectors
+        redirectors = outputs.get("proxy_redirector_public_ips", {}).get("value", [])
+        if redirectors:
+            connection_info["hosts"]["redirectors"] = {
+                "public_ips": redirectors,
+                "role": "Traffic Redirectors"
+            }
+        
+        # Network info
+        connection_info["network"] = {
+            "vpc_cidr": outputs.get("vpc_cidr", {}).get("value"),
+            "private_subnet": outputs.get("private_subnet_cidr", {}).get("value"),
+            "public_subnet": outputs.get("public_subnet_cidr", {}).get("value")
+        }
+        
+        return jsonify(connection_info)
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@bp.route('/ssh-fingerprints', methods=['GET'])
+def get_ssh_fingerprints():
+    """
+    Get SSH host key fingerprints for deployed hosts.
+    
+    This endpoint retrieves fingerprints that users can verify when connecting
+    to ensure they're connecting to the correct hosts (TOFU verification).
+    
+    Query params:
+        project: project name (optional)
+        host: specific host to get fingerprint for (optional)
+    
+    Note: Fingerprints are retrieved from S3 where hosts upload them during bootstrap,
+    or from Terraform outputs if available.
+    """
+    try:
+        project_name = request.args.get('project')
+        specific_host = request.args.get('host')
+        
+        # Use project-specific service if provided
+        if project_name:
+            service = get_service_for_project(project_name)
+            service.init()
+            service.ensure_workspace()
+        else:
+            service = terraform_service
+        
+        # Get Terraform outputs
+        output_result = service.output()
+        
+        if not output_result.get("success"):
+            return jsonify({
+                "success": False,
+                "error": "Failed to get deployment outputs"
+            })
+        
+        outputs = output_result.get("outputs", {})
+        
+        # Check for deployment
+        deployment_type = outputs.get("deployment_type", {}).get("value", "")
+        if not deployment_type:
+            return jsonify({
+                "success": False,
+                "error": "No active deployment found"
+            })
+        
+        fingerprints = {
+            "success": True,
+            "project_name": project_name or "default",
+            "hosts": {},
+            "verification_instructions": {
+                "description": "Compare these fingerprints with what SSH shows on first connection",
+                "example": "The authenticity of host 'x.x.x.x' can't be established. ED25519 key fingerprint is SHA256:xxxxx. Are you sure you want to continue connecting (yes/no)?",
+                "action": "Verify the fingerprint matches before typing 'yes'"
+            }
+        }
+        
+        # Get jumpbox connection info (includes fingerprint if available)
+        jumpbox_info = outputs.get("goad_jumpbox_connection_info", {}).get("value", {})
+        if jumpbox_info:
+            jumpbox_ip = jumpbox_info.get("public_ip") or outputs.get("goad_jumpbox_public_ip", {}).get("value")
+            
+            fingerprints["hosts"]["jumpbox"] = {
+                "ip": jumpbox_ip,
+                "user": "ubuntu",
+                "key_type": jumpbox_info.get("key_type", "ed25519"),
+                "fingerprint": jumpbox_info.get("host_key_fingerprint", "Available after first boot - check /etc/ssh/ssh_host_ed25519_key.pub on host"),
+                "how_to_verify": f"ssh-keyscan -t ed25519 {jumpbox_ip} 2>/dev/null | ssh-keygen -l -f -" if jumpbox_ip else "Deploy first to get IP"
+            }
+        
+        # Internal key info (for verifying jumpbox can connect to internal hosts)
+        internal_key_info = outputs.get("goad_internal_key_info", {}).get("value", {})
+        if internal_key_info:
+            fingerprints["internal_key"] = {
+                "description": "Jumpbox's internal key for connecting to Team Server/Attack Box",
+                "public_key_location": internal_key_info.get("public_key_location", "S3 bucket"),
+                "note": "This key is generated ON the jumpbox - private key never leaves the host"
+            }
+        
+        # Get bastion fingerprint if available
+        bastion_ip = outputs.get("bastion_public_ip", {}).get("value")
+        if bastion_ip:
+            fingerprints["hosts"]["bastion"] = {
+                "ip": bastion_ip,
+                "user": "ubuntu",
+                "key_type": "ed25519",
+                "fingerprint": "Available after first boot",
+                "how_to_verify": f"ssh-keyscan -t ed25519 {bastion_ip} 2>/dev/null | ssh-keygen -l -f -"
+            }
+        
+        # Filter by specific host if requested
+        if specific_host and specific_host in fingerprints["hosts"]:
+            fingerprints["hosts"] = {specific_host: fingerprints["hosts"][specific_host]}
+        
+        return jsonify(fingerprints)
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@bp.route('/connection-info/quick', methods=['GET'])
+def get_quick_connection_info():
+    """
+    Get minimal connection info for quick access.
+    Returns just the essential SSH commands needed to connect.
+    
+    Query params:
+        project: project name (optional)
+    """
+    try:
+        project_name = request.args.get('project')
+        
+        # Use project-specific service if provided
+        if project_name:
+            service = get_service_for_project(project_name)
+            service.init()
+            service.ensure_workspace()
+        else:
+            service = terraform_service
+        
+        # Get Terraform outputs
+        output_result = service.output()
+        outputs = output_result.get("outputs", {})
+        
+        # Get key IPs
+        jumpbox_ip = outputs.get("goad_jumpbox_public_ip", {}).get("value")
+        bastion_ip = outputs.get("bastion_public_ip", {}).get("value")
+        teamserver_ip = outputs.get("goad_teamserver_private_ip", {}).get("value")
+        
+        quick_info = {
+            "success": True,
+            "project_name": project_name or "default"
+        }
+        
+        if jumpbox_ip:
+            quick_info["jumpbox"] = {
+                "ip": jumpbox_ip,
+                "ssh": f"ssh -i ~/.ssh/goad_key ubuntu@{jumpbox_ip}"
+            }
+            
+            if teamserver_ip:
+                quick_info["teamserver_tunnel"] = {
+                    "ip": teamserver_ip,
+                    "tunnel": f"ssh -i ~/.ssh/goad_key -L 50050:{teamserver_ip}:50050 ubuntu@{jumpbox_ip}",
+                    "then": "Connect CS client to localhost:50050"
+                }
+        
+        if bastion_ip:
+            quick_info["bastion"] = {
+                "ip": bastion_ip,
+                "ssh": f"ssh -i ~/.ssh/goad_key ubuntu@{bastion_ip}"
+            }
+        
+        if not jumpbox_ip and not bastion_ip:
+            quick_info["message"] = "No deployment found or no public IPs available"
+        
+        return jsonify(quick_info)
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# =============================================================================
+# DEPRECATED: SSH PRIVATE KEY ENDPOINTS
+# =============================================================================
+# These endpoints are DEPRECATED and will be removed in a future version.
+# Private keys are now generated on hosts and never transmitted.
+# Users should use their own SSH key that they uploaded before deployment.
+# =============================================================================
 
 @bp.route('/infrastructure', methods=['GET'])
 def get_infrastructure():
@@ -2016,171 +2844,92 @@ def _get_ansible_status_message(status: str) -> str:
 
 
 # =============================================================================
-# SSH KEY DOWNLOAD ENDPOINT
+# DEPRECATED: SSH KEY DOWNLOAD ENDPOINT
+# =============================================================================
+# ⚠️  DEPRECATED: This endpoint is deprecated and will be removed.
+# 
+# SECURITY CHANGE: Private keys are no longer generated by Terraform or
+# transmitted via this API. Instead:
+#   1. Users generate their own SSH key locally (ssh-keygen -t ed25519)
+#   2. Users upload their PUBLIC key via the web UI before deployment
+#   3. Internal keys are generated ON the hosts during bootstrap
+#   4. Private keys NEVER leave the machine that generates them
+#
+# Use the new /connection-info endpoint for secure connection instructions.
 # =============================================================================
 
 @bp.route('/ssh-key/<key_type>', methods=['GET'])
 def download_ssh_key(key_type: str):
     """
-    Get SSH private key for jumpbox or Windows VMs.
-    Keys are retrieved from Terraform outputs and saved to ~/.ssh directory.
+    ⚠️  DEPRECATED: This endpoint is deprecated.
     
-    Args:
-        key_type: 'jumpbox' or 'windows'
+    Private keys are no longer provided by this API for security reasons.
     
-    Query params:
-        project: project name to get key for (uses workspace)
-        save_to_ssh: if 'true', saves to ~/.ssh directory
+    NEW APPROACH:
+    1. Generate your own SSH key: ssh-keygen -t ed25519 -f ~/.ssh/goad_key
+    2. Upload your PUBLIC key via the web UI before deployment
+    3. Use your private key to connect: ssh -i ~/.ssh/goad_key ubuntu@<jumpbox-ip>
+    
+    Use GET /connection-info for secure connection instructions.
     """
-    try:
-        if key_type not in ['jumpbox', 'windows']:
-            return jsonify({
-                "success": False,
-                "error": "Invalid key type. Use 'jumpbox' or 'windows'"
-            }), 400
-        
-        # Get project name from query params
-        project_name = request.args.get('project')
-        save_to_ssh = request.args.get('save_to_ssh', 'true').lower() == 'true'
-        
-        # Use project-specific service if provided
-        if project_name:
-            service = get_service_for_project(project_name)
-            # Ensure workspace is selected
-            service.init()
-            service.ensure_workspace()
-        else:
-            service = terraform_service
-        
-        # Get key from Terraform outputs
-        output_result = service.output()
-        outputs = output_result.get("outputs", {})
-        
-        if key_type == 'jumpbox':
-            key_content = outputs.get("goad_jumpbox_ssh_private_key", {}).get("value")
-            # Use project-specific filename if project name is provided
-            if project_name:
-                filename = f"{project_name}-goadmini-jumpbox-key.pem"
-            else:
-                filename = "goad-jumpbox.pem"
-        else:
-            key_content = outputs.get("goad_windows_ssh_private_key", {}).get("value")
-            if project_name:
-                filename = f"{project_name}-goadmini-windows-key.pem"
-            else:
-                filename = "goad-windows.pem"
-        
-        if not key_content:
-            return jsonify({
-                "success": False,
-                "error": f"SSH key not found. GOAD may not be deployed or Terraform outputs are not available."
-            }), 404
-        
-        # Determine save location
-        if save_to_ssh:
-            # Save to user's ~/.ssh directory
-            ssh_dir = Path.home() / ".ssh"
-            ssh_dir.mkdir(mode=0o700, exist_ok=True)
-            key_path = ssh_dir / filename
-        else:
-            # Save to project ssh_keys folder
-            key_path = SSH_KEYS_FOLDER / filename
-        
-        # Save key to file
-        with open(key_path, 'w') as f:
-            f.write(key_content)
-        os.chmod(key_path, 0o600)
-        
-        return jsonify({
-            "success": True,
-            "message": f"SSH key saved to {key_path}",
-            "path": str(key_path),
-            "filename": filename,
-            "chmod_command": f"chmod 600 {key_path}",
-            "key_content": key_content if not save_to_ssh else None  # Only return content if not saving
-        })
-        
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+    # Return deprecation notice instead of keys
+    return jsonify({
+        "success": False,
+        "deprecated": True,
+        "error": "This endpoint is deprecated for security reasons.",
+        "message": "Private keys are no longer provided by this API.",
+        "migration_guide": {
+            "step1": "Generate your own SSH key: ssh-keygen -t ed25519 -f ~/.ssh/goad_key",
+            "step2": "Upload your PUBLIC key via the Deploy tab before deployment",
+            "step3": "Use your private key to connect: ssh -i ~/.ssh/goad_key ubuntu@<jumpbox-ip>",
+            "step4": "Use GET /deploy/connection-info for connection instructions"
+        },
+        "security_reason": "Private keys should never be transmitted over networks. "
+                          "Keys are now generated on hosts and never leave them."
+    }), 410  # 410 Gone - resource no longer available
 
 
 @bp.route('/ssh-key/download', methods=['POST'])
 def save_ssh_key_to_disk():
     """
-    Save SSH key to user's ~/.ssh directory.
-    This endpoint is called from the UI to download and save the key.
+    ⚠️  DEPRECATED: This endpoint is deprecated.
+    
+    Private keys are no longer provided by this API for security reasons.
+    
+    NEW APPROACH:
+    1. Generate your own SSH key: ssh-keygen -t ed25519 -f ~/.ssh/goad_key
+    2. Upload your PUBLIC key via the web UI before deployment
+    3. Use your private key to connect: ssh -i ~/.ssh/goad_key ubuntu@<jumpbox-ip>
+    
+    Use GET /connection-info for secure connection instructions.
     """
-    try:
-        data = request.get_json() or {}
-        project_name = data.get('project_name')
-        key_type = data.get('key_type', 'jumpbox')
-        
-        if not project_name:
-            return jsonify({
-                "success": False,
-                "error": "Project name is required"
-            }), 400
-        
-        # Get the service for this project
-        service = get_service_for_project(project_name)
-        
-        # Initialize and ensure workspace
-        init_result = service.init()
-        if not init_result.get("success"):
-            return jsonify({
-                "success": False,
-                "error": "Failed to initialize Terraform"
-            }), 500
-        
-        ws_result = service.ensure_workspace()
-        if not ws_result.get("success"):
-            return jsonify({
-                "success": False,
-                "error": f"Failed to select workspace: {ws_result.get('stderr', '')}"
-            }), 500
-        
-        # Get outputs
-        output_result = service.output()
-        outputs = output_result.get("outputs", {})
-        
-        if key_type == 'jumpbox':
-            key_content = outputs.get("goad_jumpbox_ssh_private_key", {}).get("value")
-            filename = f"{project_name}-goadmini-jumpbox-key.pem"
-        else:
-            key_content = outputs.get("goad_windows_ssh_private_key", {}).get("value")
-            filename = f"{project_name}-goadmini-windows-key.pem"
-        
-        if not key_content:
-            return jsonify({
-                "success": False,
-                "error": f"SSH key not found in Terraform outputs. The deployment may not include GOAD or the key was not generated."
-            }), 404
-        
-        # Save to ~/.ssh
-        ssh_dir = Path.home() / ".ssh"
-        ssh_dir.mkdir(mode=0o700, exist_ok=True)
-        key_path = ssh_dir / filename
-        
-        with open(key_path, 'w') as f:
-            f.write(key_content)
-        os.chmod(key_path, 0o600)
-        
-        return jsonify({
-            "success": True,
-            "message": f"SSH key saved successfully",
-            "path": str(key_path),
-            "filename": filename,
-            "ssh_command": f"ssh -i {key_path} ubuntu@<IP_ADDRESS>"
-        })
-        
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+    # Return deprecation notice instead of saving keys
+    return jsonify({
+        "success": False,
+        "deprecated": True,
+        "error": "This endpoint is deprecated for security reasons.",
+        "message": "Private keys are no longer provided by this API.",
+        "migration_guide": {
+            "step1": "Generate your own SSH key: ssh-keygen -t ed25519 -f ~/.ssh/goad_key",
+            "step2": "Upload your PUBLIC key via the Deploy tab before deployment",
+            "step3": "Use your private key to connect: ssh -i ~/.ssh/goad_key ubuntu@<jumpbox-ip>",
+            "step4": "Use GET /deploy/connection-info for connection instructions"
+        },
+        "security_reason": "Private keys should never be transmitted over networks. "
+                          "Keys are now generated on hosts and never leave them."
+    }), 410  # 410 Gone - resource no longer available
+
+
+# Keep the old implementation commented for reference during migration
+# TODO: Remove after migration is complete
+"""
+# OLD IMPLEMENTATION - DEPRECATED
+@bp.route('/ssh-key/download', methods=['POST'])
+def save_ssh_key_to_disk_OLD():
+    # Save SSH key to user's ~/.ssh directory.
+    # This endpoint is called from the UI to download and save the key.
+    # ... (old implementation removed for security)
+"""
 
 
 # =============================================================================
@@ -2917,10 +3666,14 @@ def get_terraform_outputs():
                     outputs['dc02_state'] = instance['State']['Name']
                     
                 elif 'team' in role.lower() or 'teamserver' in name.lower():
-                    outputs['team_server_public_ip'] = instance.get('PublicIpAddress')
-                    outputs['team_server_private_ip'] = instance.get('PrivateIpAddress')
-                    outputs['team_server_instance_id'] = instance['InstanceId']
-                    outputs['team_server_state'] = instance['State']['Name']
+                    outputs['teamserver_private_ip'] = instance.get('PrivateIpAddress')
+                    outputs['teamserver_instance_id'] = instance['InstanceId']
+                    outputs['teamserver_state'] = instance['State']['Name']
+                    
+                elif 'attack' in role.lower() or 'attackbox' in name.lower():
+                    outputs['attackbox_private_ip'] = instance.get('PrivateIpAddress')
+                    outputs['attackbox_instance_id'] = instance['InstanceId']
+                    outputs['attackbox_state'] = instance['State']['Name']
                     
                 elif 'redirector' in role.lower() or 'redirector' in name.lower():
                     outputs['redirector_public_ip'] = instance.get('PublicIpAddress')
@@ -2930,6 +3683,22 @@ def get_terraform_outputs():
         
         # Get domain from config if available
         outputs['redirector_domain'] = config.get('primary_domain_name', '')
+        
+        # Get attackbox password from Terraform state if available
+        try:
+            service = get_service_for_project(project_name)
+            service.init()
+            service.ensure_workspace()
+            tf_outputs = service.output()
+            if tf_outputs.get("success"):
+                tf_out = tf_outputs.get("outputs", {})
+                # Get attackbox password from Terraform
+                attackbox_pwd = tf_out.get("goad_attackbox_password", {}).get("value")
+                if attackbox_pwd:
+                    outputs['attackbox_password'] = attackbox_pwd
+        except Exception as e:
+            # If we can't get Terraform outputs, continue without password
+            pass
         
         return jsonify({
             "success": True,

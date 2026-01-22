@@ -264,9 +264,9 @@ variable "vpc_cidr" {
 }
 
 variable "availability_zones" {
-  description = "List of availability zones"
+  description = "List of availability zones. If empty, will use first AZ in the selected region."
   type        = list(string)
-  default     = ["us-east-1a", "us-east-1b"]
+  default     = []  # Empty = auto-detect from region
 }
 
 variable "public_subnet_cidrs" {
@@ -317,6 +317,23 @@ variable "key_pair_name" {
   description = "Name of AWS key pair for SSH access"
   type        = string
   default     = ""
+}
+
+# =============================================================================
+# SSH Public Key (Phase 5 - Secure Key Management)
+# =============================================================================
+# User's SSH public key for jumpbox access. The user generates this locally
+# and provides it before deployment. Private key stays on user's machine.
+
+variable "user_public_key" {
+  description = "User's SSH public key for jumpbox access (Ed25519 or RSA format). User generates key locally with: ssh-keygen -t ed25519 -f ~/.ssh/goad_key"
+  type        = string
+  default     = ""
+  
+  validation {
+    condition     = var.user_public_key == "" || can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)\\s+[A-Za-z0-9+/=]+", var.user_public_key))
+    error_message = "user_public_key must be a valid SSH public key (ssh-ed25519, ssh-rsa, or ecdsa format) or empty"
+  }
 }
 
 # =============================================================================

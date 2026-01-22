@@ -178,7 +178,7 @@ class ConfigParser:
             'Cobalt Strike Configuration': ['cobalt_strike_archive_s3_path', 'cs_teamserver_password', 'cs_teamserver_port'],
             'VPC Configuration': ['vpc_cidr', 'availability_zones', 'public_subnet_cidrs', 'private_subnet_cidrs', 'enable_nat_gateway'],
             'Security Configuration': ['management_cidr_blocks', 'ssh_port', 'c2_server_port'],
-            'Key Pair Configuration': ['key_pair_name'],
+            'SSH Key Configuration': ['key_pair_name', 'user_public_key'],
             'Domain Configuration': ['primary_domain_name', 'primary_domain_hosted_zone_id', 'backup_domains', 'c2_subdomain', 'www_subdomain', 'cdn_subdomain', 'dns_provider', 'enable_dns_validation'],
             'C2 Team Server Configuration': ['c2_deployment_mode', 'c2_server_count', 'c2_server_instance_type', 'c2_server_ami_id', 'c2_server_root_volume_size', 'c2_server_enable_elastic_ips', 'c2_server_iam_instance_profile_name', 'c2_server_user_data'],
             'Proxy/Redirector Configuration': ['proxy_redirector_count', 'proxy_redirector_instance_type', 'proxy_redirector_ami_id', 'proxy_redirector_root_volume_size', 'proxy_redirector_iam_instance_profile_name', 'proxy_redirector_user_data'],

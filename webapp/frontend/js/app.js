@@ -125,6 +125,8 @@ const APP = {
                     checkDeploymentStatus();
                     checkDomainConfig();
                     checkCobaltStrikeFile();
+                    checkCSClientFile();
+                    checkSSHPublicKey();
                     break;
                 case 'deployments':
                     loadDeploymentsPage();
@@ -150,16 +152,28 @@ const APP = {
      * Setup event handlers for forms and buttons
      */
     setupEventHandlers() {
-        // File upload form
+        // File upload form (CS Archive for Team Server)
         const uploadForm = document.getElementById('upload-cs-form');
         if (uploadForm) {
             uploadForm.addEventListener('submit', handleFileUpload);
         }
         
-        // Delete file button
+        // Delete file button (CS Archive)
         const deleteBtn = document.getElementById('delete-file-btn');
         if (deleteBtn) {
             deleteBtn.addEventListener('click', handleFileDelete);
+        }
+        
+        // CS Client upload form (for Attack Box)
+        const csClientUploadForm = document.getElementById('upload-cs-client-form');
+        if (csClientUploadForm) {
+            csClientUploadForm.addEventListener('submit', handleCSClientUpload);
+        }
+        
+        // Delete CS Client file button
+        const deleteCSClientBtn = document.getElementById('delete-cs-client-file-btn');
+        if (deleteCSClientBtn) {
+            deleteCSClientBtn.addEventListener('click', handleCSClientDelete);
         }
         
         // Project name input - validate on input with debounce
@@ -824,7 +838,20 @@ async function validateProjectName(checkBackend = false) {
                 if (data.available) {
                     projectNameInput.style.borderColor = '#4CAF50';
                     if (statusSpan) {
-                        statusSpan.innerHTML = '<span style="color: #4CAF50;">✅ Available</span>';
+                        // Check if there's a history warning
+                        if (data.history && data.history.previously_used) {
+                            const h = data.history;
+                            let warningText = `⚠️ Previously used`;
+                            if (h.was_purged) {
+                                warningText += ' (purged)';
+                            } else if (h.had_errors) {
+                                warningText += ' (had errors)';
+                            }
+                            projectNameInput.style.borderColor = '#ff9800';
+                            statusSpan.innerHTML = `<span style="color: #ff9800;">${warningText} - consider using a new name</span>`;
+                        } else {
+                            statusSpan.innerHTML = '<span style="color: #4CAF50;">✅ Available</span>';
+                        }
                         statusSpan.style.display = 'block';
                     }
     return true;
@@ -949,7 +976,7 @@ function updateDeploymentType() {
         }
         if (keyPairHint) {
             if (isGoadOnly) {
-                keyPairHint.innerHTML = '<span style="color: #4CAF50;">✅ GOAD deployments auto-generate SSH keys. Download them after deployment.</span>';
+                keyPairHint.innerHTML = '<span style="color: #4CAF50;">✅ GOAD deployments use YOUR SSH key. Upload your public key in the Deploy tab before deploying.</span>';
             } else {
                 keyPairHint.innerHTML = 'AWS EC2 key pair for SSH access to C2 servers';
             }
@@ -1588,10 +1615,87 @@ function updateDeploymentUI(status) {
             </div>
         `;
         
-        // Show post-deployment steps
+        // Show post-deployment steps based on deployment type
         const postDeploySteps = document.getElementById('post-deployment-steps');
         if (postDeploySteps) {
-            postDeploySteps.style.display = 'block';
+            // Get the deployment type to show appropriate next steps
+            const deploymentType = status.deployment_type || '';
+            const isGoadOnly = deploymentType.startsWith('goad-');
+            const isC2Only = deploymentType.startsWith('c2-');
+            const isCombined = deploymentType.startsWith('combined-');
+            
+            if (isGoadOnly) {
+                // GOAD training lab - show jumpbox connection info
+                postDeploySteps.innerHTML = `
+                    <h4 style="margin: 0 0 15px 0; color: #2e7d32;">✅ GOAD Lab Deployed - Next Steps</h4>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <h5 style="margin: 0 0 8px 0; color: #1b5e20;">1. Connect to Jumpbox</h5>
+                        <p style="margin: 0; font-size: 0.9em; color: #555;">
+                            SSH to the jumpbox using your key (the one you uploaded before deployment):
+                        </p>
+                        <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block; margin-top: 8px; font-size: 0.85em;">
+                            ssh -i ~/.ssh/goad_key ubuntu@JUMPBOX_PUBLIC_IP
+                        </code>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <h5 style="margin: 0 0 8px 0; color: #1b5e20;">2. Access Team Server (from Jumpbox)</h5>
+                        <p style="margin: 0; font-size: 0.9em; color: #555;">
+                            Once on the jumpbox, connect to the Team Server:
+                        </p>
+                        <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block; margin-top: 8px; font-size: 0.85em;">
+                            ssh teamserver
+                        </code>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <h5 style="margin: 0 0 8px 0; color: #1b5e20;">3. Connect Cobalt Strike Client</h5>
+                        <p style="margin: 0; font-size: 0.9em; color: #555;">
+                            Create an SSH tunnel from your local machine to access the Team Server:
+                        </p>
+                        <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block; margin-top: 8px; font-size: 0.85em;">
+                            ssh -i ~/.ssh/goad_key -L 50050:192.168.56.40:50050 ubuntu@JUMPBOX_PUBLIC_IP
+                        </code>
+                        <p style="margin: 8px 0 0 0; font-size: 0.85em; color: #666;">
+                            Then connect your CS client to <strong>localhost:50050</strong>
+                        </p>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <h5 style="margin: 0 0 8px 0; color: #1b5e20;">4. RDP to Windows VMs</h5>
+                        <p style="margin: 0 0 8px 0; font-size: 0.9em; color: #555;">
+                            Step 1: Create an SSH tunnel for RDP access to AD VMs (run on YOUR local machine):
+                        </p>
+                        <code style="background: #1e1e1e; color: #4ec9b0; padding: 8px 12px; border-radius: 4px; display: block; margin-bottom: 12px; font-size: 0.85em;">
+                            ssh -i ~/.ssh/goad_key -L 3389:192.168.56.10:3389 ubuntu@JUMPBOX_PUBLIC_IP
+                        </code>
+                        
+                        <div style="padding: 12px; background: #fff; border: 2px solid #4CAF50; border-radius: 6px; margin-top: 8px;">
+                            <div style="font-weight: 600; color: #2e7d32; margin-bottom: 6px; font-size: 0.95em;">📌 Step 2: Connect RDP Client</div>
+                            <div style="font-size: 0.9em; color: #333; margin-bottom: 6px;">
+                                With the SSH tunnel running, connect your RDP client to:
+                            </div>
+                            <div style="text-align: center; padding: 10px; background: #e8f5e9; border-radius: 4px;">
+                                <code style="font-size: 1.3em; font-weight: 600; color: #2e7d32;">localhost:3389</code>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <p style="margin: 0; font-size: 0.9em; color: #555;">
+                            💡 <strong>Tip:</strong> Go to the Deployment Manager page for IPs and connection details.
+                        </p>
+                    </div>
+                `;
+                postDeploySteps.style.display = 'block';
+            } else if (isC2Only || isCombined) {
+                // C2 deployment - show DNS/SSL steps (original content)
+                postDeploySteps.style.display = 'block';
+            } else {
+                // Unknown type - hide
+                postDeploySteps.style.display = 'none';
+            }
         }
         
     } else if (status.status === 'error') {
@@ -1833,8 +1937,7 @@ async function checkCobaltStrikeFile() {
     const statusDiv = document.getElementById('cs-file-status');
     const fileInfoDiv = document.getElementById('cs-file-info');
     const fileDetails = document.getElementById('file-details');
-    const deployBtn = document.getElementById('deploy-btn');
-    const warningDiv = document.getElementById('deployment-prereq-warning');
+    const uploadFormContainer = document.getElementById('cs-upload-form-container');
     
     if (!statusDiv) return;
     
@@ -1845,12 +1948,11 @@ async function checkCobaltStrikeFile() {
         if (data.success) {
             if (data.has_file && data.latest_file) {
                 const file = data.latest_file;
-                statusDiv.innerHTML = `
-                    <div class="status-display success">
-                        <p><strong>✅ File Uploaded:</strong> ${file.filename}</p>
-                        <p><strong>Size:</strong> ${file.size_mb} MB</p>
-                    </div>
-                `;
+                
+                // Hide upload form, show compact file info
+                if (uploadFormContainer) uploadFormContainer.style.display = 'none';
+                statusDiv.style.display = 'none';
+                
                 if (fileInfoDiv) {
                     fileInfoDiv.style.display = 'block';
                     if (fileDetails) {
@@ -1862,54 +1964,17 @@ async function checkCobaltStrikeFile() {
                     }
                 }
             } else {
-                statusDiv.innerHTML = `
-                    <div class="status-display warning">
-                        <p><strong>⚠️ No file uploaded</strong></p>
-                        <p>Please upload Cobalt Strike archive before deployment.</p>
-                    </div>
-                `;
+                // Show upload form, hide file info
+                if (uploadFormContainer) uploadFormContainer.style.display = 'block';
+                statusDiv.style.display = 'none';
                 if (fileInfoDiv) fileInfoDiv.style.display = 'none';
             }
             
-            // Check both prerequisites - but domain is only required for certain deployment types
-            const deploymentTypeSelect = document.getElementById('deployment-type');
-            const deploymentType = deploymentTypeSelect?.value || '';
-            const deployConfig = DEPLOYMENT_CONFIGS[deploymentType];
-            const requiresDomain = deployConfig?.requiresDomain || false;
-            
-            let hasDomain = true; // Default to true if domain not required
-            if (requiresDomain) {
-            const domainCheck = await fetch(`${API_BASE}/health/domain-config`);
-            const domainData = await domainCheck.json();
-                hasDomain = domainData.success && domainData.configured;
-            }
-            
-            if (deployBtn) {
-                // For GOAD-only, just need CS file. For C2/Combined, need both.
-                const prereqsMet = requiresDomain ? (data.has_file && hasDomain) : data.has_file;
-                if (prereqsMet) {
-                    deployBtn.disabled = false;
-                    deployBtn.style.opacity = '1';
-                } else {
-                    deployBtn.disabled = true;
-                    deployBtn.style.opacity = '0.5';
-                }
-            }
-            
-            if (warningDiv) {
-                const missing = [];
-                if (!data.has_file) missing.push('Cobalt Strike file');
-                if (requiresDomain && !hasDomain) missing.push('Domain configuration');
-                
-                if (missing.length > 0) {
-                    warningDiv.style.display = 'block';
-                    warningDiv.innerHTML = `<p><strong>⚠️ Prerequisites Missing:</strong> ${missing.join(' and ')} required before deployment.</p>`;
-                } else {
-                    warningDiv.style.display = 'none';
-                }
-            }
+            // Update unified prerequisites check
+            updateDeploymentPrerequisites();
         }
     } catch (error) {
+        statusDiv.style.display = 'block';
         statusDiv.innerHTML = `<p>Error checking file: ${error.message}</p>`;
     }
 }
@@ -1999,12 +2064,422 @@ async function handleFileDelete() {
         
         const data = await response.json();
         if (data.success) {
-            checkCobaltStrikeFile();
+            // Show upload form again
+            const uploadFormContainer = document.getElementById('cs-upload-form-container');
+            const fileInfoDiv = document.getElementById('cs-file-info');
+            if (uploadFormContainer) uploadFormContainer.style.display = 'block';
+            if (fileInfoDiv) fileInfoDiv.style.display = 'none';
+            
+            // Clear file input
+            const fileInput = document.getElementById('cs-file-input');
+            if (fileInput) fileInput.value = '';
+            
+            // Update prerequisites
+            updateDeploymentPrerequisites();
         } else {
             alert('Error deleting file: ' + (data.error || 'Unknown error'));
         }
     } catch (error) {
         alert('Error: ' + error.message);
+    }
+}
+
+// =============================================================================
+// COBALT STRIKE CLIENT UPLOAD (for Attack Box)
+// =============================================================================
+
+async function checkCSClientFile() {
+    const statusDiv = document.getElementById('cs-client-file-status');
+    const fileInfoDiv = document.getElementById('cs-client-file-info');
+    const fileDetails = document.getElementById('cs-client-file-details');
+    const uploadFormContainer = document.getElementById('cs-client-upload-form-container');
+    
+    if (!statusDiv) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/cs-client-file`);
+        const data = await response.json();
+        
+        if (data.success) {
+            if (data.has_file && data.latest_file) {
+                const file = data.latest_file;
+                
+                // Hide upload form, show compact file info
+                if (uploadFormContainer) uploadFormContainer.style.display = 'none';
+                statusDiv.style.display = 'none';
+                
+                if (fileInfoDiv) {
+                    fileInfoDiv.style.display = 'block';
+                    if (fileDetails) {
+                        fileDetails.innerHTML = `
+                            <strong>Filename:</strong> ${file.filename}<br>
+                            <strong>Size:</strong> ${file.size_mb} MB<br>
+                            <strong>Path:</strong> ${file.path}
+                        `;
+                    }
+                }
+            } else {
+                // Show upload form, hide file info
+                if (uploadFormContainer) uploadFormContainer.style.display = 'block';
+                statusDiv.style.display = 'none';
+                if (fileInfoDiv) fileInfoDiv.style.display = 'none';
+            }
+        }
+    } catch (error) {
+        statusDiv.style.display = 'block';
+        statusDiv.innerHTML = `<p>Error checking CS Client file: ${error.message}</p>`;
+    }
+}
+
+async function handleCSClientUpload(e) {
+    e.preventDefault();
+    
+    const fileInput = document.getElementById('cs-client-file-input');
+    const uploadBtn = document.getElementById('upload-cs-client-btn');
+    const progressDiv = document.getElementById('cs-client-upload-progress');
+    const progressFill = document.getElementById('cs-client-progress-fill');
+    const progressText = document.getElementById('cs-client-progress-text');
+    const statusDiv = document.getElementById('cs-client-file-status');
+    
+    if (!fileInput.files[0]) {
+        alert('Please select a file');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    
+    uploadBtn.disabled = true;
+    progressDiv.style.display = 'block';
+    progressFill.style.width = '0%';
+    progressText.textContent = 'Uploading...';
+    
+    try {
+        const xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+                const percentComplete = (e.loaded / e.total) * 100;
+                progressFill.style.width = percentComplete + '%';
+                progressText.textContent = `Uploading... ${Math.round(percentComplete)}%`;
+            }
+        });
+        
+        xhr.addEventListener('load', () => {
+            if (xhr.status === 200) {
+                const data = JSON.parse(xhr.responseText);
+                if (data.success) {
+                    progressFill.style.width = '100%';
+                    progressText.textContent = 'Upload complete!';
+                    setTimeout(() => {
+                        progressDiv.style.display = 'none';
+                        checkCSClientFile();
+                    }, 1000);
+                } else {
+                    statusDiv.innerHTML = `<p>Error: ${data.error || 'Upload failed'}</p>`;
+                    progressDiv.style.display = 'none';
+                }
+            } else {
+                statusDiv.innerHTML = `<p>Error: Upload failed (${xhr.status})</p>`;
+                progressDiv.style.display = 'none';
+            }
+            uploadBtn.disabled = false;
+        });
+        
+        xhr.addEventListener('error', () => {
+            statusDiv.innerHTML = '<p>Error: Upload failed</p>';
+            progressDiv.style.display = 'none';
+            uploadBtn.disabled = false;
+        });
+        
+        xhr.open('POST', `${API_BASE}/deploy/upload-cs-client`);
+        xhr.send(formData);
+        
+    } catch (error) {
+        statusDiv.innerHTML = `<p>Error: ${error.message}</p>`;
+        progressDiv.style.display = 'none';
+        uploadBtn.disabled = false;
+    }
+}
+
+async function handleCSClientDelete() {
+    if (!confirm('Are you sure you want to delete the CS Client file?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/cs-client-file`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: 'latest' })
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            // Show upload form again
+            const uploadFormContainer = document.getElementById('cs-client-upload-form-container');
+            const fileInfoDiv = document.getElementById('cs-client-file-info');
+            if (uploadFormContainer) uploadFormContainer.style.display = 'block';
+            if (fileInfoDiv) fileInfoDiv.style.display = 'none';
+            
+            // Clear file input
+            const fileInput = document.getElementById('cs-client-file-input');
+            if (fileInput) fileInput.value = '';
+        } else {
+            alert('Error deleting file: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+
+// =============================================================================
+// SSH PUBLIC KEY MANAGEMENT
+// =============================================================================
+
+async function checkSSHPublicKey() {
+    const statusDiv = document.getElementById('ssh-key-status');
+    const keyInfoDiv = document.getElementById('ssh-key-info');
+    const keyDetails = document.getElementById('ssh-key-details');
+    const formContainer = document.getElementById('ssh-key-form-container');
+    
+    if (!statusDiv) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/ssh-public-key`);
+        const data = await response.json();
+        
+        if (data.success) {
+            if (data.has_key && data.valid) {
+                // Key is configured and valid - show compact view
+                if (formContainer) formContainer.style.display = 'none';
+                statusDiv.style.display = 'none';
+                
+                if (keyInfoDiv) {
+                    keyInfoDiv.style.display = 'block';
+                    if (keyDetails) {
+                        keyDetails.innerHTML = `
+                            <strong>Type:</strong> ${data.key_type}<br>
+                            <strong>Fingerprint:</strong> ${data.fingerprint}<br>
+                            ${data.comment ? `<strong>Comment:</strong> ${data.comment}` : ''}
+                        `;
+                    }
+                }
+                
+            } else if (data.has_key && !data.valid) {
+                // Key exists but is invalid - show form with error
+                if (formContainer) formContainer.style.display = 'block';
+                if (keyInfoDiv) keyInfoDiv.style.display = 'none';
+                statusDiv.style.display = 'block';
+                statusDiv.innerHTML = `
+                    <div class="status-display error" style="margin-bottom: 15px;">
+                        <p><strong>❌ Invalid SSH Key:</strong> ${data.error || 'The stored key is not valid'}</p>
+                    </div>
+                `;
+                
+            } else {
+                // No key configured - show form
+                if (formContainer) formContainer.style.display = 'block';
+                if (keyInfoDiv) keyInfoDiv.style.display = 'none';
+                statusDiv.style.display = 'none';
+            }
+            
+            // Update prerequisites check
+            updateDeploymentPrerequisites();
+        }
+    } catch (error) {
+        statusDiv.style.display = 'block';
+        statusDiv.innerHTML = `<p>Error checking SSH key: ${error.message}</p>`;
+    }
+}
+
+async function saveSSHPublicKey() {
+    const keyInput = document.getElementById('ssh-public-key-input');
+    const saveBtn = document.getElementById('save-ssh-key-btn');
+    const statusDiv = document.getElementById('ssh-key-status');
+    
+    if (!keyInput) return;
+    
+    const publicKey = keyInput.value.trim();
+    
+    if (!publicKey) {
+        alert('Please paste your SSH public key');
+        return;
+    }
+    
+    // Basic client-side validation
+    if (!publicKey.startsWith('ssh-ed25519') && 
+        !publicKey.startsWith('ssh-rsa') && 
+        !publicKey.startsWith('ecdsa-sha2-')) {
+        alert('Invalid SSH public key format.\n\nExpected format: ssh-ed25519 AAAA... or ssh-rsa AAAA...\n\nMake sure you\'re pasting the PUBLIC key (from .pub file), not the private key.');
+        return;
+    }
+    
+    // Check if it looks like a private key
+    if (publicKey.includes('PRIVATE KEY')) {
+        alert('⚠️ This looks like a PRIVATE key!\n\nPlease paste your PUBLIC key instead.\n\nYour public key is in the .pub file (e.g., ~/.ssh/goad_key.pub)');
+        return;
+    }
+    
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = '💾 Saving...';
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/ssh-public-key`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ public_key: publicKey })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Show success message
+            if (statusDiv) {
+                statusDiv.innerHTML = `
+                    <div class="status-display success">
+                        <p><strong>✅ SSH Key Saved Successfully!</strong></p>
+                        <p><strong>Type:</strong> ${data.key_type}</p>
+                        <p><strong>Fingerprint:</strong> <code>${data.fingerprint}</code></p>
+                        ${data.warning ? `<p style="color: #ff9800;"><strong>⚠️ Note:</strong> ${data.warning}</p>` : ''}
+                    </div>
+                `;
+            }
+            
+            // Refresh the display
+            setTimeout(() => checkSSHPublicKey(), 1000);
+            
+        } else {
+            alert('Error saving SSH key: ' + (data.error || 'Unknown error'));
+        }
+        
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = '💾 Save SSH Public Key';
+        }
+    }
+}
+
+function editSSHKey() {
+    const formContainer = document.getElementById('ssh-key-form-container');
+    const keyInput = document.getElementById('ssh-public-key-input');
+    const keyInfoDiv = document.getElementById('ssh-key-info');
+    
+    // Show the form, hide the info
+    if (formContainer) formContainer.style.display = 'block';
+    if (keyInfoDiv) keyInfoDiv.style.display = 'none';
+    
+    // Clear and focus input
+    if (keyInput) {
+        keyInput.value = '';
+        keyInput.focus();
+    }
+}
+
+async function deleteSSHKey() {
+    if (!confirm('Are you sure you want to delete your SSH public key?\n\nYou will need to add a new key before deploying.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/deploy/ssh-public-key`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Show form, hide info
+            const formContainer = document.getElementById('ssh-key-form-container');
+            const keyInfoDiv = document.getElementById('ssh-key-info');
+            const keyInput = document.getElementById('ssh-public-key-input');
+            
+            if (formContainer) formContainer.style.display = 'block';
+            if (keyInfoDiv) keyInfoDiv.style.display = 'none';
+            if (keyInput) keyInput.value = '';
+            
+            // Update prerequisites
+            updateDeploymentPrerequisites();
+        } else {
+            alert('Error deleting SSH key: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+
+// Update deployment prerequisites to include SSH key check
+async function updateDeploymentPrerequisites() {
+    const deployBtn = document.getElementById('deploy-btn');
+    const warningDiv = document.getElementById('deployment-prereq-warning');
+    
+    // Get deployment type config
+    const deploymentTypeSelect = document.getElementById('deployment-type');
+    const deploymentType = deploymentTypeSelect?.value || '';
+    const config = DEPLOYMENT_CONFIGS[deploymentType];
+    const requiresDomain = config?.requiresDomain || false;
+    
+    const missing = [];
+    
+    // Check SSH public key - ALWAYS required
+    try {
+        const sshResponse = await fetch(`${API_BASE}/deploy/ssh-public-key`);
+        const sshData = await sshResponse.json();
+        if (!sshData.has_key || !sshData.valid) {
+            missing.push('SSH public key');
+        }
+    } catch (e) {
+        missing.push('SSH public key');
+    }
+    
+    // Check Cobalt Strike file
+    try {
+        const csResponse = await fetch(`${API_BASE}/deploy/cobalt-strike-file`);
+        const csData = await csResponse.json();
+        if (!csData.has_file) {
+            missing.push('Cobalt Strike file');
+        }
+    } catch (e) {
+        missing.push('Cobalt Strike file');
+    }
+    
+    // Check domain (only if required)
+    if (requiresDomain) {
+        try {
+            const domainResponse = await fetch(`${API_BASE}/health/domain-config`);
+            const domainData = await domainResponse.json();
+            if (!domainData.success || !domainData.configured) {
+                missing.push('Domain configuration');
+            }
+        } catch (e) {
+            missing.push('Domain configuration');
+        }
+    }
+    
+    // Update UI
+    if (deployBtn) {
+        if (missing.length === 0) {
+            deployBtn.disabled = false;
+            deployBtn.style.opacity = '1';
+        } else {
+            deployBtn.disabled = true;
+            deployBtn.style.opacity = '0.5';
+        }
+    }
+    
+    if (warningDiv) {
+        if (missing.length > 0) {
+            warningDiv.style.display = 'block';
+            warningDiv.innerHTML = `<p><strong>⚠️ Prerequisites Missing:</strong> ${missing.join(', ')} required before deployment.</p>`;
+        } else {
+            warningDiv.style.display = 'none';
+        }
     }
 }
 
@@ -2029,6 +2504,17 @@ async function startDeployment() {
     const requiresDomain = config ? config.requiresDomain : true;
     
     const missing = [];
+    
+    // Check SSH public key - ALWAYS required for lab access
+    try {
+        const sshCheck = await fetch(`${API_BASE}/deploy/ssh-public-key`);
+        const sshData = await sshCheck.json();
+        if (!sshData.has_key || !sshData.valid) {
+            missing.push('SSH public key');
+        }
+    } catch (e) {
+        missing.push('SSH public key');
+    }
     
     // Check Cobalt Strike file - required for ALL deployments
     if (requiresCS) {
@@ -2061,6 +2547,9 @@ async function startDeployment() {
     
     const statusDiv = document.getElementById('deployment-status');
     const outputDiv = document.getElementById('deployment-output');
+    
+    // IMPORTANT: Reset the plan flag so status polling can work
+    isPlanRunning = false;
     
     // Clear the plan output area when starting deployment
     if (outputDiv) {
@@ -2487,9 +2976,6 @@ async function destroyInfrastructure(projectName = null) {
  * @param {string} projectName - Optional project name to purge (for multi-project support)
  */
 async function purgeFailedDeployment(projectName = null) {
-    // Get resource count for confirmation message
-    const resourceCount = allResources ? allResources.length : 0;
-    
     // Try to get project name from various sources if not provided
     if (!projectName) {
         // Check if we have a current deployment project
@@ -2502,19 +2988,44 @@ async function purgeFailedDeployment(projectName = null) {
         }
     }
     
+    // Fetch the actual resource count for THIS specific project
+    let resourceCount = 0;
+    if (projectName) {
+        try {
+            const resourceResponse = await fetch(`${API_BASE}/deploy/resources?project=${encodeURIComponent(projectName)}`);
+            const resourceData = await resourceResponse.json();
+            if (resourceData.success && resourceData.resources) {
+                resourceCount = resourceData.resources.length;
+            }
+        } catch (e) {
+            console.warn('Could not fetch resource count for project:', e);
+        }
+    }
+    
+    // If no resources found, warn the user
+    if (resourceCount === 0) {
+        const proceed = confirm(
+            `⚠️ No AWS resources found for project: ${projectName}\n\n` +
+            `This project may have already been cleaned up, or the resources were never created.\n\n` +
+            `Do you still want to attempt a purge? This will try to clean up any Terraform state.`
+        );
+        if (!proceed) {
+            return;
+        }
+    }
+    
     const projectInfo = projectName ? `\nProject: ${projectName}` : '';
     
+    // Build a clearer, more accurate confirmation message
+    const resourceText = resourceCount > 0 
+        ? `This will delete ${resourceCount} AWS resource${resourceCount !== 1 ? 's' : ''} found for this project.`
+        : `This will attempt to delete all AWS resources for this project.`;
+    
     const confirmText = prompt(
-        `⚠️ PURGE ALL PROJECT RESOURCES?${projectInfo}\n\n` +
-        `This will PERMANENTLY DELETE all ${resourceCount} AWS resources associated with this project.\n\n` +
-        `Resources to be deleted:\n` +
-        `• VPCs, Subnets, Security Groups\n` +
-        `• EC2 Instances, EBS Volumes\n` +
-        `• NAT Gateways, Elastic IPs\n` +
-        `• IAM Roles, S3 Buckets\n` +
-        `• All other project resources\n\n` +
-        `This CANNOT be undone!\n\n` +
-        `Type "PURGE" to confirm:`
+        `⚠️ PURGE PROJECT RESOURCES?${projectInfo}\n\n` +
+        `${resourceText}\n\n` +
+        `This action CANNOT be undone!\n\n` +
+        `Type PURGE to confirm:`
     );
     
     if (confirmText !== 'PURGE') {
@@ -2644,6 +3155,10 @@ function pollDestructionStatus(projectName = null) {
                     // Destruction complete
                     clearInterval(pollInterval);
                     disableDeployButton(false);
+                    
+                    // Immediately refresh resource list to show updated state
+                    loadResourceList();
+                    
                     if (overviewDiv) {
                         overviewDiv.innerHTML = `
                             <div class="status-display success">
@@ -2657,16 +3172,18 @@ function pollDestructionStatus(projectName = null) {
                             </div>
                         `;
                     }
-                    // Refresh the page to update all sections
+                    // Refresh other sections after a short delay
                     setTimeout(() => {
                         refreshDeployments();
-                        loadResourceList();
                         renderDeploymentTimeline();
-                    }, 2000);
+                    }, 1000);
                 } else if (status.status === 'error') {
                     // Destruction failed
                     clearInterval(pollInterval);
                     disableDeployButton(false);
+                    
+                    // Refresh resource list - some resources may have been deleted
+                    loadResourceList();
                     
                     // Build ALL logs (not just errors) to show full context
                     let allLogsHtml = '';
@@ -2990,60 +3507,120 @@ async function loadConnectionInfo(projectName, sessionId) {
         const response = await fetch(`${API_BASE}/deploy/outputs?project=${encodeURIComponent(projectName)}`);
         const data = await response.json();
         
-        if (data.success && data.outputs) {
-            const outputs = data.outputs;
-            const keyName = outputs.jumpbox_key_name || `${projectName}-goadmini-jumpbox-key`;
-            
-            // Build connection info HTML
-            let html = '<div style="font-size: 0.95em;">';
-            
-            // SSH Key Download Button (always show first)
-            html += `
-                <div style="margin-bottom: 15px; padding: 12px; background: #fff8e1; border-radius: 6px; border-left: 4px solid #ffc107;">
-                    <div style="font-weight: 600; color: #f57c00; margin-bottom: 8px;">🔑 SSH Key Setup</div>
-                    <div style="margin-bottom: 10px; font-size: 0.9em; color: #666;">
-                        Before connecting, you need to download the SSH key to your <code>~/.ssh</code> directory.
-                    </div>
-                    <button onclick="downloadSSHKey('${projectName}', 'jumpbox')" 
-                            style="background: #ff9800; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 500; margin-right: 10px;">
-                        📥 Download SSH Key to ~/.ssh
-                    </button>
-                    <span id="ssh-key-status-${sessionId}" style="font-size: 0.85em; color: #666;"></span>
+        if (!data.success || !data.outputs) {
+            contentDiv.innerHTML = `<div style="color: #666;">No connection details available. ${data.error || ''}</div>`;
+            return;
+        }
+        
+        const outputs = data.outputs;
+        
+        // Get user's key path from their uploaded public key comment
+        let userKeyPath = '~/.ssh/your_key';  // Default fallback
+        let keyComment = null;
+        
+        try {
+            const sshKeyResponse = await fetch(`${API_BASE}/deploy/ssh-public-key`);
+            const sshKeyData = await sshKeyResponse.json();
+            if (sshKeyData.success && sshKeyData.has_key && sshKeyData.comment) {
+                keyComment = sshKeyData.comment;
+                // Try to extract key path from comment
+                // Common patterns: user@host, ~/.ssh/keyname, /path/to/key, email@domain.com
+                if (keyComment.includes('/.ssh/')) {
+                    // Comment contains a path like ~/.ssh/id_ed25519 or /home/user/.ssh/mykey
+                    userKeyPath = keyComment.trim();
+                } else if (keyComment.match(/^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$/)) {
+                    // It's an email - use default key names based on key type
+                    if (sshKeyData.key_type === 'ssh-ed25519') {
+                        userKeyPath = '~/.ssh/id_ed25519';
+                    } else if (sshKeyData.key_type === 'ssh-rsa') {
+                        userKeyPath = '~/.ssh/id_rsa';
+                    }
+                } else if (!keyComment.includes('@') && !keyComment.includes(' ')) {
+                    // Simple comment like "mykey" - assume it's in ~/.ssh/
+                    userKeyPath = `~/.ssh/${keyComment}`;
+                }
+            }
+        } catch (e) {
+            console.log('Could not fetch SSH key info, using default path');
+        }
+        
+        // Build connection info HTML
+        let html = '<div style="font-size: 0.95em;">';
+        
+        const keyPathDisplay = userKeyPath.replace('~/', '~/');
+        const isDefaultPath = userKeyPath === '~/.ssh/your_key';
+        
+        // SSH Key Info Section - Secure Architecture
+        html += `
+            <div style="margin-bottom: 15px; padding: 15px; background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border-radius: 8px; border-left: 4px solid #4CAF50;">
+                <div style="font-weight: 600; color: #2e7d32; margin-bottom: 10px; font-size: 1.05em;">🔐 Secure SSH Access</div>
+                <div style="margin-bottom: 12px; font-size: 0.9em; color: #333; line-height: 1.5;">
+                    <strong>You use YOUR OWN SSH key</strong> — the same public key you provided before deployment.
+                    Your private key never leaves your machine.
                 </div>
-            `;
-            
-            // Jumpbox SSH
-            if (outputs.jumpbox_public_ip) {
-                const sshCommand = `ssh -i ~/.ssh/${keyName}.pem ubuntu@${outputs.jumpbox_public_ip}`;
-                const escapedSshCommand = sshCommand.replace(/'/g, "\\'");
-                html += `
-                    <div style="margin-bottom: 15px; padding: 12px; background: #e8f5e9; border-radius: 6px; border-left: 4px solid #4CAF50;">
-                        <div style="font-weight: 600; color: #2e7d32; margin-bottom: 8px;">🖥️ Jumpbox SSH Access</div>
-                        <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.jumpbox_public_ip}</code></div>
-                        <div style="margin-bottom: 8px;"><strong>User:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">ubuntu</code></div>
-                        <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden;">
-                            <button onclick="copyToClipboard('${escapedSshCommand}', this)" 
-                                    style="position: absolute; top: 8px; right: 8px; background: #333; color: #ccc; border: 1px solid #555; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
-                                📋 Copy
-                            </button>
-                            <div style="color: #4ec9b0; padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.95em; overflow-x: auto; white-space: nowrap;">
-                                ${sshCommand}
-                            </div>
+                ${!isDefaultPath ? `
+                <div style="background: white; padding: 10px 12px; border-radius: 6px; margin-bottom: 10px; border: 1px solid #81c784;">
+                    <div style="font-size: 0.9em; color: #2e7d32;">
+                        <strong>🔑 Your key:</strong> <code style="background: #e8f5e9; padding: 2px 6px; border-radius: 3px;">${keyPathDisplay}</code>
+                        ${keyComment ? `<span style="color: #666; font-size: 0.85em; margin-left: 8px;">(from: ${keyComment})</span>` : ''}
+                    </div>
+                </div>
+                ` : `
+                <div style="background: white; padding: 12px; border-radius: 6px; margin-bottom: 10px;">
+                    <div style="font-weight: 500; color: #1565c0; margin-bottom: 8px;">📋 How it works:</div>
+                    <ol style="margin: 0; padding-left: 20px; color: #555; font-size: 0.88em; line-height: 1.7;">
+                        <li>You generated your key pair locally: <code style="background: #f5f5f5; padding: 1px 4px; border-radius: 2px;">ssh-keygen -t ed25519</code></li>
+                        <li>You uploaded your <strong>public key</strong> before deployment</li>
+                        <li>Your <strong>private key</strong> stays on your machine — never transmitted</li>
+                        <li>The jumpbox was provisioned with your public key in <code>authorized_keys</code></li>
+                    </ol>
+                </div>
+                `}
+                <div style="font-size: 0.85em; color: #666; display: flex; align-items: center; gap: 6px;">
+                    <span style="color: #4CAF50;">✅</span> No private keys are stored on servers or transmitted via API
+                </div>
+            </div>
+        `;
+        
+        // Jumpbox SSH
+        if (outputs.jumpbox_public_ip) {
+            const sshCommand = `ssh -i ${userKeyPath} ubuntu@${outputs.jumpbox_public_ip}`;
+            const escapedSshCommand = sshCommand.replace(/'/g, "\\'");
+            html += `
+                <div style="margin-bottom: 15px; padding: 12px; background: #e8f5e9; border-radius: 6px; border-left: 4px solid #4CAF50;">
+                    <div style="font-weight: 600; color: #2e7d32; margin-bottom: 8px;">🖥️ Jumpbox SSH Access</div>
+                    <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.jumpbox_public_ip}</code></div>
+                    <div style="margin-bottom: 8px;"><strong>User:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">ubuntu</code></div>
+                    <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden;">
+                        <button onclick="copyToClipboard('${escapedSshCommand}', this)" 
+                                style="position: absolute; top: 8px; right: 8px; background: #333; color: #ccc; border: 1px solid #555; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
+                            📋 Copy
+                        </button>
+                        <div style="color: #4ec9b0; padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.95em; overflow-x: auto; white-space: nowrap;">
+                            ${sshCommand}
                         </div>
                     </div>
-                `;
-            }
+                    ${isDefaultPath ? `
+                    <div style="margin-top: 8px; font-size: 0.85em; color: #666;">
+                        💡 Replace <code>your_key</code> with the path to your private key (e.g., <code>~/.ssh/id_ed25519</code>)
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+        }
             
             // Windows RDP via Jumpbox
             if (outputs.dc01_private_ip) {
-                const tunnelCommand = `ssh -i ~/.ssh/${keyName}.pem -L 3389:${outputs.dc01_private_ip}:3389 ubuntu@${outputs.jumpbox_public_ip}`;
+                const tunnelCommand = `ssh -i ${userKeyPath} -L 3389:${outputs.dc01_private_ip}:3389 ubuntu@${outputs.jumpbox_public_ip}`;
                 const escapedTunnelCommand = tunnelCommand.replace(/'/g, "\\'");
                 html += `
                     <div style="margin-bottom: 15px; padding: 12px; background: #e3f2fd; border-radius: 6px; border-left: 4px solid #2196F3;">
                         <div style="font-weight: 600; color: #1565c0; margin-bottom: 8px;">🪟 Windows DC01 (via Jumpbox)</div>
                         <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.dc01_private_ip}</code></div>
                         <div style="margin-bottom: 8px;"><strong>Access:</strong> RDP through SSH tunnel</div>
-                        <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden;">
+                        
+                        <div style="font-weight: 500; color: #333; margin-bottom: 6px; font-size: 0.9em;">Step 1: Create SSH Tunnel (run on YOUR local machine)</div>
+                        <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden; margin-bottom: 12px;">
                             <button onclick="copyToClipboard('${escapedTunnelCommand}', this)" 
                                     style="position: absolute; top: 8px; right: 8px; background: #333; color: #ccc; border: 1px solid #555; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
                                 📋 Copy
@@ -3053,7 +3630,29 @@ async function loadConnectionInfo(projectName, sessionId) {
                                 <div style="white-space: nowrap;">${tunnelCommand}</div>
                             </div>
                         </div>
-                        <div style="margin-top: 8px; font-size: 0.9em; color: #666;">Then connect RDP to <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px;">localhost:3389</code></div>
+                        
+                        <div style="padding: 15px; background: #fff; border-radius: 6px; border: 2px solid #2196F3; margin-top: 12px;">
+                            <div style="font-weight: 600; color: #1565c0; margin-bottom: 8px; font-size: 1.1em;">📌 Step 2: Connect RDP Client</div>
+                            <div style="font-size: 1.05em; color: #333; margin-bottom: 8px;">
+                                With the SSH tunnel running, connect your RDP client to:
+                            </div>
+                            <div style="text-align: center; padding: 12px; background: #e3f2fd; border-radius: 4px; border: 1px solid #2196F3;">
+                                <code style="font-size: 1.3em; font-weight: 600; color: #1565c0; font-family: 'SF Mono', Monaco, Consolas, monospace;">localhost:3389</code>
+                            </div>
+                            <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                                💡 Use your Windows RDP client (Remote Desktop Connection on Windows, Microsoft Remote Desktop on Mac)
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top: 12px; padding: 10px; background: #fff3e0; border-radius: 4px; border-left: 3px solid #ff9800;">
+                            <div style="font-weight: 500; color: #e65100; margin-bottom: 6px; font-size: 0.85em;">🔧 Advanced: Creating tunnel FROM the jumpbox</div>
+                            <div style="font-size: 0.8em; color: #666; line-height: 1.5;">
+                                If you're already on the jumpbox and want to create an RDP tunnel, use the internal key:
+                            </div>
+                            <code style="display: block; margin-top: 6px; background: #f5f5f5; padding: 6px 8px; border-radius: 3px; font-size: 0.75em; color: #333;">
+                                ssh -i ~/.ssh/jumpbox_internal_key -L 3389:${outputs.dc01_private_ip}:3389 ubuntu@${outputs.jumpbox_public_ip}
+                            </code>
+                        </div>
                     </div>
                 `;
             }
@@ -3065,7 +3664,19 @@ async function loadConnectionInfo(projectName, sessionId) {
                         <div style="font-weight: 600; color: #c2185b; margin-bottom: 8px;">🎯 Cobalt Strike Team Server (Direct)</div>
                         <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.team_server_public_ip}</code></div>
                         <div style="margin-bottom: 8px;"><strong>Port:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">50050</code></div>
-                        <div style="font-size: 0.9em; color: #666;">Connect your CS Client directly to this IP:port</div>
+                        
+                        <!-- License Activation Notice -->
+                        <div style="margin: 10px 0; padding: 10px; background: #fff3e0; border-radius: 4px; border: 1px solid #ffb74d;">
+                            <div style="font-weight: 600; color: #e65100; margin-bottom: 6px; font-size: 0.9em;">⚠️ License Activation & Password Setup Required</div>
+                            <div style="font-size: 0.85em; color: #333; line-height: 1.4; margin-bottom: 8px;">
+                                SSH to the server and run <code style="background: #f5f5f5; padding: 1px 4px; border-radius: 2px;">cd /opt/cobaltstrike && sudo ./update</code> to activate your license.
+                            </div>
+                            <div style="font-size: 0.85em; color: #333; line-height: 1.4;">
+                                Then start with password: <code style="background: #f5f5f5; padding: 1px 4px; border-radius: 2px;">cd /opt/cobaltstrike/server && sudo ./teamserver ${outputs.team_server_public_ip} YourPassword</code>
+                            </div>
+                        </div>
+                        
+                        <div style="font-size: 0.9em; color: #666;">Connect your CS Client directly to this IP:port after license activation</div>
                     </div>
                 `;
             }
@@ -3074,25 +3685,64 @@ async function loadConnectionInfo(projectName, sessionId) {
             if (outputs.teamserver_private_ip) {
                 const teamserverSshCommand = `ssh ubuntu@${outputs.teamserver_private_ip}`;
                 const escapedTeamserverSshCommand = teamserverSshCommand.replace(/'/g, "\\'");
+                const activateLicenseCmd = `cd /opt/cobaltstrike && sudo ./update`;
+                const escapedActivateLicenseCmd = activateLicenseCmd.replace(/'/g, "\\'");
                 
                 html += `
                     <div style="margin-bottom: 15px; padding: 12px; background: #ffebee; border-radius: 6px; border-left: 4px solid #f44336;">
                         <div style="font-weight: 600; color: #c62828; margin-bottom: 8px;">🔴 CS Team Server (Ubuntu)</div>
                         <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.teamserver_private_ip}</code></div>
                         <div style="margin-bottom: 5px;"><strong>CS Port:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">50050</code></div>
-                        <div style="margin-bottom: 10px; font-size: 0.9em; color: #666;">
-                            Runs Cobalt Strike Team Server ONLY. Access via Jumpbox or from Windows Attack Box.
+                        
+                        <!-- License Activation Notice -->
+                        <div style="margin: 12px 0; padding: 12px; background: #fff3e0; border-radius: 6px; border: 1px solid #ffb74d;">
+                            <div style="font-weight: 600; color: #e65100; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                                <span style="font-size: 1.1em;">⚠️</span> License Activation & Password Setup Required
+                            </div>
+                            <div style="font-size: 0.9em; color: #333; margin-bottom: 10px; line-height: 1.5;">
+                                Before the Team Server can run, you must activate your Cobalt Strike license and set a password.
+                                This is a <strong>one-time manual step</strong> that requires your license key.
+                            </div>
+                            <div style="font-weight: 500; color: #333; margin-bottom: 6px; font-size: 0.85em;">Steps to activate:</div>
+                            <div style="background: #1e1e1e; border-radius: 4px; padding: 10px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em; margin-bottom: 8px;">
+                                <div style="color: #6a9955; margin-bottom: 4px;"># 1. SSH to Team Server (from Jumpbox)</div>
+                                <div style="color: #4ec9b0; margin-bottom: 8px;">ssh teamserver</div>
+                                <div style="color: #6a9955; margin-bottom: 4px;"># 2. Run the license activation</div>
+                                <div style="color: #4ec9b0; margin-bottom: 8px;">${activateLicenseCmd}</div>
+                                <div style="color: #6a9955; margin-bottom: 4px;"># 3. Enter your license key when prompted</div>
+                            </div>
                         </div>
                         
-                        <div style="font-weight: 500; color: #333; margin-bottom: 6px; font-size: 0.9em;">SSH to Team Server (from Jumpbox):</div>
-                        <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden;">
-                            <button onclick="copyToClipboard('${escapedTeamserverSshCommand}', this)" 
-                                    style="position: absolute; top: 8px; right: 8px; background: #333; color: #ccc; border: 1px solid #555; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
-                                📋 Copy
-                            </button>
-                            <div style="color: #4ec9b0; padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.95em;">
-                                ${teamserverSshCommand}
+                        <!-- Password Setup Notice -->
+                        <div style="margin: 12px 0; padding: 12px; background: #e3f2fd; border-radius: 6px; border: 1px solid #2196F3;">
+                            <div style="font-weight: 600; color: #1565c0; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                                <span style="font-size: 1.1em;">🔑</span> Set Team Server Password
                             </div>
+                            <div style="font-size: 0.9em; color: #333; margin-bottom: 10px; line-height: 1.5;">
+                                After license activation, you must <strong>manually start the team server with a password</strong>.
+                                Choose a strong password - you'll need it to connect the CS Client.
+                            </div>
+                            <div style="font-weight: 500; color: #333; margin-bottom: 6px; font-size: 0.85em;">Start team server with password:</div>
+                            <div style="background: #1e1e1e; border-radius: 4px; padding: 10px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em; margin-bottom: 8px;">
+                                <div style="color: #6a9955; margin-bottom: 4px;"># Start the team server</div>
+                                <div style="color: #4ec9b0; margin-bottom: 4px;">cd /opt/cobaltstrike/server</div>
+                                <div style="color: #4ec9b0;">sudo ./teamserver ${outputs.teamserver_private_ip} YourPasswordHere</div>
+                            </div>
+                            <div style="font-size: 0.8em; color: #666; padding: 8px; background: #fff; border-radius: 4px; margin-bottom: 8px;">
+                                💡 <strong>Keep it running:</strong> Use <code style="background: #f5f5f5; padding: 1px 4px; border-radius: 2px;">screen</code> or <code style="background: #f5f5f5; padding: 1px 4px; border-radius: 2px;">tmux</code> to run in background: <code style="background: #f5f5f5; padding: 1px 4px; border-radius: 2px;">screen -S teamserver</code> then start the server.
+                            </div>
+                            <div style="font-size: 0.8em; color: #666; padding: 8px; background: #fff; border-radius: 4px;">
+                                💡 <strong>Remember this password!</strong> You'll use it to connect the CS Client to this team server on port 50050.
+                            </div>
+                            <div style="font-size: 0.8em; color: #1565c0; padding: 8px; background: #e3f2fd; border-radius: 4px; margin-top: 8px;">
+                                ℹ️ <strong>Why ${outputs.teamserver_private_ip}?</strong> Using the actual IP (not 0.0.0.0) ensures beacons know where to connect back. All GOAD VMs and the attack box can reach this internal IP directly.
+                            </div>
+                        </div>
+                        
+                        <div style="font-weight: 500; color: #333; margin-bottom: 6px; font-size: 0.9em;">Verify team server is running:</div>
+                        <div style="background: #1e1e1e; border-radius: 4px; padding: 10px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em; margin-bottom: 12px;">
+                            <div style="color: #4ec9b0; margin-bottom: 4px;">sudo systemctl status teamserver</div>
+                            <div style="color: #4ec9b0;">sudo netstat -tlnp | grep 50050</div>
                         </div>
                     </div>
                 `;
@@ -3100,32 +3750,58 @@ async function loadConnectionInfo(projectName, sessionId) {
             
             // Windows Attack Box (GOAD + CS mode - Windows workstation with CS Client + Tools)
             if (outputs.attackbox_private_ip) {
-                const rdpTunnelCommand = `ssh -i ~/.ssh/${keyName}.pem -L 3389:${outputs.attackbox_private_ip}:3389 ubuntu@${outputs.jumpbox_public_ip}`;
+                const rdpTunnelCommand = `ssh -i ${userKeyPath} -L 3389:${outputs.attackbox_private_ip}:3389 ubuntu@${outputs.jumpbox_public_ip}`;
                 const escapedRdpTunnelCommand = rdpTunnelCommand.replace(/'/g, "\\'");
-                const localCsTunnelCommand = `ssh -i ~/.ssh/${keyName}.pem -L 50050:192.168.56.40:50050 ubuntu@${outputs.jumpbox_public_ip}`;
+                const localCsTunnelCommand = `ssh -i ${userKeyPath} -L 50050:192.168.56.40:50050 ubuntu@${outputs.jumpbox_public_ip}`;
                 const escapedLocalCsTunnelCommand = localCsTunnelCommand.replace(/'/g, "\\'");
+                
+                // Get password - use from outputs if available, otherwise show placeholder
+                const attackboxPassword = outputs.attackbox_password || '(see Terraform outputs)';
                 
                 html += `
                     <div style="margin-bottom: 15px; padding: 12px; background: #e8f5e9; border-radius: 6px; border-left: 4px solid #4CAF50;">
                         <div style="font-weight: 600; color: #2e7d32; margin-bottom: 8px;">🖥️ Windows Attack Box (CS Client + Tools)</div>
                         <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">${outputs.attackbox_private_ip}</code></div>
                         <div style="margin-bottom: 5px;"><strong>OS:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">Windows Server 2019</code></div>
-                        <div style="margin-bottom: 5px;"><strong>Login:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">Administrator / AttackB0x!2024</code></div>
+                        <div style="margin-bottom: 5px;"><strong>Login:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">Administrator / ${attackboxPassword}</code></div>
                         <div style="margin-bottom: 10px; font-size: 0.9em; color: #666;">
-                            Your attack workstation with CS Client, PowerSploit, and WSL2 for SSH.
+                            Your attack workstation with CS Client, PowerSploit, and WSL2.
                         </div>
                         
-                        <div style="font-weight: 500; color: #333; margin-bottom: 6px; font-size: 0.9em;">🔗 RDP to Attack Box (SSH Tunnel from your machine):</div>
+                        <div style="font-weight: 500; color: #333; margin-bottom: 6px; font-size: 0.9em;">🔗 Option 1: RDP via SSH Tunnel (Graphical Access)</div>
+                        <div style="font-size: 0.85em; color: #666; margin-bottom: 8px;">
+                            Step 1: Create SSH Tunnel (run on YOUR local machine)
+                        </div>
                         <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden; margin-bottom: 12px;">
                             <button onclick="copyToClipboard('${escapedRdpTunnelCommand}', this)" 
                                     style="position: absolute; top: 8px; right: 8px; background: #333; color: #ccc; border: 1px solid #555; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
                                 📋 Copy
                             </button>
                             <div style="color: #4ec9b0; padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em; overflow-x: auto;">
-                                <div style="color: #6a9955; margin-bottom: 4px;"># Step 1: Create RDP tunnel (run on your local machine)</div>
-                                <div style="white-space: nowrap; margin-bottom: 8px;">${rdpTunnelCommand}</div>
-                                <div style="color: #6a9955; margin-bottom: 4px;"># Step 2: RDP to localhost:3389</div>
-                                <div style="color: #6a9955;"># Login: Administrator / AttackB0x!2024</div>
+                                <div style="color: #6a9955; margin-bottom: 4px;"># SSH tunnel for RDP</div>
+                                <div style="white-space: nowrap;">${rdpTunnelCommand}</div>
+                            </div>
+                        </div>
+                        
+                        <div style="padding: 12px; background: #fff; border-radius: 4px; border: 2px solid #4CAF50; margin-bottom: 12px;">
+                            <div style="font-weight: 600; color: #2e7d32; margin-bottom: 6px;">📌 Step 2: Connect RDP Client</div>
+                            <div style="font-size: 0.95em; color: #333; margin-bottom: 6px;">
+                                With the SSH tunnel running, connect your RDP client to:
+                            </div>
+                            <div style="text-align: center; padding: 10px; background: #e8f5e9; border-radius: 4px;">
+                                <code style="font-size: 1.2em; font-weight: 600; color: #2e7d32; font-family: 'SF Mono', Monaco, Consolas, monospace;">localhost:3389</code>
+                            </div>
+                            <div style="margin-top: 8px; font-size: 0.85em; color: #666;">
+                                Login: Administrator / ${attackboxPassword}
+                            </div>
+                        </div>
+                        
+                        <div style="font-weight: 500; color: #333; margin-bottom: 6px; font-size: 0.9em;">🔗 Option 2: SSH from Jumpbox (Command Line)</div>
+                        <div style="position: relative; background: #1e1e1e; border-radius: 4px; overflow: hidden; margin-bottom: 12px;">
+                            <div style="color: #4ec9b0; padding: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em;">
+                                <div style="color: #6a9955; margin-bottom: 4px;"># From the jumpbox, SSH directly to Attack Box</div>
+                                <div>ssh attackbox</div>
+                                <div style="color: #6a9955; margin-top: 4px;"># Or: ssh Administrator@192.168.56.50</div>
                             </div>
                         </div>
                         
@@ -3133,14 +3809,10 @@ async function loadConnectionInfo(projectName, sessionId) {
                             <div style="font-weight: 500; margin-bottom: 8px;">📦 Pre-installed Tools:</div>
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; color: #666;">
                                 <div>• PowerSploit (C:\\Tools\\PowerSploit)</div>
-                                <div>• WSL2 Ubuntu (ssh teamserver)</div>
+                                <div>• WSL2 Ubuntu</div>
                                 <div>• PowerView, PowerUp</div>
-                                <div>• Git, VS Code, Python</div>
+                                <div>• Git, Python, AWS CLI</div>
                             </div>
-                        </div>
-                        
-                        <div style="margin-top: 10px; padding: 8px; background: #e3f2fd; border-radius: 4px; font-size: 0.85em; color: #1565c0;">
-                            <strong>💡 Workflow:</strong> RDP to Attack Box → Open WSL → <code>ssh teamserver</code> to connect to CS Team Server
                         </div>
                     </div>
                 `;
@@ -3195,22 +3867,29 @@ async function loadConnectionInfo(projectName, sessionId) {
                 `;
             }
             
-            // Key file location info
-            html += `
-                <div style="padding: 10px; background: #f5f5f5; border-radius: 6px; margin-top: 10px;">
-                    <div style="font-weight: 500; margin-bottom: 5px;">📁 Key Files Location</div>
-                    <code style="font-size: 0.9em; color: #666;">~/.ssh/${keyName}.pem</code>
-                    <div style="margin-top: 5px; font-size: 0.85em; color: #888;">
-                        The key file permissions are automatically set to 600 when downloaded.
+            // Internal Access Info (from Jumpbox) - show if teamserver or attackbox exists
+            if (outputs.teamserver_private_ip || outputs.attackbox_private_ip) {
+                html += `
+                    <div style="padding: 15px; background: linear-gradient(135deg, #e8eaf6 0%, #c5cae9 100%); border-radius: 8px; margin-top: 10px; border: 1px solid #9fa8da;">
+                        <div style="font-weight: 600; margin-bottom: 10px; color: #3949ab;">🔗 Internal Access (from Jumpbox)</div>
+                        <div style="font-size: 0.9em; color: #333; margin-bottom: 12px;">
+                            Once connected to the jumpbox, you can access internal hosts using the pre-configured SSH aliases:
+                        </div>
+                        <div style="background: #1e1e1e; border-radius: 6px; padding: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.9em;">
+                            ${outputs.teamserver_private_ip ? `<div style="color: #4ec9b0; margin-bottom: 6px;"><span style="color: #6a9955;"># SSH to Team Server</span></div><div style="color: #4ec9b0; margin-bottom: 10px;">ssh teamserver</div>` : ''}
+                            ${outputs.attackbox_private_ip ? `<div style="color: #4ec9b0; margin-bottom: 6px;"><span style="color: #6a9955;"># SSH to Attack Box</span></div><div style="color: #4ec9b0; margin-bottom: 10px;">ssh attackbox</div>` : ''}
+                            <div style="color: #4ec9b0; margin-bottom: 6px;"><span style="color: #6a9955;"># SSH to Windows DC (by IP)</span></div>
+                            <div style="color: #4ec9b0;">ssh 192.168.56.10</div>
+                        </div>
+                        <div style="margin-top: 10px; font-size: 0.85em; color: #5c6bc0;">
+                            💡 The jumpbox has pre-configured SSH keys for internal access. No additional keys needed.
+                        </div>
                     </div>
-                </div>
-            `;
+                `;
+            }
             
             html += '</div>';
             contentDiv.innerHTML = html;
-        } else {
-            contentDiv.innerHTML = `<div style="color: #666;">No connection details available. ${data.error || ''}</div>`;
-        }
     } catch (error) {
         contentDiv.innerHTML = `<div style="color: #f44336;">Error loading connection info: ${error.message}</div>`;
     }
@@ -3256,37 +3935,28 @@ window.copyToClipboard = copyToClipboard;
 
 /**
  * Download SSH key to ~/.ssh directory
+ * @deprecated This function is deprecated. The new secure architecture uses user-provided keys.
+ * Private keys are no longer generated or distributed by the system.
  */
 async function downloadSSHKey(projectName, keyType = 'jumpbox') {
-    try {
-        const response = await fetch(`${API_BASE}/deploy/ssh-key/download`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                project_name: projectName,
-                key_type: keyType
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            alert(`✅ SSH Key saved successfully!\n\nPath: ${data.path}\n\nYou can now use the SSH commands above.`);
-        } else {
-            alert(`❌ Failed to download SSH key:\n${data.error}`);
-        }
-    } catch (error) {
-        alert(`❌ Error: ${error.message}`);
-    }
+    // Show deprecation notice
+    alert(`⚠️ SSH Key Download Deprecated\n\n` +
+          `The new secure architecture no longer distributes private keys.\n\n` +
+          `How it works now:\n` +
+          `1. You generate your own key pair locally\n` +
+          `2. You upload your PUBLIC key before deployment\n` +
+          `3. Your PRIVATE key stays on your machine\n\n` +
+          `Use your own private key to connect:\n` +
+          `ssh -i ~/.ssh/your_key ubuntu@<jumpbox-ip>`);
 }
 
 /**
- * Copy GOAD step 1 command with project-specific key name
+ * Copy GOAD step 1 command with user's own key
  */
 function copyGoadStep1(projectName) {
-    const command = `ssh -i ~/.ssh/${projectName}-goadmini-jumpbox-key.pem ubuntu@<JUMPBOX_IP>`;
+    const command = `ssh -i ~/.ssh/your_key ubuntu@<JUMPBOX_IP>`;
     navigator.clipboard.writeText(command).then(() => {
-        alert('✅ Copied! Remember to replace <JUMPBOX_IP> with the actual IP from Connection Info.');
+        alert('✅ Copied!\n\nRemember to:\n1. Replace "your_key" with your private key path (e.g., ~/.ssh/id_ed25519)\n2. Replace <JUMPBOX_IP> with the actual IP from Connection Info');
     }).catch(err => {
         console.error('Failed to copy:', err);
         alert('Failed to copy to clipboard');
@@ -4380,6 +5050,16 @@ function renderResourceTable(resources) {
         return state !== 'deleted' && state !== 'terminated' && state !== 'deleting';
     });
     
+    // Group resources by project for the purge buttons
+    const projectGroups = {};
+    activeResources.forEach(r => {
+        const project = r.project || 'unknown';
+        if (!projectGroups[project]) {
+            projectGroups[project] = [];
+        }
+        projectGroups[project].push(r);
+    });
+    
     const typeIcons = {
         'ec2': '🖥️',
         'vpc': '🌐',
@@ -4429,7 +5109,7 @@ function renderResourceTable(resources) {
                 <span style="background: ${stateColors[r.state?.toLowerCase()] || '#9e9e9e'}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; text-transform: uppercase;">${r.state || 'unknown'}</span>
             </td>
             <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 0.8em; color: #1565c0;">
-                ${r.project ? `<span style="background: #e3f2fd; padding: 3px 8px; border-radius: 4px;">${r.project}</span>` : '-'}
+                ${r.project ? `<a href="#" onclick="event.preventDefault(); purgeFailedDeployment('${r.project}')" style="background: #e3f2fd; padding: 3px 8px; border-radius: 4px; text-decoration: none; cursor: pointer;" title="Click to purge this project">${r.project}</a>` : '-'}
             </td>
             <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 0.85em; color: #666;">${r.details || '-'}</td>
         </tr>
@@ -4655,10 +5335,14 @@ function renderDeploymentTimeline() {
     const timelineContent = document.getElementById('timeline-content');
     if (!timelineContent) return;
     
+    // Filter out plan-only logs from the deployment timeline
+    // Plan logs should only appear in the archived logs section
+    const deploymentOnlyLogs = deploymentLogs.filter(log => log.entry_type !== 'plan');
+    
     // Get unique deployment sessions (group by date + project_name)
     // This allows multiple deployments on the same day to be shown separately
     const sessions = {};
-    deploymentLogs.forEach(log => {
+    deploymentOnlyLogs.forEach(log => {
         const date = log.timestamp.split('T')[0];
         // Use project_name from log if available, otherwise use date as fallback
         const projectName = log.project_name || null;
@@ -4691,22 +5375,34 @@ function renderDeploymentTimeline() {
         
         // If project_name wasn't in log, try to extract from message
         if (!sessions[sessionKey].projectName && log.message) {
-            // Pattern: project_name-component (e.g., "goad_mini_dev_001-goadmini-vpc")
-            const projectMatch = log.message.match(/([a-z0-9_]+_[a-z0-9_]+_[a-z0-9_]+)-/i);
-            if (projectMatch) {
-                sessions[sessionKey].projectName = projectMatch[1];
+            // Pattern 1: "project: name" or "(project: name)"
+            const projectColonMatch = log.message.match(/\(?\s*project[:\s]+([a-z0-9_]+(?:_[a-z0-9_]+)+)\s*\)?/i);
+            if (projectColonMatch) {
+                sessions[sessionKey].projectName = projectColonMatch[1];
             }
             
-            // Also check for "Project:" or "project_name" patterns
-            const projectNameMatch = log.message.match(/project[_\s]*name[:\s]+["']?([^"'\s,]+)/i);
-            if (projectNameMatch) {
-                sessions[sessionKey].projectName = projectNameMatch[1];
+            // Pattern 2: project_name-component (e.g., "goad_mini_dev_001-goadmini-vpc")
+            if (!sessions[sessionKey].projectName) {
+                const projectMatch = log.message.match(/([a-z0-9]+_[a-z0-9]+_[a-z0-9_]+)-/i);
+                if (projectMatch) {
+                    sessions[sessionKey].projectName = projectMatch[1];
+                }
             }
             
-            // Check for patterns like "project 'name'" or "for project 'name'"
-            const quotedProjectMatch = log.message.match(/project\s+['"]([^'"]+)['"]/i);
-            if (quotedProjectMatch) {
-                sessions[sessionKey].projectName = quotedProjectMatch[1];
+            // Pattern 3: "for project 'name'" or "project 'name'"
+            if (!sessions[sessionKey].projectName) {
+                const quotedProjectMatch = log.message.match(/project\s+['"]([^'"]+)['"]/i);
+                if (quotedProjectMatch) {
+                    sessions[sessionKey].projectName = quotedProjectMatch[1];
+                }
+            }
+            
+            // Pattern 4: workspace name pattern (e.g., "Using workspace: goad_mini_dev_001")
+            if (!sessions[sessionKey].projectName) {
+                const workspaceMatch = log.message.match(/workspace[:\s]+([a-z0-9_]+(?:_[a-z0-9_]+)+)/i);
+                if (workspaceMatch) {
+                    sessions[sessionKey].projectName = workspaceMatch[1];
+                }
             }
         }
         
@@ -4781,15 +5477,25 @@ function renderDeploymentTimeline() {
         
         // Project name - the actual project name (e.g., goad_mini_dev_001)
         const projectName = s.projectName || 'Unknown Project';
+        const hasValidProjectName = s.projectName && s.projectName !== 'Unknown Project';
+        
+        // Get resource count for this project from allResources
+        const projectResourceCount = hasValidProjectName ? 
+            allResources.filter(r => r.project === projectName).length : 0;
+        const resourceCountLabel = projectResourceCount > 0 ? ` (${projectResourceCount})` : '';
         
         // Deployment type badge (e.g., goad-mini, c2-full)
         const deploymentTypeBadge = s.deploymentType ? `<span style="background: #e3f2fd; color: #1565c0; padding: 3px 8px; border-radius: 4px; font-size: 0.75em; font-weight: 500;">${s.deploymentType}</span>` : '';
         
-        // Show purge button for failed deployments (but not if already destroyed)
-        const purgeButton = (s.hasError && !wasDestroyed) ? `
-            <button onclick="event.stopPropagation(); purgeFailedDeployment('${projectName}')" class="btn" style="background: #ff5722; color: white; font-size: 0.75em; padding: 6px 12px; margin-left: 10px;" title="Clean up resources from this failed deployment">
-                🧹 Purge
+        // Show purge button for failed deployments (but not if already destroyed or unknown project)
+        const purgeButton = (s.hasError && !wasDestroyed && hasValidProjectName) ? `
+            <button onclick="event.stopPropagation(); purgeFailedDeployment('${projectName}')" class="btn" style="background: #ff5722; color: white; font-size: 0.75em; padding: 6px 12px; margin-left: 10px;" title="Clean up ${projectResourceCount} resources from this failed deployment">
+                🧹 Purge${resourceCountLabel}
             </button>
+        ` : (s.hasError && !wasDestroyed && !hasValidProjectName) ? `
+            <span style="color: #999; font-size: 0.75em; margin-left: 10px;" title="Cannot purge: project name unknown. Use the Resources section to manually delete.">
+                ⚠️ Manual cleanup required
+            </span>
         ` : '';
         
         // Build expanded content
@@ -5019,7 +5725,8 @@ function buildSessionDetails(session, sessionId) {
                 </div>
                 <div style="padding: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.85em; color: #d4d4d4; line-height: 1.6;">
                     <div style="color: #6a9955;"># Create SSH tunnel to access Windows VMs via WinRM</div>
-                    <div style="color: #4ec9b0;">ssh -i ~/.ssh/${projectName}-goadmini-jumpbox-key.pem -L 5985:192.168.56.10:5985 ubuntu@&lt;JUMPBOX_IP&gt;</div>
+                    <div style="color: #6a9955;"># Replace 'your_key' with your private key path (e.g., ~/.ssh/id_ed25519)</div>
+                    <div style="color: #4ec9b0;">ssh -i ~/.ssh/your_key -L 5985:192.168.56.10:5985 ubuntu@&lt;JUMPBOX_IP&gt;</div>
                     <div style="color: #6a9955; margin-top: 8px;"># Keep this terminal open while running Ansible</div>
                 </div>
             </div>
@@ -6489,17 +7196,21 @@ async function populateConnectionInfo(data) {
                     
                     ${jb.public_ip ? `
                         <div style="margin-bottom: 10px;">
-                            <span style="color: #666;">SSH Access:</span>
+                            <span style="color: #666;">SSH Access (use your own private key):</span>
                             <code style="background: #1e1e1e; color: #4ec9b0; padding: 10px 15px; border-radius: 5px; display: block; margin-top: 5px; overflow-x: auto;">
-                                ${jb.commands?.ssh || `ssh -i ${jb.ssh_key_path || '~/.ssh/goad-key.pem'} ubuntu@${jb.public_ip}`}
+                                ${jb.commands?.ssh || `ssh -i ~/.ssh/your_key ubuntu@${jb.public_ip}`}
                             </code>
                         </div>
                         
                         <div style="margin-bottom: 10px;">
                             <span style="color: #666;">SOCKS Proxy (for accessing AD network):</span>
                             <code style="background: #1e1e1e; color: #4ec9b0; padding: 10px 15px; border-radius: 5px; display: block; margin-top: 5px; overflow-x: auto;">
-                                ${jb.commands?.socks_proxy || `ssh -D 1080 -i ${jb.ssh_key_path || '~/.ssh/goad-key.pem'} ubuntu@${jb.public_ip}`}
+                                ${jb.commands?.socks_proxy || `ssh -D 1080 -i ~/.ssh/your_key ubuntu@${jb.public_ip}`}
                             </code>
+                        </div>
+                        
+                        <div style="margin-top: 8px; padding: 8px; background: #e8f5e9; border-radius: 4px; font-size: 0.85em; color: #2e7d32;">
+                            💡 Replace <code>your_key</code> with your private key path (e.g., <code>~/.ssh/id_ed25519</code>)
                         </div>
                     ` : `
                         <p style="color: #f57c00;">⚠️ Jumpbox IP not available yet. The lab may still be deploying.</p>

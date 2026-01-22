@@ -411,6 +411,41 @@ class TerraformService:
             "workspace": self.workspace_name
         }
     
+    def apply_fresh(self) -> Dict:
+        """Apply Terraform changes without using a saved plan file.
+        
+        This is useful when the state has changed since the plan was created
+        (e.g., after a targeted apply). It runs a fresh plan and apply in one step.
+        """
+        if not self.tfvars_file.exists():
+            return {
+                "success": False,
+                "error": f"terraform.tfvars file not found: {self.tfvars_file}"
+            }
+        
+        # Ensure correct workspace is selected
+        if self.workspace_name != "default":
+            ws_result = self.ensure_workspace()
+            if not ws_result["success"]:
+                return ws_result
+        
+        exit_code, stdout, stderr = self._run_command(
+            [
+                "terraform", "apply",
+                "-var-file", str(self.tfvars_file.absolute()),
+                "-auto-approve"
+            ],
+            timeout=TIMEOUT_APPLY
+        )
+        
+        return {
+            "success": exit_code == 0,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "workspace": self.workspace_name
+        }
+    
     def output(self) -> Dict:
         """Get Terraform outputs"""
         # Ensure correct workspace is selected

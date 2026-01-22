@@ -1,117 +1,170 @@
 #!/bin/bash
-# =============================================================================
-# Team Server Initialization Script (Cobalt Strike ONLY)
-# =============================================================================
-# This script sets up a MINIMAL Cobalt Strike Team Server
-# NO other tools - just Java + CS teamserver daemon
-# =============================================================================
-
+# Team Server Init - Cobalt Strike ONLY with Secure Key Management
 set -e
 
-# Variables from Terraform templatefile()
 CS_ARCHIVE_S3_PATH="${cs_archive_s3_path}"
 CS_PASSWORD="${cs_password}"
+DEPLOYMENT_BUCKET="${deployment_bucket}"
+DEPLOYMENT_ID="${deployment_id}"
+AWS_REGION="${aws_region}"
+HOSTNAME="${hostname}"
 
-# Logging
 LOG_FILE="/var/log/teamserver-init.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
+echo "=== Team Server Init Started: $(date) ==="
 
-echo "=============================================="
-echo "Cobalt Strike Team Server Initialization"
-echo "Started: $(date)"
-echo "This is a MINIMAL server - CS teamserver ONLY"
-echo "=============================================="
-
-# Wait for cloud-init to complete
-while [ ! -f /var/lib/cloud/instance/boot-finished ]; do
-    echo "Waiting for cloud-init to complete..."
-    sleep 5
-done
-
-# =============================================================================
-# 1. System Updates and Minimal Dependencies
-# =============================================================================
-echo "[1/5] Installing minimal dependencies..."
-
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get upgrade -y
-
-# Install ONLY what's needed for Cobalt Strike
-apt-get install -y \
-    openjdk-11-jdk \
-    awscli \
-    net-tools \
-    curl \
-    wget \
-    unzip
-
-echo "Dependencies installed"
-
-# =============================================================================
-# 2. Create Directories
-# =============================================================================
-echo "[2/5] Creating directories..."
-
-mkdir -p /opt/cobaltstrike
-mkdir -p /opt/logs
-
-chown -R ubuntu:ubuntu /opt/cobaltstrike
-chown -R ubuntu:ubuntu /opt/logs
-
-echo "Directories created"
-
-# =============================================================================
-# 3. Download and Extract Cobalt Strike
-# =============================================================================
-echo "[3/5] Downloading Cobalt Strike from S3..."
-
-if [ -n "$CS_ARCHIVE_S3_PATH" ] && [ "$CS_ARCHIVE_S3_PATH" != "" ]; then
-    # Download from S3
-    aws s3 cp "$CS_ARCHIVE_S3_PATH" /tmp/cobaltstrike.tar.gz
-    
-    if [ $? -eq 0 ]; then
-        echo "Downloaded Cobalt Strike archive"
-        
-        # Extract
-        tar -xzf /tmp/cobaltstrike.tar.gz -C /opt/cobaltstrike --strip-components=1
-        
-        # Clean up
-        rm -f /tmp/cobaltstrike.tar.gz
-        
-        # Set permissions
-        chown -R ubuntu:ubuntu /opt/cobaltstrike
-        chmod +x /opt/cobaltstrike/teamserver 2>/dev/null || true
-        chmod +x /opt/cobaltstrike/cobaltstrike 2>/dev/null || true
-        
-        echo "Cobalt Strike extracted successfully"
-    else
-        echo "WARNING: Failed to download Cobalt Strike from S3"
-        echo "You will need to manually install Cobalt Strike"
-    fi
-else
-    echo "No Cobalt Strike S3 path provided"
-    echo "Skipping Cobalt Strike download - manual installation required"
+# Set hostname
+if [ -n "$HOSTNAME" ]; then
+    hostnamectl set-hostname "$HOSTNAME"
+    echo "127.0.0.1 $HOSTNAME" >> /etc/hosts
+    echo "Hostname set to: $HOSTNAME"
 fi
 
-# =============================================================================
-# 4. Create Systemd Service for Team Server
-# =============================================================================
-echo "[4/5] Creating systemd service..."
+# Note: We don't wait for boot-finished here because this script IS part of cloud-init
+# The boot-finished file is created AFTER user-data scripts complete
 
-if [ -n "$CS_PASSWORD" ] && [ "$CS_PASSWORD" != "" ] && [ -f /opt/cobaltstrike/teamserver ]; then
-    # Create systemd service file
+# Install dependencies
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y && apt-get upgrade -y
+apt-get install -y openjdk-17-jdk awscli net-tools curl wget unzip
+
+# Create directories
+mkdir -p /opt/cobaltstrike/server /opt/logs /home/ubuntu/.ssh
+chown -R ubuntu:ubuntu /opt/cobaltstrike /opt/logs
+chmod 700 /home/ubuntu/.ssh
+chown ubuntu:ubuntu /home/ubuntu/.ssh
+
+# Download jumpbox public key from S3
+if [ -n "$DEPLOYMENT_BUCKET" ]; then
+    S3_KEY="s3://$DEPLOYMENT_BUCKET/keys/$DEPLOYMENT_ID/jumpbox_internal.pub"
+    echo "Downloading jumpbox public key from S3..."
+    for i in $(seq 1 60); do
+        if aws s3 cp "$S3_KEY" /tmp/jumpbox.pub --region "$AWS_REGION" 2>/dev/null; then
+            if ssh-keygen -l -f /tmp/jumpbox.pub >/dev/null 2>&1; then
+                cat /tmp/jumpbox.pub >> /home/ubuntu/.ssh/authorized_keys
+                chmod 600 /home/ubuntu/.ssh/authorized_keys
+                chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys
+                rm -f /tmp/jumpbox.pub
+                echo "KEY_CONFIGURED" > /opt/cobaltstrike/bootstrap-status
+                echo "Jumpbox public key configured"
+                break
+            fi
+        fi
+        echo "Waiting for jumpbox key... ($i/60)"
+        sleep 10
+    done
+    
+    # Download attack box public key from S3 (allow SSH from attack box)
+    S3_ATTACKBOX_KEY="s3://$DEPLOYMENT_BUCKET/keys/$DEPLOYMENT_ID/attackbox_internal.pub"
+    echo "Downloading attack box public key from S3..."
+    for i in $(seq 1 60); do
+        if aws s3 cp "$S3_ATTACKBOX_KEY" /tmp/attackbox.pub --region "$AWS_REGION" 2>/dev/null; then
+            if ssh-keygen -l -f /tmp/attackbox.pub >/dev/null 2>&1; then
+                cat /tmp/attackbox.pub >> /home/ubuntu/.ssh/authorized_keys
+                chmod 600 /home/ubuntu/.ssh/authorized_keys
+                chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys
+                rm -f /tmp/attackbox.pub
+                echo "ATTACKBOX_KEY_CONFIGURED" >> /opt/cobaltstrike/bootstrap-status
+                echo "Attack box public key configured"
+                break
+            fi
+        fi
+        echo "Waiting for attack box key... ($i/60)"
+        sleep 10
+    done
+    
+    # Download attack box WSL public key from S3 (allow SSH from WSL on attack box)
+    S3_WSL_KEY="s3://$DEPLOYMENT_BUCKET/keys/$DEPLOYMENT_ID/wsl_attackbox_internal.pub"
+    echo "Downloading attack box WSL public key from S3..."
+    for i in $(seq 1 60); do
+        if aws s3 cp "$S3_WSL_KEY" /tmp/wsl_attackbox.pub --region "$AWS_REGION" 2>/dev/null; then
+            if ssh-keygen -l -f /tmp/wsl_attackbox.pub >/dev/null 2>&1; then
+                cat /tmp/wsl_attackbox.pub >> /home/ubuntu/.ssh/authorized_keys
+                chmod 600 /home/ubuntu/.ssh/authorized_keys
+                chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys
+                rm -f /tmp/wsl_attackbox.pub
+                echo "WSL_KEY_CONFIGURED" >> /opt/cobaltstrike/bootstrap-status
+                echo "Attack box WSL public key configured"
+                break
+            fi
+        fi
+        echo "Waiting for attack box WSL key... ($i/60)"
+        sleep 10
+    done
+fi
+
+# Download and extract Cobalt Strike
+CS_EXTRACTED=false
+if [ -n "$CS_ARCHIVE_S3_PATH" ]; then
+    echo "Downloading Cobalt Strike from S3..."
+    aws s3 cp "$CS_ARCHIVE_S3_PATH" /tmp/cs-archive
+    
+    if [ -f /tmp/cs-archive ]; then
+        # Detect file type and extract accordingly
+        FILE_TYPE=$(file /tmp/cs-archive)
+        echo "Archive type: $FILE_TYPE"
+        
+        if echo "$FILE_TYPE" | grep -q "gzip compressed"; then
+            echo "Extracting as gzip compressed tar..."
+            tar -xzf /tmp/cs-archive -C /opt/cobaltstrike --strip-components=1 && CS_EXTRACTED=true
+        elif echo "$FILE_TYPE" | grep -q "POSIX tar archive"; then
+            echo "Extracting as plain tar..."
+            tar -xf /tmp/cs-archive -C /opt/cobaltstrike --strip-components=1 && CS_EXTRACTED=true
+        elif echo "$FILE_TYPE" | grep -q "Zip archive"; then
+            echo "Extracting as zip..."
+            unzip -o /tmp/cs-archive -d /opt/cobaltstrike && CS_EXTRACTED=true
+        else
+            echo "WARNING: Unknown archive type, trying tar -xf..."
+            tar -xf /tmp/cs-archive -C /opt/cobaltstrike --strip-components=1 && CS_EXTRACTED=true || \
+            tar -xzf /tmp/cs-archive -C /opt/cobaltstrike --strip-components=1 && CS_EXTRACTED=true || \
+            echo "ERROR: Failed to extract archive"
+        fi
+        
+        rm -f /tmp/cs-archive
+    fi
+fi
+
+# Post-extraction setup for Cobalt Strike 4.6+
+if [ "$CS_EXTRACTED" = true ]; then
+    echo "Cobalt Strike extracted successfully"
+    
+    # Extract TeamServerImage from JAR if not present (CS 4.6+ stores it in the JAR)
+    if [ -f /opt/cobaltstrike/cobaltstrike.jar ] && [ ! -f /opt/cobaltstrike/server/TeamServerImage ]; then
+        echo "Extracting TeamServerImage from JAR (CS 4.6+)..."
+        cd /opt/cobaltstrike/server
+        unzip -o ../cobaltstrike.jar TeamServerImage -d . 2>/dev/null || true
+        chmod +x TeamServerImage 2>/dev/null || true
+    fi
+    
+    # Make scripts executable
+    chmod +x /opt/cobaltstrike/server/teamserver 2>/dev/null || true
+    chmod +x /opt/cobaltstrike/update 2>/dev/null || true
+    
+    # Set ownership
+    chown -R ubuntu:ubuntu /opt/cobaltstrike
+    
+    # Check if license activation is needed
+    LICENSE_STATUS="unknown"
+    if [ -f /opt/cobaltstrike/server/TeamServerImage ]; then
+        # Try a quick test to see if licensed
+        cd /opt/cobaltstrike/server
+        timeout 5 ./TeamServerImage --help 2>&1 | grep -q "Please run the 'update' program" && LICENSE_STATUS="needs_activation" || LICENSE_STATUS="ready"
+    fi
+    echo "LICENSE_STATUS=$LICENSE_STATUS" >> /opt/cobaltstrike/bootstrap-status
+fi
+
+# Create systemd service (will only work after license activation)
+if [ -f /opt/cobaltstrike/server/teamserver ]; then
     cat > /etc/systemd/system/teamserver.service << EOF
 [Unit]
 Description=Cobalt Strike Team Server
 After=network.target
-Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/cobaltstrike
-ExecStart=/opt/cobaltstrike/teamserver 0.0.0.0 $CS_PASSWORD
+WorkingDirectory=/opt/cobaltstrike/server
+ExecStart=/opt/cobaltstrike/server/teamserver 0.0.0.0 $CS_PASSWORD
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:/opt/logs/teamserver.log
@@ -120,186 +173,118 @@ StandardError=append:/opt/logs/teamserver-error.log
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    # Reload systemd and enable service
     systemctl daemon-reload
     systemctl enable teamserver
     
-    # Start the service
-    systemctl start teamserver
-    
-    echo "Team server service created and started"
-    echo "Team server running on port 50050"
-else
-    echo "Skipping team server service creation"
-    echo "Either password not set or teamserver binary not found"
+    # Only start if we have a password and license appears ready
+    if [ -n "$CS_PASSWORD" ] && [ "$LICENSE_STATUS" = "ready" ]; then
+        echo "Starting team server..."
+        systemctl start teamserver
+    else
+        echo "Team server service created but NOT started - license activation required"
+    fi
 fi
 
-# =============================================================================
-# 5. Create Helper Scripts and README
-# =============================================================================
-echo "[5/5] Creating helper scripts..."
-
-# Create comprehensive README
-cat > /home/ubuntu/README.txt << 'README'
+# README with clear instructions
+cat > /home/ubuntu/README.txt << 'READMEEOF'
 ================================================================================
-                    TEAM SERVER - QUICK START GUIDE
+                    COBALT STRIKE TEAM SERVER
 ================================================================================
 
-ROLE: Cobalt Strike Team Server ONLY
+IMPORTANT: LICENSE ACTIVATION REQUIRED
+--------------------------------------
+Before the team server can run, you must activate your Cobalt Strike license:
 
-This is a MINIMAL server. It runs ONLY the CS teamserver daemon.
-NO offensive tools are installed here - use the Attack Box for tools.
+    cd /opt/cobaltstrike
+    sudo ./update
 
-================================================================================
-                              SSH KEY INFORMATION
-================================================================================
+Enter your license key when prompted. This downloads the licensed binaries.
 
-This server uses the INTERNAL SSH key for access.
+AFTER LICENSE ACTIVATION
+------------------------
+Start the team server:
 
-Who can access this server:
-  ✅ Jumpbox (has internal key at ~/.ssh/internal_key)
-  ✅ Attack Box WSL (has internal key at ~/.ssh/teamserver_key)
-  ❌ Your local machine (external key doesn't work here!)
+    sudo systemctl start teamserver
 
-IMPORTANT SECURITY NOTE:
-  - This server has NO outbound SSH keys
-  - It cannot initiate connections to other hosts
-  - Compromise here is contained - no lateral movement possible
+Or manually:
 
-================================================================================
-                              TEAM SERVER STATUS
-================================================================================
+    cd /opt/cobaltstrike/server
+    sudo ./teamserver 0.0.0.0 <YOUR_PASSWORD>
 
-Check if team server is running:
-  /opt/cobaltstrike/check-status.sh
+USEFUL COMMANDS
+---------------
+Check status:     /opt/cobaltstrike/check-status.sh
+Restart:          sudo systemctl restart teamserver
+View logs:        tail -f /opt/logs/teamserver.log
+Stop:             sudo systemctl stop teamserver
 
-Restart team server:
-  /opt/cobaltstrike/restart-teamserver.sh
+CONNECTION INFO
+---------------
+Team Server IP:   192.168.56.40
+Team Server Port: 50050
 
-View live logs:
-  /opt/cobaltstrike/view-logs.sh
+From your LOCAL machine, create an SSH tunnel:
+    ssh -L 50050:192.168.56.40:50050 ubuntu@<JUMPBOX_PUBLIC_IP>
 
-Check listening ports:
-  netstat -tlnp | grep -E '(50050|443|80)'
-
-================================================================================
-                              CONNECTING CS CLIENT
-================================================================================
-
-FROM ATTACK BOX (Windows):
-  1. RDP to Attack Box
-  2. Run CS Client: java -jar C:\Tools\cobaltstrike\cobaltstrike.jar
-  3. Connect to: 192.168.56.40:50050
-
-FROM YOUR LOCAL MACHINE:
-  1. Create SSH tunnel through Jumpbox:
-     ssh -i ~/.ssh/<jumpbox-key>.pem -L 50050:192.168.56.40:50050 ubuntu@<JUMPBOX_IP>
-  2. Run your local CS Client
-  3. Connect to: localhost:50050
-
-FROM ATTACK BOX WSL:
-  ssh teamserver   # Pre-configured alias
+Then connect your CS Client to: localhost:50050
 
 ================================================================================
-                              NETWORK ACCESS
-================================================================================
-
-This Team Server:
-  - Private IP: 192.168.56.40
-  - CS Port: 50050
-  - NO public IP (private subnet only)
-
-Can reach:
-  - GOAD AD VMs (192.168.56.10-25) for beacons
-  - Outbound internet (via NAT) for staged payloads
-
-Cannot reach:
-  - Jumpbox (no SSH key)
-  - Your local machine (no route)
-
-================================================================================
-                              TROUBLESHOOTING
-================================================================================
-
-Team server not starting?
-  - Check logs: cat /opt/logs/teamserver.log
-  - Check Java: java -version
-  - Check files: ls -la /opt/cobaltstrike/
-
-Port 50050 not listening?
-  - Restart: sudo systemctl restart teamserver
-  - Check: sudo systemctl status teamserver
-
-Can't connect from CS Client?
-  - Verify SSH tunnel is active
-  - Check password is correct
-  - Verify firewall allows 50050
-
-================================================================================
-Created by Red Team Infrastructure Deployment Tool
-================================================================================
-README
-
+READMEEOF
 chown ubuntu:ubuntu /home/ubuntu/README.txt
-chmod 644 /home/ubuntu/README.txt
 
-# Script to check team server status
+# Helper scripts
 cat > /opt/cobaltstrike/check-status.sh << 'EOF'
 #!/bin/bash
-echo "=== Team Server Status ==="
-systemctl status teamserver --no-pager
+echo "=== Cobalt Strike Team Server Status ==="
 echo ""
-echo "=== Listening Ports ==="
-netstat -tlnp | grep -E '(50050|443|80)'
+
+# Check license status
+if [ -f /opt/cobaltstrike/server/TeamServerImage ]; then
+    cd /opt/cobaltstrike/server
+    if timeout 3 ./TeamServerImage --help 2>&1 | grep -q "Please run the 'update' program"; then
+        echo "LICENSE: ❌ NOT ACTIVATED"
+        echo "         Run: cd /opt/cobaltstrike && sudo ./update"
+        echo ""
+    else
+        echo "LICENSE: ✅ Activated"
+        echo ""
+    fi
+else
+    echo "LICENSE: ⚠️  TeamServerImage not found"
+    echo ""
+fi
+
+# Check service status
+echo "=== Service Status ==="
+systemctl status teamserver --no-pager 2>/dev/null || echo "Service not running"
 echo ""
-echo "=== Recent Logs ==="
-tail -20 /opt/logs/teamserver.log 2>/dev/null || echo "No logs yet"
+
+# Check if listening
+echo "=== Port 50050 ==="
+netstat -tlnp 2>/dev/null | grep 50050 || echo "Not listening on port 50050"
 EOF
 chmod +x /opt/cobaltstrike/check-status.sh
 
-# Script to restart team server
-cat > /opt/cobaltstrike/restart-teamserver.sh << 'EOF'
+cat > /opt/cobaltstrike/activate-license.sh << 'EOF'
 #!/bin/bash
-echo "Restarting team server..."
-sudo systemctl restart teamserver
-sleep 3
-sudo systemctl status teamserver --no-pager
+echo "=== Cobalt Strike License Activation ==="
+echo ""
+echo "This will run the Cobalt Strike update program."
+echo "You will need your license key."
+echo ""
+cd /opt/cobaltstrike
+sudo ./update
+echo ""
+echo "If activation was successful, start the team server with:"
+echo "    sudo systemctl start teamserver"
 EOF
-chmod +x /opt/cobaltstrike/restart-teamserver.sh
-
-# Script to view logs
-cat > /opt/cobaltstrike/view-logs.sh << 'EOF'
-#!/bin/bash
-tail -f /opt/logs/teamserver.log
-EOF
-chmod +x /opt/cobaltstrike/view-logs.sh
+chmod +x /opt/cobaltstrike/activate-license.sh
 
 chown -R ubuntu:ubuntu /opt/cobaltstrike
 
-# =============================================================================
-# Complete
-# =============================================================================
-echo ""
-echo "=============================================="
-echo "Team Server Installation Complete!"
-echo "Finished: $(date)"
-echo "=============================================="
-echo ""
-echo "This server runs ONLY the Cobalt Strike Team Server"
-echo "No other tools are installed here."
-echo ""
-echo "=== Commands ==="
-echo "  Check status:  /opt/cobaltstrike/check-status.sh"
-echo "  Restart:       /opt/cobaltstrike/restart-teamserver.sh"
-echo "  View logs:     /opt/cobaltstrike/view-logs.sh"
-echo ""
-echo "=== Connection ==="
-echo "  Team Server Port: 50050"
-echo "  Connect via SSH tunnel from your local machine:"
-echo "    ssh -L 50050:192.168.56.40:50050 ubuntu@<JUMPBOX_IP>"
-echo ""
-
-# Create completion marker
 touch /opt/cobaltstrike/.install-complete
-
+echo "=== Team Server Init Complete: $(date) ==="
+echo ""
+echo "NEXT STEP: Activate your Cobalt Strike license"
+echo "    ssh teamserver"
+echo "    cd /opt/cobaltstrike && sudo ./update"
