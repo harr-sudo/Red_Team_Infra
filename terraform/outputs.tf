@@ -76,6 +76,11 @@ output "private_subnet_ids" {
   value       = local.deploy_c2_infra ? module.vpc[0].private_subnet_ids : []
 }
 
+output "management_subnet_ids" {
+  description = "IDs of the management subnets (bastion isolation)"
+  value       = local.deploy_c2_infra ? module.vpc[0].management_subnet_ids : []
+}
+
 # =============================================================================
 # 4. C2 INFRASTRUCTURE OUTPUTS
 # =============================================================================
@@ -187,6 +192,31 @@ output "bastion_windows_password_info" {
 }
 
 # =============================================================================
+# 5b. ATTACK BOX OUTPUTS (Windows Workstation)
+# =============================================================================
+
+output "attack_box_instance_id" {
+  description = "Attack box EC2 instance ID"
+  value       = local.deploy_attack_box && length(module.attack_box) > 0 ? module.attack_box[0].instance_id : null
+}
+
+output "attack_box_private_ip" {
+  description = "Attack box private IP address"
+  value       = local.deploy_attack_box && length(module.attack_box) > 0 ? module.attack_box[0].private_ip : null
+}
+
+output "attack_box_admin_password" {
+  description = "Attack box Windows Administrator password"
+  value       = local.deploy_attack_box && length(module.attack_box) > 0 ? module.attack_box[0].admin_password : null
+  sensitive   = true
+}
+
+output "attack_box_rdp_tunnel" {
+  description = "SSH tunnel command for RDP to attack box (uses port 3390 to avoid bastion conflict)"
+  value       = local.deploy_attack_box && length(module.attack_box) > 0 ? module.attack_box[0].rdp_tunnel_command : null
+}
+
+# =============================================================================
 # 6. PROXY/REDIRECTOR OUTPUTS
 # =============================================================================
 
@@ -203,6 +233,35 @@ output "proxy_redirector_public_ips" {
 output "proxy_redirector_private_ips" {
   description = "Private IP addresses of the proxy/redirector instances"
   value       = local.deploy_redirectors && length(module.proxy_redirector) > 0 ? module.proxy_redirector[0].proxy_redirector_private_ips : []
+}
+
+# =============================================================================
+# 6b. DOMAIN FRONTING OUTPUTS (CloudFront)
+# =============================================================================
+
+output "domain_fronting_enabled" {
+  description = "Whether domain fronting (CloudFront) is enabled"
+  value       = local.deploy_domain_fronting
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID"
+  value       = local.deploy_domain_fronting && length(module.domain_fronting) > 0 ? module.domain_fronting[0].cloudfront_distribution_id : null
+}
+
+output "cloudfront_domain_name" {
+  description = "CloudFront domain name (d123abc.cloudfront.net) - use as Host header in CS profile"
+  value       = local.deploy_domain_fronting && length(module.domain_fronting) > 0 ? module.domain_fronting[0].cloudfront_domain_name : null
+}
+
+output "cloudfront_aliases" {
+  description = "All domains configured as CloudFront aliases (available for domain rotation)"
+  value       = local.deploy_domain_fronting && length(module.domain_fronting) > 0 ? module.domain_fronting[0].cloudfront_aliases : []
+}
+
+output "cloudfront_status" {
+  description = "CloudFront distribution deployment status"
+  value       = local.deploy_domain_fronting && length(module.domain_fronting) > 0 ? module.domain_fronting[0].cloudfront_status : null
 }
 
 # =============================================================================
@@ -267,17 +326,6 @@ output "goad_credentials" {
 output "goad_domain_info" {
   description = "GOAD domain information"
   value       = local.deploy_goad && length(module.goad) > 0 ? module.goad[0].domain_info : null
-}
-
-output "goad_attackbox_private_ip" {
-  description = "GOAD Attack Box private IP"
-  value       = local.deploy_goad && length(module.goad) > 0 ? module.goad[0].attackbox_private_ip : null
-}
-
-output "goad_attackbox_password" {
-  description = "GOAD Attack Box Administrator password (randomly generated)"
-  value       = local.deploy_goad && length(module.goad) > 0 ? module.goad[0].attackbox_admin_password : null
-  sensitive   = true
 }
 
 output "goad_teamserver_private_ip" {

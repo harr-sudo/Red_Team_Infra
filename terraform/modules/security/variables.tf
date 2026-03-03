@@ -49,6 +49,16 @@ variable "goad_vpc_cidr" {
   default     = ""
 }
 
+# =============================================================================
+# Domain Fronting Configuration
+# =============================================================================
+
+variable "enable_domain_fronting" {
+  description = "When true, restrict redirector HTTP/HTTPS to CloudFront IPs only (via managed prefix list)"
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

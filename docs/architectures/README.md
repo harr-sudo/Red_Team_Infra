@@ -10,17 +10,21 @@ This directory contains detailed architecture documentation for all deployment m
 
 | Lab Type | VMs | Domains | Cost/Month | Best For | Documentation |
 |----------|-----|---------|------------|----------|---------------|
-| **GOAD Mini** | 2 | 1 | $75-100 | Beginners, learning AD basics | [📄 goad-mini.md](./goad-mini.md) |
-| **GOAD Light** | 4 | 2 | $200-250 | Intermediate, multi-domain attacks | [📄 goad-light.md](./goad-light.md) |
-| **GOAD Full** | 6 | 3 | $350-400 | Advanced, complete AD environment | [📄 goad-full.md](./goad-full.md) |
+| **GOAD Mini** | 1 DC | 1 | $75-100 | Beginners, learning AD basics | [📄 goad-mini.md](./goad-mini.md) |
+| **GOAD Light** | 2 DC + 1 SRV | 2 | $150-200 | Intermediate, multi-domain attacks | [📄 goad-light.md](./goad-light.md) |
+| **GOAD SCCM** | dc01 + srv01 + srv02 + ws01 | 1 | $180-230 | SCCM attack scenarios (sccm.lab) | |
+| **GOAD Full** | 3 DC + 2 SRV | 3 | $200-250 | Advanced, complete AD environment | [📄 goad-full.md](./goad-full.md) |
+| **GOAD NHA** | dc01-dc02 + srv01-srv03 | 2 | $200-250 | CTF challenge (ninja.hack) | |
 
 ### C2 Infrastructure
 
 | Deployment Mode | Servers | Cost/Month | Best For | Documentation |
 |----------------|---------|------------|----------|---------------|
-| **C2 Ad-Hoc** | 1 C2 + 2 Redirectors | $60-105 | Quick pentests, POCs | [📄 c2-adhoc.md](./c2-adhoc.md) |
-| **C2 Purple Team** | 2 C2 + 2 Redirectors | $90-140 | Purple team exercises, redundancy | [📄 c2-purple.md](./c2-purple.md) |
-| **C2 Full Red Team** | 3 C2 (phases) + 2 Redirectors | $120-170 | Full red team, phase-based ops | [📄 c2-full.md](./c2-full.md) |
+| **C2 Ad-Hoc** | 1 C2 + 2 Redirectors + Attack Box | $160-192 | Quick pentests, POCs | [📄 c2-adhoc.md](./c2-adhoc.md) |
+| **C2 Purple Team** | 2 C2 + 2 Redirectors + Attack Box | $190-230 | Purple team exercises, redundancy | [📄 c2-purple.md](./c2-purple.md) |
+| **C2 Full Red Team** | 3 C2 (phases) + 2 Redirectors + Attack Box | $220-260 | Full red team, phase-based ops | [📄 c2-full.md](./c2-full.md) |
+
+**Optional add-on:** CloudFront Domain Fronting — hides redirector IPs behind CDN. Adds ~$10-50/month. See [C2 Traffic Flow](../C2_TRAFFIC_FLOW.md#domain-fronting-traffic-flow-optional).
 
 ### Combined Deployments
 
@@ -48,7 +52,9 @@ All architecture diagrams are generated using AWS best practices and are located
 ### Available Diagrams
 
 - `goad-mini-architecture.png` - GOAD Mini deployment
-- `goad-light-architecture.png` - GOAD Light deployment  
+- `goad-light-architecture.png` - GOAD Light deployment
+- `goad-sccm-architecture.png` - GOAD SCCM deployment
+- `goad-nha-architecture.png` - GOAD NHA deployment
 - `goad-full-architecture.png` - GOAD Full deployment
 - `c2-adhoc-architecture.png` - C2 Ad-Hoc deployment
 - `c2-purple-architecture.png` - C2 Purple Team deployment
@@ -66,16 +72,18 @@ All architecture diagrams are generated using AWS best practices and are located
 | Lab | Monthly Cost (24/7) | Monthly Cost (Stop/Start 70% savings) | Daily Cost | Best Use Case |
 |-----|---------------------|----------------------------------------|------------|---------------|
 | Mini | $75-100 | $22-30 | $2.50-3.30 | Learning basics |
-| Light | $200-250 | $60-75 | $6.60-8.30 | Multi-domain practice |
-| Full | $350-400 | $105-120 | $11.60-13.30 | Complete training |
+| Light | $150-200 | $45-60 | $5-6.60 | Multi-domain practice |
+| SCCM | $180-230 | $54-69 | $6-7.60 | SCCM attack scenarios |
+| Full | $200-250 | $60-75 | $6.60-8.30 | Complete training |
+| NHA | $200-250 | $60-75 | $6.60-8.30 | Challenge mode (CTF) |
 
 ### C2-Only Deployments (Infrastructure)
 
 | Mode | Monthly Cost | 2-Week Cost | Daily Cost | Best Use Case |
 |------|--------------|-------------|------------|---------------|
-| Ad-Hoc | $60-105 | $28-49 | $2-3.50 | Quick pentests |
-| Purple Team | $90-140 | $42-65 | $3-4.60 | Purple team exercises |
-| Full Red Team | $120-170 | $56-79 | $4-5.60 | Phase-based ops |
+| Ad-Hoc | $160-192 | $75-90 | $5-6.50 | Quick pentests |
+| Purple Team | $190-230 | $89-107 | $6-7.50 | Purple team exercises |
+| Full Red Team | $220-260 | $103-121 | $7-8.50 | Phase-based ops |
 
 ### Combined Deployments (Full Simulation)
 
@@ -207,7 +215,9 @@ terraform destroy
 
 4. **Operational Security**
    - ✅ Use legitimate-looking domains
-   - ✅ Implement HTTPS with valid certs
+   - ✅ Implement HTTPS with valid certs (Let's Encrypt or ACM with domain fronting)
+   - ✅ Avoid self-signed certs in production (flagged by Shodan/Censys, blocked by proxies)
+   - ✅ Consider domain fronting to hide redirector IPs from DNS analysis
    - ✅ Randomize beacon sleep times
    - ✅ Monitor for blue team detection
    - ✅ Practice proper cleanup

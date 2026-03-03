@@ -65,13 +65,15 @@ locals {
   # S3 bucket names must be lowercase, 3-63 chars, only letters, numbers, hyphens
   sanitized_name = lower(replace(var.project_name, "_", "-"))
 
-  # Determine which roles to create based on VPC IDs provided
-  create_c2_role   = var.enable_c2_role && var.c2_vpc_id != ""
-  create_goad_role = var.enable_goad_role && var.goad_vpc_id != ""
+  # Determine which roles to create based on enable flags (known at plan time).
+  # VPC IDs are only used inside policy documents, NOT for count conditions,
+  # because VPC IDs come from module outputs that aren't known until apply.
+  create_c2_role   = var.enable_c2_role
+  create_goad_role = var.enable_goad_role
 
-  # Backwards compatibility: if old vpc_id is provided, determine which role to create
-  # This handles the case where only one VPC exists (C2-only or GOAD-only modes)
-  legacy_vpc_id = var.vpc_id != "" && !local.create_c2_role && !local.create_goad_role ? var.vpc_id : ""
+  # Backwards compatibility: if old vpc_id is provided and neither new role is enabled
+  # Use the enable flags (not VPC ID strings) to keep count values plan-time deterministic
+  legacy_vpc_id = var.vpc_id != "" && !var.enable_c2_role && !var.enable_goad_role ? var.vpc_id : ""
 }
 
 # =============================================================================

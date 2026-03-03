@@ -62,6 +62,12 @@ variable "windows_admin_password" {
   sensitive   = true
 }
 
+variable "private_ip" {
+  description = "Static private IP address (leave empty for DHCP)"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

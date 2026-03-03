@@ -18,9 +18,8 @@ GOAD creates realistic, vulnerable Active Directory environments with:
 | **GOAD** | 5 | 2 | 3 | Full lab - complete AD environment | ~$300-400/mo |
 | **GOAD-Light** | 3 | 1 | 2 | Smaller lab for limited resources | ~$180-250/mo |
 | **GOAD-Mini** | 1 | 1 | 1 | Minimalist - sevenkingdoms.local only | ~$60-90/mo |
-| **SCCM** | 4 | 1 | 1 | Microsoft Configuration Manager lab | ~$250-350/mo |
-| **NHA** | 5 | 1 | 2 | Challenge lab (no schema provided) | ~$300-400/mo |
-| **MINILAB** | 2 | 1 | 1 | Basic DC + Workstation | ~$120-180/mo |
+| **SCCM** | 4 | 1 | 1 | Microsoft Configuration Manager lab (sccm.lab) | ~$250-350/mo |
+| **NHA** | 5 | 1 | 2 | CTF challenge lab (ninja.hack + academy.ninja.lan) | ~$300-400/mo |
 
 ### Key Discovery: GOAD Already Has a Jump Box!
 
@@ -219,7 +218,6 @@ git clone https://github.com/Orange-Cyberdefense/GOAD.git tools/goad
 │    ○ GOAD-Mini (1 VM, 1 domain) - ~$75/mo                   │
 │    ○ SCCM (4 VMs, SCCM environment) - ~$300/mo              │
 │    ○ NHA Challenge (5 VMs, no hints) - ~$350/mo             │
-│    ○ MINILAB (2 VMs, basic setup) - ~$150/mo                │
 │                                                              │
 │  [i] Labs provide vulnerable AD environments for testing     │
 │      your C2 infrastructure against realistic targets.       │

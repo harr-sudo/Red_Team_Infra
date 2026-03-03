@@ -31,16 +31,39 @@ output "public_route_table_id" {
 }
 
 output "private_route_table_id" {
-  description = "ID of the private route table (if NAT Gateway enabled)"
-  value       = var.enable_nat_gateway ? aws_route_table.private_rt[0].id : null
+  description = "ID of the private route table"
+  value       = aws_route_table.private_rt.id
 }
 
 output "private_route_table_ids" {
   description = "List of private route table IDs (for VPC peering)"
-  value       = var.enable_nat_gateway ? [aws_route_table.private_rt[0].id] : [aws_route_table.public_rt.id]
+  value       = [aws_route_table.private_rt.id]
+}
+
+output "management_subnet_ids" {
+  description = "IDs of the management subnets (bastion isolation)"
+  value       = aws_subnet.management_subnets[*].id
+}
+
+output "management_route_table_id" {
+  description = "ID of the management route table (null if no management subnets)"
+  value       = length(aws_route_table.management_rt) > 0 ? aws_route_table.management_rt[0].id : null
 }
 
 output "all_route_table_ids" {
-  description = "All route table IDs in the VPC"
-  value       = var.enable_nat_gateway ? [aws_route_table.public_rt.id, aws_route_table.private_rt[0].id] : [aws_route_table.public_rt.id]
+  description = "All route table IDs in the VPC (public, private, management)"
+  value = concat(
+    [aws_route_table.public_rt.id, aws_route_table.private_rt.id],
+    length(aws_route_table.management_rt) > 0 ? [aws_route_table.management_rt[0].id] : []
+  )
+}
+
+output "nat_gateway_id" {
+  description = "ID of the NAT Gateway (if enabled)"
+  value       = var.enable_nat_gateway ? aws_nat_gateway.nat_gw[0].id : null
+}
+
+output "nat_gateway_public_ip" {
+  description = "Public IP of the NAT Gateway (if enabled)"
+  value       = var.enable_nat_gateway ? aws_eip.nat_eip[0].public_ip : null
 }

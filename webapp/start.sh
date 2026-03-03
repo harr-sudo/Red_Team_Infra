@@ -31,6 +31,16 @@ fi
 # Activate virtual environment
 source "$PROJECT_ROOT/venv/bin/activate"
 
+# Verify pip works (venv breaks if the project directory was moved/renamed)
+if ! pip --version &> /dev/null; then
+    echo -e "${YELLOW}Virtual environment appears broken (common after moving/renaming the project directory).${NC}"
+    echo -e "${YELLOW}Recreating virtual environment...${NC}"
+    deactivate 2>/dev/null || true
+    rm -rf "$PROJECT_ROOT/venv"
+    python3 -m venv "$PROJECT_ROOT/venv"
+    source "$PROJECT_ROOT/venv/bin/activate"
+fi
+
 # Install/update dependencies
 echo -e "${YELLOW}Installing dependencies...${NC}"
 pip install -q --upgrade pip

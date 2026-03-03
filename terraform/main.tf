@@ -36,6 +36,16 @@ provider "aws" {
   }
 }
 
+# AWS provider in us-east-1 (required for CloudFront ACM certificates)
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  default_tags {
+    tags = local.enhanced_tags
+  }
+}
+
 # =============================================================================
 # DATA SOURCES - Get Available Availability Zones
 # =============================================================================
@@ -69,14 +79,43 @@ locals {
   deploy_redirectors    = local.is_c2_only || local.is_combined
   deploy_bastion        = local.is_c2_only || local.is_combined
   deploy_vpc_peering    = local.is_combined
+  deploy_domain_fronting = (local.is_c2_only || local.is_combined) && var.enable_domain_fronting
   install_cs_on_jumpbox = local.is_goad_only # Only for GOAD-only mode
+  deploy_attack_box     = var.enable_attack_box
+
+  # -------------------------------------------------------------------------
+  # Static IP Allocation (C2 VPC)
+  # -------------------------------------------------------------------------
+  # Management Subnet (10.0.0.0/24): .10 = Bastion
+  # DMZ Subnet 1 (10.0.1.0/24): .10 = Redirector 1
+  # DMZ Subnet 2 (10.0.2.0/24): .10 = Redirector 2
+  # Private Subnet 1 (10.0.10.0/24): .10 = C2 Server 1, .11 = C2 Server 3, .50 = Attack Box
+  # Private Subnet 2 (10.0.11.0/24): .10 = C2 Server 2
+  bastion_private_ip     = "10.0.0.10"
+  attack_box_private_ip  = "10.0.10.50"
+  c2_server_private_ips  = ["10.0.10.10", "10.0.11.10"]
+  redirector_private_ips = ["10.0.1.10", "10.0.2.10"]
+
+  # Phase-based C2 server subnet and IP mapping (c2-full)
+  c2_phase_subnet_indices = {
+    staging   = 0
+    post-ex   = 1
+    long-haul = 0
+  }
+  c2_phase_private_ips = {
+    staging   = ["10.0.10.10"]
+    post-ex   = ["10.0.11.10"]
+    long-haul = ["10.0.10.11"]
+  }
+
+  # GOAD IP range prefix (e.g., "192.168.56")
+  goad_ip_range = join(".", slice(split(".", split("/", var.goad_vpc_cidr)[0]), 0, 3))
 
   # -------------------------------------------------------------------------
   # GOAD Lab Type Mapping
   # -------------------------------------------------------------------------
   goad_lab_map = {
     "goad-mini"            = "GOAD-Mini"
-    "goad-minilab"         = "MINILAB"
     "goad-light"           = "GOAD-Light"
     "goad-sccm"            = "SCCM"
     "goad-full"            = "GOAD"
@@ -203,14 +242,19 @@ module "vpc" {
   count  = local.deploy_c2_infra ? 1 : 0
   source = "./modules/vpc"
 
-  vpc_cidr             = var.vpc_cidr
-  availability_zones   = local.availability_zones
-  public_subnet_cidrs  = var.public_subnet_cidrs
-  private_subnet_cidrs = var.private_subnet_cidrs
-  project_name         = var.project_name
-  environment          = var.environment
-  enable_nat_gateway   = var.enable_nat_gateway
-  tags                 = local.enhanced_tags
+  vpc_cidr                = var.vpc_cidr
+  availability_zones      = local.availability_zones
+  public_subnet_cidrs     = var.public_subnet_cidrs
+  private_subnet_cidrs    = var.private_subnet_cidrs
+  management_subnet_cidrs = var.management_subnet_cidrs
+  project_name            = var.project_name
+  environment             = var.environment
+  enable_nat_gateway      = var.enable_nat_gateway
+  enable_nacls            = var.enable_nacls
+  management_cidr_blocks  = var.management_cidr_blocks
+  c2_server_port          = var.c2_server_port
+  ssh_port                = var.ssh_port
+  tags                    = local.enhanced_tags
 }
 
 # =============================================================================
@@ -232,6 +276,9 @@ module "security" {
   enable_vpc_peering = local.deploy_vpc_peering
   goad_vpc_cidr      = local.deploy_vpc_peering ? var.goad_vpc_cidr : ""
 
+  # Domain fronting (restrict redirector to CloudFront IPs only)
+  enable_domain_fronting = var.enable_domain_fronting
+
   tags = var.tags
 }
 
@@ -250,6 +297,7 @@ module "c2_team_server" {
   key_pair_name              = var.key_pair_name
   private_subnet_ids         = module.vpc[0].private_subnet_ids
   security_group_id          = module.security[0].c2_team_server_security_group_id
+  private_ips                = local.c2_server_private_ips
   project_name               = var.project_name
   environment                = var.environment
   root_volume_size           = var.c2_server_root_volume_size
@@ -286,8 +334,10 @@ module "c2_phase_servers" {
   instance_type              = each.value.instance_type
   ami_id                     = var.c2_server_ami_id != "" ? var.c2_server_ami_id : data.aws_ami.ubuntu.id
   key_pair_name              = var.key_pair_name
-  private_subnet_ids         = module.vpc[0].private_subnet_ids
+  # Route each phase to its designated subnet
+  private_subnet_ids         = [module.vpc[0].private_subnet_ids[lookup(local.c2_phase_subnet_indices, each.key, 0) % length(module.vpc[0].private_subnet_ids)]]
   security_group_id          = module.security[0].c2_team_server_security_group_id
+  private_ips                = lookup(local.c2_phase_private_ips, each.key, [])
   project_name               = var.project_name
   environment                = var.environment
   root_volume_size           = each.value.root_volume_size
@@ -322,6 +372,7 @@ module "proxy_redirector" {
   key_pair_name              = var.key_pair_name
   public_subnet_ids          = module.vpc[0].public_subnet_ids
   security_group_id          = module.security[0].proxy_redirector_security_group_id
+  private_ips                = local.redirector_private_ips
   project_name               = var.project_name
   environment                = var.environment
   root_volume_size           = var.proxy_redirector_root_volume_size
@@ -333,7 +384,7 @@ module "proxy_redirector" {
   # Domain configuration for nginx redirector setup
   primary_domain = var.primary_domain_name
   c2_subdomain   = var.c2_subdomain
-  c2_server_ip   = length(module.c2_team_server) > 0 ? module.c2_team_server[0].private_ips[0] : ""
+  c2_server_ip   = length(module.c2_team_server) > 0 ? module.c2_team_server[0].first_server_private_ip : ""
   c2_server_port = var.c2_server_port
 
   # SSL configuration
@@ -355,7 +406,9 @@ module "bastion" {
 
   project_name               = var.project_name
   environment                = var.environment
-  public_subnet_id           = module.vpc[0].public_subnet_ids[0]
+  # OPSEC: Bastion in management subnet (isolated from redirectors in DMZ)
+  # Falls back to public subnet if management subnet is not configured
+  public_subnet_id           = length(module.vpc[0].management_subnet_ids) > 0 ? module.vpc[0].management_subnet_ids[0] : module.vpc[0].public_subnet_ids[0]
   security_group_id          = module.security[0].bastion_security_group_id
   key_pair_name              = var.key_pair_name
   instance_type              = var.bastion_instance_type
@@ -363,8 +416,59 @@ module "bastion" {
   root_volume_size           = var.bastion_root_volume_size
   enable_detailed_monitoring = var.enable_detailed_monitoring
   iam_instance_profile_name  = var.bastion_iam_instance_profile_name
+  private_ip                 = local.bastion_private_ip
   windows_admin_password     = var.windows_admin_password
   tags                       = local.enhanced_tags
+}
+
+# =============================================================================
+# ATTACK BOX MODULE - Windows Attack Workstation
+# =============================================================================
+# Deployed for ALL deployment types:
+#   C2-only & Combined: C2 VPC private subnet (10.0.10.50)
+#   GOAD-only: GOAD VPC private subnet (x.x.x.50)
+
+module "attack_box" {
+  count  = local.deploy_attack_box ? 1 : 0
+  source = "./modules/attack_box"
+
+  project_name = var.project_name
+  environment  = var.environment
+
+  # Network placement: C2 VPC for C2/combined, GOAD VPC for GOAD-only
+  subnet_id         = local.is_goad_only ? (length(module.goad) > 0 ? module.goad[0].private_subnet_id : "") : (length(module.vpc) > 0 ? module.vpc[0].private_subnet_ids[0] : "")
+  security_group_id = local.is_goad_only ? (length(module.goad) > 0 ? module.goad[0].security_group_id : "") : (length(module.security) > 0 ? module.security[0].attack_box_security_group_id : "")
+  private_ip        = local.is_goad_only ? "${local.goad_ip_range}.50" : local.attack_box_private_ip
+
+  # Instance configuration
+  instance_type              = var.attack_box_instance_type
+  root_volume_size           = var.attack_box_root_volume_size
+  admin_password             = var.attack_box_admin_password
+  key_pair_name              = var.key_pair_name
+  enable_detailed_monitoring = var.enable_detailed_monitoring
+
+  # C2 Server connection (for CS Client shortcut)
+  c2_server_ip   = local.is_goad_only ? "${local.goad_ip_range}.40" : local.c2_server_private_ips[0]
+  c2_server_port = var.c2_server_port
+
+  # S3 / Deployment artifacts
+  deployment_bucket         = length(module.cs_storage) > 0 ? module.cs_storage[0].bucket_name : ""
+  deployment_id             = var.project_name
+  aws_region                = var.aws_region
+  iam_instance_profile_name = length(module.cs_storage) > 0 ? (local.is_goad_only ? module.cs_storage[0].instance_profile_name_goad : module.cs_storage[0].instance_profile_name_c2) : ""
+  cs_client_s3_path         = var.cobalt_strike_archive_s3_path
+
+  # Tools repository
+  tools_repo_url    = var.tools_repo_url
+  tools_repo_branch = var.tools_repo_branch
+
+  # Key exchange (GOAD-only: S3-based SSH key exchange with jumpbox)
+  enable_key_exchange = local.is_goad_only
+  s3_key_prefix       = local.is_goad_only ? "keys/${var.project_name}" : ""
+
+  tags = local.enhanced_tags
+
+  depends_on = [module.vpc, module.goad, module.cs_storage]
 }
 
 # =============================================================================
@@ -423,9 +527,15 @@ module "vpc_peering" {
   count  = local.deploy_vpc_peering ? 1 : 0
   source = "./modules/vpc_peering"
 
-  c2_vpc_id            = module.vpc[0].vpc_id
-  goad_vpc_id          = module.goad[0].vpc_id
-  c2_route_table_ids   = module.vpc[0].private_route_table_ids
+  c2_vpc_id  = module.vpc[0].vpc_id
+  goad_vpc_id = module.goad[0].vpc_id
+  # BUG FIX: Include ALL route tables so bastion + redirectors can reach GOAD VMs
+  # Previously only private RT had peering routes — bastion couldn't reach GOAD
+  c2_route_table_ids = concat(
+    module.vpc[0].private_route_table_ids,
+    [module.vpc[0].public_route_table_id],
+    length(module.vpc[0].management_subnet_ids) > 0 ? [module.vpc[0].management_route_table_id] : []
+  )
   goad_route_table_ids = module.goad[0].route_table_ids
   c2_cidr              = var.vpc_cidr
   goad_cidr            = var.goad_vpc_cidr
@@ -450,7 +560,7 @@ module "dns" {
   cdn_subdomain       = var.cdn_subdomain
 
   # Point DNS records to redirector IPs
-  redirector_ips = length(module.proxy_redirector) > 0 ? module.proxy_redirector[0].public_ips : []
+  redirector_ips = length(module.proxy_redirector) > 0 ? module.proxy_redirector[0].proxy_redirector_public_ips : []
 
   # Hosted zone settings
   create_hosted_zone = var.create_dns_hosted_zone
@@ -461,6 +571,7 @@ module "dns" {
   enable_cdn_subdomain         = var.enable_cdn_subdomain
   enable_apex_record           = var.enable_apex_record
   create_backup_domain_records = var.create_backup_domain_records
+  enable_domain_fronting       = var.enable_domain_fronting
   enable_spf_record            = var.enable_spf_record
   enable_dmarc_record          = var.enable_dmarc_record
 
@@ -491,4 +602,111 @@ module "certificates" {
   tags         = local.enhanced_tags
 
   depends_on = [module.dns]
+}
+
+# =============================================================================
+# DOMAIN FRONTING - CloudFront CDN Proxy for C2 Traffic
+# =============================================================================
+# Hides redirector IPs behind CloudFront. Enables domain fronting where
+# beacons connect to a front domain (e.g. grid.crowdstrike.com) but the
+# Host header routes traffic to our CloudFront distribution.
+#
+# CloudFront requires ACM certificates in us-east-1, so we create a
+# separate certificate here (independent of the regional cert above).
+# =============================================================================
+
+# ACM Certificate in us-east-1 for CloudFront
+resource "aws_acm_certificate" "cloudfront_cert" {
+  count    = local.deploy_domain_fronting && var.primary_domain_name != "" ? 1 : 0
+  provider = aws.us_east_1
+
+  domain_name       = var.primary_domain_name
+  validation_method = "DNS"
+
+  subject_alternative_names = compact(concat(
+    [
+      "*.${var.primary_domain_name}",
+      "${var.c2_subdomain}.${var.primary_domain_name}",
+    ],
+    var.enable_www_subdomain ? ["${var.www_subdomain}.${var.primary_domain_name}"] : [],
+    var.enable_cdn_subdomain ? ["${var.cdn_subdomain}.${var.primary_domain_name}"] : [],
+    var.backup_domains,
+  ))
+
+  tags = merge(local.enhanced_tags, {
+    Name      = "${var.project_name}-${var.environment}-cloudfront-cert"
+    Component = "DomainFronting"
+  })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# DNS validation records for CloudFront certificate
+resource "aws_route53_record" "cloudfront_cert_validation" {
+  for_each = local.deploy_domain_fronting && var.primary_domain_name != "" ? {
+    for dvo in aws_acm_certificate.cloudfront_cert[0].domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  } : {}
+
+  allow_overwrite = true
+  name            = each.value.name
+  records         = [each.value.record]
+  ttl             = 60
+  type            = each.value.type
+  zone_id         = length(module.dns) > 0 ? module.dns[0].zone_id : ""
+
+  depends_on = [module.dns]
+}
+
+resource "aws_acm_certificate_validation" "cloudfront_cert" {
+  count    = local.deploy_domain_fronting && var.primary_domain_name != "" ? 1 : 0
+  provider = aws.us_east_1
+
+  certificate_arn         = aws_acm_certificate.cloudfront_cert[0].arn
+  validation_record_fqdns = [for record in aws_route53_record.cloudfront_cert_validation : record.fqdn]
+
+  timeouts {
+    create = "30m"
+  }
+}
+
+# CloudFront Domain Fronting Module
+module "domain_fronting" {
+  count  = local.deploy_domain_fronting && var.primary_domain_name != "" ? 1 : 0
+  source = "./modules/domain_fronting"
+
+  primary_domain_name = var.primary_domain_name
+  c2_subdomain        = var.c2_subdomain
+  www_subdomain       = var.www_subdomain
+  cdn_subdomain       = var.cdn_subdomain
+  backup_domains      = var.backup_domains
+
+  # Origins: existing redirector public IPs
+  origin_ips = length(module.proxy_redirector) > 0 ? module.proxy_redirector[0].proxy_redirector_public_ips : []
+
+  # ACM certificate from us-east-1
+  acm_certificate_arn = aws_acm_certificate_validation.cloudfront_cert[0].certificate_arn
+
+  # Route 53 zone for DNS alias records
+  route53_zone_id = length(module.dns) > 0 ? module.dns[0].zone_id : ""
+
+  # Subdomain toggles
+  enable_www_subdomain = var.enable_www_subdomain
+  enable_cdn_subdomain = var.enable_cdn_subdomain
+  enable_apex_record   = var.enable_apex_record
+
+  project_name = var.project_name
+  environment  = var.environment
+  tags         = local.enhanced_tags
+
+  depends_on = [
+    module.proxy_redirector,
+    module.dns,
+    aws_acm_certificate_validation.cloudfront_cert
+  ]
 }

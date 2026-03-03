@@ -4,7 +4,7 @@
 # =============================================================================
 # AWS Configuration
 # =============================================================================
-aws_region = "us-east-1"
+aws_region = "eu-central-1"
 aws_profile = "default"  # Optional: AWS CLI profile name
 
 # =============================================================================
@@ -25,7 +25,7 @@ engagement_type = ""  # Options: adhoc, purple-team, full-red-team
 # VPC Configuration
 # =============================================================================
 vpc_cidr = "10.0.0.0/16"
-availability_zones = ["us-east-1a", "us-east-1b"]
+availability_zones = ["eu-central-1a", "eu-central-1b"]
 
 # Public Subnets (for proxy/redirector servers)
 public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
@@ -148,7 +148,7 @@ enable_detailed_monitoring = false  # Enable detailed CloudWatch monitoring (cos
 # =============================================================================
 # Uncomment and configure if using S3 backend for state storage
 # terraform_backend_bucket = "red-team-terraform-state"
-# terraform_backend_region = "us-east-1"
+# terraform_backend_region = "eu-central-1"
 # terraform_backend_key = "terraform.tfstate"
 # terraform_backend_dynamodb_table = "terraform-state-lock"
 

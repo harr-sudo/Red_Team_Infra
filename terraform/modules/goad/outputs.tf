@@ -83,30 +83,8 @@ output "teamserver_ssh_command" {
   value       = var.install_cobalt_strike ? "ssh ubuntu@${var.ip_range}.40" : null
 }
 
-# =============================================================================
-# Attack Box Outputs (Windows - CS Client + Tools)
-# =============================================================================
-
-output "attackbox_private_ip" {
-  description = "Private IP address of the Windows attack box"
-  value       = var.install_cobalt_strike ? aws_instance.attackbox[0].private_ip : null
-}
-
-output "attackbox_instance_id" {
-  description = "Instance ID of the Windows attack box"
-  value       = var.install_cobalt_strike ? aws_instance.attackbox[0].id : null
-}
-
-output "attackbox_rdp_tunnel" {
-  description = "SSH tunnel command for RDP to attack box"
-  value       = var.install_cobalt_strike ? "ssh -i goad-jumpbox.pem -L 3389:${var.ip_range}.50:3389 ubuntu@${aws_eip.jumpbox.public_ip}" : null
-}
-
-output "attackbox_admin_password" {
-  description = "Administrator password for the Windows attack box (randomly generated per deployment)"
-  value       = var.install_cobalt_strike ? local.attackbox_password : null
-  sensitive   = true
-}
+# NOTE: Attack box outputs migrated to standalone module (terraform/modules/attack_box/)
+# Attack box is now instantiated at the root level for all deployment types.
 
 # =============================================================================
 # SSH Key Outputs - Secure Key Management (Phase 1)
@@ -227,8 +205,7 @@ output "credentials" {
     } : null
     attackbox = var.install_cobalt_strike ? {
       username = "Administrator"
-      password = local.attackbox_password
-      note     = "Windows attack box - RDP via jumpbox tunnel"
+      note     = "Windows attack box - password from standalone attack_box module"
       ip       = "${var.ip_range}.50"
     } : null
     domain_users = {
@@ -275,7 +252,7 @@ output "access_instructions" {
     "Step 1: Create RDP tunnel through jumpbox:",
     "   ssh -i goad-jumpbox.pem -L 3389:${var.ip_range}.50:3389 ubuntu@${aws_eip.jumpbox.public_ip}",
     "Step 2: RDP to localhost:3389",
-    "Step 3: Login: Administrator / ${local.attackbox_password}",
+    "Step 3: Login: Administrator / <see attack_box module output for password>",
     "Step 4: On Windows, open WSL terminal and type: ssh teamserver",
     "Step 5: Or launch CS Client GUI and connect to: ${var.ip_range}.40:50050",
     "",
@@ -333,10 +310,10 @@ output "deployment_summary" {
       access = "SSH via jumpbox (internal key)"
     } : null
     attackbox = var.install_cobalt_strike ? {
-      role   = "Windows Attack Workstation"
+      role   = "Windows Attack Workstation (standalone module)"
       ip     = "${var.ip_range}.50"
-      os     = "Windows Server 2019"
-      tools  = ["PowerSploit", "WSL2", "CS Client ready"]
+      os     = "Windows Server 2022"
+      tools  = ["PowerSploit", "WSL2", "CS Client", "Red Team Tools"]
       access = "RDP via jumpbox tunnel"
     } : null
     goad_lab = {

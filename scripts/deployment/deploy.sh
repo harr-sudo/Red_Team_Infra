@@ -127,7 +127,7 @@ wait_for_instances() {
     
     log_info "Waiting for instances: $instance_ids"
     
-    aws ec2 wait instance-status-ok --instance-ids $instance_ids
+    aws ec2 wait instance-status-ok --region eu-central-1 --instance-ids $instance_ids
     
     log_info "All instances are ready!"
 }

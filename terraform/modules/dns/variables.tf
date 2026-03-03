@@ -89,6 +89,12 @@ variable "create_backup_domain_records" {
   default     = true
 }
 
+variable "enable_domain_fronting" {
+  description = "Whether domain fronting is enabled. When true, A records for subdomains and backup domain CNAMEs are NOT created (the domain_fronting module creates CloudFront alias records instead)."
+  type        = bool
+  default     = false
+}
+
 # =============================================================================
 # EMAIL/REPUTATION RECORDS
 # =============================================================================

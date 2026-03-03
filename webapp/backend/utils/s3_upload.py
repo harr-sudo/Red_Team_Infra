@@ -17,7 +17,7 @@ class S3UploadError(Exception):
     pass
 
 
-def get_s3_client(region: str = 'us-east-1', profile: Optional[str] = None):
+def get_s3_client(region: str = 'eu-central-1', profile: Optional[str] = None):
     """
     Get boto3 S3 client.
     
@@ -36,7 +36,7 @@ def get_s3_client(region: str = 'us-east-1', profile: Optional[str] = None):
     return session.client('s3', region_name=region)
 
 
-def find_cs_bucket(project_name: str, region: str = 'us-east-1', profile: Optional[str] = None) -> Optional[str]:
+def find_cs_bucket(project_name: str, region: str = 'eu-central-1', profile: Optional[str] = None) -> Optional[str]:
     """
     Find the CS files S3 bucket created by Terraform.
     
@@ -70,7 +70,7 @@ def find_cs_bucket(project_name: str, region: str = 'us-east-1', profile: Option
 def upload_cs_file(
     file_path: str,
     project_name: str,
-    region: str = 'us-east-1',
+    region: str = 'eu-central-1',
     profile: Optional[str] = None,
     bucket_name: Optional[str] = None,
     s3_key_prefix: str = ""
@@ -139,7 +139,7 @@ def upload_cs_file(
         raise S3UploadError("AWS credentials not found. Configure AWS CLI or set environment variables.")
 
 
-def check_bucket_exists(bucket_name: str, region: str = 'us-east-1', profile: Optional[str] = None) -> bool:
+def check_bucket_exists(bucket_name: str, region: str = 'eu-central-1', profile: Optional[str] = None) -> bool:
     """
     Check if an S3 bucket exists and is accessible.
     
@@ -161,7 +161,7 @@ def check_bucket_exists(bucket_name: str, region: str = 'us-east-1', profile: Op
 
 def list_cs_files(
     project_name: str,
-    region: str = 'us-east-1',
+    region: str = 'eu-central-1',
     profile: Optional[str] = None,
     bucket_name: Optional[str] = None
 ) -> list:
@@ -207,7 +207,7 @@ def list_cs_files(
 def delete_cs_file(
     key: str,
     project_name: str,
-    region: str = 'us-east-1',
+    region: str = 'eu-central-1',
     profile: Optional[str] = None,
     bucket_name: Optional[str] = None
 ) -> bool:
@@ -256,19 +256,19 @@ if __name__ == '__main__':
     upload_parser = subparsers.add_parser('upload', help='Upload file to S3')
     upload_parser.add_argument('file', help='File to upload')
     upload_parser.add_argument('--project', required=True, help='Project name')
-    upload_parser.add_argument('--region', default='us-east-1', help='AWS region')
+    upload_parser.add_argument('--region', default='eu-central-1', help='AWS region')
     upload_parser.add_argument('--profile', help='AWS profile')
     
     # List command
     list_parser = subparsers.add_parser('list', help='List files in S3')
     list_parser.add_argument('--project', required=True, help='Project name')
-    list_parser.add_argument('--region', default='us-east-1', help='AWS region')
+    list_parser.add_argument('--region', default='eu-central-1', help='AWS region')
     list_parser.add_argument('--profile', help='AWS profile')
     
     # Find bucket command
     find_parser = subparsers.add_parser('find-bucket', help='Find CS bucket')
     find_parser.add_argument('--project', required=True, help='Project name')
-    find_parser.add_argument('--region', default='us-east-1', help='AWS region')
+    find_parser.add_argument('--region', default='eu-central-1', help='AWS region')
     find_parser.add_argument('--profile', help='AWS profile')
     
     args = parser.parse_args()

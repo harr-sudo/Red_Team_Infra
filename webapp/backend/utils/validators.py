@@ -8,7 +8,7 @@ from typing import Dict, List, Tuple
 
 # Deployment types that are GOAD-only (auto-generate their own SSH keys)
 GOAD_ONLY_DEPLOYMENT_TYPES = [
-    'goad-mini', 'goad-minilab', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha'
+    'goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha'
 ]
 
 # Deployment types that require a domain name
@@ -131,8 +131,14 @@ class ConfigValidator:
                         if backup_domain and not ConfigValidator.validate_domain(backup_domain):
                             errors.append(f"Invalid backup_domains[{i}].domain_name format: {backup_domain}")
         
+        # Validate domain fronting requirements
+        enable_domain_fronting = config.get('enable_domain_fronting', False)
+        if enable_domain_fronting:
+            if not config.get('primary_domain_name', '').strip():
+                errors.append("enable_domain_fronting requires primary_domain_name to be set")
+
         return len(errors) == 0, errors
-    
+
     @staticmethod
     def validate_config(config: Dict) -> Tuple[bool, List[str]]:
         """Validate complete configuration"""
@@ -183,6 +189,34 @@ class ConfigValidator:
         domain_valid, domain_errors = ConfigValidator.validate_domain_config(config)
         if not domain_valid:
             errors.extend(domain_errors)
-        
+
+        # Validate attack box configuration
+        attack_box_valid, attack_box_errors = ConfigValidator.validate_attack_box_config(config)
+        if not attack_box_valid:
+            errors.extend(attack_box_errors)
+
+        return len(errors) == 0, errors
+
+    @staticmethod
+    def validate_attack_box_config(config: Dict) -> Tuple[bool, List[str]]:
+        """Validate attack box configuration"""
+        errors = []
+
+        enable_attack_box = config.get('enable_attack_box', True)
+        if not enable_attack_box:
+            return True, []
+
+        # Validate instance type
+        valid_instance_types = ['t2.large', 't3.large', 't3.xlarge', 'm5.large']
+        instance_type = config.get('attack_box_instance_type', 't2.large')
+        if instance_type and instance_type not in valid_instance_types:
+            errors.append(f"Invalid attack_box_instance_type: {instance_type}. Must be one of: {', '.join(valid_instance_types)}")
+
+        # Validate disk size
+        disk_size = config.get('attack_box_root_volume_size', 100)
+        if isinstance(disk_size, (int, float)):
+            if disk_size < 50 or disk_size > 500:
+                errors.append(f"attack_box_root_volume_size must be between 50 and 500 GB (got {disk_size})")
+
         return len(errors) == 0, errors
 

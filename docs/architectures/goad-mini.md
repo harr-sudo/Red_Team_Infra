@@ -8,53 +8,82 @@ GOAD Mini is the most cost-effective and simplest GOAD deployment, perfect for l
 
 ### Infrastructure
 
-| Component | Type | Specifications | Purpose |
-|-----------|------|---------------|---------|
-| **GOAD Jumpbox + CS** | EC2 (t3.medium) | 2 vCPU, 4GB RAM, Public IP | Dual-purpose: Lab access & Cobalt Strike server |
-| **DC01** | EC2 (t3.medium) | 2 vCPU, 4GB RAM, Private IP | Domain Controller - sevenkingdoms.local |
+| Component | IP Address | Instance Type | Subnet | Purpose |
+|-----------|-----------|---------------|--------|---------|
+| **Jumpbox** | 192.168.56.100 | t2.micro | Public (.64/26) | SSH gateway with Elastic IP |
+| **DC01 (kingslanding)** | 192.168.56.10 | t2.medium | Private (.0/26) | Domain Controller - sevenkingdoms.local |
+| **Team Server** | 192.168.56.40 | t2.medium | Private (.0/26) | Cobalt Strike server (port 50050) |
+| **Attack Box** | 192.168.56.50 | t2.large | Private (.0/26) | Windows Server 2022 with CS Client + tools |
 
-### Network Configuration
+### Network Architecture
 
-- **VPC CIDR**: 10.10.0.0/16
-- **Public Subnet**: For jumpbox with internet access
-- **Private Subnet**: 10.10.1.0/24 for domain controller
-- **Internet Gateway**: Provides public internet access to jumpbox
-
-### Security Groups
-
-#### Jumpbox Security Group
-```yaml
-Inbound Rules:
-  - Port 22 (SSH): From management_cidr_blocks
-  - Port 50050 (Cobalt Strike): From management_cidr_blocks
-Outbound Rules:
-  - All traffic: To anywhere (0.0.0.0/0)
+```
+GOAD VPC: 192.168.56.0/24
+├── Public Subnet: 192.168.56.64/26
+│   ├── Jumpbox (.100) — Ubuntu, Elastic IP, SSH gateway
+│   ├── Internet Gateway — bidirectional internet for public subnet
+│   └── NAT Gateway — outbound-only internet for private subnet
+│
+└── Private Subnet: 192.168.56.0/26
+    ├── DC01 kingslanding (.10) — Win Server 2019, sevenkingdoms.local
+    ├── Team Server (.40) — Ubuntu, CS port 50050
+    └── Attack Box (.50) — Win Server 2022, CS Client + offensive tools
 ```
 
-#### GOAD Lab Security Group
+**Two subnets, not one:** The jumpbox sits in the **public subnet** with an Elastic IP for direct SSH access. All AD VMs, the Team Server, and Attack Box sit in the **private subnet** with no public IPs.
+
+#### NAT Gateway
+
+The NAT Gateway is **physically deployed in the public subnet** (it needs an Elastic IP and IGW access to function), but it **serves the private subnet**. This is standard AWS architecture:
+
+1. Private subnet route table points `0.0.0.0/0 → NAT Gateway`
+2. When a private instance (e.g., DC01) needs internet (Windows updates, tool downloads), traffic flows: `DC01 → VPC Router → NAT GW (public subnet) → IGW → Internet`
+3. The NAT translates the private IP to its own public EIP for the outbound connection
+4. **Inbound connections from the internet cannot reach private instances** — NAT is outbound-only
+
+The jumpbox reaches private instances via **internal VPC routing** (not through the NAT). Subnets in the same VPC communicate directly through the VPC router.
+
+#### Traffic Flows
+
+| Flow | Path | Purpose |
+|------|------|---------|
+| Operator → Jumpbox | SSH → IGW → Jumpbox (public IP) | Management access |
+| Jumpbox → AD VMs | Internal VPC routing (direct) | Lab access, RDP/WinRM |
+| Jumpbox → Team Server | Internal VPC routing (direct) | CS client connection |
+| AD VMs → Internet | Private subnet → NAT GW → IGW | Windows updates, downloads |
+| Team Server ↔ Attack Box | Internal VPC routing (CS 50050) | CS client to server |
+
+### Security Group
+
+GOAD uses a **single shared security group** (`goad_sg`) for all instances:
+
 ```yaml
 Inbound Rules:
-  - All traffic: From jumpbox only
-  - RDP (3389): From jumpbox
-  - WinRM (5985/5986): From jumpbox
-  - SMB (445): From jumpbox
-  - LDAP (389/636): From jumpbox
+  - All traffic: From within VPC CIDR (192.168.56.0/24)
+  - SSH (22): From management_cidr_blocks
+  - RDP (3389): From management_cidr_blocks
+  - WinRM (5985/5986): From management_cidr_blocks
 Outbound Rules:
-  - All traffic: To VPC only
+  - HTTP/HTTPS (80/443): To anywhere (updates)
+  - DNS (53): To anywhere
+  - ICMP: To anywhere
+  - All traffic: Within VPC CIDR
 ```
+
+> **Note:** The shared security group is intentional — GOAD labs are deliberately vulnerable training environments where internal traffic should flow freely.
 
 ## Key Features
 
 ### 1. Single Domain Environment
 - **Domain**: sevenkingdoms.local
-- **Domain Controller**: DC01 (Windows Server 2019)
+- **Domain Controller**: DC01 kingslanding (192.168.56.10, Windows Server 2019)
 - **Simplified AD structure** for learning fundamentals
 
-### 2. Integrated Cobalt Strike
-- **Team Server runs on jumpbox** - no separate C2 infrastructure needed
-- **Direct beacon callbacks** within the same network
-- **Port 50050 exposed** for Cobalt Strike client connections
-- **Perfect for training** - focus on AD attacks, not C2 infrastructure
+### 2. Cobalt Strike Infrastructure
+- **Team Server** (192.168.56.40) — dedicated Ubuntu instance in private subnet running CS on port 50050
+- **Attack Box** (192.168.56.50) — Windows Server 2022 with CS Client GUI, PowerSploit, VS Code, WSL2, and red team tools
+- **Access**: Operator SSH tunnels through jumpbox to reach Team Server (`ssh -L 50050:192.168.56.40:50050 ubuntu@<jumpbox-eip>`)
+- **Attack Box access**: RDP tunnel through jumpbox (`ssh -L 3390:192.168.56.50:3389 ubuntu@<jumpbox-eip>`)
 
 ### 3. Built-in Vulnerabilities
 
@@ -72,8 +101,7 @@ The GOAD Mini lab includes common AD misconfigurations:
 - AWS Account with appropriate permissions
 - terraform.tfvars configured with:
   ```hcl
-  goad_lab_type = "GOAD-Mini"
-  goad_jumpbox_instance_type = "t3.medium"
+  deployment_type = "goad-mini"
   ```
 
 ### Deployment Steps
@@ -102,20 +130,34 @@ The GOAD Mini lab includes common AD misconfigurations:
 
 ### 1. SSH to Jumpbox
 ```bash
-ssh -i ~/.ssh/your-key.pem ubuntu@<jumpbox-public-ip>
+ssh -i ~/.ssh/your-key.pem ubuntu@<jumpbox-eip>
 ```
 
 ### 2. Cobalt Strike Client Connection
-```
-Host: <jumpbox-public-ip>
-Port: 50050
-Password: [Retrieved from deployment output]
+```bash
+# SSH tunnel to Team Server (from operator laptop)
+ssh -L 50050:192.168.56.40:50050 -i ~/.ssh/your-key.pem ubuntu@<jumpbox-eip>
+
+# Then connect CS Client to localhost:50050
+# Password: [Retrieved from deployment output]
 ```
 
-### 3. RDP to Domain Controller (via Jumpbox)
+### 3. RDP to Attack Box (via Jumpbox tunnel)
 ```bash
-# From jumpbox
-xfreerdp /v:10.10.1.10 /u:Administrator /p:'<password>' /cert:ignore
+# SSH tunnel for RDP (from operator laptop)
+ssh -L 3390:192.168.56.50:3389 -i ~/.ssh/your-key.pem ubuntu@<jumpbox-eip>
+
+# Then RDP to localhost:3390
+# User: Administrator | Password: [From deployment output]
+```
+
+### 4. RDP to Domain Controller (via Jumpbox)
+```bash
+# SSH tunnel for DC01 RDP
+ssh -L 3391:192.168.56.10:3389 -i ~/.ssh/your-key.pem ubuntu@<jumpbox-eip>
+
+# Then RDP to localhost:3391
+xfreerdp /v:localhost:3391 /u:Administrator /p:'<password>' /cert:ignore
 ```
 
 ## Attack Scenarios
@@ -123,19 +165,19 @@ xfreerdp /v:10.10.1.10 /u:Administrator /p:'<password>' /cert:ignore
 ### Scenario 1: Initial Enumeration
 ```bash
 # From jumpbox
-nmap -p 88,389,445,3389 10.10.1.10
-ldapsearch -x -H ldap://10.10.1.10 -b "DC=sevenkingdoms,DC=local"
+nmap -p 88,389,445,3389 192.168.56.10
+ldapsearch -x -H ldap://192.168.56.10 -b "DC=sevenkingdoms,DC=local"
 ```
 
 ### Scenario 2: Kerberoasting
 ```bash
 # Using Impacket
-GetUserSPNs.py sevenkingdoms.local/user:password -dc-ip 10.10.1.10 -request
+GetUserSPNs.py sevenkingdoms.local/user:password -dc-ip 192.168.56.10 -request
 ```
 
 ### Scenario 3: BloodHound Collection
 ```bash
-bloodhound-python -d sevenkingdoms.local -u user -p password -ns 10.10.1.10 -c all
+bloodhound-python -d sevenkingdoms.local -u user -p password -ns 192.168.56.10 -c all
 ```
 
 ### Scenario 4: Cobalt Strike Beacon Deployment
@@ -146,16 +188,19 @@ bloodhound-python -d sevenkingdoms.local -u user -p password -ns 10.10.1.10 -c a
 
 ## Cost Breakdown
 
-### Monthly Cost Estimate: ~$75-100
+### Monthly Cost Estimate: ~$125-175
 
 | Resource | Type | Monthly Cost |
 |----------|------|--------------|
-| Jumpbox | t3.medium (24/7) | ~$30 |
-| DC01 | t3.medium (24/7) | ~$30 |
-| EBS Storage | 50GB (2x 25GB) | ~$5 |
+| Jumpbox | t2.micro (24/7) | ~$8 |
+| DC01 | t2.medium (24/7) | ~$33 |
+| Team Server | t2.medium (24/7) | ~$33 |
+| Attack Box | t2.large (24/7) | ~$67 |
+| EBS Storage | 100GB (attack box) + 30GB x3 | ~$15 |
+| NAT Gateway | Always on | ~$32 |
 | Data Transfer | Minimal | ~$5-10 |
 | S3 Storage | Scripts & Tools | <$1 |
-| **Total** | | **~$75-100** |
+| **Total** | | **~$125-175** |
 
 ### Cost Optimization Tips
 
@@ -179,25 +224,29 @@ bloodhound-python -d sevenkingdoms.local -u user -p password -ns 10.10.1.10 -c a
 ## Troubleshooting
 
 ### Issue: Cannot connect to Cobalt Strike
-**Solution**: Verify security group allows port 50050 from your IP
+**Solution**: SSH tunnel through jumpbox to Team Server
 ```bash
-aws ec2 describe-security-groups --group-ids <sg-id>
+# Ensure tunnel is active
+ssh -L 50050:192.168.56.40:50050 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
+# Then connect CS Client to localhost:50050
 ```
 
 ### Issue: DC01 not responding
-**Solution**: Check if domain promotion completed
+**Solution**: Check if domain promotion completed (can take 10-15 min after instance boot)
 ```bash
-ssh jumpbox
-ping 10.10.1.10
-nslookup sevenkingdoms.local 10.10.1.10
+# From jumpbox
+ssh ubuntu@<jumpbox-eip>
+ping 192.168.56.10
+nslookup sevenkingdoms.local 192.168.56.10
 ```
 
 ### Issue: Beacon won't call back
-**Solution**: Verify jumpbox can reach DC01 on all ports
+**Solution**: Verify Team Server can reach DC01 (both in private subnet, should route directly)
 ```bash
-# From jumpbox
-nc -zv 10.10.1.10 445
-nc -zv 10.10.1.10 135
+# From jumpbox, SSH to team server
+ssh ubuntu@192.168.56.40
+nc -zv 192.168.56.10 445
+nc -zv 192.168.56.10 135
 ```
 
 ## Learning Path
@@ -250,10 +299,11 @@ nc -zv 10.10.1.10 135
 ## Summary
 
 GOAD Mini is the **perfect starting point** for learning AD attacks:
-- ✅ **Low cost** (~$75-100/month)
-- ✅ **Simple setup** (1 DC + Jumpbox)
+- ✅ **Low cost** (~$125-175/month, or ~$40 with stop/start)
+- ✅ **Simple setup** (1 DC + Jumpbox + Team Server + Attack Box)
 - ✅ **Fast deployment** (20-30 minutes)
 - ✅ **All essential vulnerabilities** included
-- ✅ **Integrated C2** for realistic attack scenarios
+- ✅ **Dedicated Attack Box** with CS Client, PowerSploit, and red team tools
+- ✅ **Proper network isolation** — private subnet for lab, public for access only
 
 Perfect for beginners and budget-conscious learners!

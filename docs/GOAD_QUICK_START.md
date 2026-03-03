@@ -13,11 +13,10 @@ Get a vulnerable Active Directory lab running alongside your C2 infrastructure i
 | Lab | VMs | Description | Est. Monthly Cost | Best For |
 |-----|-----|-------------|-------------------|----------|
 | **GOAD-Mini** | 1 | Single domain controller | ~$75/mo | Quick testing, learning basics |
-| **MINILAB** | 2 | DC + Workstation | ~$150/mo | Basic attack chains |
 | **GOAD-Light** | 3 | 2 domains, 1 forest | ~$200/mo | Most common scenarios |
-| **SCCM** | 4 | SCCM/ConfigMgr environment | ~$300/mo | SCCM-specific attacks |
+| **SCCM** | 4 | SCCM/ConfigMgr (sccm.lab) | ~$300/mo | SCCM-specific attacks |
 | **GOAD** | 5 | Full lab - 3 domains, 2 forests | ~$350/mo | Complete AD training |
-| **NHA** | 5 | Challenge lab (no hints!) | ~$350/mo | CTF-style practice |
+| **NHA** | 5 | CTF challenge (ninja.hack) | ~$350/mo | Challenge-mode practice |
 
 ## Quick Start
 
@@ -210,7 +209,7 @@ terraform destroy
 ### High AWS Costs
 
 1. Stop labs when not in use: `./goad.sh -t stop`
-2. Use smaller labs (GOAD-Mini, MINILAB) for basic testing
+2. Use smaller labs (GOAD-Mini, GOAD-Mini) for basic testing
 3. Set up AWS Budget alerts
 
 ## Architecture Overview
@@ -239,7 +238,7 @@ terraform destroy
 
 ## Next Steps
 
-1. **Deploy a lab**: Start with GOAD-Mini or MINILAB
+1. **Deploy a lab**: Start with GOAD-Mini
 2. **Test connectivity**: SSH to jumpbox, verify SOCKS proxy works
 3. **Generate payload**: Create Cobalt Strike beacon for GOAD network
 4. **Practice attacks**: Use the pre-configured vulnerabilities

@@ -73,6 +73,63 @@ Team Server → Redirector → IGW → Internet → Target Network
 
 ---
 
+## Domain Fronting Traffic Flow (Optional)
+
+When CloudFront domain fronting is enabled, traffic takes an additional hop through the CDN before reaching the redirector. This hides the redirector's IP from blue team analysis.
+
+### 4. Domain Fronting Flow (CloudFront)
+
+```
+┌─────────────┐                 ┌──────────────┐                 ┌──────────────┐                 ┌──────────────┐
+│   Target    │──HTTPS to──────▶│  CloudFront  │────Origin───────▶│  Redirector  │────Forward─────▶│ Team Server  │
+│   Network   │  front domain   │  (CDN Edge)  │    Request       │  (Public)    │                 │  (Private)   │
+│             │                 │              │                 │              │                 │              │
+│             │◀──Response──────│              │◀───Response──────│              │◀───Commands─────│              │
+└─────────────┘                 └──────────────┘                 └──────────────┘                 └──────────────┘
+```
+
+**How it works:**
+1. Beacon sends HTTPS request to **front domain** (e.g. `grid.crowdstrike.com`) — legitimate third-party domain
+2. TLS connection uses front domain's certificate — looks like normal CDN traffic
+3. HTTP `Host` header contains our **back domain** (e.g. `api.our-domain.com`)
+4. CloudFront routes based on Host header to our distribution
+5. CloudFront forwards to **origin** (redirector's Elastic IP)
+6. Redirector forwards to C2 team server in private subnet
+
+**What the blue team sees:**
+- DNS resolution: `grid.crowdstrike.com` → CloudFront IP (legitimate)
+- TLS SNI: `grid.crowdstrike.com` (legitimate certificate)
+- They do NOT see our domain or redirector IP in network logs
+
+### SSL Chain with Domain Fronting
+
+```
+Target ──── Front Domain Cert ──── CloudFront ──── ACM Cert ──── Redirector ──── Self-Signed ──── C2 Server
+         (not ours, borrowed)                   (auto, free)                  (CF doesn't verify)
+```
+
+| Segment | Certificate | Provider | Notes |
+|---------|------------|----------|-------|
+| Target → CloudFront | Front domain's cert | Third party | Borrowed reputation |
+| CloudFront → Redirector | ACM certificate | AWS (free) | Auto-provisioned via DNS validation |
+| Redirector → C2 Server | Self-signed | Generated at setup | Internal VPC traffic only |
+
+### SSL Without Domain Fronting
+
+| Option | Certificate | OPSEC Impact |
+|--------|------------|--------------|
+| **Let's Encrypt** | Trusted, auto-renewed | Good — trusted by browsers/proxies. Appears in CT logs. |
+| **Self-Signed** | Untrusted, generated locally | Poor — flagged by Shodan/Censys, blocked by corporate proxies |
+
+### Domain Rotation with CloudFront
+
+When a domain is burned mid-engagement:
+
+1. **Instant switch** — Change CS malleable profile to use a pre-configured backup domain. All backup domains are already CloudFront aliases with valid ACM certs.
+2. **Add new backup** — Update web app → redeploy. ACM validates new domain via DNS (~2-5 min). CloudFront propagates (~15-30 min).
+
+---
+
 ## Updated Diagram Traffic Flows
 
 ### C2 Ad-Hoc Architecture
@@ -93,6 +150,12 @@ Team Server → Redirector → IGW → Internet → Target Network
 - 1 HTTP Redirector (Port 80)
 - 1 HTTPS Redirector (Port 443)
 - 1 Cobalt Strike Team Server
+
+**With Domain Fronting (Optional)**:
+- Add CloudFront distribution between Internet and Redirectors
+- Redirector ingress restricted to CloudFront IPs (AWS managed prefix list)
+- ACM certificate handles public SSL (no Let's Encrypt needed)
+- Traffic: Internet → CloudFront → Internet Gateway → Redirector → Team Server
 
 ---
 

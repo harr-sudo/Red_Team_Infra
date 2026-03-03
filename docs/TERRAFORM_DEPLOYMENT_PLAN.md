@@ -265,11 +265,6 @@ GOAD_LABS = {
         'ip_range': '192.168.56',
         'lab_identifier': 'goad-mini',
     },
-    'MINILAB': {
-        'source_dir': 'tools/goad/ad/MINILAB/providers/aws',
-        'ip_range': '192.168.56',
-        'lab_identifier': 'minilab',
-    },
     'GOAD-Light': {
         'source_dir': 'tools/goad/ad/GOAD-Light/providers/aws',
         'ip_range': '192.168.56',
@@ -526,7 +521,7 @@ variable "deployment_type" {
 }
 
 variable "goad_lab_type" {
-  description = "GOAD lab type when deploying GOAD: 'GOAD-Mini', 'MINILAB', 'GOAD-Light', 'SCCM', 'GOAD', 'NHA'"
+  description = "GOAD lab type when deploying GOAD: 'GOAD-Mini', 'GOAD-Light', 'SCCM', 'GOAD', 'NHA'"
   type        = string
   default     = ""
 }
@@ -573,7 +568,6 @@ locals {
   # Map deployment type to GOAD lab
   goad_lab_map = {
     "goad-mini"    = "GOAD-Mini"
-    "goad-minilab" = "MINILAB"
     "goad-light"   = "GOAD-Light"
     "goad-sccm"    = "SCCM"
     "goad-full"    = "GOAD"
@@ -1775,7 +1769,6 @@ function togglePassword(elementOrId) {
 | Lab Type | VMs | Windows Instances | Jumpbox | Est. Monthly |
 |----------|-----|-------------------|---------|--------------|
 | **GOAD Mini** | 1 DC | t3.large x1 (~$81) | t3.medium (~$30) | **~$145** |
-| **MINILAB** | 2 VMs | t3.large x2 (~$162) | t3.medium (~$30) | **~$225** |
 | **GOAD Light** | 3 VMs | t3.large x3 (~$243) | t3.medium (~$30) | **~$310** |
 | **SCCM** | 4 VMs | t3.xlarge x4 (~$700) | t3.medium (~$30) | **~$765** |
 | **GOAD Full** | 5 VMs | t3.large x5 (~$405) | t3.medium (~$30) | **~$470** |

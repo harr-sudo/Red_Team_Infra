@@ -42,17 +42,7 @@ Every deployment type in the Red Team Infrastructure project now has its own spe
 - **Domains**: 1 (sevenkingdoms.local)
 - **Orientation**: Landscape (Left-to-Right)
 
-### 2. GOAD MiniLab (2 VMs, 1 Domain)
-- **Diagram**: `goad-minilab-correct.png`
-- **Terraform Lab Type**: `MINILAB`
-- **VMs**: 
-  - 1 DC (kingslanding)
-  - 1 Workstation (winterfell)
-  - Jump Box, Team Server, Attack Box
-- **Domains**: 1
-- **Orientation**: Landscape (Left-to-Right)
-
-### 3. GOAD Light (3 VMs, 2 Domains)
+### 2. GOAD Light (3 VMs, 2 Domains)
 - **Diagram**: `goad-light-correct.png`
 - **Terraform Lab Type**: `GOAD-Light`
 - **VMs**: 
@@ -62,7 +52,7 @@ Every deployment type in the Red Team Infrastructure project now has its own spe
 - **Domains**: 2 (north.sevenkingdoms.local, essos.local)
 - **Orientation**: Landscape (Left-to-Right)
 
-### 4. GOAD Full (5 VMs, 3 Domains, 2 Forests)
+### 3. GOAD Full (5 VMs, 3 Domains, 2 Forests)
 - **Diagram**: `goad-full-correct.png`
 - **Terraform Lab Type**: `GOAD`
 - **VMs**: 
@@ -75,27 +65,28 @@ Every deployment type in the Red Team Infrastructure project now has its own spe
   - essos.local
 - **Orientation**: Landscape (Left-to-Right)
 
-### 5. GOAD SCCM (4 VMs, SCCM Lab)
+### 4. GOAD SCCM (4 VMs, SCCM Lab)
 - **Diagram**: `goad-sccm-correct.png`
 - **Terraform Lab Type**: `SCCM`
-- **VMs**: 
+- **VMs**:
   - 1 DC (kingslanding)
   - 1 SCCM Server (meereen)
   - 2 Workstations (winterfell, braavos)
   - Jump Box, Team Server, Attack Box
 - **Focus**: System Center Configuration Manager exploitation
+- **Domains**: 1 (sccm.lab)
 - **Orientation**: Landscape (Left-to-Right)
 
-### 6. GOAD NHA (5 VMs, Challenge Lab)
+### 5. GOAD NHA (5 VMs, Challenge Lab)
 - **Diagram**: `goad-nha-correct.png`
 - **Terraform Lab Type**: `NHA`
-- **VMs**: 
+- **VMs**:
   - 2 DCs across 2 domains
   - 2 Workstations
   - 1 Application Server
   - Jump Box, Team Server, Attack Box
 - **Focus**: CTF-style security challenges
-- **Domains**: 2
+- **Domains**: 2 (ninja.hack, academy.ninja.lan)
 - **Orientation**: Landscape (Left-to-Right)
 
 ---
@@ -191,7 +182,6 @@ All diagrams follow this pattern:
 | UI Display Name | Terraform `lab_type` Variable | Diagram File |
 |----------------|------------------------------|--------------|
 | GOAD Mini | `GOAD-Mini` | `goad-mini-correct.png` |
-| GOAD MiniLab | `MINILAB` | `goad-minilab-correct.png` |
 | GOAD Light | `GOAD-Light` | `goad-light-correct.png` |
 | GOAD Full | `GOAD` | `goad-full-correct.png` |
 | GOAD SCCM | `SCCM` | `goad-sccm-correct.png` |

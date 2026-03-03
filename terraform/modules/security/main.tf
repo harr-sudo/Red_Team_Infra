@@ -70,22 +70,8 @@ resource "aws_security_group" "proxy_redirector_sg" {
     cidr_blocks = var.management_cidr_blocks
   }
 
-  # HTTP/HTTPS from internet (for CDN/CloudFront)
-  ingress {
-    description = "HTTP from internet"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "HTTPS from internet"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  # HTTP/HTTPS rules are defined as separate resources below to support
+  # conditional CloudFront-only restriction when domain fronting is enabled
 
   # NOTE: Egress to C2 servers is added via separate rule below to avoid cycle
 
@@ -106,6 +92,66 @@ resource "aws_security_group" "proxy_redirector_sg" {
       Component = "ProxyRedirector"
     }
   )
+}
+
+# =============================================================================
+# REDIRECTOR HTTP/HTTPS RULES - Conditional on domain fronting
+# =============================================================================
+# When domain fronting is DISABLED: allow HTTP/HTTPS from the internet (0.0.0.0/0)
+# When domain fronting is ENABLED: restrict to CloudFront IPs only via managed prefix list
+
+# CloudFront managed prefix list (only needed when domain fronting is enabled)
+data "aws_ec2_managed_prefix_list" "cloudfront" {
+  count = var.enable_domain_fronting ? 1 : 0
+  name  = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
+# --- Without domain fronting: open to internet ---
+
+resource "aws_security_group_rule" "redirector_http_public" {
+  count             = var.enable_domain_fronting ? 0 : 1
+  type              = "ingress"
+  from_port         = 80
+  to_port           = 80
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.proxy_redirector_sg.id
+  description       = "HTTP from internet"
+}
+
+resource "aws_security_group_rule" "redirector_https_public" {
+  count             = var.enable_domain_fronting ? 0 : 1
+  type              = "ingress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.proxy_redirector_sg.id
+  description       = "HTTPS from internet"
+}
+
+# --- With domain fronting: CloudFront IPs only ---
+
+resource "aws_security_group_rule" "redirector_http_cloudfront" {
+  count             = var.enable_domain_fronting ? 1 : 0
+  type              = "ingress"
+  from_port         = 80
+  to_port           = 80
+  protocol          = "tcp"
+  prefix_list_ids   = [data.aws_ec2_managed_prefix_list.cloudfront[0].id]
+  security_group_id = aws_security_group.proxy_redirector_sg.id
+  description       = "HTTP from CloudFront only (domain fronting)"
+}
+
+resource "aws_security_group_rule" "redirector_https_cloudfront" {
+  count             = var.enable_domain_fronting ? 1 : 0
+  type              = "ingress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  prefix_list_ids   = [data.aws_ec2_managed_prefix_list.cloudfront[0].id]
+  security_group_id = aws_security_group.proxy_redirector_sg.id
+  description       = "HTTPS from CloudFront only (domain fronting)"
 }
 
 # =============================================================================
@@ -177,6 +223,49 @@ resource "aws_security_group" "bastion_sg" {
   )
 }
 
+# Security Group for Attack Box (Windows Workstation)
+resource "aws_security_group" "attack_box_sg" {
+  name        = "${var.project_name}-${var.environment}-attack-box-sg"
+  description = "Security group for Windows attack box in private subnet"
+  vpc_id      = var.vpc_id
+
+  # RDP access from bastion host only
+  ingress {
+    description     = "RDP from bastion host"
+    from_port       = 3389
+    to_port         = 3389
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion_sg.id]
+  }
+
+  # SSH access from bastion host (for OpenSSH on Windows)
+  ingress {
+    description     = "SSH from bastion host"
+    from_port       = var.ssh_port
+    to_port         = var.ssh_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion_sg.id]
+  }
+
+  # Outbound - all traffic allowed (for tool downloads, C2 connections, etc.)
+  egress {
+    description = "All outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(
+    var.tags,
+    {
+      Name      = "${var.project_name}-${var.environment}-attack-box-sg"
+      Type      = "SecurityGroup"
+      Component = "AttackBox"
+    }
+  )
+}
+
 # =============================================================================
 # VPC PEERING RULES (for Combined Mode)
 # =============================================================================
@@ -219,5 +308,18 @@ resource "aws_security_group_rule" "bastion_to_goad" {
   cidr_blocks       = [var.goad_vpc_cidr]
   security_group_id = aws_security_group.bastion_sg.id
   description       = "Allow bastion to reach GOAD VMs via VPC peering"
+}
+
+# Allow attack box to reach GOAD VMs (for direct operations)
+resource "aws_security_group_rule" "attack_box_to_goad" {
+  count = var.enable_vpc_peering && var.goad_vpc_cidr != "" ? 1 : 0
+
+  type              = "egress"
+  from_port         = 0
+  to_port           = 65535
+  protocol          = "tcp"
+  cidr_blocks       = [var.goad_vpc_cidr]
+  security_group_id = aws_security_group.attack_box_sg.id
+  description       = "Allow attack box to reach GOAD VMs via VPC peering"
 }
 

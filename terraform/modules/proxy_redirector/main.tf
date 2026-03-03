@@ -52,6 +52,7 @@ resource "aws_instance" "proxy_redirector" {
   key_name               = var.key_pair_name
   subnet_id              = var.public_subnet_ids[count.index % length(var.public_subnet_ids)]
   vpc_security_group_ids = [var.security_group_id]
+  private_ip             = length(var.private_ips) > count.index ? var.private_ips[count.index] : null
 
   # Ephemeral storage only - no persistent EBS volumes
   # This enforces the "no data storage" requirement

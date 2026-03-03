@@ -64,8 +64,9 @@ locals {
 # =============================================================================
 
 # Primary C2 subdomain -> Redirector(s)
+# Skipped when domain fronting is enabled (CloudFront alias records used instead)
 resource "aws_route53_record" "c2_primary" {
-  count = length(var.redirector_ips) > 0 ? 1 : 0
+  count = length(var.redirector_ips) > 0 && !var.enable_domain_fronting ? 1 : 0
 
   zone_id = local.zone_id
   name    = local.c2_fqdn
@@ -81,8 +82,9 @@ resource "aws_route53_record" "c2_primary" {
 }
 
 # WWW subdomain -> Redirector(s) (for web traffic blending)
+# Skipped when domain fronting is enabled (CloudFront alias records used instead)
 resource "aws_route53_record" "www" {
-  count = length(var.redirector_ips) > 0 && var.enable_www_subdomain ? 1 : 0
+  count = length(var.redirector_ips) > 0 && var.enable_www_subdomain && !var.enable_domain_fronting ? 1 : 0
 
   zone_id = local.zone_id
   name    = local.www_fqdn
@@ -93,8 +95,9 @@ resource "aws_route53_record" "www" {
 }
 
 # CDN subdomain -> Redirector(s) (for CDN-style traffic)
+# Skipped when domain fronting is enabled (CloudFront alias records used instead)
 resource "aws_route53_record" "cdn" {
-  count = length(var.redirector_ips) > 0 && var.enable_cdn_subdomain ? 1 : 0
+  count = length(var.redirector_ips) > 0 && var.enable_cdn_subdomain && !var.enable_domain_fronting ? 1 : 0
 
   zone_id = local.zone_id
   name    = local.cdn_fqdn
@@ -105,8 +108,9 @@ resource "aws_route53_record" "cdn" {
 }
 
 # Root domain -> Redirector(s) (apex/naked domain)
+# Skipped when domain fronting is enabled (CloudFront alias records used instead)
 resource "aws_route53_record" "apex" {
-  count = length(var.redirector_ips) > 0 && var.enable_apex_record ? 1 : 0
+  count = length(var.redirector_ips) > 0 && var.enable_apex_record && !var.enable_domain_fronting ? 1 : 0
 
   zone_id = local.zone_id
   name    = var.primary_domain_name
@@ -121,8 +125,9 @@ resource "aws_route53_record" "apex" {
 # =============================================================================
 
 # For each backup domain, create records pointing to redirectors
+# Skipped when domain fronting is enabled (backup domains become CloudFront aliases instead)
 resource "aws_route53_record" "backup_domains" {
-  for_each = var.create_backup_domain_records ? toset(var.backup_domains) : toset([])
+  for_each = var.create_backup_domain_records && !var.enable_domain_fronting ? toset(var.backup_domains) : toset([])
 
   zone_id = local.zone_id
   name    = each.value

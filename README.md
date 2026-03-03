@@ -207,7 +207,7 @@ See [Tools Repository Access](./docs/TOOLS_REPOSITORY_ACCESS.md) for accessing t
 
 ### 🏰 GOAD Integration (Vulnerable AD Labs)
 - **Integrated GOAD labs** for realistic attack practice
-- **Multiple lab types**: GOAD, GOAD-Light, GOAD-Mini, SCCM, NHA, MINILAB
+- **Multiple lab types**: GOAD, GOAD-Light, GOAD-Mini, SCCM, NHA
 - **Pre-configured vulnerabilities**: Kerberoasting, AS-REP Roasting, DCSync, Pass-the-Hash, and more
 - **Built-in jumpbox**: SSH access and SOCKS proxy for C2 integration
 - **Cost management**: Start/Stop labs to save money when not in use
@@ -240,9 +240,8 @@ Integrated vulnerable Active Directory environments for testing your C2 infrastr
 | **GOAD** | 5 | 2 | 3 | Full lab - complete AD environment | ~$350/mo |
 | **GOAD-Light** | 3 | 1 | 2 | Smaller lab for limited resources | ~$200/mo |
 | **GOAD-Mini** | 1 | 1 | 1 | Minimalist - single domain | ~$75/mo |
-| **SCCM** | 4 | 1 | 1 | Microsoft Configuration Manager lab | ~$300/mo |
-| **NHA** | 5 | 1 | 2 | Challenge lab (no hints) | ~$350/mo |
-| **MINILAB** | 2 | 1 | 1 | Basic DC + Workstation | ~$150/mo |
+| **SCCM** | 4 | 1 | 1 | Microsoft Configuration Manager lab (sccm.lab) | ~$300/mo |
+| **NHA** | 5 | 1 | 2 | CTF challenge lab (ninja.hack + academy.ninja.lan) | ~$350/mo |
 
 **Key Features:**
 - 🎯 Pre-configured vulnerabilities (Kerberoasting, AS-REP Roasting, DCSync, etc.)

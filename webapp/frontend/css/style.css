@@ -1,83 +1,132 @@
-/* Red Team Infrastructure Manager - Styles */
+/* Red Team Infrastructure Manager - Styles
+   Palette defined in palette.css — edit that file to retheme.
+   Navy/olive/cream theme with dark/light mode — no gradients */
 
+@import url('palette.css');
+
+/* ============================================================================
+   LAYOUT TOKENS (non-color — keep in style.css)
+   ============================================================================ */
+:root {
+    --radius-sm: 8px;
+    --radius: 12px;
+    --radius-lg: 16px;
+    --transition: 0.3s ease;
+}
+
+/* ============================================================================
+   BASE RESET & TYPOGRAPHY
+   ============================================================================ */
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
-body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    min-height: 100vh;
-    padding: 20px;
-    color: #333;
+html {
+    font-size: 15px;
 }
 
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-size: 1rem;
+    background: var(--bg-body);
+    min-height: 100vh;
+    padding: 20px;
+    color: var(--text-primary);
+}
+
+a {
+    color: var(--gold-muted);
+}
+
+a:hover {
+    color: var(--gold);
+}
+
+code {
+    background: var(--bg-body);
+    color: var(--gold-muted);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.9em;
+}
+
+/* ============================================================================
+   LAYOUT — CONTAINER
+   ============================================================================ */
 .container {
     max-width: 1200px;
     margin: 0 auto;
-    background: white;
-    border-radius: 10px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    background: var(--bg-container);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
     overflow: visible;
 }
 
+/* ============================================================================
+   HEADER
+   ============================================================================ */
+/* Header — kept for architecture.html */
 header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 30px;
+    background: var(--burgundy);
+    color: var(--text-primary);
+    padding: 24px 30px;
     text-align: center;
+    position: relative;
 }
 
 header h1 {
-    font-size: 2.5em;
-    margin-bottom: 10px;
+    font-size: 2.2em;
+    margin-bottom: 6px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--gold);
 }
 
-.subtitle {
-    opacity: 0.9;
-    font-size: 1.1em;
-}
-
-/* Tabs */
+/* ============================================================================
+   NAVIGATION TABS — Pill style
+   ============================================================================ */
 .tabs {
     display: flex;
-    background: #f5f5f5;
-    border-bottom: 2px solid #ddd;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 14px;
+    background: var(--bg-card);
 }
 
 .tab-btn {
-    flex: 1;
-    padding: 15px 20px;
+    padding: 10px 20px;
     background: transparent;
     border: none;
+    border-radius: 20px;
     cursor: pointer;
-    font-size: 1em;
+    font-size: 0.95em;
     font-weight: 500;
-    color: #666;
-    transition: all 0.3s;
-    border-bottom: 3px solid transparent;
+    color: var(--text-muted);
+    transition: all var(--transition);
+    white-space: nowrap;
 }
 
 .tab-btn:hover {
-    background: #e8e8e8;
-    color: #333;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
 }
 
 .tab-btn.active {
-    background: white;
-    color: #667eea;
-    border-bottom-color: #667eea;
+    background: var(--brand);
+    color: var(--accent);
 }
 
-/* Tab Container */
+/* ============================================================================
+   TAB CONTAINER & PAGES
+   ============================================================================ */
 #tab-container {
     position: relative;
     min-height: 400px;
 }
 
-/* Tab Pages */
 .tab-page {
     display: none;
     padding: 30px;
@@ -87,29 +136,34 @@ header h1 {
     display: block;
 }
 
-/* Cards */
+/* ============================================================================
+   CARDS
+   ============================================================================ */
 .card {
-    background: white;
-    border-radius: 8px;
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
     padding: 25px;
     margin-bottom: 20px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .card h2 {
-    color: #333;
+    color: var(--gold);
     margin-bottom: 20px;
-    font-size: 1.8em;
-    border-bottom: 2px solid #eee;
+    font-size: 1.7em;
     padding-bottom: 10px;
+    font-weight: 600;
 }
 
 .card h3 {
-    color: #555;
+    color: var(--text-primary);
     margin: 20px 0 10px 0;
     font-size: 1.3em;
 }
 
-/* Forms */
+/* ============================================================================
+   FORMS
+   ============================================================================ */
 .form-group {
     margin-bottom: 20px;
 }
@@ -118,29 +172,39 @@ header h1 {
     display: block;
     margin-bottom: 8px;
     font-weight: 500;
-    color: #555;
+    color: var(--text-secondary);
 }
 
 .form-group input,
-.form-group select {
+.form-group select,
+.form-group textarea {
     width: 100%;
-    padding: 10px;
-    border: 2px solid #ddd;
-    border-radius: 5px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     font-size: 1em;
-    transition: border-color 0.3s;
+    transition: border-color var(--transition);
+    background: var(--bg-input);
+    color: var(--text-primary);
 }
 
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group textarea:focus {
     outline: none;
-    border-color: #667eea;
+    border-color: var(--gold-dim);
+    box-shadow: 0 0 0 2px rgba(163, 184, 122, 0.2);
+}
+
+.form-group input::placeholder,
+.form-group textarea::placeholder {
+    color: var(--text-muted);
 }
 
 .form-group small {
     display: block;
     margin-top: 5px;
-    color: #888;
+    color: var(--text-muted);
     font-size: 0.9em;
 }
 
@@ -150,120 +214,302 @@ header h1 {
     gap: 10px;
 }
 
-/* Buttons */
+/* ============================================================================
+   BUTTONS
+   ============================================================================ */
 .btn {
-    padding: 12px 24px;
+    padding: 10px 20px;
     border: none;
-    border-radius: 5px;
-    font-size: 1em;
+    border-radius: var(--radius);
+    font-size: 0.95em;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.3s;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    transition: all var(--transition);
 }
 
 .btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    filter: brightness(1.1);
+}
+
+.btn:active {
+    transform: translateY(1px);
+}
+
+.btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 .btn-primary {
-    background: #667eea;
-    color: white;
+    background: var(--burgundy);
+    color: var(--gold);
 }
 
 .btn-primary:hover {
-    background: #5568d3;
+    background: var(--burgundy-light);
 }
 
 .btn-success {
-    background: #48bb78;
-    color: white;
+    background: var(--success);
+    color: #fff;
 }
 
 .btn-success:hover {
-    background: #38a169;
+    background: #58A864;
 }
 
 .btn-danger {
-    background: #f56565;
-    color: white;
+    background: var(--danger);
+    color: #fff;
 }
 
 .btn-danger:hover {
-    background: #e53e3e;
+    background: #D44840;
 }
 
 .btn-warning {
-    background: #ed8936;
-    color: white;
+    background: var(--warning);
+    color: #fff;
 }
 
 .btn-warning:hover {
-    background: #dd6b20;
+    background: #D4A218;
 }
 
 .btn-info {
-    background: #4299e1;
-    color: white;
+    background: var(--info);
+    color: #fff;
 }
 
 .btn-info:hover {
-    background: #3182ce;
+    background: #6098D0;
 }
 
 .btn-secondary {
-    background: #718096;
-    color: white;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
 }
 
 .btn-secondary:hover {
-    background: #4a5568;
+    background: var(--border);
+    color: var(--text-primary);
 }
 
-/* Status Display */
-.status-display {
-    background: #f7fafc;
-    border: 2px solid #e2e8f0;
-    border-radius: 5px;
+.btn-sm {
+    padding: 4px 10px;
+    font-size: 0.85em;
+    border-radius: var(--radius-sm);
+}
+
+/* ============================================================================
+   SECTION CARDS — Unified styling for config/deploy/prereq sections
+   ============================================================================ */
+.section-card {
+    margin-bottom: 20px;
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    background: var(--bg-section);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.section-card--highlight {
+    border-left: 3px solid var(--gold-dim);
+}
+
+.section-card--brand {
+    border-left: 3px solid var(--brand-light);
+}
+
+.section-card h3 {
+    margin: 0 0 12px 0;
+    color: var(--gold);
+    font-size: 1.15em;
+}
+
+.section-card h4 {
+    margin: 0 0 10px 0;
+    color: var(--gold-muted);
+    font-size: 1.05em;
+}
+
+.section-card p {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    margin-bottom: 12px;
+}
+
+/* ============================================================================
+   CALLOUTS / INFO BOXES
+   ============================================================================ */
+.callout {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    font-size: 0.9em;
+    margin: 12px 0;
+    border-left: 3px solid;
+}
+
+.callout--info {
+    background: var(--info-bg);
+    border-color: var(--info);
+    color: var(--info-text);
+}
+
+.callout--warning {
+    background: var(--warning-bg);
+    border-color: var(--warning);
+    color: var(--warning-text);
+}
+
+.callout--success {
+    background: var(--success-bg);
+    border-color: var(--success);
+    color: var(--success-text);
+}
+
+.callout--danger {
+    background: var(--danger-bg);
+    border-color: var(--danger);
+    color: var(--danger-text);
+}
+
+.callout strong {
+    color: inherit;
+}
+
+/* ============================================================================
+   DEPLOYMENT OVERVIEW — Shown on config page after selecting deployment type
+   ============================================================================ */
+.deployment-overview {
+    margin: 20px 0;
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    background: var(--burgundy-dark);
+    color: var(--text-primary);
+}
+
+.deployment-overview h4 {
+    margin: 0 0 15px 0;
+    color: var(--gold);
+}
+
+.deployment-overview .overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+}
+
+.deployment-overview .overview-detail {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.9em;
+}
+
+.deployment-overview .time-estimate {
+    margin-top: 15px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-lg);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+/* ============================================================================
+   DEPLOY TYPE INFO (on deployment page)
+   ============================================================================ */
+.deploy-type-banner {
+    margin-bottom: 20px;
     padding: 15px;
-    margin: 15px 0;
-    min-height: 50px;
+    border-radius: var(--radius-lg);
+    background: var(--burgundy);
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.deploy-type-banner .icon {
+    font-size: 1.5em;
+}
+
+/* ============================================================================
+   CONFIG SUMMARY (on deployment page)
+   ============================================================================ */
+.config-summary {
+    margin-bottom: 20px;
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    background: var(--bg-section);
+}
+
+.config-summary h4 {
+    margin: 0 0 15px 0;
+    color: var(--gold);
+}
+
+.config-summary .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+/* ============================================================================
+   STATUS DISPLAY
+   ============================================================================ */
+.status-display {
+    background: transparent;
+    border: none;
+    border-radius: var(--radius);
+    padding: 10px 0;
+    margin: 10px 0;
+    color: var(--text-muted);
+}
+
+.status-display.success,
+.status-display.error,
+.status-display.warning,
+.status-display.info {
+    background: var(--bg-section);
+    border: 1px solid var(--border);
+    padding: 15px;
 }
 
 .status-display.success {
-    background: #f0fff4;
-    border-color: #48bb78;
-    color: #22543d;
+    background: var(--success-bg);
+    border-color: var(--success-border);
+    color: var(--success-text);
 }
 
 .status-display.error {
-    background: #fff5f5;
-    border-color: #f56565;
-    color: #742a2a;
+    background: var(--danger-bg);
+    border-color: var(--danger-border);
+    color: var(--danger-text);
 }
 
 .status-display.warning {
-    background: #fffaf0;
-    border-color: #ed8936;
-    color: #7c2d12;
+    background: var(--warning-bg);
+    border-color: var(--warning-border);
+    color: var(--warning-text);
 }
 
 .status-display.info {
-    background: #ebf8ff;
-    border-color: #4299e1;
-    color: #2c5282;
+    background: var(--info-bg);
+    border-color: var(--info-border);
+    color: var(--info-text);
 }
 
-/* Output Display */
+/* ============================================================================
+   OUTPUT / TERMINAL DISPLAY
+   ============================================================================ */
 .output-display {
-    background: #1a202c;
-    color: #a0aec0;
-    border-radius: 5px;
+    background: var(--bg-terminal);
+    color: var(--text-terminal);
+    border-radius: var(--radius);
     padding: 15px;
     margin: 15px 0;
-    font-family: 'Courier New', monospace;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
     font-size: 0.9em;
     min-height: 500px;
     max-height: none;
@@ -272,11 +518,13 @@ header h1 {
     word-wrap: break-word;
 }
 
-/* Messages */
+/* ============================================================================
+   MESSAGES
+   ============================================================================ */
 .message {
     margin-top: 15px;
     padding: 12px;
-    border-radius: 5px;
+    border-radius: var(--radius);
     display: none;
 }
 
@@ -285,18 +533,20 @@ header h1 {
 }
 
 .message.success {
-    background: #f0fff4;
-    border: 2px solid #48bb78;
-    color: #22543d;
+    background: var(--success-bg);
+    border: 1px solid var(--success-border);
+    color: var(--success-text);
 }
 
 .message.error {
-    background: #fff5f5;
-    border: 2px solid #f56565;
-    color: #742a2a;
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
+    color: var(--danger-text);
 }
 
-/* Quick Actions */
+/* ============================================================================
+   QUICK ACTIONS & DEPLOYMENT ACTIONS
+   ============================================================================ */
 .quick-actions {
     display: flex;
     gap: 10px;
@@ -311,10 +561,161 @@ header h1 {
     flex-wrap: wrap;
 }
 
-/* Loading Spinner */
+/* ============================================================================
+   UPLOAD SECTIONS
+   ============================================================================ */
+.upload-section {
+    margin-bottom: 20px;
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    background: var(--bg-section);
+}
+
+.upload-section h4 {
+    margin: 0 0 12px 0;
+    color: var(--gold-muted);
+}
+
+.upload-section input[type="file"] {
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    max-width: 400px;
+    width: 100%;
+}
+
+/* Progress bars */
+.progress-bar {
+    width: 100%;
+    height: 20px;
+    background: var(--bg-body);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--burgundy-light);
+    transition: width 0.3s;
+}
+
+/* ============================================================================
+   TABLES
+   ============================================================================ */
+table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.9em;
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+table thead tr {
+    background: var(--burgundy-dark);
+    color: var(--gold);
+}
+
+table th {
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+}
+
+table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+}
+
+table tbody tr:hover {
+    background: var(--bg-elevated);
+}
+
+/* ============================================================================
+   DETAILS / COLLAPSIBLE
+   ============================================================================ */
+details {
+    margin: 10px 0;
+    border-radius: var(--radius);
+    background: transparent;
+}
+
+details summary {
+    padding: 10px 0;
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--brand-light);
+    user-select: none;
+    font-size: 0.92em;
+    list-style: none;
+}
+
+details summary::-webkit-details-marker {
+    display: none;
+}
+
+details summary::before {
+    content: '▸ ';
+    display: inline;
+    transition: transform var(--transition);
+}
+
+details[open] summary::before {
+    content: '▾ ';
+}
+
+details summary:hover {
+    color: var(--accent);
+}
+
+details[open] {
+    background: var(--bg-elevated);
+    padding: 0 16px 4px;
+}
+
+details[open] summary {
+    padding: 12px 0;
+    margin-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+details > div,
+details > ol,
+details > ul {
+    padding: 8px 0 12px;
+}
+
+/* ============================================================================
+   CHECKBOX + TOGGLE STYLES
+   ============================================================================ */
+.toggle-switch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-switch input[type="checkbox"] {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+    accent-color: var(--brand);
+}
+
+input[type="checkbox"] {
+    accent-color: var(--brand);
+}
+
+/* ============================================================================
+   LOADING SPINNER
+   ============================================================================ */
 .spinner {
-    border: 3px solid #f3f3f3;
-    border-top: 3px solid #667eea;
+    border: 3px solid var(--border);
+    border-top: 3px solid var(--gold);
     border-radius: 50%;
     width: 30px;
     height: 30px;
@@ -328,29 +729,38 @@ header h1 {
     100% { transform: rotate(360deg); }
 }
 
-/* Responsive */
-@media (max-width: 768px) {
-    .tabs {
-        flex-direction: column;
-    }
-    
-    .tab-button {
-        border-bottom: 1px solid #ddd;
-        border-right: none;
-    }
-    
-    .form-actions,
-    .quick-actions,
-    .deployment-actions {
-        flex-direction: column;
-    }
-    
-    .btn {
-        width: 100%;
-    }
+/* ============================================================================
+   LIFECYCLE MANAGEMENT CARDS
+   ============================================================================ */
+.lifecycle-card {
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    background: var(--bg-section);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
-/* Status Tab Enhancements */
+.lifecycle-card h4 {
+    margin: 0 0 10px 0;
+    color: var(--gold-muted);
+}
+
+.lifecycle-card p {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    margin-bottom: 15px;
+}
+
+.lifecycle-card .billing-info {
+    background: var(--bg-card);
+    padding: 10px;
+    border-radius: var(--radius);
+    margin-bottom: 15px;
+    font-size: 0.85em;
+}
+
+/* ============================================================================
+   STATUS TAB ENHANCEMENTS
+   ============================================================================ */
 .status-header {
     display: flex;
     justify-content: space-between;
@@ -359,17 +769,17 @@ header h1 {
 }
 
 .status-card {
-    background: #f8f9fa;
-    border: 2px solid #e9ecef;
-    border-radius: 8px;
+    background: var(--bg-section);
+    border-radius: var(--radius-lg);
     padding: 20px;
     margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 .status-card h3 {
     margin-top: 0;
     margin-bottom: 15px;
-    color: #333;
+    color: var(--text-primary);
 }
 
 .status-badge-large {
@@ -386,11 +796,13 @@ header h1 {
 
 .metric-item {
     padding: 10px;
-    background: white;
-    border-radius: 5px;
-    border: 1px solid #e9ecef;
+    background: var(--bg-card);
+    border-radius: var(--radius);
 }
 
+/* ============================================================================
+   COLLAPSIBLE SECTIONS
+   ============================================================================ */
 .collapsible h3 {
     cursor: pointer;
     user-select: none;
@@ -400,11 +812,11 @@ header h1 {
 }
 
 .collapsible h3:hover {
-    color: #667eea;
+    color: var(--gold);
 }
 
 .expand-icon {
-    font-size: 0.8em;
+    font-size: 0.85em;
     transition: transform 0.3s;
 }
 
@@ -413,46 +825,412 @@ header h1 {
     overflow-y: auto;
 }
 
-.btn-sm {
-    padding: 3px 8px;
+/* ============================================================================
+   CODE BLOCK PREVIEWS (Malleable Profile, etc.)
+   ============================================================================ */
+.code-preview {
+    background: var(--bg-terminal);
+    color: var(--accent-muted);
+    padding: 16px;
+    border-radius: var(--radius);
+    margin: 0;
     font-size: 0.85em;
-    border-radius: 3px;
+    line-height: 1.5;
+    overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
 }
 
-.toggle-switch {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+.preview-tab {
+    padding: 8px 16px;
+    border: none;
+    border-radius: var(--radius) var(--radius) 0 0;
+    background: var(--bg-elevated);
+    color: var(--text-muted);
     cursor: pointer;
-    user-select: none;
+    font-size: 0.85em;
+    font-weight: 500;
 }
 
-.toggle-switch input[type="checkbox"] {
-    cursor: pointer;
-    width: 18px;
-    height: 18px;
+.preview-tab.active {
+    background: var(--bg-terminal);
+    color: var(--gold-muted);
 }
 
-/* Toast Notifications */
+/* ============================================================================
+   GRID LAYOUTS
+   ============================================================================ */
+.grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+.grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+}
+
+.grid-auto {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+}
+
+/* ============================================================================
+   SELECT DROPDOWN — Deployment type selector
+   ============================================================================ */
+.deploy-selector {
+    margin-bottom: 25px;
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    background: var(--bg-section);
+}
+
+.deploy-selector h3 {
+    margin: 0 0 10px 0;
+    color: var(--gold);
+}
+
+.deploy-selector select {
+    font-size: 1.05em;
+    padding: 12px;
+    border: 1px solid var(--gold-dim);
+    border-radius: var(--radius);
+    width: 100%;
+    background: var(--bg-input);
+    color: var(--text-primary);
+}
+
+.deploy-selector select:focus {
+    outline: none;
+    border-color: var(--gold);
+    box-shadow: 0 0 0 2px rgba(163, 184, 122, 0.2);
+}
+
+/* ============================================================================
+   TOAST NOTIFICATIONS
+   ============================================================================ */
 @keyframes slideIn {
-    from {
-        transform: translateX(100%);
-        opacity: 0;
-    }
-    to {
-        transform: translateX(0);
-        opacity: 1;
-    }
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
 }
 
 @keyframes slideOut {
-    from {
-        transform: translateX(0);
-        opacity: 1;
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(100%); opacity: 0; }
+}
+
+/* ============================================================================
+   RESPONSIVE
+   ============================================================================ */
+@media (max-width: 768px) {
+    .tabs {
+        flex-wrap: wrap;
     }
-    to {
-        transform: translateX(100%);
-        opacity: 0;
+
+    .tab-btn {
+        flex: 0 0 auto;
+    }
+
+    .form-actions,
+    .quick-actions,
+    .deployment-actions {
+        flex-direction: column;
+    }
+
+    .btn {
+        width: 100%;
+    }
+
+    .grid-2,
+    .grid-3 {
+        grid-template-columns: 1fr;
     }
 }
 
+/* ============================================================================
+   COMPACT SECTION CARDS — For pages like Prerequisites with many small sections
+   ============================================================================ */
+.section-card--compact {
+    padding: 14px 16px;
+    margin-bottom: 10px;
+}
+
+.section-card--compact h3 {
+    margin: 0 0 6px 0;
+    font-size: 1.05em;
+}
+
+.section-card--compact p {
+    margin-bottom: 8px;
+    font-size: 0.88em;
+}
+
+.section-card--compact .status-display {
+    margin: 6px 0 0 0;
+    padding: 4px 0 0 0;
+}
+
+.section-card--compact .status-display p {
+    margin: 0;
+    font-size: 0.88em;
+}
+
+/* ============================================================================
+   THEME TOGGLE — sits inside .tabs nav bar, pushed right
+   ============================================================================ */
+.theme-toggle {
+    margin-left: auto;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1.1em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition);
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.theme-toggle:hover {
+    background: var(--border);
+    color: var(--text-primary);
+    transform: scale(1.1);
+}
+
+[data-theme="light"] .theme-toggle {
+    background: var(--bg-elevated);
+    border-color: var(--border);
+    color: var(--text-secondary);
+}
+
+[data-theme="light"] .theme-toggle:hover {
+    background: var(--border);
+    color: var(--text-primary);
+}
+
+/* ============================================================================
+   LIGHT MODE — Fix text on brand-colored backgrounds
+   In light mode, elements with brand-colored backgrounds need cream text.
+   ============================================================================ */
+[data-theme="light"] header {
+    color: #EFFBDB;
+}
+
+[data-theme="light"] header h1 {
+    color: #EFFBDB;
+}
+
+[data-theme="light"] table thead tr {
+    color: #EFFBDB;
+}
+
+[data-theme="light"] .deployment-overview {
+    color: #EFFBDB;
+}
+
+[data-theme="light"] .deployment-overview h4 {
+    color: #EFFBDB;
+}
+
+[data-theme="light"] .deploy-type-banner {
+    color: #EFFBDB;
+}
+
+[data-theme="light"] .btn-primary {
+    color: #EFFBDB;
+}
+
+[data-theme="light"] .tab-btn.active {
+    color: #EFFBDB;
+}
+
+/* ============================================================================
+   ARCHITECTURE TAB — Diagram + Markdown content
+   ============================================================================ */
+
+/* Diagram wrapper — light background so diagrams (white bg PNGs) look good */
+.arch-diagram-wrapper {
+    background: var(--bg-section);
+    padding: 24px;
+    border-radius: var(--radius-lg);
+    margin-bottom: 24px;
+}
+
+.arch-diagram-frame {
+    background: #fff;
+    padding: 16px;
+    border-radius: var(--radius);
+}
+
+.arch-diagram-img {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: transform var(--transition);
+    display: block;
+}
+
+.arch-diagram-img:hover {
+    transform: scale(1.01);
+}
+
+.arch-diagram-caption {
+    margin-top: 12px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.88em;
+}
+
+.arch-diagram-caption span {
+    color: var(--brand-light);
+}
+
+.arch-diagram-caption span:hover {
+    color: var(--accent);
+}
+
+/* Markdown rendered content */
+.markdown-content {
+    line-height: 1.6;
+    color: var(--text-primary);
+}
+
+.markdown-content h1 {
+    color: var(--accent);
+    padding-bottom: 10px;
+    margin-top: 0;
+}
+
+.markdown-content h2 {
+    color: var(--accent-muted);
+    padding-bottom: 8px;
+    margin-top: 30px;
+}
+
+.markdown-content h3 {
+    color: var(--text-primary);
+    margin-top: 25px;
+}
+
+.markdown-content pre {
+    background: var(--bg-terminal);
+    color: var(--text-terminal);
+    padding: 20px;
+    border-radius: var(--radius);
+    overflow-x: auto;
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-size: 0.9em;
+    line-height: 1.5;
+}
+
+.markdown-content code {
+    background: var(--bg-body);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-size: 0.9em;
+    color: var(--accent-muted);
+}
+
+.markdown-content pre code {
+    background: transparent;
+    padding: 0;
+    color: var(--text-terminal);
+}
+
+.markdown-content table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin: 20px 0;
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.markdown-content table th {
+    background: var(--brand-dark);
+    color: var(--accent);
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+}
+
+.markdown-content table td {
+    padding: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+}
+
+.markdown-content table tr:nth-child(even) {
+    background: var(--bg-section);
+}
+
+.markdown-content table tr:hover {
+    background: var(--bg-elevated);
+}
+
+.markdown-content blockquote {
+    border-left: 3px solid var(--accent-dim);
+    padding-left: 20px;
+    margin-left: 0;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.markdown-content ul, .markdown-content ol {
+    padding-left: 25px;
+}
+
+.markdown-content li {
+    margin: 8px 0;
+    color: var(--text-secondary);
+}
+
+.markdown-content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius);
+}
+
+.markdown-content hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 30px 0;
+}
+
+/* Light mode — fix markdown table header text */
+[data-theme="light"] .markdown-content table th {
+    color: #EFFBDB;
+}
+
+/* ============================================================================
+   SCROLLBAR
+   ============================================================================ */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-body);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--border-light);
+}

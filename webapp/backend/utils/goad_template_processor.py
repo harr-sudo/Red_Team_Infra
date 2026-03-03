@@ -38,17 +38,6 @@ GOAD_LABS = {
         'forests': 1,
         'description': 'Single DC - sevenkingdoms.local',
     },
-    'MINILAB': {
-        'source_dir': 'tools/goad/ad/MINILAB/providers/aws',
-        'template_dir': 'tools/goad/template/provider/aws',
-        'config_file': 'tools/goad/ad/MINILAB/data/config.json',
-        'lab_identifier': 'minilab',
-        'default_ip_range': '192.168.56',
-        'vm_count': 2,
-        'domains': 1,
-        'forests': 1,
-        'description': 'DC + Workstation',
-    },
     'GOAD-Light': {
         'source_dir': 'tools/goad/ad/GOAD-Light/providers/aws',
         'template_dir': 'tools/goad/template/provider/aws',
@@ -108,8 +97,8 @@ def get_lab_info(lab_type: str) -> Optional[Dict]:
 
 def process_goad_templates(
     lab_type: str,
-    aws_region: str = 'us-east-1',
-    aws_zone: str = 'us-east-1a',
+    aws_region: str = 'eu-central-1',
+    aws_zone: str = 'eu-central-1a',
     ip_range: Optional[str] = None,
     output_dir: Optional[str] = None,
     base_path: Optional[str] = None
@@ -119,8 +108,8 @@ def process_goad_templates(
     
     Args:
         lab_type: GOAD lab type (e.g., 'GOAD-Light')
-        aws_region: AWS region (e.g., 'us-east-1')
-        aws_zone: AWS availability zone (e.g., 'us-east-1a')
+        aws_region: AWS region (e.g., 'eu-central-1')
+        aws_zone: AWS availability zone (e.g., 'eu-central-1a')
         ip_range: Override IP range (default from GOAD_LABS)
         output_dir: Output directory (default: terraform/modules/goad/generated)
         base_path: Base path for the project (default: current directory)
@@ -321,8 +310,8 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description='Process GOAD templates')
     parser.add_argument('lab_type', choices=list(GOAD_LABS.keys()), help='GOAD lab type')
-    parser.add_argument('--region', default='us-east-1', help='AWS region')
-    parser.add_argument('--zone', default='us-east-1a', help='AWS availability zone')
+    parser.add_argument('--region', default='eu-central-1', help='AWS region')
+    parser.add_argument('--zone', default='eu-central-1a', help='AWS availability zone')
     parser.add_argument('--ip-range', default=None, help='IP range (e.g., 192.168.56)')
     parser.add_argument('--output', default=None, help='Output directory')
     parser.add_argument('--base-path', default=None, help='Base project path')

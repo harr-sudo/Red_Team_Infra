@@ -6,31 +6,93 @@ The **C2 Ad-Hoc** deployment provides a **lightweight, single-server Cobalt Stri
 
 ## Architecture Components
 
-### Infrastructure
+### Infrastructure (Static IPs)
 
-| Component | Type | Location | Purpose |
-|-----------|------|----------|---------|
-| **C2 Team Server** | t3.medium (Private) | 10.0.10.5 | Cobalt Strike team server |
-| **Redirector 1** | t3.small (Public) | Public IP | Traffic forwarding (primary) |
-| **Redirector 2** | t3.small (Public) | Public IP | Traffic forwarding (backup) |
-| **Bastion/Jump Box** | t3.medium (Public) | Public IP | Windows Server + WSL2 for management |
+| Component | Type | Subnet | Private IP | Public IP | Purpose |
+|-----------|------|--------|-----------|-----------|---------|
+| **Bastion Host** | t3.medium (Windows + WSL2) | Management (10.0.0.0/24) | 10.0.0.10 | EIP (Elastic IP) | Operator entry point (RDP/SSH) |
+| **Redirector 1** | t3.small (nginx HTTPS) | DMZ (10.0.1.0/24) | 10.0.1.10 | EIP (Elastic IP) | Traffic forwarding (primary) |
+| **Redirector 2** | t3.small (nginx HTTPS) | DMZ (10.0.2.0/24) | 10.0.2.10 | EIP (Elastic IP) | Traffic forwarding (backup) |
+| **C2 Team Server** | t3.medium (Cobalt Strike) | Private (10.0.10.0/24) | 10.0.10.10 | None | Cobalt Strike team server |
+| **Attack Box** | t2.large (Windows 2022) | Private (10.0.10.0/24) | 10.0.10.50 | None | CS Client GUI, red team tools |
+| **NAT Gateway** | Managed | Public | — | Auto | Outbound-only internet for private instances |
 
 ### Network Architecture
 
+#### Internet Gateway vs NAT Gateway
+
+The VPC has two gateways that serve fundamentally different purposes:
+
+**Internet Gateway (IGW)** — Bidirectional, for public subnets:
+- Inbound: Target beacon callbacks (HTTPS :443) arrive here, routed to redirectors
+- Outbound: Any instance with an Elastic IP goes out through the IGW
+- The Redirectors and Bastion all have EIPs and sit in public subnets routed through the IGW
+- The operator at home connects to the Bastion's EIP through the IGW
+
+**NAT Gateway** — Outbound only, for private subnets:
+- The C2 Team Server and Attack Box sit in private subnets with NO public IPs
+- When they need internet (apt updates, git clone, S3 downloads), traffic goes out via NAT
+- Nothing from the internet can initiate a connection to private instances via NAT
+
+#### How Elastic IPs Work (Single NIC, Not Dual-Homed)
+
+The Bastion, Redirector 1, and Redirector 2 each have a **single NIC** with a private IP. The Elastic IP (EIP) is **not a second interface** — it's a 1-to-1 NAT mapping performed transparently by AWS at the Internet Gateway:
+
+```
+Bastion has 1 NIC → 1 private IP: 10.0.0.10
+
+AWS translates at the IGW (the instance never sees the public IP):
+  Inbound:  Operator connects to EIP (e.g. 54.x.x.x) → IGW translates → 10.0.0.10
+  Outbound: 10.0.0.10 sends traffic out → IGW translates → appears as 54.x.x.x
+```
+
+If you RDP into the bastion and run `ipconfig`, you'll see **one NIC with 10.0.0.10** — the EIP never appears on the instance itself. AWS handles public↔private translation at the IGW before traffic reaches the instance.
+
+The bastion reaches private subnet instances (C2 at 10.0.10.10, Attack Box at 10.0.10.50) via **VPC internal routing** — all subnets in the same VPC can communicate through the local route table entry (`10.0.0.0/16 → local`). Security groups control which traffic is allowed between subnets, not routing.
+
+#### Standard Mode (Redirectors Only)
 ```
 Internet
    ↓
+Internet Gateway (bidirectional — public subnet instances have EIPs)
+   ↓
+Management Subnet (10.0.0.0/24)
+   └── Bastion Host (10.0.0.10, EIP) ← Operator RDP/SSH entry point
+   ↓
+DMZ Subnets (10.0.1.0/24, 10.0.2.0/24)
+   ├── Redirector 1 (10.0.1.10, EIP) ← Beacon traffic (port 443)
+   └── Redirector 2 (10.0.2.10, EIP) ← Beacon traffic (port 443)
+   ↓
+Private Subnet (10.0.10.0/24) — NO public IPs, no direct internet access
+   ├── C2 Team Server (10.0.10.10)  ← Cobalt Strike (port 50050)
+   └── Attack Box (10.0.10.50)      ← Windows workstation (CS Client, tools)
+   ↓
+NAT Gateway → Internet (outbound only — updates, S3 downloads, git clone)
+```
+
+#### Domain Fronting Mode (Optional)
+```
+Internet
+   ↓
+CloudFront (CDN edge)          ← Beacon traffic to front domain
+   ↓                              Host header → your back domain
 Internet Gateway
    ↓
-Public Subnet (DMZ)
-   ├── Redirector 1 (nginx/socat) ← Beacon traffic (port 443)
-   ├── Redirector 2 (nginx/socat) ← Beacon traffic (port 443)
-   └── Bastion (Windows + WSL2) ← Operator access (RDP/SSH)
+Management Subnet (10.0.0.0/24)
+   └── Bastion Host (10.0.0.10, EIP) ← Operator RDP/SSH entry point
    ↓
-Private Subnet
-   └── C2 Team Server ← Cobalt Strike (port 50050)
+DMZ Subnets (10.0.1.0/24, 10.0.2.0/24)
+   ├── Redirector 1 (10.0.1.10, EIP) ← Origin for CloudFront (HTTPS only)
+   └── Redirector 2 (10.0.2.10, EIP) ← Origin for CloudFront (HTTPS only)
    ↓
-NAT Gateway → Internet (for updates)
+Private Subnet (10.0.10.0/24) — NO public IPs
+   ├── C2 Team Server (10.0.10.10)  ← Cobalt Strike (port 50050)
+   └── Attack Box (10.0.10.50)      ← Windows workstation (CS Client, tools)
+   ↓
+NAT Gateway → Internet (outbound only)
+
+Security: Redirector ingress locked to CloudFront IPs only
+SSL: ACM cert (Client→CloudFront), Self-signed (CloudFront→Redirector)
 ```
 
 ## Key Features
@@ -53,6 +115,7 @@ NAT Gateway → Internet (for updates)
 
 ### 3. Traffic Flow
 
+#### Standard (Redirectors Only)
 ```
 Target → HTTPS (443) → Redirector 1/2 → Forward → C2 Server (50050)
                           ↓
@@ -60,23 +123,65 @@ Target → HTTPS (443) → Redirector 1/2 → Forward → C2 Server (50050)
                   (SSL termination)
 ```
 
-### 4. Operator Access Patterns
+#### With Domain Fronting (Optional)
+```
+Target → HTTPS to front domain (e.g. grid.crowdstrike.com)
+       → Host header: your-domain.cloudfront.net
+       → CloudFront edge → Redirector origin (Elastic IP)
+       → Forward → C2 Server (50050)
+```
 
-#### Option A: SSH Tunnel (Recommended)
+| | Redirectors Only | + Domain Fronting |
+|---|---|---|
+| **Blue team sees** | Traffic to your domain | Traffic to front domain (e.g. crowdstrike.com) |
+| **Redirector IP** | Visible in DNS | Hidden behind CloudFront |
+| **SSL** | Let's Encrypt or self-signed | ACM (auto, free) |
+| **Setup time** | ~15 min | +15-30 min (CloudFront propagation) |
+| **Domain burned?** | Re-point DNS | Switch to backup domain (instant) |
+
+### 4. Attack Box (Windows Workstation)
+- **Windows Server 2022** optimized for red team operations (server bloat removed, Defender disabled)
+- **Cobalt Strike Client GUI** — pre-installed from S3, desktop shortcut to connect to C2 server
+- **Red team tools** — cloned from GitHub repo to `C:\Tools` (PowerSploit, SharpTools, etc.)
+- **Payload staging** — empty `C:\Payloads` directory for operator use during engagement
+- **WSL2 with Ubuntu** — Linux tooling available alongside Windows
+- **Private subnet only** (10.0.10.50) — no public IP, accessed via bastion RDP tunnel
+- **Toggleable** — `enable_attack_box = true` (default), can be disabled to save costs
+
+### 5. Operator Access Patterns
+
+#### Option A: SSH Tunnel to C2 (Recommended for CS Client on laptop)
 ```bash
-# Create SSH tunnel from your laptop
-ssh -i key.pem -L 50050:10.0.10.5:50050 ubuntu@<bastion-public-ip>
+# Create SSH tunnel from your laptop through bastion to C2 server
+ssh -i key.pem -L 50050:10.0.10.10:50050 ubuntu@<bastion-eip>
 
-# Connect Cobalt Strike client to localhost
+# Connect Cobalt Strike client on your laptop to localhost
 Host: 127.0.0.1:50050
 ```
 
-#### Option B: RDP to Bastion
+#### Option B: RDP to Attack Box (Recommended for full workstation)
 ```bash
-# RDP to bastion
-mstsc /v:<bastion-public-ip>
+# RDP to bastion first (port 3389)
+mstsc /v:<bastion-eip>
 
-# From bastion, run CS client connecting to 10.0.10.5:50050
+# From bastion, RDP tunnel to attack box at 10.0.10.50:3389
+# Or set up a local RDP tunnel from your laptop:
+ssh -i key.pem -L 3390:10.0.10.50:3389 ubuntu@<bastion-eip>
+mstsc /v:localhost:3390
+
+# Attack box has CS Client pre-installed — double-click desktop shortcut
+# Connects to C2 server at 10.0.10.10:50050 (same private subnet, direct access)
+```
+
+#### Option C: RDP to Bastion Only
+```bash
+# RDP to bastion (Windows + WSL2)
+mstsc /v:<bastion-eip>
+
+# From bastion WSL2, SSH tunnel to C2 server
+ssh -L 50050:10.0.10.10:50050 ubuntu@10.0.10.10
+
+# Run CS client from bastion connecting to localhost:50050
 ```
 
 ## Deployment
@@ -130,13 +235,50 @@ terraform apply -var="engagement_type=adhoc"
 terraform output c2_connection_info
 ```
 
+## SSL/TLS Options
+
+| Option | How it works | OPSEC | When to use |
+|--------|-------------|-------|-------------|
+| **Let's Encrypt** | Certbot auto-provisions trusted cert via DNS challenge | Trusted by browsers and proxies. Appears in Certificate Transparency logs. | Standard deployments without domain fronting |
+| **Self-Signed** | Generated during redirector setup | Flagged by Shodan/Censys. Blocked by corporate proxies. Browser warnings. | Testing only, or as CloudFront→Redirector origin cert |
+| **ACM (with Domain Fronting)** | AWS auto-provisions free cert, validates via Route 53 DNS | Trusted, no CT log exposure for internal traffic. Front domain's cert used publicly. | When domain fronting is enabled |
+
+### SSL Flow: Standard (No Domain Fronting)
+```
+Target → HTTPS → Redirector (Let's Encrypt or self-signed cert) → C2 Server
+```
+
+### SSL Flow: With Domain Fronting
+```
+Target → HTTPS → Front domain cert (not yours)
+       → CloudFront → ACM cert (auto-provisioned, free)
+       → Redirector → Self-signed cert (CloudFront doesn't verify origin)
+       → C2 Server
+```
+
+When domain fronting is enabled, Let's Encrypt is not needed. ACM handles the public-facing SSL automatically, and the redirector uses a self-signed cert for the CloudFront-to-origin connection.
+
 ## Security Groups
 
 ### Redirector Security Group
+
+**Standard mode:**
 ```yaml
 Inbound:
   - Port 80 (HTTP): 0.0.0.0/0
   - Port 443 (HTTPS): 0.0.0.0/0
+  - Port 22 (SSH): <bastion-private-ip>/32
+
+Outbound:
+  - Port 50050: <c2-server-private-ip>/32  # To team server
+  - Port 443: 0.0.0.0/0  # For updates
+```
+
+**With domain fronting** (redirector locked to CloudFront IPs only):
+```yaml
+Inbound:
+  - Port 80 (HTTP): com.amazonaws.global.cloudfront.origin-facing  # AWS managed prefix list
+  - Port 443 (HTTPS): com.amazonaws.global.cloudfront.origin-facing
   - Port 22 (SSH): <bastion-private-ip>/32
 
 Outbound:
@@ -225,7 +367,7 @@ Week 4: OpSec and cleanup
 ```nginx
 # /etc/nginx/sites-available/c2-redirector
 upstream c2_backend {
-    server 10.0.10.5:50050;  # C2 team server
+    server 10.0.10.10:50050;  # C2 team server
 }
 
 server {
@@ -249,11 +391,11 @@ server {
 
 ```bash
 # Simple TCP forwarding
-socat TCP4-LISTEN:443,fork,reuseaddr TCP4:10.0.10.5:50050
+socat TCP4-LISTEN:443,fork,reuseaddr TCP4:10.0.10.10:50050
 
 # With SSL termination
 socat OPENSSL-LISTEN:443,cert=/etc/ssl/cert.pem,key=/etc/ssl/key.pem,verify=0,fork \
-  TCP4:10.0.10.5:50050
+  TCP4:10.0.10.10:50050
 ```
 
 ## Beacon Configuration
@@ -298,7 +440,7 @@ http-get {
 
 ## Cost Breakdown
 
-### Monthly Cost: ~$60-90
+### Monthly Cost: ~$155-190
 
 | Resource | Type | Cost/Month |
 |----------|------|------------|
@@ -306,12 +448,13 @@ http-get {
 | Redirector 1 | t3.small (24/7) | ~$15 |
 | Redirector 2 | t3.small (24/7) | ~$15 |
 | Bastion | t3.medium (24/7) | ~$30 |
+| Attack Box | t2.large (24/7) | ~$50 |
 | NAT Gateway | (Optional) | ~$32 |
-| EBS Storage | 100GB total | ~$10 |
+| EBS Storage | 200GB total | ~$15 |
 | Data Transfer | Minimal | ~$5-10 |
-| S3 | CS files | <$1 |
-| **Total (no NAT)** | | **~$105** |
-| **Total (with NAT)** | | **~$137** |
+| S3 | CS files + scripts | <$1 |
+| **Total (no NAT)** | | **~$160** |
+| **Total (with NAT)** | | **~$192** |
 
 ### Cost Optimization
 
@@ -359,7 +502,7 @@ aws logs filter-pattern "POST /api/v1/status" --log-group-name /aws/ec2/redirect
 ```bash
 # 1. Check redirector can reach C2 server
 ssh redirector1
-nc -zv 10.0.10.5 50050
+nc -zv 10.0.10.10 50050
 
 # 2. Check nginx/socat is running
 systemctl status nginx
@@ -379,7 +522,7 @@ curl -k https://operations.company.com
 **Diagnosis**:
 ```bash
 # From bastion
-telnet 10.0.10.5 50050
+telnet 10.0.10.10 50050
 
 # Check Cobalt Strike is running
 ssh c2-server
@@ -392,7 +535,7 @@ ps aux | grep teamserver
 sudo systemctl restart cobaltstrike
 # Or manually:
 cd /opt/cobaltstrike
-sudo ./teamserver 10.0.10.5 <password>
+sudo ./teamserver 10.0.10.10 <password>
 ```
 
 ### Issue: SSL certificate errors
@@ -490,6 +633,6 @@ C2 Ad-Hoc is **perfect for**:
 - ❌ Not suitable for long engagements
 - ❌ Limited scalability
 
-**Cost**: ~$60-105/month (or $42-56 for 2-week engagement)
+**Cost**: ~$160-192/month (or ~$75-90 for 2-week engagement)
 
 For simple, short-term engagements, this is your best choice!

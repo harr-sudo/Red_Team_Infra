@@ -1,0 +1,147 @@
+/* ============================================================================
+   PALETTE — Swap colors here to retheme the entire app
+   ============================================================================
+
+   Current: Dark Navy + Olive Green + Cream (dark/light mode)
+
+   Anchor colors:
+     #10121B — dark navy (base)
+     #8FA464 — olive green (brand)
+     #EFFBDB — light cream (accent)
+
+   To experiment: change the values below, save, and refresh.
+   Everything else in style.css references these variables.
+   ============================================================================ */
+
+:root {
+    /* ── BRAND COLORS ─────────────────────────────────────────────────────── */
+    --brand: #8FA464;              /* Olive green — primary brand */
+    --brand-light: #A3B87A;        /* Lighter olive — hover, highlights */
+    --brand-dark: #6B7D4A;         /* Darker olive — pressed, active */
+    --accent: #EFFBDB;             /* Cream — headings, prominent text */
+    --accent-muted: #C8D9A8;       /* Muted cream-green — secondary highlights */
+    --accent-dim: #9BB07E;         /* Dim olive-cream — subtle accents */
+
+    /* ── SURFACES ─────────────────────────────────────────────────────────── */
+    /* Clear nesting: body → container → card → section → elevated          */
+    --bg-body: #10121B;            /* Page background (deepest navy) */
+    --bg-container: #161926;       /* Main container */
+    --bg-card: #1C2031;            /* Cards & panels */
+    --bg-card-hover: #232840;      /* Card hover state */
+    --bg-elevated: #292F4A;        /* Raised elements (dropdowns, popovers) */
+    --bg-input: #131620;           /* Form inputs (recessed) */
+    --bg-section: #1F243A;         /* Sections within cards */
+
+    /* ── BORDERS ──────────────────────────────────────────────────────────── */
+    --border: #2E3550;
+    --border-light: #3D4668;
+    --border-focus: var(--brand-light);
+
+    /* ── TEXT ─────────────────────────────────────────────────────────────── */
+    --text-primary: #EEF0F6;       /* Headings, body text */
+    --text-secondary: #B0B8CC;     /* Labels, descriptions */
+    --text-muted: #7A849E;         /* Hints, placeholders */
+    --text-inverse: #10121B;       /* Text on light backgrounds */
+
+    /* ── SEMANTIC COLORS ──────────────────────────────────────────────────── */
+    /* Success (green) */
+    --success: #4A9A56;
+    --success-bg: #142218;
+    --success-border: #2D6B37;
+    --success-text: #7ECF8C;
+
+    /* Danger (red) */
+    --danger: #C43B34;
+    --danger-bg: #241416;
+    --danger-border: #6B2A28;
+    --danger-text: #F08A84;
+
+    /* Warning (amber) */
+    --warning: #C4940F;
+    --warning-bg: #221E10;
+    --warning-border: #6B5420;
+    --warning-text: #F0CA4A;
+
+    /* Info (blue) */
+    --info: #5088C0;
+    --info-bg: #131D2C;
+    --info-border: #2D4F72;
+    --info-text: #82BBE8;
+
+    /* ── TERMINAL / CODE ─────────────────────────────────────────────────── */
+    --bg-terminal: #0B0D14;
+    --text-terminal: #B0B8CC;
+
+    /* ── BACKWARD COMPAT ALIASES ─────────────────────────────────────────── */
+    --burgundy: var(--brand);
+    --burgundy-light: var(--brand-light);
+    --burgundy-dark: var(--brand-dark);
+    --gold: var(--accent);
+    --gold-muted: var(--accent-muted);
+    --gold-dim: var(--accent-dim);
+}
+
+/* ============================================================================
+   LIGHT MODE — Flip surfaces and text, keep brand + semantic colors
+   ============================================================================ */
+[data-theme="light"] {
+    /* ── SURFACES (cream-based) ──────────────────────────────────────────── */
+    --bg-body: #EFFBDB;
+    --bg-container: #E4F0CC;
+    --bg-card: #D8E5BD;
+    --bg-card-hover: #D0DDB0;
+    --bg-elevated: #C2D09F;
+    --bg-input: #E8F4C8;
+    --bg-section: #CDDAAE;
+
+    /* ── BORDERS ──────────────────────────────────────────────────────────── */
+    --border: #A8BA88;
+    --border-light: #B8CA98;
+
+    /* ── TEXT (dark navy) ─────────────────────────────────────────────────── */
+    --text-primary: #10121B;
+    --text-secondary: #2A2F40;
+    --text-muted: #4A5168;
+    --text-inverse: #EFFBDB;
+
+    /* ── BRAND (dark teal for accent backgrounds) ──────────────────────── */
+    --brand: #0E1F27;
+    --brand-light: #162D38;
+    --brand-dark: #091620;
+    --accent: #8FA464;
+    --accent-muted: #6B7D4A;
+    --accent-dim: #5A6C3C;
+
+    /* ── SEMANTIC (boosted for light backgrounds) ────────────────────────── */
+    --success: #2D7A3A;
+    --success-bg: #D8F0DC;
+    --success-border: #8CC89A;
+    --success-text: #1A5A26;
+
+    --danger: #B82E28;
+    --danger-bg: #F8DCDA;
+    --danger-border: #E0908C;
+    --danger-text: #8A1A16;
+
+    --warning: #A07A08;
+    --warning-bg: #F5ECD0;
+    --warning-border: #D4B44A;
+    --warning-text: #6A5004;
+
+    --info: #3068A0;
+    --info-bg: #D8EAF8;
+    --info-border: #88B8E0;
+    --info-text: #1A4A78;
+
+    /* ── TERMINAL / CODE (stays dark in both modes) ────────────────────── */
+    --bg-terminal: #0E1F27;
+    --text-terminal: #B0B8CC;
+
+    /* ── BACKWARD COMPAT ALIASES ─────────────────────────────────────────── */
+    --burgundy: var(--brand);
+    --burgundy-light: var(--brand-light);
+    --burgundy-dark: var(--brand-dark);
+    --gold: var(--accent);
+    --gold-muted: var(--accent-muted);
+    --gold-dim: var(--accent-dim);
+}

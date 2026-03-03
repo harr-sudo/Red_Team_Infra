@@ -31,17 +31,6 @@ GOAD_LABS = {
         'attacks': ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Pass-the-Hash'],
         'domain_names': ['sevenkingdoms.local']
     },
-    'MINILAB': {
-        'name': 'MINILAB',
-        'display_name': 'Mini Lab',
-        'vms': 2,
-        'domains': 1,
-        'forests': 1,
-        'description': 'Basic lab with one DC and one Workstation. Good for practicing basic attack chains.',
-        'est_cost': 150,
-        'attacks': ['Kerberoasting', 'AS-REP Roasting', 'DCSync', 'Pass-the-Hash', 'Lateral Movement'],
-        'domain_names': ['psycho.psycho.local']
-    },
     'GOAD-Light': {
         'name': 'GOAD-Light',
         'display_name': 'GOAD Light',
@@ -62,7 +51,7 @@ GOAD_LABS = {
         'description': 'Lab with Microsoft Configuration Manager (SCCM/ConfigMgr). For SCCM-specific attacks.',
         'est_cost': 300,
         'attacks': ['SCCM Attacks', 'NAA Credentials', 'PXE Boot Attacks', 'Task Sequence Attacks'],
-        'domain_names': ['sccm.local']
+        'domain_names': ['sccm.lab']
     },
     'GOAD': {
         'name': 'GOAD',
@@ -81,11 +70,20 @@ GOAD_LABS = {
         'vms': 5,
         'domains': 2,
         'forests': 1,
-        'description': 'Challenge lab with no hints provided. CTF-style for advanced practice.',
+        'description': 'Network Hacking Academy - CTF-style challenge lab. Ninja-themed corporate network.',
         'est_cost': 350,
-        'attacks': ['Unknown - Challenge Mode'],
-        'domain_names': ['Hidden']
+        'attacks': ['Challenge Mode - Discover attack paths yourself'],
+        'domain_names': ['ninja.hack', 'academy.ninja.lan']
     }
+}
+
+# Mapping from lab_type to upstream GOAD Ansible directory name
+GOAD_ANSIBLE_LAB_MAP = {
+    'GOAD-Mini': 'GOAD-Mini',
+    'GOAD-Light': 'GOAD-Light',
+    'GOAD': 'GOAD',
+    'SCCM': 'SCCM',
+    'NHA': 'NHA',
 }
 
 # Get project root directory
@@ -286,6 +284,452 @@ def deploy_goad():
         }), 500
 
 
+@bp.route('/provision', methods=['POST'])
+def provision_goad():
+    """
+    Trigger Ansible AD provisioning on the jumpbox.
+    This SSHs to the jumpbox and runs the upstream GOAD Ansible playbooks
+    to configure Active Directory domains, users, trusts, and vulnerabilities.
+
+    Key steps:
+      1. Get jumpbox IP from terraform output
+      2. SSH to jumpbox and resolve {{ip_range}} placeholders in inventory files
+      3. Run ansible-playbook under nohup (survives SSH disconnects)
+      4. Track remote PID for status checks
+    """
+    data = request.get_json() or {}
+    lab_name = data.get('lab_name')
+
+    if not lab_name:
+        return jsonify({
+            'success': False,
+            'error': 'lab_name is required'
+        }), 400
+
+    if lab_name not in GOAD_LABS:
+        return jsonify({
+            'success': False,
+            'error': f'Unknown lab: {lab_name}',
+            'available_labs': list(GOAD_LABS.keys())
+        }), 400
+
+    # Map to upstream GOAD Ansible directory
+    ansible_lab = GOAD_ANSIBLE_LAB_MAP.get(lab_name)
+    if not ansible_lab:
+        return jsonify({
+            'success': False,
+            'error': f'No Ansible provisioning available for lab: {lab_name}'
+        }), 400
+
+    # Get jumpbox IP from terraform output
+    try:
+        from webapp.backend.utils.config_parser import ConfigParser
+        project_root = get_project_root()
+        config_dir = project_root / "configs"
+        tfvars_file = config_dir / "terraform.tfvars"
+
+        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+
+        # Get ip_range from config (default 192.168.56)
+        ip_range = config.get('goad_ip_range', config.get('ip_range', '192.168.56'))
+
+        # Try getting jumpbox IP from terraform output
+        terraform_dir = project_root / "terraform"
+        result = subprocess.run(
+            ['terraform', 'output', '-json'],
+            cwd=str(terraform_dir),
+            capture_output=True,
+            text=True,
+            timeout=TERRAFORM_OUTPUT_TIMEOUT
+        )
+
+        jumpbox_ip = None
+        if result.returncode == 0:
+            try:
+                outputs = json.loads(result.stdout)
+                # Look for jumpbox IP in various output formats
+                for key in ['goad_jumpbox_ip', 'jumpbox_ip', 'jumpbox_public_ip']:
+                    if key in outputs:
+                        val = outputs[key]
+                        jumpbox_ip = val.get('value') if isinstance(val, dict) else val
+                        break
+            except json.JSONDecodeError:
+                pass
+
+        if not jumpbox_ip:
+            return jsonify({
+                'success': False,
+                'error': 'Could not determine jumpbox IP. Is the infrastructure deployed?',
+                'hint': 'Run terraform apply first, then provision AD.'
+            }), 400
+
+        # Build the provisioning script to run on the jumpbox.
+        # The script:
+        #   1. Resolves {{ip_range}} placeholders in inventory files (GOAD uses Jinja2
+        #      templates that are normally rendered by goad.py — we must do it ourselves)
+        #   2. Runs ansible-playbook under nohup so it survives SSH disconnects
+        #   3. Writes exit code to a status file for remote status checks
+        provision_script = (
+            f"set -e; "
+            # Resolve {{ip_range}} in the AWS inventory file (CRITICAL — without this,
+            # Ansible tries to connect to the literal string '{{ip_range}}.10')
+            f"INV_FILE=/home/ubuntu/GOAD/ad/{ansible_lab}/providers/aws/inventory; "
+            f"if grep -q '{{{{ip_range}}}}' \"$INV_FILE\" 2>/dev/null; then "
+            f"  sed -i 's/{{{{ip_range}}}}/{ip_range}/g' \"$INV_FILE\"; "
+            f"fi; "
+            # Run Ansible under nohup so it survives SSH drops.
+            # Log all output to file. Write exit code to status file when done.
+            f"nohup bash -c '"
+            f"  cd /home/ubuntu/GOAD && "
+            f"  ansible-playbook "
+            f"    -i ad/{ansible_lab}/data/inventory "
+            f"    -i ad/{ansible_lab}/providers/aws/inventory "
+            f"    ansible/main.yml "
+            f"    > /home/ubuntu/goad-provision.log 2>&1; "
+            f"  echo $? > /home/ubuntu/goad-provision-exitcode"
+            f"' > /dev/null 2>&1 & "
+            # Print the background PID so we can track it remotely
+            f"echo $!"
+        )
+
+        # SSH command to run on jumpbox (using the user's SSH key)
+        ssh_key_path = config.get('ssh_private_key_path', '~/.ssh/goad_key')
+        ssh_cmd = [
+            'ssh', '-o', 'StrictHostKeyChecking=no',
+            '-o', 'BatchMode=yes',
+            '-i', os.path.expanduser(ssh_key_path),
+            f'ubuntu@{jumpbox_ip}',
+            provision_script
+        ]
+
+        # Run SSH command — this returns quickly because nohup backgrounds the work.
+        # The stdout contains the remote Ansible PID.
+        ssh_result = subprocess.run(
+            ssh_cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        if ssh_result.returncode != 0:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to start provisioning on jumpbox',
+                'stderr': ssh_result.stderr,
+                'hint': 'Check SSH key and jumpbox connectivity.'
+            }), 500
+
+        remote_pid = ssh_result.stdout.strip()
+
+        # Save provisioning state
+        goad_workspace = get_goad_workspace()
+        goad_workspace.mkdir(parents=True, exist_ok=True)
+        provision_marker = goad_workspace / 'provisioning.json'
+        with open(provision_marker, 'w') as f:
+            json.dump({
+                'lab_name': lab_name,
+                'ansible_lab': ansible_lab,
+                'jumpbox_ip': jumpbox_ip,
+                'remote_pid': remote_pid,
+                'status': 'running',
+                'ip_range': ip_range,
+                'ssh_key_path': ssh_key_path,
+                'started_at': str(subprocess.run(['date', '-u', '+%Y-%m-%dT%H:%M:%SZ'],
+                                                  capture_output=True, text=True).stdout.strip())
+            }, f, indent=2)
+
+        return jsonify({
+            'success': True,
+            'message': f'AD provisioning started for {lab_name}',
+            'jumpbox_ip': jumpbox_ip,
+            'remote_pid': remote_pid,
+            'estimated_time': '30-60 minutes depending on lab type',
+            'log_file': '/home/ubuntu/goad-provision.log',
+            'monitor_cmd': f'ssh ubuntu@{jumpbox_ip} tail -f /home/ubuntu/goad-provision.log',
+            'check_status': 'GET /api/goad/provision-status'
+        })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'success': False,
+            'error': 'Timed out connecting to jumpbox'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/provision-status', methods=['GET'])
+def provision_status():
+    """
+    Check the status of an ongoing AD provisioning.
+    SSHs to the jumpbox to check if the remote Ansible process is still running
+    and reads the exit code file to detect success/failure.
+    """
+    goad_workspace = get_goad_workspace()
+    provision_marker = goad_workspace / 'provisioning.json'
+
+    if not provision_marker.exists():
+        return jsonify({
+            'success': True,
+            'provisioning': False,
+            'message': 'No provisioning in progress'
+        })
+
+    try:
+        with open(provision_marker, 'r') as f:
+            prov_data = json.load(f)
+
+        # If already completed/failed, just return stored status
+        if prov_data.get('status') in ('completed', 'failed'):
+            return jsonify({
+                'success': True,
+                'provisioning': False,
+                'data': prov_data
+            })
+
+        jumpbox_ip = prov_data.get('jumpbox_ip')
+        remote_pid = prov_data.get('remote_pid')
+        ssh_key_path = prov_data.get('ssh_key_path', '~/.ssh/goad_key')
+
+        if not jumpbox_ip or not remote_pid:
+            return jsonify({
+                'success': True,
+                'provisioning': False,
+                'data': prov_data,
+                'message': 'Missing jumpbox_ip or remote_pid'
+            })
+
+        # SSH to jumpbox to check if the remote process is still running,
+        # read exit code if finished, and fetch the last 20 lines of the log
+        check_cmd = (
+            f"if kill -0 {remote_pid} 2>/dev/null; then "
+            f"  echo 'RUNNING'; "
+            f"elif [ -f /home/ubuntu/goad-provision-exitcode ]; then "
+            f"  echo \"DONE:$(cat /home/ubuntu/goad-provision-exitcode)\"; "
+            f"else "
+            f"  echo 'UNKNOWN'; "
+            f"fi; "
+            f"echo '---LOG_TAIL---'; "
+            f"tail -20 /home/ubuntu/goad-provision.log 2>/dev/null || echo 'No log file yet'"
+        )
+
+        ssh_cmd = [
+            'ssh', '-o', 'StrictHostKeyChecking=no',
+            '-o', 'BatchMode=yes',
+            '-o', 'ConnectTimeout=10',
+            '-i', os.path.expanduser(ssh_key_path),
+            f'ubuntu@{jumpbox_ip}',
+            check_cmd
+        ]
+
+        result = subprocess.run(
+            ssh_cmd,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode != 0:
+            # Can't reach jumpbox — don't change status, just report
+            return jsonify({
+                'success': True,
+                'provisioning': True,
+                'data': prov_data,
+                'message': 'Cannot reach jumpbox to check status (may still be running)'
+            })
+
+        # Parse response: split on ---LOG_TAIL--- to get status and log tail
+        raw_output = result.stdout.strip()
+        if '---LOG_TAIL---' in raw_output:
+            status_line, log_tail = raw_output.split('---LOG_TAIL---', 1)
+            status_line = status_line.strip()
+            log_tail = log_tail.strip()
+        else:
+            status_line = raw_output
+            log_tail = ''
+
+        if status_line == 'RUNNING':
+            return jsonify({
+                'success': True,
+                'provisioning': True,
+                'data': prov_data,
+                'log_tail': log_tail
+            })
+        elif status_line.startswith('DONE:'):
+            exit_code = status_line.split(':', 1)[1].strip()
+            if exit_code == '0':
+                prov_data['status'] = 'completed'
+            else:
+                prov_data['status'] = 'failed'
+                prov_data['exit_code'] = exit_code
+            prov_data['log_tail'] = log_tail
+            with open(provision_marker, 'w') as f:
+                json.dump(prov_data, f, indent=2)
+            return jsonify({
+                'success': True,
+                'provisioning': False,
+                'data': prov_data,
+                'log_tail': log_tail
+            })
+        else:
+            # UNKNOWN — process gone but no exit code file
+            prov_data['status'] = 'failed'
+            prov_data['error'] = 'Process terminated without writing exit code'
+            prov_data['log_tail'] = log_tail
+            with open(provision_marker, 'w') as f:
+                json.dump(prov_data, f, indent=2)
+            return jsonify({
+                'success': True,
+                'provisioning': False,
+                'data': prov_data,
+                'log_tail': log_tail
+            })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'success': True,
+            'provisioning': True,
+            'data': prov_data,
+            'message': 'Timed out checking jumpbox (provisioning may still be running)'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/verify', methods=['POST'])
+def verify_goad():
+    """
+    Verify AD health by SSHing to jumpbox and testing WinRM connectivity
+    to each Windows VM using Ansible's win_ping module.
+
+    Flow: Local machine → SSH → Jumpbox → WinRM ping → each AD VM
+    """
+    goad_workspace = get_goad_workspace()
+
+    # Load provisioning or deployment info to get jumpbox IP and lab name
+    provision_marker = goad_workspace / 'provisioning.json'
+    deployment_marker = goad_workspace / 'current_deployment.json'
+
+    jumpbox_ip = None
+    lab_name = None
+    ssh_key_path = '~/.ssh/goad_key'
+    ip_range = '192.168.56'
+
+    # Try provisioning.json first, then current_deployment.json
+    for marker in [provision_marker, deployment_marker]:
+        if marker.exists():
+            with open(marker, 'r') as f:
+                data = json.load(f)
+            jumpbox_ip = jumpbox_ip or data.get('jumpbox_ip')
+            lab_name = lab_name or data.get('lab_name')
+            ssh_key_path = data.get('ssh_key_path', ssh_key_path)
+            ip_range = data.get('ip_range', ip_range)
+
+    if not jumpbox_ip or not lab_name:
+        return jsonify({
+            'success': False,
+            'error': 'No deployment found — need jumpbox_ip and lab_name'
+        }), 404
+
+    # Determine which VMs to check based on lab type
+    vm_checks = {
+        'GOAD-Mini': {'dc01': f'{ip_range}.10'},
+        'GOAD-Light': {'dc01': f'{ip_range}.10', 'dc02': f'{ip_range}.11', 'srv02': f'{ip_range}.22'},
+        'SCCM': {'dc01': f'{ip_range}.10', 'srv01': f'{ip_range}.11', 'srv02': f'{ip_range}.12', 'ws01': f'{ip_range}.13'},
+        'GOAD': {'dc01': f'{ip_range}.10', 'dc02': f'{ip_range}.11', 'dc03': f'{ip_range}.12', 'srv02': f'{ip_range}.22', 'srv03': f'{ip_range}.23'},
+        'NHA': {'dc01': f'{ip_range}.10', 'dc02': f'{ip_range}.20', 'srv01': f'{ip_range}.21', 'srv02': f'{ip_range}.22', 'srv03': f'{ip_range}.23'},
+    }
+
+    vms = vm_checks.get(lab_name, {})
+    if not vms:
+        return jsonify({
+            'success': False,
+            'error': f'Unknown lab type for verification: {lab_name}'
+        }), 400
+
+    ansible_lab = GOAD_ANSIBLE_LAB_MAP.get(lab_name, lab_name)
+
+    try:
+        # Build a verify command that runs ansible win_ping on the jumpbox
+        # This tests WinRM connectivity + authentication in one shot
+        verify_cmd = (
+            f"cd /home/ubuntu/GOAD && "
+            f"ansible -i ad/{ansible_lab}/data/inventory "
+            f"-i ad/{ansible_lab}/providers/aws/inventory "
+            f"-m win_ping all 2>&1 || true"
+        )
+
+        ssh_cmd = [
+            'ssh', '-o', 'StrictHostKeyChecking=no',
+            '-o', 'BatchMode=yes',
+            '-o', 'ConnectTimeout=10',
+            '-i', os.path.expanduser(ssh_key_path),
+            f'ubuntu@{jumpbox_ip}',
+            verify_cmd
+        ]
+
+        result = subprocess.run(
+            ssh_cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        if result.returncode != 0 and not result.stdout:
+            return jsonify({
+                'success': False,
+                'error': 'Cannot reach jumpbox via SSH',
+                'details': result.stderr.strip()
+            }), 502
+
+        # Parse ansible output to determine per-VM pass/fail
+        # Ansible win_ping output looks like:
+        #   dc01 | SUCCESS => { "changed": false, "ping": "pong" }
+        #   dc02 | UNREACHABLE! => { ... }
+        output = result.stdout.strip()
+        vm_results = {}
+        for vm_name, vm_ip in vms.items():
+            # Check if this VM shows SUCCESS in the output
+            if f'{vm_name} | SUCCESS' in output or f'{vm_ip} | SUCCESS' in output:
+                vm_results[vm_name] = {'ip': vm_ip, 'status': 'healthy', 'winrm': True}
+            elif f'{vm_name} | UNREACHABLE' in output or f'{vm_ip} | UNREACHABLE' in output:
+                vm_results[vm_name] = {'ip': vm_ip, 'status': 'unreachable', 'winrm': False}
+            elif f'{vm_name} | FAILED' in output or f'{vm_ip} | FAILED' in output:
+                vm_results[vm_name] = {'ip': vm_ip, 'status': 'failed', 'winrm': False}
+            else:
+                vm_results[vm_name] = {'ip': vm_ip, 'status': 'unknown', 'winrm': False}
+
+        healthy_count = sum(1 for v in vm_results.values() if v['status'] == 'healthy')
+        total_count = len(vm_results)
+
+        return jsonify({
+            'success': True,
+            'lab_name': lab_name,
+            'healthy': healthy_count,
+            'total': total_count,
+            'all_healthy': healthy_count == total_count,
+            'vms': vm_results,
+            'raw_output': output
+        })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'success': False,
+            'error': 'Verification timed out (60s) — Ansible win_ping may be slow'
+        }), 504
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @bp.route('/destroy', methods=['POST'])
 def destroy_goad():
     """Destroy the current GOAD deployment"""
@@ -394,14 +838,6 @@ def get_credentials():
                     {'username': 'jaime.lannister', 'password': 'vagrant', 'domain': 'SEVENKINGDOMS', 'role': 'Domain User'},
                 ]
             },
-            'MINILAB': {
-                'domains': [
-                    {'name': 'PSYCHO', 'fqdn': 'psycho.psycho.local', 'dc': 'DC01'}
-                ],
-                'key_users': [
-                    {'username': 'Administrator', 'password': 'vagrant', 'domain': 'PSYCHO', 'role': 'Domain Admin'},
-                ]
-            },
             'GOAD-Light': {
                 'domains': [
                     {'name': 'SEVENKINGDOMS', 'fqdn': 'sevenkingdoms.local', 'dc': 'DC01'},
@@ -416,12 +852,18 @@ def get_credentials():
             },
             'SCCM': {
                 'domains': [
-                    {'name': 'SCCM', 'fqdn': 'sccm.local', 'dc': 'DC01'}
+                    {'name': 'SCCM', 'fqdn': 'sccm.lab', 'dc': 'DC01'}
                 ],
                 'key_users': [
                     {'username': 'Administrator', 'password': 'vagrant', 'domain': 'SCCM', 'role': 'Domain Admin'},
                     {'username': 'sccm_admin', 'password': 'vagrant', 'domain': 'SCCM', 'role': 'SCCM Admin'},
                 ],
+                'local_admin_passwords': {
+                    'dc01': 'AZERTY*qsdfg',
+                    'srv01': 'NgtI75cKV+Pu',
+                    'srv02': 'NgtazecKV+Pu',
+                    'ws01': 'EP+xh7Rk6j90',
+                },
                 'special_accounts': [
                     {'name': 'NAA (Network Access Account)', 'note': 'Check SCCM for credentials - often misconfigured'},
                     {'name': 'Task Sequence Account', 'note': 'Used for OSD - may have elevated privileges'},
@@ -448,12 +890,14 @@ def get_credentials():
             },
             'NHA': {
                 'domains': [
-                    {'name': 'Hidden', 'fqdn': 'Challenge Mode', 'dc': 'Unknown'}
+                    {'name': 'NINJA', 'fqdn': 'ninja.hack', 'dc': 'DC01'},
+                    {'name': 'ACADEMY', 'fqdn': 'academy.ninja.lan', 'dc': 'DC02'}
                 ],
                 'key_users': [
-                    {'username': '???', 'password': '???', 'domain': 'NHA', 'role': 'Find them yourself!'},
+                    {'username': 'Administrator', 'password': 'vagrant', 'domain': 'NINJA', 'role': 'Domain Admin'},
+                    {'username': 'Administrator', 'password': 'vagrant', 'domain': 'ACADEMY', 'role': 'Domain Admin'},
                 ],
-                'note': 'NHA is a challenge lab - credentials are intentionally hidden. Good luck!'
+                'note': 'NHA is a challenge lab - discover the attack paths yourself! Default password is "vagrant".'
             }
         }
         
@@ -465,8 +909,8 @@ def get_credentials():
             'lab_name': lab_name,
             'lab_display_name': lab_info.get('display_name', lab_name),
             'domains': lab_creds.get('domains', []),
-            'default_password': 'vagrant',  # Standard GOAD password
-            'local_admin_password': 'vagrant',
+            'default_password': 'vagrant',  # Standard GOAD domain password (post AD provisioning)
+            'local_admin_passwords': lab_creds.get('local_admin_passwords', {}),
             'default_users': [
                 {'username': 'Administrator', 'password': 'vagrant', 'domain': 'Local Admin', 'note': 'Local admin on all VMs'},
                 {'username': 'vagrant', 'password': 'vagrant', 'domain': 'Local User', 'note': 'Default vagrant user'},
@@ -586,7 +1030,7 @@ def start_goad():
         tfvars_file = config_dir / "terraform.tfvars"
         
         config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
-        aws_region = config.get('aws_region', 'us-east-1')
+        aws_region = config.get('aws_region', 'eu-central-1')
         project_name = config.get('project_name', '')
         
         # Use AWS EC2 API to start instances
@@ -658,7 +1102,7 @@ def stop_goad():
         tfvars_file = config_dir / "terraform.tfvars"
         
         config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
-        aws_region = config.get('aws_region', 'us-east-1')
+        aws_region = config.get('aws_region', 'eu-central-1')
         project_name = config.get('project_name', '')
         
         # Use AWS EC2 API to stop instances
@@ -730,7 +1174,7 @@ def get_goad_instance_status():
         tfvars_file = config_dir / "terraform.tfvars"
         
         config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
-        aws_region = config.get('aws_region', 'us-east-1')
+        aws_region = config.get('aws_region', 'eu-central-1')
         project_name = config.get('project_name', '')
         
         # Use AWS EC2 API to get instance status

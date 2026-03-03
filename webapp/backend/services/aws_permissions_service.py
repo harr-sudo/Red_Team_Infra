@@ -157,13 +157,13 @@ class AWSPermissionsService:
         """
         # Map permissions to safe test operations
         test_operations = {
-            "ec2:DescribeVpcs": ["aws", "ec2", "describe-vpcs", "--max-items", "1"],
-            "ec2:DescribeSubnets": ["aws", "ec2", "describe-subnets", "--max-items", "1"],
-            "ec2:DescribeInstances": ["aws", "ec2", "describe-instances", "--max-items", "1"],
-            "ec2:DescribeSecurityGroups": ["aws", "ec2", "describe-security-groups", "--max-items", "1"],
-            "ec2:DescribeImages": ["aws", "ec2", "describe-images", "--owners", "amazon", "--max-items", "1"],
-            "ec2:DescribeAvailabilityZones": ["aws", "ec2", "describe-availability-zones"],
-            "ec2:DescribeKeyPairs": ["aws", "ec2", "describe-key-pairs", "--max-items", "1"],
+            "ec2:DescribeVpcs": ["aws", "ec2", "describe-vpcs", "--region", "eu-central-1", "--max-items", "1"],
+            "ec2:DescribeSubnets": ["aws", "ec2", "describe-subnets", "--region", "eu-central-1", "--max-items", "1"],
+            "ec2:DescribeInstances": ["aws", "ec2", "describe-instances", "--region", "eu-central-1", "--max-items", "1"],
+            "ec2:DescribeSecurityGroups": ["aws", "ec2", "describe-security-groups", "--region", "eu-central-1", "--max-items", "1"],
+            "ec2:DescribeImages": ["aws", "ec2", "describe-images", "--region", "eu-central-1", "--owners", "amazon", "--max-items", "1"],
+            "ec2:DescribeAvailabilityZones": ["aws", "ec2", "describe-availability-zones", "--region", "eu-central-1"],
+            "ec2:DescribeKeyPairs": ["aws", "ec2", "describe-key-pairs", "--region", "eu-central-1", "--max-items", "1"],
             "s3:ListBucket": ["aws", "s3", "ls", "--max-items", "1"],
             "iam:GetRole": ["aws", "iam", "list-roles", "--max-items", "1"],
         }

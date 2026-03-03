@@ -20,27 +20,11 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
   }
 }
 
-# =============================================================================
-# RANDOM PASSWORD FOR ATTACK BOX
-# =============================================================================
-# Generate a unique password per deployment for better security
-# Note: Avoid $, `, \, ', " which cause shell escaping issues through SSH tunnels
-resource "random_password" "attackbox" {
-  length           = 30
-  special          = true
-  override_special = "!@#%^&*"  # Shell-safe special chars (no $ ` \ ' ")
-  min_lower        = 4
-  min_upper        = 4
-  min_numeric      = 4
-  min_special      = 2
-}
+# NOTE: Attack box resources migrated to standalone module (terraform/modules/attack_box/)
+# The attack box is now instantiated at the root level for all deployment types.
 
 # =============================================================================
 # DATA SOURCES - Dynamic AMI Lookup
@@ -95,9 +79,6 @@ data "aws_ami" "windows_2016" {
 locals {
   lab_identifier = var.lab_identifier != "" ? var.lab_identifier : lower(replace(var.lab_type, "-", ""))
 
-  # Attack box password - use provided or generated
-  attackbox_password = var.attackbox_admin_password != "" ? var.attackbox_admin_password : random_password.attackbox.result
-
   # Dynamic AMI references
   ami_windows_2019 = data.aws_ami.windows_2019.id
   ami_windows_2016 = data.aws_ami.windows_2016.id
@@ -115,28 +96,6 @@ locals {
         private_ip    = "${var.ip_range}.10"
         password      = "8dCT-DJjgScp"
         role          = "DC"
-      }
-    }
-    "MINILAB" = {
-      "dc01" = {
-        name          = "dc01"
-        hostname      = "dc01"
-        domain        = "minilab.local"
-        ami           = local.ami_windows_2019
-        instance_type = "t2.medium"
-        private_ip    = "${var.ip_range}.10"
-        password      = "Admin123!"
-        role          = "DC"
-      }
-      "ws01" = {
-        name          = "ws01"
-        hostname      = "ws01"
-        domain        = "minilab.local"
-        ami           = local.ami_windows_2019
-        instance_type = "t2.medium"
-        private_ip    = "${var.ip_range}.20"
-        password      = "Admin123!"
-        role          = "Workstation"
       }
     }
     "GOAD-Light" = {
@@ -171,6 +130,9 @@ locals {
         role          = "Server"
       }
     }
+    # SCCM - Aligned with upstream GOAD
+    # https://github.com/Orange-Cyberdefense/GOAD/tree/main/ad/SCCM
+    # Passwords match upstream inventory (ad/SCCM/providers/aws/inventory)
     "SCCM" = {
       "dc01" = {
         name          = "dc01"
@@ -179,37 +141,37 @@ locals {
         ami           = local.ami_windows_2019
         instance_type = "t2.medium"
         private_ip    = "${var.ip_range}.10"
-        password      = "Admin123!"
+        password      = "AZERTY*qsdfg"
         role          = "DC"
       }
-      "sccm" = {
-        name          = "sccm"
-        hostname      = "sccm"
+      "srv01" = {
+        name          = "srv01"
+        hostname      = "srv01"
         domain        = "sccm.lab"
         ami           = local.ami_windows_2019
         instance_type = "t2.large"
         private_ip    = "${var.ip_range}.11"
-        password      = "Admin123!"
+        password      = "NgtI75cKV+Pu"
         role          = "SCCM"
       }
-      "mssql" = {
-        name          = "mssql"
-        hostname      = "mssql"
+      "srv02" = {
+        name          = "srv02"
+        hostname      = "srv02"
         domain        = "sccm.lab"
         ami           = local.ami_windows_2019
         instance_type = "t2.medium"
         private_ip    = "${var.ip_range}.12"
-        password      = "Admin123!"
+        password      = "NgtazecKV+Pu"
         role          = "SQL"
       }
-      "client" = {
-        name          = "client"
-        hostname      = "client"
+      "ws01" = {
+        name          = "ws01"
+        hostname      = "ws01"
         domain        = "sccm.lab"
         ami           = local.ami_windows_2019
         instance_type = "t2.medium"
-        private_ip    = "${var.ip_range}.20"
-        password      = "Admin123!"
+        private_ip    = "${var.ip_range}.13"
+        password      = "EP+xh7Rk6j90"
         role          = "Client"
       }
     }
@@ -265,55 +227,57 @@ locals {
         role          = "Server"
       }
     }
+    # NHA (Network Hacking Academy) - Aligned with upstream GOAD
+    # https://github.com/Orange-Cyberdefense/GOAD/tree/main/ad/NHA
     "NHA" = {
       "dc01" = {
         name          = "dc01"
-        hostname      = "dc-academy"
-        domain        = "academy.yourcompany.local"
+        hostname      = "dc01"
+        domain        = "ninja.hack"
         ami           = local.ami_windows_2019
         instance_type = "t2.medium"
         private_ip    = "${var.ip_range}.10"
-        password      = "Admin123!"
+        password      = "8dCT-6546541qsdDJjgScp"
         role          = "DC"
       }
       "dc02" = {
         name          = "dc02"
-        hostname      = "dc-yourcompany"
-        domain        = "yourcompany.local"
-        ami           = local.ami_windows_2019
-        instance_type = "t2.medium"
-        private_ip    = "${var.ip_range}.11"
-        password      = "Admin123!"
-        role          = "DC"
-      }
-      "sql" = {
-        name          = "sql"
-        hostname      = "sql"
-        domain        = "yourcompany.local"
-        ami           = local.ami_windows_2019
-        instance_type = "t2.medium"
-        private_ip    = "${var.ip_range}.12"
-        password      = "Admin123!"
-        role          = "SQL"
-      }
-      "web" = {
-        name          = "web"
-        hostname      = "web"
-        domain        = "yourcompany.local"
+        hostname      = "dc02"
+        domain        = "academy.ninja.lan"
         ami           = local.ami_windows_2019
         instance_type = "t2.medium"
         private_ip    = "${var.ip_range}.20"
-        password      = "Admin123!"
-        role          = "Web"
+        password      = "Ufe-qsdaz789bVXSx9rk"
+        role          = "DC"
       }
-      "share" = {
-        name          = "share"
-        hostname      = "share"
-        domain        = "yourcompany.local"
+      "srv01" = {
+        name          = "srv01"
+        hostname      = "srv01"
+        domain        = "academy.ninja.lan"
         ami           = local.ami_windows_2019
         instance_type = "t2.medium"
         private_ip    = "${var.ip_range}.21"
-        password      = "Admin123!"
+        password      = "EaqsdP+xh7sdfzaRk6j90"
+        role          = "SQL"
+      }
+      "srv02" = {
+        name          = "srv02"
+        hostname      = "srv02"
+        domain        = "academy.ninja.lan"
+        ami           = local.ami_windows_2019
+        instance_type = "t2.medium"
+        private_ip    = "${var.ip_range}.22"
+        password      = "978i2pF43UqsdqsdJ-qsd"
+        role          = "Web"
+      }
+      "srv03" = {
+        name          = "srv03"
+        hostname      = "srv03"
+        domain        = "academy.ninja.lan"
+        ami           = local.ami_windows_2019
+        instance_type = "t2.medium"
+        private_ip    = "${var.ip_range}.23"
+        password      = "EalwxkfhqsdP+xh7sdfzaRk6j90"
         role          = "FileServer"
       }
     }

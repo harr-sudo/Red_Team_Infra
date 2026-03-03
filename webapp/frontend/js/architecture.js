@@ -1,15 +1,5 @@
-// Architecture Documentation - Dynamically loads markdown files
-// Uses marked.js for rendering
-
-// Configure marked options
-marked.setOptions({
-    breaks: true,
-    gfm: true,
-    headerIds: true,
-    mangle: false,
-    tables: true,
-    sanitize: false
-});
+// Architecture Documentation - Embedded tab in main SPA
+// Uses marked.js for markdown rendering
 
 // Architecture content definitions with file paths
 const architectures = {
@@ -18,6 +8,16 @@ const architectures = {
         diagram: '/api/architecture/diagram/c2-adhoc-architecture.png',
         markdownFile: 'c2-adhoc.md',
         title: 'C2 Ad-Hoc - Single Team Server'
+    },
+    'c2-adhoc-domain-fronting': {
+        diagram: '/api/architecture/diagram/c2-adhoc-domain-fronting.png',
+        markdownFile: 'c2-adhoc.md',
+        title: 'C2 Ad-Hoc - Domain Fronting Mode'
+    },
+    'ssl-options': {
+        diagram: '/api/architecture/diagram/ssl-options-comparison.png',
+        markdownFile: 'c2-adhoc.md',
+        title: 'SSL/TLS Options Comparison'
     },
     'c2-purple': {
         diagram: '/api/architecture/diagram/c2-purple-architecture.png',
@@ -29,40 +29,35 @@ const architectures = {
         markdownFile: 'c2-adhoc.md',
         title: 'C2 Full Red Team - Phase-Based'
     },
-    
-    // GOAD Training Labs - Each with specific diagram
+
+    // GOAD Training Labs
     'goad-mini': {
-        diagram: '/api/architecture/diagram/goad-mini-correct.png',
+        diagram: '/api/architecture/diagram/goad-mini-architecture.png',
         markdownFile: 'goad-mini.md',
-        title: 'GOAD Mini - 1 VM, 1 Domain'
-    },
-    'goad-minilab': {
-        diagram: '/api/architecture/diagram/goad-minilab-correct.png',
-        markdownFile: 'goad-mini.md',
-        title: 'GOAD MiniLab - 2 VMs, 1 Domain'
+        title: 'GOAD Mini - 1 DC, 1 Domain'
     },
     'goad-light': {
-        diagram: '/api/architecture/diagram/goad-light-correct.png',
+        diagram: '/api/architecture/diagram/goad-light-architecture.png',
         markdownFile: 'goad-light.md',
         title: 'GOAD Light - 3 VMs, 2 Domains'
     },
     'goad-full': {
-        diagram: '/api/architecture/diagram/goad-full-correct.png',
+        diagram: '/api/architecture/diagram/goad-full-architecture.png',
         markdownFile: 'goad-light.md',
         title: 'GOAD Full - 5 VMs, 3 Domains, 2 Forests'
     },
     'goad-sccm': {
-        diagram: '/api/architecture/diagram/goad-sccm-correct.png',
+        diagram: '/api/architecture/diagram/goad-sccm-architecture.png',
         markdownFile: 'goad-light.md',
         title: 'GOAD SCCM - 4 VMs, SCCM Lab'
     },
     'goad-nha': {
-        diagram: '/api/architecture/diagram/goad-nha-correct.png',
+        diagram: '/api/architecture/diagram/goad-nha-architecture.png',
         markdownFile: 'goad-light.md',
         title: 'GOAD NHA - 5 VMs, Challenge Lab'
     },
-    
-    // Combined Deployments - Specific combined diagrams
+
+    // Combined Deployments
     'combined-mini': {
         diagram: '/api/architecture/diagram/combined-c2-goad-mini.png',
         markdownFile: 'goad-mini.md',
@@ -78,12 +73,12 @@ const architectures = {
         markdownFile: 'goad-light.md',
         title: 'Combined: Full C2 + GOAD Full'
     },
-    
+
     // Component Architecture
     'attack-box': {
         diagram: '/api/architecture/diagram/attackbox-architecture.png',
-        markdownFile: 'goad-mini.md',
-        title: 'Windows Attack Box - Detailed Architecture'
+        markdownFile: 'attackbox.md',
+        title: 'Windows Attack Box - Standalone Module'
     },
     'iam-security': {
         diagram: '/api/architecture/diagram/iam-security-architecture.png',
@@ -97,19 +92,16 @@ const architectures = {
     }
 };
 
-// Function to load markdown from Flask API
+let architectureInitialized = false;
+
+// Load markdown from Flask API
 async function loadMarkdownFile(filename) {
     try {
-        console.log(`Loading markdown file: ${filename}`);
         const response = await fetch(`/api/architecture/docs/${filename}`);
-        
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
-        
         const data = await response.json();
-        console.log('Response data:', data);
-        
         if (data.status === 'success') {
             return data.content;
         } else {
@@ -117,101 +109,46 @@ async function loadMarkdownFile(filename) {
         }
     } catch (error) {
         console.error('Error loading markdown file:', error);
-        return `# Error Loading Documentation
-
-Unable to load documentation file: ${filename}
-
-Error: ${error.message}
-
-## Troubleshooting
-
-The documentation could not be loaded. This might be because:
-- The file doesn't exist yet
-- The web server needs to be restarted
-- There's a network connectivity issue
-
-## Quick Fix
-
-Try refreshing the page or check the browser console (F12) for more details.
-
-## Available Architectures
-
-You can try selecting a different architecture type from the dropdown menu above.
-`;
+        return `# Error Loading Documentation\n\nUnable to load: ${filename}\n\nError: ${error.message}\n\nTry refreshing the page or selecting a different architecture.`;
     }
 }
 
-// Function to render architecture
+// Render architecture content
 async function renderArchitecture(selectedArch) {
     const contentDiv = document.getElementById('markdown-content');
     const arch = architectures[selectedArch];
-    
+
     if (!arch) {
-        contentDiv.innerHTML = '<p style="color: #f44336;">Architecture not found</p>';
+        contentDiv.innerHTML = '<p style="color: var(--danger-text);">Architecture not found</p>';
         return;
     }
-    
-    console.log(`Rendering architecture: ${selectedArch}`);
-    
+
     // Show loading state
-    contentDiv.innerHTML = '<div class="loading">Loading architecture documentation</div>';
-    
+    contentDiv.innerHTML = '<p style="color: var(--text-muted); text-align: center; padding: 40px 0;">Loading architecture documentation...</p>';
+
     let html = '';
-    
-    // Add diagram if available
+
+    // Add diagram section — uses CSS classes for theme support
     if (arch.diagram) {
         html += `
-            <div style="
-                background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-                padding: 30px;
-                border-radius: 12px;
-                margin-bottom: 30px;
-                box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-            ">
-                <h2 style="margin-top: 0; color: #1e3c72; display: flex; align-items: center; gap: 10px;">
-                    <span>📐</span>
-                    <span>AWS Architecture Diagram</span>
-                </h2>
-                <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
-                    <img src="${arch.diagram}" 
+            <div class="arch-diagram-wrapper">
+                <div class="arch-diagram-frame">
+                    <img src="${arch.diagram}"
                          alt="${arch.title || selectedArch} architecture diagram"
-                         style="
-                            max-width: 100%; 
-                            height: auto;
-                            border-radius: 8px;
-                            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                            cursor: pointer;
-                            transition: transform 0.3s;
-                         "
-                         onmouseover="this.style.transform='scale(1.02)'"
-                         onmouseout="this.style.transform='scale(1)'"
+                         class="arch-diagram-img"
                          onclick="window.open(this.src, '_blank')"
                          title="Click to open in new tab"
                          onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27800%27 height=%27400%27%3E%3Crect fill=%27%23f0f0f0%27 width=%27800%27 height=%27400%27/%3E%3Ctext x=%2750%25%27 y=%2750%25%27 font-size=%2720%27 text-anchor=%27middle%27 dy=%27.3em%27 fill=%27%23999%27%3EDiagram not available%3C/text%3E%3C/svg%3E'">
                 </div>
-                <div style="
-                    margin-top: 15px; 
-                    text-align: center; 
-                    color: #666; 
-                    font-size: 0.9em;
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    gap: 15px;
-                    flex-wrap: wrap;
-                ">
-                    <span>✨ Generated using AWS MCP Diagram Server</span>
-                    <span>|</span>
-                    <span>📚 Following <a href="https://aws.amazon.com/blogs/machine-learning/build-aws-architecture-diagrams-using-amazon-q-cli-and-mcp/" target="_blank" style="color: #2a5298;">AWS Best Practices</a></span>
-                    <span>|</span>
-                    <span style="cursor: pointer; color: #2a5298; font-weight: 500;" onclick="window.open('${arch.diagram}', '_blank')">
-                        🔍 View Full Size
+                <div class="arch-diagram-caption">
+                    <span style="cursor: pointer; font-weight: 500;" onclick="window.open('${arch.diagram}', '_blank')">
+                        View Full Size
                     </span>
                 </div>
             </div>
         `;
     }
-    
+
     // Load and render markdown content
     try {
         let markdownContent;
@@ -220,48 +157,52 @@ async function renderArchitecture(selectedArch) {
         } else {
             markdownContent = `# ${arch.title || selectedArch}\n\nDocumentation coming soon...`;
         }
-        
+
         html += marked.parse(markdownContent);
         contentDiv.innerHTML = html;
-        
-        console.log('Architecture rendered successfully');
     } catch (error) {
         console.error('Error rendering architecture:', error);
         contentDiv.innerHTML = html + `
-            <div style="background: #fff3e0; border-left: 4px solid #ff9800; padding: 15px; margin: 20px 0; border-radius: 4px;">
-                <h3 style="margin-top: 0; color: #f57c00;">⚠️ Error Loading Documentation</h3>
-                <p>Unable to load the documentation content. Please try refreshing the page.</p>
-                <p style="color: #666; font-size: 0.9em;">Error: ${error.message}</p>
-                <p style="margin-top: 15px;">
-                    <button onclick="location.reload()" style="
-                        background: #2a5298;
-                        color: white;
-                        border: none;
-                        padding: 10px 20px;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        font-size: 1em;
-                    ">
-                        🔄 Refresh Page
-                    </button>
-                </p>
+            <div class="callout callout--warning">
+                <strong>Error Loading Documentation</strong>
+                <p>Unable to load the documentation content. ${error.message}</p>
             </div>
         `;
     }
 }
 
-// Handle dropdown change
-document.getElementById('architecture-select').addEventListener('change', function(e) {
-    console.log('Architecture selection changed to:', e.target.value);
-    renderArchitecture(e.target.value).catch(error => {
-        console.error('Failed to render architecture:', error);
-    });
-});
+// Called by APP.loadPageContent when architecture tab is activated
+function initArchitecturePage() {
+    // Configure marked on first use
+    if (typeof marked !== 'undefined' && !architectureInitialized) {
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+            headerIds: true,
+            mangle: false,
+            tables: true,
+            sanitize: false
+        });
+    }
 
-// Load default architecture on page load
-document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM loaded, rendering default architecture');
-    renderArchitecture('goad-mini').catch(error => {
-        console.error('Failed to load default architecture:', error);
-    });
-});
+    const select = document.getElementById('architecture-select');
+    if (!select) return;
+
+    // Attach change listener once
+    if (!architectureInitialized) {
+        select.addEventListener('change', function(e) {
+            renderArchitecture(e.target.value).catch(error => {
+                console.error('Failed to render architecture:', error);
+            });
+        });
+        architectureInitialized = true;
+    }
+
+    // Load default on first visit, or reload current selection
+    const current = select.value;
+    if (current) {
+        renderArchitecture(current).catch(error => {
+            console.error('Failed to load architecture:', error);
+        });
+    }
+}

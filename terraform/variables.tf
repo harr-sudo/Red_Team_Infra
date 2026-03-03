@@ -7,7 +7,7 @@
 variable "aws_region" {
   description = "AWS region for resources"
   type        = string
-  default     = "us-east-1"
+  default     = "eu-central-1"
 }
 
 # =============================================================================
@@ -30,7 +30,7 @@ variable "environment" {
 # This is the main variable that controls what gets deployed.
 # Options:
 #   C2-Only:   c2-adhoc, c2-purple, c2-full
-#   GOAD-Only: goad-mini, goad-minilab, goad-light, goad-sccm, goad-full, goad-nha
+#   GOAD-Only: goad-mini, goad-light, goad-sccm, goad-full, goad-nha
 #   Combined:  combined-adhoc-mini, combined-adhoc-light, combined-full-full
 
 variable "deployment_type" {
@@ -43,11 +43,11 @@ variable "deployment_type" {
       # C2-Only modes
       "c2-adhoc", "c2-purple", "c2-full",
       # GOAD-Only modes (with CS on jumpbox)
-      "goad-mini", "goad-minilab", "goad-light", "goad-sccm", "goad-full", "goad-nha",
+      "goad-mini", "goad-light", "goad-sccm", "goad-full", "goad-nha",
       # Combined modes (C2 + GOAD with VPC peering)
       "combined-adhoc-mini", "combined-adhoc-light", "combined-full-full"
     ], var.deployment_type)
-    error_message = "Invalid deployment_type. Must be one of: c2-adhoc, c2-purple, c2-full, goad-mini, goad-minilab, goad-light, goad-sccm, goad-full, goad-nha, combined-adhoc-mini, combined-adhoc-light, combined-full-full"
+    error_message = "Invalid deployment_type. Must be one of: c2-adhoc, c2-purple, c2-full, goad-mini, goad-light, goad-sccm, goad-full, goad-nha, combined-adhoc-mini, combined-adhoc-light, combined-full-full"
   }
 }
 
@@ -61,8 +61,8 @@ variable "goad_lab_type" {
   default     = ""
 
   validation {
-    condition     = var.goad_lab_type == "" || contains(["GOAD-Mini", "MINILAB", "GOAD-Light", "SCCM", "GOAD", "NHA"], var.goad_lab_type)
-    error_message = "goad_lab_type must be one of: GOAD-Mini, MINILAB, GOAD-Light, SCCM, GOAD, NHA, or empty (auto-configure)"
+    condition     = var.goad_lab_type == "" || contains(["GOAD-Mini", "GOAD-Light", "SCCM", "GOAD", "NHA"], var.goad_lab_type)
+    error_message = "goad_lab_type must be one of: GOAD-Mini, GOAD-Light, SCCM, GOAD, NHA, or empty (auto-configure)"
   }
 }
 
@@ -239,6 +239,16 @@ variable "malleable_profile" {
 }
 
 # =============================================================================
+# Domain Fronting Configuration (CloudFront CDN Proxy)
+# =============================================================================
+
+variable "enable_domain_fronting" {
+  description = "Enable CloudFront domain fronting for C2 traffic. Hides redirector IPs behind CloudFront CDN and makes traffic appear as CDN traffic. Only applicable to C2 deployments."
+  type        = bool
+  default     = false
+}
+
+# =============================================================================
 # Legacy Engagement Type (Deprecated - use deployment_type instead)
 # =============================================================================
 
@@ -281,10 +291,22 @@ variable "private_subnet_cidrs" {
   default     = ["10.0.10.0/24", "10.0.11.0/24"]
 }
 
-variable "enable_nat_gateway" {
-  description = "Enable NAT Gateway for private subnets"
+variable "management_subnet_cidrs" {
+  description = "CIDR blocks for management subnets (bastion isolation). Separates bastion from redirectors in DMZ. Empty list disables management subnet and falls back to public subnet."
+  type        = list(string)
+  default     = ["10.0.0.0/24"]
+}
+
+variable "enable_nacls" {
+  description = "Enable Network ACLs for defense-in-depth across all subnet tiers (management, DMZ, private). NACLs add subnet-level firewall rules on top of security groups."
   type        = bool
   default     = false
+}
+
+variable "enable_nat_gateway" {
+  description = "Enable NAT Gateway for private subnets (required for C2 servers to download packages and reach AWS services)"
+  type        = bool
+  default     = true
 }
 
 # =============================================================================
@@ -513,6 +535,35 @@ variable "windows_admin_password" {
 }
 
 # =============================================================================
+# Attack Box Configuration (Windows Workstation)
+# =============================================================================
+
+variable "enable_attack_box" {
+  description = "Enable Windows attack box for red team operations (deployed for all deployment types)"
+  type        = bool
+  default     = true
+}
+
+variable "attack_box_instance_type" {
+  description = "EC2 instance type for Windows attack box (needs 8GB+ RAM)"
+  type        = string
+  default     = "t2.large"
+}
+
+variable "attack_box_root_volume_size" {
+  description = "Root volume size in GB for Windows attack box"
+  type        = number
+  default     = 100
+}
+
+variable "attack_box_admin_password" {
+  description = "Windows Administrator password for attack box (empty = auto-generate 30-char)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# =============================================================================
 # Tools Repository Configuration
 # =============================================================================
 variable "tools_repo_url" {
@@ -562,7 +613,7 @@ variable "terraform_backend_bucket" {
 variable "terraform_backend_region" {
   description = "AWS region for Terraform backend"
   type        = string
-  default     = "us-east-1"
+  default     = "eu-central-1"
 }
 
 variable "terraform_backend_key" {

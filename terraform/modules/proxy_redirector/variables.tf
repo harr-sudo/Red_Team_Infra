@@ -32,6 +32,12 @@ variable "security_group_id" {
   type        = string
 }
 
+variable "private_ips" {
+  description = "List of static private IPs for redirector servers (empty list = DHCP)"
+  type        = list(string)
+  default     = []
+}
+
 variable "project_name" {
   description = "Name of the project (used for resource naming)"
   type        = string

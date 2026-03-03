@@ -47,6 +47,12 @@ variable "security_group_id" {
   type        = string
 }
 
+variable "private_ips" {
+  description = "List of static private IPs for C2 servers (empty list = DHCP)"
+  type        = list(string)
+  default     = []
+}
+
 # =============================================================================
 # Project Configuration
 # =============================================================================

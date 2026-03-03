@@ -3,11 +3,11 @@
 # This lightweight bootstrap stays under the 16KB EC2 user_data limit
 $ErrorActionPreference = "Continue"
 
-# Variables
+# Variables from Terraform templatefile()
 $DeploymentBucket = "${deployment_bucket}"
 $DeploymentId = "${deployment_id}"
 $AwsRegion = "${aws_region}"
-$ScriptKey = "$DeploymentId/scripts/attackbox_init.ps1"
+$ScriptKey = "$DeploymentId/scripts/attack_box_init.ps1"
 
 # Create logs directory
 $LogDir = "C:\Users\Administrator\Desktop\Deployment-Logs-Scripts"
@@ -27,26 +27,21 @@ Write-Log "Script Key: $ScriptKey"
 Write-Log "AWS Region: $AwsRegion"
 
 # Download the main initialization script from S3
-$MainScriptPath = "$LogDir\attackbox_init_main.ps1"
+$MainScriptPath = "$LogDir\attack_box_init_main.ps1"
 Write-Log "Downloading main init script from S3..."
 
 try {
-    # Use AWS Tools for PowerShell (pre-installed on Windows Server 2022)
     Import-Module AWSPowerShell -ErrorAction SilentlyContinue
-    
-    # Download from S3
+
     $maxRetries = 5
     $retryCount = 0
     $downloaded = $false
-    
+
     while (-not $downloaded -and $retryCount -lt $maxRetries) {
         try {
             Write-Log "Download attempt $($retryCount + 1) of $maxRetries..."
-            
-            # Use AWS CLI (more reliable than PowerShell module)
-            $awsCmd = "aws s3 cp s3://$DeploymentBucket/$ScriptKey $MainScriptPath --region $AwsRegion"
-            Invoke-Expression $awsCmd
-            
+            & aws s3 cp "s3://$DeploymentBucket/$ScriptKey" $MainScriptPath --region $AwsRegion
+
             if (Test-Path $MainScriptPath) {
                 $fileSize = (Get-Item $MainScriptPath).Length
                 Write-Log "Successfully downloaded script ($fileSize bytes)"
@@ -64,18 +59,15 @@ try {
             }
         }
     }
-    
+
     if (-not $downloaded) {
         throw "Failed to download script after $maxRetries attempts"
     }
-    
+
     # Execute the main initialization script
     Write-Log "Executing main initialization script..."
-    Write-Log "Script path: $MainScriptPath"
-    
-    # Run the script
     & PowerShell.exe -ExecutionPolicy Bypass -File $MainScriptPath
-    
+
     Write-Log "Main initialization script completed"
     Write-Log "=== Attack Box Bootstrap Finished Successfully ==="
 }
@@ -83,10 +75,7 @@ catch {
     Write-Log "FATAL ERROR: $($_.Exception.Message)"
     Write-Log "Stack Trace: $($_.Exception.StackTrace)"
     Write-Log "=== Attack Box Bootstrap Failed ==="
-    
-    # Create error marker file
     "Bootstrap failed: $($_.Exception.Message)" | Out-File "$LogDir\bootstrap_error.txt"
-    
     exit 1
 }
 </powershell>

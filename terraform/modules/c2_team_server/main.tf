@@ -49,6 +49,7 @@ resource "aws_instance" "c2_team_server" {
   key_name               = var.key_pair_name
   subnet_id              = var.private_subnet_ids[count.index % length(var.private_subnet_ids)]
   vpc_security_group_ids = [var.security_group_id]
+  private_ip             = length(var.private_ips) > count.index ? var.private_ips[count.index] : null
 
   # Root volume - encrypted and deleted on termination
   root_block_device {

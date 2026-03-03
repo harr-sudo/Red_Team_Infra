@@ -26,7 +26,7 @@
         - name: Retrieve SSH key from SSM
           win_shell: |
             $ssmKey = "{{ tools_repo_ssh_key }}"
-            $region = "{{ ansible_ec2_placement_region | default('us-east-1') }}"
+            $region = "{{ ansible_ec2_placement_region | default('eu-central-1') }}"
             $key = (Get-SSMParameter -Name $ssmKey -Region $region -WithDecryption).Value
             $key | Out-File -FilePath "$env:USERPROFILE\.ssh\id_rsa_tools" -Encoding ASCII -NoNewline
             icacls "$env:USERPROFILE\.ssh\id_rsa_tools" /inheritance:r /grant:r "$env:USERNAME:(R)"
@@ -39,7 +39,7 @@
         - name: Retrieve HTTPS token from SSM
           win_shell: |
             $ssmToken = "{{ tools_repo_https_token }}"
-            $region = "{{ ansible_ec2_placement_region | default('us-east-1') }}"
+            $region = "{{ ansible_ec2_placement_region | default('eu-central-1') }}"
             $token = (Get-SSMParameter -Name $ssmToken -Region $region -WithDecryption).Value
             $env:TOOLS_REPO_TOKEN = $token
           register: ssm_token_result

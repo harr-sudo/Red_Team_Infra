@@ -15,3 +15,8 @@ output "bastion_security_group_id" {
   value       = aws_security_group.bastion_sg.id
 }
 
+output "attack_box_security_group_id" {
+  description = "ID of the attack box security group"
+  value       = aws_security_group.attack_box_sg.id
+}
+

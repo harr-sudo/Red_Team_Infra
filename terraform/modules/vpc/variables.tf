@@ -20,6 +20,36 @@ variable "private_subnet_cidrs" {
   type        = list(string)
 }
 
+variable "management_subnet_cidrs" {
+  description = "CIDR blocks for management subnets (bastion isolation). Empty list disables management subnet."
+  type        = list(string)
+  default     = []
+}
+
+variable "enable_nacls" {
+  description = "Enable Network ACLs for defense-in-depth across all subnet tiers"
+  type        = bool
+  default     = false
+}
+
+variable "management_cidr_blocks" {
+  description = "Operator IP CIDR blocks for NACL rules (SSH/RDP ingress to management subnet)"
+  type        = list(string)
+  default     = []
+}
+
+variable "c2_server_port" {
+  description = "C2 server port for NACL rules"
+  type        = number
+  default     = 50050
+}
+
+variable "ssh_port" {
+  description = "SSH port for NACL rules"
+  type        = number
+  default     = 22
+}
+
 variable "project_name" {
   description = "Name of the project (used for resource naming)"
   type        = string

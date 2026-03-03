@@ -121,6 +121,88 @@ def create_empty_state() -> dict:
         "logs": []
     }
 
+def query_remaining_resources(project_name: str) -> dict:
+    """Query AWS for resources still tagged with this project.
+    Uses Resource Groups Tagging API for comprehensive coverage.
+    Returns {count, by_service, resources} or {count: -1, error} on failure."""
+    import boto3
+    from webapp.backend.utils.config_parser import ConfigParser
+
+    aws_region = 'eu-central-1'
+    config_dir = project_root / "configs"
+    tfvars_file = config_dir / "terraform.tfvars"
+    if tfvars_file.exists():
+        config = ConfigParser.parse_tfvars(tfvars_file)
+        aws_region = config.get('aws_region', 'eu-central-1')
+
+    try:
+        tagging = boto3.client('resourcegroupstaggingapi', region_name=aws_region)
+        paginator = tagging.get_paginator('get_resources')
+        pages = paginator.paginate(
+            TagFilters=[{'Key': 'Project', 'Values': [project_name]}],
+            ResourcesPerPage=100
+        )
+
+        resources = []
+        by_service = {}
+        for page in pages:
+            for r in page.get('ResourceTagMappingList', []):
+                arn = r['ResourceARN']
+                parts = arn.split(':')
+                service = parts[2] if len(parts) > 2 else 'unknown'
+                resource_id = parts[-1].split('/')[-1] if parts else arn
+                resources.append({
+                    'arn': arn,
+                    'service': service,
+                    'resource_id': resource_id
+                })
+                by_service[service] = by_service.get(service, 0) + 1
+
+        return {'count': len(resources), 'by_service': by_service, 'resources': resources}
+    except Exception as e:
+        return {'count': -1, 'error': str(e), 'by_service': {}, 'resources': []}
+
+
+def parse_terraform_destroy_output(stdout: str, stderr: str) -> dict:
+    """Parse terraform destroy stdout/stderr into structured results.
+
+    Terraform outputs lines like:
+      aws_instance.example: Destroying... [id=i-1234567890abcdef0]
+      aws_instance.example: Destruction complete after 1m2s
+      Error: error deleting Security Group (sg-xxx): DependencyViolation...
+    """
+    import re
+
+    destroyed = []
+    errors = []
+
+    # Match successful destructions
+    for match in re.finditer(
+        r'^(\S+): Destruction complete after (.+)$', stdout, re.MULTILINE
+    ):
+        destroyed.append({'address': match.group(1), 'duration': match.group(2)})
+
+    # Match errors from stderr
+    for match in re.finditer(r'^.*Error: (.+)$', stderr, re.MULTILINE):
+        errors.append(match.group(1).strip())
+
+    # Track resources that started destroying but never completed (timeout/hang)
+    destroying = set()
+    for match in re.finditer(r'^(\S+): Destroying\.\.\.', stdout, re.MULTILINE):
+        destroying.add(match.group(1))
+
+    completed = {d['address'] for d in destroyed}
+    still_destroying = list(destroying - completed)
+
+    return {
+        'destroyed_count': len(destroyed),
+        'destroyed': destroyed,
+        'error_count': len(errors),
+        'errors': errors,
+        'still_destroying': still_destroying
+    }
+
+
 def get_active_deployments() -> list:
     """Get list of currently running deployments"""
     return [
@@ -451,13 +533,13 @@ def run_deployment(project_name: str = None):
                 from webapp.backend.utils.s3_upload import upload_cs_file, find_cs_bucket, S3UploadError
                 
                 # Find the bucket that was just created
-                bucket_name = find_cs_bucket(project_name, config.get('aws_region', 'us-east-1'))
+                bucket_name = find_cs_bucket(project_name, config.get('aws_region', 'eu-central-1'))
                 
                 if bucket_name:
                     s3_uri, _ = upload_cs_file(
                         str(local_cs_file),
                         project_name,
-                        config.get('aws_region', 'us-east-1'),
+                        config.get('aws_region', 'eu-central-1'),
                         bucket_name=bucket_name
                     )
                     add_log(f"Uploaded Cobalt Strike to {s3_uri}", "success", project_name)
@@ -479,14 +561,14 @@ def run_deployment(project_name: str = None):
                 from webapp.backend.utils.s3_upload import upload_cs_file, find_cs_bucket, S3UploadError
                 
                 # Find the bucket
-                bucket_name = find_cs_bucket(project_name, config.get('aws_region', 'us-east-1'))
+                bucket_name = find_cs_bucket(project_name, config.get('aws_region', 'eu-central-1'))
                 
                 if bucket_name:
                     # Upload with a different key prefix for the client
                     s3_client_uri, _ = upload_cs_file(
                         str(local_cs_client_file),
                         project_name,
-                        config.get('aws_region', 'us-east-1'),
+                        config.get('aws_region', 'eu-central-1'),
                         bucket_name=bucket_name,
                         s3_key_prefix="cs-client/"
                     )
@@ -563,7 +645,7 @@ def save_deployment_resources(project_name: str, service: TerraformService, depl
     try:
         # Get config for region
         config = ConfigParser.parse_tfvars(service.tfvars_file) if service.tfvars_file.exists() else {}
-        aws_region = config.get('aws_region', 'us-east-1')
+        aws_region = config.get('aws_region', 'eu-central-1')
         
         # Query AWS for all resources with this project tag
         resources = []
@@ -832,9 +914,10 @@ def save_deployment_resources(project_name: str, service: TerraformService, depl
         add_log(f"Warning: Could not save resource list: {e}", "warning", project_name)
 
 def run_destroy(project_name: str = None):
-    """Run destroy in background thread with phased destruction for combined mode"""
+    """Run destroy in background thread with phased destruction for combined mode.
+    Tracks before/after resource counts and parses terraform output for detailed reporting."""
     global deployment_state
-    
+
     # Use project-specific state if provided
     if project_name and project_name in deployment_states:
         state = deployment_states[project_name]
@@ -842,69 +925,127 @@ def run_destroy(project_name: str = None):
     else:
         state = deployment_state
         service = terraform_service
-    
+
+    all_destroyed = []
+    all_errors = []
+
     try:
         state["status"] = "running"
         state["output"] = ""
         state["error"] = None
-        
+
         add_log("Starting infrastructure destruction...", "warning", project_name)
-        
+
+        # Count resources before destroy
+        resources_before = {'count': 0, 'by_service': {}, 'resources': []}
+        if project_name:
+            state["step"] = "Counting existing resources..."
+            add_log("Querying AWS for tagged resources before destroy...", "info", project_name)
+            resources_before = query_remaining_resources(project_name)
+            if resources_before['count'] > 0:
+                breakdown = ", ".join(f"{c} {s}" for s, c in sorted(
+                    resources_before['by_service'].items(), key=lambda x: -x[1]))
+                add_log(f"Found {resources_before['count']} tagged resources: {breakdown}", "info", project_name)
+
         # Get current deployment type
         output_result = service.output()
         outputs = output_result.get("outputs", {})
         deployment_type = outputs.get("deployment_type", {}).get("value", "")
-        
+
         # Check if combined mode (requires phased destruction)
         is_combined = deployment_type.startswith("combined-")
-        
+        destroy_failed = False
+
         if is_combined:
             # Phase 1: Destroy VPC peering first
             state["step"] = "Phase 1/3: Destroying VPC peering..."
             add_log("Phase 1/3: Destroying VPC peering...", "info", project_name)
             result = service.destroy_target("module.vpc_peering")
+            parsed = parse_terraform_destroy_output(result.get("stdout", ""), result.get("stderr", ""))
+            all_destroyed.extend(parsed['destroyed'])
+            all_errors.extend(parsed['errors'])
             if not result["success"]:
                 state["status"] = "error"
                 state["error"] = result.get("stderr", "Failed to destroy VPC peering")
                 add_log(f"Failed to destroy VPC peering: {state['error'][:500]}", "error", project_name)
-                return
-            
-            # Phase 2: Destroy GOAD
-            state["step"] = "Phase 2/3: Destroying GOAD lab..."
-            add_log("Phase 2/3: Destroying GOAD lab...", "info", project_name)
-            result = service.destroy_target("module.goad")
-            if not result["success"]:
-                state["status"] = "error"
-                state["error"] = result.get("stderr", "Failed to destroy GOAD")
-                add_log(f"Failed to destroy GOAD: {state['error'][:500]}", "error", project_name)
-                return
-            
-            # Phase 3: Destroy remaining C2 infrastructure
-            state["step"] = "Phase 3/3: Destroying C2 infrastructure..."
-            add_log("Phase 3/3: Destroying C2 infrastructure...", "info", project_name)
-            result = service.destroy()
-            if not result["success"]:
-                state["status"] = "error"
-                state["error"] = result.get("stderr", "Failed to destroy C2 infrastructure")
-                add_log(f"Failed to destroy C2 infrastructure: {state['error'][:500]}", "error", project_name)
-                return
+                destroy_failed = True
+
+            if not destroy_failed:
+                # Phase 2: Destroy GOAD
+                state["step"] = "Phase 2/3: Destroying GOAD lab..."
+                add_log("Phase 2/3: Destroying GOAD lab...", "info", project_name)
+                result = service.destroy_target("module.goad")
+                parsed = parse_terraform_destroy_output(result.get("stdout", ""), result.get("stderr", ""))
+                all_destroyed.extend(parsed['destroyed'])
+                all_errors.extend(parsed['errors'])
+                if not result["success"]:
+                    state["status"] = "error"
+                    state["error"] = result.get("stderr", "Failed to destroy GOAD")
+                    add_log(f"Failed to destroy GOAD: {state['error'][:500]}", "error", project_name)
+                    destroy_failed = True
+
+            if not destroy_failed:
+                # Phase 3: Destroy remaining C2 infrastructure
+                state["step"] = "Phase 3/3: Destroying C2 infrastructure..."
+                add_log("Phase 3/3: Destroying C2 infrastructure...", "info", project_name)
+                result = service.destroy()
+                parsed = parse_terraform_destroy_output(result.get("stdout", ""), result.get("stderr", ""))
+                all_destroyed.extend(parsed['destroyed'])
+                all_errors.extend(parsed['errors'])
+                if not result["success"]:
+                    state["status"] = "error"
+                    state["error"] = result.get("stderr", "Failed to destroy C2 infrastructure")
+                    add_log(f"Failed to destroy C2 infrastructure: {state['error'][:500]}", "error", project_name)
+                    destroy_failed = True
         else:
             # Standard destroy for non-combined modes
             state["step"] = "Destroying infrastructure..."
             add_log("Running terraform destroy...", "info", project_name)
             result = service.destroy()
+            parsed = parse_terraform_destroy_output(result.get("stdout", ""), result.get("stderr", ""))
+            all_destroyed.extend(parsed['destroyed'])
+            all_errors.extend(parsed['errors'])
             if not result["success"]:
                 state["status"] = "error"
                 state["error"] = result.get("stderr", "Destroy failed")
                 add_log(f"Destroy failed: {state['error'][:500]}", "error", project_name)
-                return
-        
-        state["status"] = "success"
-        state["step"] = "Infrastructure destroyed"
-        state["deployment_type"] = None
+                destroy_failed = True
+
+        if not destroy_failed:
+            for d in all_destroyed:
+                add_log(f"Destroyed: {d['address']} ({d['duration']})", "success", project_name)
+            state["status"] = "success"
+            state["step"] = "Infrastructure destroyed"
+            state["deployment_type"] = None
+            add_log(f"Infrastructure destroyed successfully! {len(all_destroyed)} resources removed.", "success", project_name)
+
+        # Query remaining resources after destroy (success or failure)
+        resources_after = {'count': 0, 'by_service': {}, 'resources': []}
+        if project_name:
+            state["step"] = "Verifying cleanup..."
+            add_log("Querying AWS for remaining resources...", "info", project_name)
+            resources_after = query_remaining_resources(project_name)
+            if resources_after['count'] > 0:
+                breakdown = ", ".join(f"{c} {s}" for s, c in sorted(
+                    resources_after['by_service'].items(), key=lambda x: -x[1]))
+                add_log(f"WARNING: {resources_after['count']} resources still remain: {breakdown}", "warning", project_name)
+            elif resources_after['count'] == 0:
+                add_log("Verification complete: no tagged resources remain in AWS", "success", project_name)
+
+        # Store structured result
+        state["purge_result"] = {
+            "resources_before": resources_before.get('count', 0),
+            "resources_after": resources_after.get('count', 0),
+            "resources_after_by_service": resources_after.get('by_service', {}),
+            "resources_after_list": resources_after.get('resources', []),
+            "terraform_destroyed": all_destroyed,
+            "terraform_destroyed_count": len(all_destroyed),
+            "terraform_errors": all_errors,
+            "terraform_error_count": len(all_errors),
+        }
+
         state["completed_at"] = time.time()
-        add_log("Infrastructure destroyed successfully!", "success", project_name)
-        
+
     except Exception as e:
         state["status"] = "error"
         state["error"] = str(e)
@@ -953,7 +1094,8 @@ def get_deployment_status():
             "elapsed_formatted": elapsed_formatted,
             "est_remaining_seconds": est_remaining,
             "est_remaining_formatted": est_remaining_formatted,
-            "logs": state.get("logs", [])[-20:],  # Last 20 log entries
+            "logs": state.get("logs", []),
+            "purge_result": state.get("purge_result"),
             "project_name": project_name
         }
     })
@@ -1062,121 +1204,141 @@ def check_project_name():
     # Get AWS region from config
     config_dir = project_root / "configs"
     tfvars_file = config_dir / "terraform.tfvars"
-    aws_region = 'us-east-1'  # Default
+    aws_region = 'eu-central-1'  # Default
     if tfvars_file.exists():
         config = ConfigParser.parse_tfvars(tfvars_file)
-        aws_region = config.get('aws_region', 'us-east-1')
+        aws_region = config.get('aws_region', 'eu-central-1')
     
-    # OPTION 2: Check AWS directly for existing resources with this project tag
+    # Check AWS using Resource Groups Tagging API — finds ALL resources with Project tag
+    # This is comprehensive: covers EC2, VPC, S3, IAM, Secrets Manager, Security Groups, etc.
+    aws_check = {"checked": False, "found": 0, "by_service": {}, "error": None}
     try:
-        ec2 = boto3.client('ec2', region_name=aws_region)
-        
-        # Check for VPCs with this project tag
-        vpc_response = ec2.describe_vpcs(
-            Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+        tagging = boto3.client('resourcegroupstaggingapi', region_name=aws_region)
+        paginator = tagging.get_paginator('get_resources')
+        pages = paginator.paginate(
+            TagFilters=[{'Key': 'Project', 'Values': [project_name]}],
+            ResourcesPerPage=100
         )
-        
-        if vpc_response.get('Vpcs'):
-            vpc_count = len(vpc_response['Vpcs'])
+
+        aws_resources = []
+        by_service = {}
+        for page in pages:
+            for r in page.get('ResourceTagMappingList', []):
+                arn = r['ResourceARN']
+                # Extract service from ARN (arn:aws:SERVICE:region:account:...)
+                parts = arn.split(':')
+                service = parts[2] if len(parts) > 2 else 'unknown'
+                resource_id = parts[-1].split('/')[-1] if parts else arn
+                aws_resources.append({'arn': arn, 'service': service, 'resource_id': resource_id})
+                by_service[service] = by_service.get(service, 0) + 1
+
+        aws_check["checked"] = True
+        aws_check["found"] = len(aws_resources)
+        aws_check["by_service"] = by_service
+
+        if aws_resources:
+            # Build human-readable service breakdown
+            breakdown = ", ".join(f"{count} {svc}" for svc, count in sorted(by_service.items(), key=lambda x: -x[1]))
             return jsonify({
                 "success": True,
                 "available": False,
                 "reason": "aws_resources_exist",
-                "resource_count": vpc_count,
-                "resource_type": "VPC",
-                "message": f"Project '{project_name}' already has {vpc_count} VPC(s) in AWS ({aws_region})",
-                "source": "aws"
+                "resource_count": len(aws_resources),
+                "breakdown": breakdown,
+                "by_service": by_service,
+                "message": f"Project '{project_name}' has {len(aws_resources)} AWS resources ({breakdown})",
+                "source": "aws",
+                "checks": {
+                    "aws_tagging": aws_check,
+                    "deployment_history": {"checked": True, "previously_used": bool(history_warning)} if history_warning else {"checked": True, "previously_used": False}
+                }
             })
-        
-        # Also check for EC2 instances
-        instance_response = ec2.describe_instances(
-            Filters=[
-                {'Name': 'tag:Project', 'Values': [project_name]},
-                {'Name': 'instance-state-name', 'Values': ['pending', 'running', 'stopping', 'stopped']}
-            ]
-        )
-        
-        instance_count = sum(len(r['Instances']) for r in instance_response.get('Reservations', []))
-        if instance_count > 0:
-            return jsonify({
-                "success": True,
-                "available": False,
-                "reason": "aws_resources_exist",
-                "resource_count": instance_count,
-                "resource_type": "EC2",
-                "message": f"Project '{project_name}' already has {instance_count} EC2 instance(s) in AWS ({aws_region})",
-                "source": "aws"
-            })
-        
-        # Check S3 buckets (they're globally unique)
-        s3 = boto3.client('s3', region_name=aws_region)
-        project_prefix = project_name.lower().replace('_', '-')
-        try:
-            bucket_response = s3.list_buckets()
-            matching_buckets = [
-                b['Name'] for b in bucket_response.get('Buckets', [])
-                if project_prefix in b['Name'].lower()
-            ]
-            if matching_buckets:
-                return jsonify({
-                    "success": True,
-                    "available": False,
-                    "reason": "aws_resources_exist",
-                    "resource_count": len(matching_buckets),
-                    "resource_type": "S3",
-                    "buckets": matching_buckets,
-                    "message": f"Project '{project_name}' already has S3 bucket(s): {', '.join(matching_buckets)}",
-                    "source": "aws"
-                })
-        except Exception:
-            pass  # S3 check is optional
-            
     except Exception as e:
-        # AWS check failed - continue with local check
-        print(f"AWS check failed: {e}")
+        aws_check["checked"] = True
+        aws_check["error"] = str(e)
+        print(f"AWS Resource Groups Tagging API check failed: {e}")
     
     # Check local Terraform workspaces
+    local_check = {"checked": False, "found": False, "resources": 0, "error": None}
     try:
         init_result = terraform_service.init()
         if init_result["success"]:
             ws_list = terraform_service.workspace_list()
+            local_check["checked"] = True
             if ws_list["success"] and project_name in ws_list.get("workspaces", []):
                 terraform_service.workspace_select(project_name)
                 state_result = terraform_service.show()
-                
+
                 if state_result["success"]:
                     state = state_result.get("state", {})
                     resources = state.get("values", {}).get("root_module", {}).get("resources", [])
-                    
+
                     if resources and len(resources) > 0:
+                        local_check["found"] = True
+                        local_check["resources"] = len(resources)
                         return jsonify({
                             "success": True,
                             "available": False,
                             "reason": "has_local_resources",
                             "resource_count": len(resources),
-                            "message": f"Project '{project_name}' exists locally with {len(resources)} resources",
-                            "source": "local"
+                            "message": f"Project '{project_name}' exists locally with {len(resources)} Terraform resources",
+                            "source": "local",
+                            "checks": {
+                                "aws_tagging": aws_check,
+                                "local_workspace": local_check,
+                                "deployment_history": {"checked": True, "previously_used": bool(history_warning)} if history_warning else {"checked": True, "previously_used": False}
+                            }
                         })
-                
+
                 # Workspace exists but is empty - allow reuse with warning
+                local_check["found"] = True
+                local_check["resources"] = 0
                 response = {
                     "success": True,
                     "available": True,
                     "workspace_exists": True,
-                    "message": f"Project '{project_name}' workspace exists but has no resources"
+                    "message": f"Project '{project_name}' workspace exists but has no resources",
+                    "checks": {
+                        "aws_tagging": aws_check,
+                        "local_workspace": local_check,
+                        "deployment_history": {"checked": True, "previously_used": bool(history_warning)} if history_warning else {"checked": True, "previously_used": False}
+                    }
                 }
                 if history_warning:
                     response["history"] = history_warning
                     response["message"] += " (previously used)"
                 return jsonify(response)
     except Exception as e:
+        local_check["checked"] = True
+        local_check["error"] = str(e)
         print(f"Local workspace check failed: {e}")
-    
+
+    # Build final checks summary
+    checks = {
+        "aws_tagging": aws_check,
+        "local_workspace": local_check,
+        "deployment_history": {"checked": True, "previously_used": bool(history_warning)} if history_warning else {"checked": True, "previously_used": False}
+    }
+
+    # If AWS check failed entirely, warn the user rather than silently passing
+    if aws_check.get("error"):
+        response = {
+            "success": True,
+            "available": True,
+            "aws_warning": f"Could not verify AWS resources: {aws_check['error']}",
+            "message": f"Project name '{project_name}' appears available (AWS check failed — verify manually)",
+            "checks": checks
+        }
+        if history_warning:
+            response["history"] = history_warning
+        return jsonify(response)
+
     # Project name is available
     response = {
         "success": True,
         "available": True,
-        "message": f"Project name '{project_name}' is available"
+        "message": f"Project name '{project_name}' is available",
+        "checks": checks
     }
     if history_warning:
         response["history"] = history_warning
@@ -1300,7 +1462,7 @@ def deploy():
     # If resources already exist, Terraform will detect conflicts during apply.
     
     # Define which deployment types require what prerequisites
-    GOAD_ONLY_TYPES = ['goad-mini', 'goad-minilab', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha']
+    GOAD_ONLY_TYPES = ['goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha']
     C2_ONLY_TYPES = ['c2-adhoc', 'c2-purple', 'c2-full']
     COMBINED_TYPES = ['combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full']
     
@@ -1488,9 +1650,10 @@ def purge_resources():
     })
 
 def run_purge(project_name: str = None):
-    """Run purge in background thread - force destroy all resources"""
+    """Run purge in background thread - force destroy all resources.
+    Tracks before/after resource counts and parses terraform output for detailed reporting."""
     global deployment_state
-    
+
     # Use project-specific state if provided
     if project_name and project_name in deployment_states:
         state = deployment_states[project_name]
@@ -1498,67 +1661,112 @@ def run_purge(project_name: str = None):
     else:
         state = deployment_state
         service = terraform_service
-    
+
     try:
         add_log("Starting resource purge...", "warning", project_name)
-        
-        # First, try to refresh state to see what exists
+
+        # Count resources before purge
+        resources_before = {'count': 0, 'by_service': {}, 'resources': []}
+        if project_name:
+            state["step"] = "Counting existing resources..."
+            add_log("Querying AWS for tagged resources before purge...", "info", project_name)
+            resources_before = query_remaining_resources(project_name)
+            if resources_before['count'] > 0:
+                breakdown = ", ".join(f"{c} {s}" for s, c in sorted(
+                    resources_before['by_service'].items(), key=lambda x: -x[1]))
+                add_log(f"Found {resources_before['count']} tagged resources: {breakdown}", "info", project_name)
+            elif resources_before['count'] == 0:
+                add_log("No tagged AWS resources found (Terraform state may still have resources)", "info", project_name)
+
+        # Refresh state
         state["step"] = "Refreshing Terraform state..."
         add_log("Refreshing Terraform state to detect existing resources...", "info", project_name)
-        
-        # Run terraform refresh to update state with actual AWS resources
         refresh_result = service.refresh()
         if refresh_result.get("success"):
             add_log("State refreshed successfully", "success", project_name)
         else:
             add_log("State refresh had issues, continuing with destroy...", "warning", project_name)
-        
-        # Now run destroy
+
+        # Run destroy
         state["step"] = "Destroying all resources..."
         state["progress_percent"] = 30
         add_log("Running terraform destroy to remove all resources...", "info", project_name)
-        
+
         result = service.destroy()
-        
+        destroy_parsed = parse_terraform_destroy_output(
+            result.get("stdout", ""), result.get("stderr", ""))
+
         if result["success"]:
+            for d in destroy_parsed['destroyed']:
+                add_log(f"Destroyed: {d['address']} ({d['duration']})", "success", project_name)
+
             state["status"] = "success"
             state["step"] = "Resources purged"
             state["progress_percent"] = 100
-            add_log("All resources have been purged successfully!", "success", project_name)
-            
-            # Also clear the terraform state to start fresh
-            add_log("Clearing Terraform state for clean slate...", "info", project_name)
-            
-            # If using workspace, optionally delete it
+            add_log(f"Terraform destroy completed: {destroy_parsed['destroyed_count']} resources destroyed", "success", project_name)
+
             if project_name and service.workspace_name != "default":
                 add_log(f"Cleaning up workspace '{service.workspace_name}'...", "info", project_name)
-            
         else:
-            # Log the first destroy error
             first_error = result.get("stderr", "Unknown error")
             add_log(f"Standard destroy failed: {first_error[:500]}", "error", project_name)
-            
-            # If normal destroy fails, try with -refresh=false
+
+            # Force destroy fallback
             add_log("Trying force destroy with -refresh=false...", "warning", project_name)
             state["step"] = "Force destroying resources..."
             state["progress_percent"] = 60
-            
+
             result = service.force_destroy()
-            
+            force_parsed = parse_terraform_destroy_output(
+                result.get("stdout", ""), result.get("stderr", ""))
+
+            # Merge parsed results
+            destroy_parsed['destroyed'].extend(force_parsed['destroyed'])
+            destroy_parsed['destroyed_count'] += force_parsed['destroyed_count']
+            destroy_parsed['errors'].extend(force_parsed['errors'])
+            destroy_parsed['error_count'] += force_parsed['error_count']
+
             if result["success"]:
+                for d in force_parsed['destroyed']:
+                    add_log(f"Force-destroyed: {d['address']} ({d['duration']})", "success", project_name)
                 state["status"] = "success"
                 state["step"] = "Resources force-purged"
                 state["progress_percent"] = 100
-                add_log("Resources force-purged successfully!", "success", project_name)
+                add_log(f"Force destroy completed: {force_parsed['destroyed_count']} additional resources destroyed", "success", project_name)
             else:
                 state["status"] = "error"
                 error_msg = result.get("stderr", "Purge failed")
                 state["error"] = error_msg
-                # Log the full error (truncated for readability)
                 add_log(f"Purge failed: {error_msg[:1000]}", "error", project_name)
-        
+
+        # Query remaining resources after purge
+        resources_after = {'count': 0, 'by_service': {}, 'resources': []}
+        if project_name:
+            state["step"] = "Verifying cleanup..."
+            add_log("Querying AWS for remaining resources...", "info", project_name)
+            resources_after = query_remaining_resources(project_name)
+            if resources_after['count'] > 0:
+                breakdown = ", ".join(f"{c} {s}" for s, c in sorted(
+                    resources_after['by_service'].items(), key=lambda x: -x[1]))
+                add_log(f"WARNING: {resources_after['count']} resources still remain: {breakdown}", "warning", project_name)
+            elif resources_after['count'] == 0:
+                add_log("Verification complete: no tagged resources remain in AWS", "success", project_name)
+
+        # Store structured purge result
+        state["purge_result"] = {
+            "resources_before": resources_before.get('count', 0),
+            "resources_after": resources_after.get('count', 0),
+            "resources_after_by_service": resources_after.get('by_service', {}),
+            "resources_after_list": resources_after.get('resources', []),
+            "terraform_destroyed": destroy_parsed['destroyed'],
+            "terraform_destroyed_count": destroy_parsed['destroyed_count'],
+            "terraform_errors": destroy_parsed['errors'],
+            "terraform_error_count": destroy_parsed['error_count'],
+            "still_destroying": destroy_parsed.get('still_destroying', [])
+        }
+
         state["completed_at"] = time.time()
-        
+
     except Exception as e:
         state["status"] = "error"
         state["error"] = str(e)
@@ -2958,7 +3166,7 @@ def upload_to_s3():
         
         config = ConfigParser.parse_tfvars(tfvars_file)
         project_name = config.get('project_name', '')
-        aws_region = config.get('aws_region', 'us-east-1')
+        aws_region = config.get('aws_region', 'eu-central-1')
         
         if not project_name:
             return jsonify({
@@ -3031,7 +3239,7 @@ def stop_infrastructure():
         tfvars_file = config_dir / "terraform.tfvars"
         
         config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
-        aws_region = config.get('aws_region', 'us-east-1')
+        aws_region = config.get('aws_region', 'eu-central-1')
         
         # Use config project name as fallback
         if not project_name:
@@ -3054,26 +3262,43 @@ def stop_infrastructure():
             ]
         )
         
+        instances = []
         instance_ids = []
         for reservation in response.get('Reservations', []):
-            for instance in reservation.get('Instances', []):
-                instance_ids.append(instance['InstanceId'])
-        
+            for inst in reservation.get('Instances', []):
+                inst_id = inst['InstanceId']
+                instance_ids.append(inst_id)
+                # Get instance name from tags
+                name = inst_id
+                for tag in inst.get('Tags', []):
+                    if tag['Key'] == 'Name':
+                        name = tag['Value']
+                        break
+                instances.append({
+                    'id': inst_id,
+                    'name': name,
+                    'type': inst.get('InstanceType', ''),
+                    'private_ip': inst.get('PrivateIpAddress'),
+                    'public_ip': inst.get('PublicIpAddress')
+                })
+
         if not instance_ids:
             return jsonify({
                 "success": True,
                 "message": "No running instances found",
-                "stopped_count": 0
+                "stopped_count": 0,
+                "instances": []
             })
-        
+
         # Stop instances
         ec2.stop_instances(InstanceIds=instance_ids)
-        
+
         return jsonify({
             "success": True,
             "message": f"Stopped {len(instance_ids)} instances",
             "stopped_count": len(instance_ids),
-            "instance_ids": instance_ids
+            "instance_ids": instance_ids,
+            "instances": instances
         })
         
     except Exception as e:
@@ -3102,7 +3327,7 @@ def start_infrastructure():
         tfvars_file = config_dir / "terraform.tfvars"
         
         config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
-        aws_region = config.get('aws_region', 'us-east-1')
+        aws_region = config.get('aws_region', 'eu-central-1')
         
         # Use config project name as fallback
         if not project_name:
@@ -3125,26 +3350,43 @@ def start_infrastructure():
             ]
         )
         
+        instances = []
         instance_ids = []
         for reservation in response.get('Reservations', []):
-            for instance in reservation.get('Instances', []):
-                instance_ids.append(instance['InstanceId'])
-        
+            for inst in reservation.get('Instances', []):
+                inst_id = inst['InstanceId']
+                instance_ids.append(inst_id)
+                # Get instance name from tags
+                name = inst_id
+                for tag in inst.get('Tags', []):
+                    if tag['Key'] == 'Name':
+                        name = tag['Value']
+                        break
+                instances.append({
+                    'id': inst_id,
+                    'name': name,
+                    'type': inst.get('InstanceType', ''),
+                    'private_ip': inst.get('PrivateIpAddress'),
+                    'public_ip': inst.get('PublicIpAddress')
+                })
+
         if not instance_ids:
             return jsonify({
                 "success": True,
                 "message": "No stopped instances found",
-                "started_count": 0
+                "started_count": 0,
+                "instances": []
             })
-        
+
         # Start instances
         ec2.start_instances(InstanceIds=instance_ids)
-        
+
         return jsonify({
             "success": True,
             "message": f"Started {len(instance_ids)} instances",
             "started_count": len(instance_ids),
-            "instance_ids": instance_ids
+            "instance_ids": instance_ids,
+            "instances": instances
         })
         
     except Exception as e:
@@ -3158,25 +3400,24 @@ def start_infrastructure():
 def get_instance_status():
     """
     Get the current status of all EC2 instances for this project.
+    Accepts optional ?project=name query parameter.
     """
     try:
         import boto3
         from webapp.backend.utils.config_parser import ConfigParser
-        
-        # Get config
+
+        # Get project name from query param or config
+        project_name = request.args.get('project', '').strip()
+
         config_dir = project_root / "configs"
         tfvars_file = config_dir / "terraform.tfvars"
-        
-        if not tfvars_file.exists():
-            return jsonify({
-                "success": False,
-                "error": "Configuration not found"
-            }), 400
-        
-        config = ConfigParser.parse_tfvars(tfvars_file)
-        project_name = config.get('project_name', '')
-        aws_region = config.get('aws_region', 'us-east-1')
-        
+
+        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        aws_region = config.get('aws_region', 'eu-central-1')
+
+        if not project_name:
+            project_name = config.get('project_name', '')
+
         if not project_name:
             return jsonify({
                 "success": False,
@@ -3258,7 +3499,7 @@ def get_project_resources(project_name: str):
                 all_deployments = json.load(f)
             deployment_data = all_deployments.get(project_name, {})
         
-        aws_region = deployment_data.get('region', 'us-east-1')
+        aws_region = deployment_data.get('region', 'eu-central-1')
         
         # Check if we should do a full AWS refresh
         refresh = request.args.get('refresh', 'false').lower() == 'true'
@@ -3617,7 +3858,7 @@ def get_terraform_outputs():
         tfvars_file = config_dir / "terraform.tfvars"
         
         config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
-        aws_region = config.get('aws_region', 'us-east-1')
+        aws_region = config.get('aws_region', 'eu-central-1')
         
         if not project_name:
             project_name = config.get('project_name', '')
@@ -3715,384 +3956,208 @@ def get_terraform_outputs():
 @bp.route('/resources', methods=['GET'])
 def get_all_resources():
     """
-    Get a comprehensive list of ALL deployed AWS resources.
-    Uses boto3 to query AWS directly for accurate resource information.
-    
-    Query params:
-    - project: specific project name to filter by (optional)
-    - all_projects: if 'true', fetch resources from all known projects
+    Get a comprehensive list of ALL AWS resources across all regions.
+    Queries every enabled region in the account without tag filtering.
     """
     try:
         import boto3
-        from webapp.backend.utils.config_parser import ConfigParser
-        
-        # Check query params
-        specific_project = request.args.get('project')
-        all_projects_flag = request.args.get('all_projects', 'false').lower() == 'true'
-        
-        # Get config for region
-        config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        
-        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
-        aws_region = config.get('aws_region', 'us-east-1')
-        
-        # Determine which project names to query
-        project_names = []
-        
-        if specific_project:
-            # Query specific project
-            project_names = [specific_project]
-        elif all_projects_flag:
-            # Get all known project names from deployment history
-            history = load_deployment_history()
-            project_names = list(set(
-                h.get('project_name') for h in history 
-                if h.get('project_name')
-            ))
-            # Also include current config project
-            current_project = config.get('project_name', '')
-            if current_project and current_project not in project_names:
-                project_names.append(current_project)
-        else:
-            # Default: use current config project
-            project_name = config.get('project_name', '')
-            if project_name:
-                project_names = [project_name]
-        
-        if not project_names:
-            return jsonify({
-                "success": True,
-                "resources": [],
-                "message": "No project name configured"
-            })
-        
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         resources = []
-        
-        # EC2 Client
-        ec2 = boto3.client('ec2', region_name=aws_region)
-        
-        # Query resources for each project
-        for project_name in project_names:
-            # 1. EC2 Instances
+        regions_with_resources = set()
+
+        # Get account ID via STS
+        sts = boto3.client('sts')
+        try:
+            caller_identity = sts.get_caller_identity()
+            aws_account_id = caller_identity.get('Account', 'unknown')
+            aws_user_arn = caller_identity.get('Arn', '')
+        except Exception:
+            aws_account_id = 'unknown'
+            aws_user_arn = ''
+
+        # Restricted to eu-central-1 only
+        all_regions = ['eu-central-1']
+
+        def _get_tag(tags, key, default=''):
+            """Extract a tag value from a list of AWS tags."""
+            return next((t['Value'] for t in (tags or []) if t['Key'] == key), default)
+
+        def query_regional_resources(region):
+            """Query all resources in a region — no tag filtering."""
+            regional = []
+            ec2 = boto3.client('ec2', region_name=region)
+
+            # 1. EC2 Instances (exclude terminated)
             try:
                 response = ec2.describe_instances(
-                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                    Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped', 'pending', 'stopping']}]
                 )
                 for reservation in response.get('Reservations', []):
-                    for instance in reservation.get('Instances', []):
-                        name = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed')
-                        role = next((t['Value'] for t in instance.get('Tags', []) if t['Key'] == 'Role'), '')
-                        resources.append({
+                    for inst in reservation.get('Instances', []):
+                        tags = inst.get('Tags', [])
+                        name = _get_tag(tags, 'Name', 'Unnamed')
+                        role = _get_tag(tags, 'Role')
+                        project = _get_tag(tags, 'Project')
+                        regional.append({
                             'type': 'ec2',
                             'name': name,
-                            'id': instance['InstanceId'],
-                            'state': instance['State']['Name'],
-                            'details': f"{instance['InstanceType']} | {role}" if role else instance['InstanceType'],
-                            'project': project_name
+                            'id': inst['InstanceId'],
+                            'state': inst['State']['Name'],
+                            'details': f"{inst['InstanceType']} | {role}" if role else inst['InstanceType'],
+                            'project': project or '-',
+                            'region': region
                         })
             except Exception as e:
-                print(f"Error fetching EC2 instances for {project_name}: {e}")
-            
-            # 2. VPCs
+                print(f"Error fetching EC2 in {region}: {e}")
+
+            # 2. VPCs (exclude default VPC)
             try:
-                response = ec2.describe_vpcs(
-                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-                )
+                response = ec2.describe_vpcs()
                 for vpc in response.get('Vpcs', []):
-                    name = next((t['Value'] for t in vpc.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed VPC')
-                    resources.append({
+                    if vpc.get('IsDefault'):
+                        continue
+                    tags = vpc.get('Tags', [])
+                    regional.append({
                         'type': 'vpc',
-                        'name': name,
+                        'name': _get_tag(tags, 'Name', 'Unnamed VPC'),
                         'id': vpc['VpcId'],
                         'state': vpc['State'],
                         'details': vpc['CidrBlock'],
-                        'project': project_name
+                        'project': _get_tag(tags, 'Project') or '-',
+                        'region': region
                     })
             except Exception as e:
-                print(f"Error fetching VPCs for {project_name}: {e}")
-            
-            # 3. Subnets
+                print(f"Error fetching VPCs in {region}: {e}")
+
+            # 3. Elastic IPs
             try:
-                response = ec2.describe_subnets(
-                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-                )
-                for subnet in response.get('Subnets', []):
-                    name = next((t['Value'] for t in subnet.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Subnet')
-                    resources.append({
-                        'type': 'subnet',
-                        'name': name,
-                        'id': subnet['SubnetId'],
-                        'state': subnet['State'],
-                        'details': f"{subnet['CidrBlock']} | AZ: {subnet['AvailabilityZone']}",
-                        'project': project_name
-                    })
-            except Exception as e:
-                print(f"Error fetching subnets for {project_name}: {e}")
-            
-            # 4. Security Groups
-            try:
-                response = ec2.describe_security_groups(
-                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-                )
-                for sg in response.get('SecurityGroups', []):
-                    resources.append({
-                        'type': 'sg',
-                        'name': sg['GroupName'],
-                        'id': sg['GroupId'],
-                        'state': 'active',
-                        'details': sg.get('Description', '')[:50],
-                        'project': project_name
-                    })
-            except Exception as e:
-                print(f"Error fetching security groups for {project_name}: {e}")
-            
-            # 5. Elastic IPs
-            try:
-                response = ec2.describe_addresses(
-                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-                )
+                response = ec2.describe_addresses()
                 for eip in response.get('Addresses', []):
-                    name = next((t['Value'] for t in eip.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed EIP')
-                    resources.append({
+                    tags = eip.get('Tags', [])
+                    regional.append({
                         'type': 'eip',
-                        'name': name,
+                        'name': _get_tag(tags, 'Name', 'Unnamed EIP'),
                         'id': eip.get('AllocationId', 'N/A'),
                         'state': 'associated' if eip.get('InstanceId') else 'available',
                         'details': eip.get('PublicIp', 'N/A'),
-                        'project': project_name
+                        'project': _get_tag(tags, 'Project') or '-',
+                        'region': region
                     })
             except Exception as e:
-                print(f"Error fetching Elastic IPs for {project_name}: {e}")
-            
-            # 6. NAT Gateways
+                print(f"Error fetching EIPs in {region}: {e}")
+
+            # 4. NAT Gateways (exclude deleted)
             try:
                 response = ec2.describe_nat_gateways(
-                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+                    Filters=[{'Name': 'state', 'Values': ['available', 'pending', 'failed']}]
                 )
                 for nat in response.get('NatGateways', []):
-                    name = next((t['Value'] for t in nat.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed NAT')
+                    tags = nat.get('Tags', [])
                     public_ip = nat.get('NatGatewayAddresses', [{}])[0].get('PublicIp', 'N/A')
-                    resources.append({
+                    regional.append({
                         'type': 'nat',
-                        'name': name,
+                        'name': _get_tag(tags, 'Name', 'Unnamed NAT'),
                         'id': nat['NatGatewayId'],
                         'state': nat['State'],
                         'details': f"Public IP: {public_ip}",
-                        'project': project_name
+                        'project': _get_tag(tags, 'Project') or '-',
+                        'region': region
                     })
             except Exception as e:
-                print(f"Error fetching NAT Gateways for {project_name}: {e}")
-            
-            # 7. Internet Gateways
+                print(f"Error fetching NAT Gateways in {region}: {e}")
+
+            # 5. Key Pairs
             try:
-                response = ec2.describe_internet_gateways(
-                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-                )
-                for igw in response.get('InternetGateways', []):
-                    name = next((t['Value'] for t in igw.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed IGW')
-                    attached = 'attached' if igw.get('Attachments') else 'detached'
-                    resources.append({
-                        'type': 'igw',
-                        'name': name,
-                        'id': igw['InternetGatewayId'],
-                        'state': attached,
-                        'details': '',
-                        'project': project_name
-                    })
-            except Exception as e:
-                print(f"Error fetching Internet Gateways for {project_name}: {e}")
-            
-            # 8. S3 Buckets (check for project-named buckets)
-            try:
-                s3 = boto3.client('s3', region_name=aws_region)
-                response = s3.list_buckets()
-                project_prefix = project_name.lower().replace('_', '-')
-                for bucket in response.get('Buckets', []):
-                    bucket_name_lower = bucket['Name'].lower()
-                    # Must start with the project prefix to avoid matching longer project names
-                    if bucket_name_lower.startswith(project_prefix):
-                        resources.append({
-                            'type': 's3',
-                            'name': bucket['Name'],
-                            'id': bucket['Name'],
-                            'state': 'available',
-                            'details': f"Created: {bucket['CreationDate'].strftime('%Y-%m-%d')}",
-                            'project': project_name
-                        })
-            except Exception as e:
-                print(f"Error fetching S3 buckets for {project_name}: {e}")
-            
-            # 9. Key Pairs
-            try:
-                response = ec2.describe_key_pairs(
-                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-                )
+                response = ec2.describe_key_pairs()
                 for kp in response.get('KeyPairs', []):
-                    resources.append({
+                    tags = kp.get('Tags', [])
+                    regional.append({
                         'type': 'keypair',
                         'name': kp['KeyName'],
                         'id': kp.get('KeyPairId', kp['KeyName']),
                         'state': 'available',
                         'details': f"Type: {kp.get('KeyType', 'rsa')}",
-                        'project': project_name
+                        'project': _get_tag(tags, 'Project') or '-',
+                        'region': region
                     })
             except Exception as e:
-                print(f"Error fetching key pairs for {project_name}: {e}")
-            
-            # 10. Route Tables
+                print(f"Error fetching key pairs in {region}: {e}")
+
+            return regional
+
+        def query_global_resources():
+            """Query global resources (S3, Route 53) — no tag filtering."""
+            global_res = []
+
+            # S3 Buckets
             try:
-                response = ec2.describe_route_tables(
-                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-                )
-                for rt in response.get('RouteTables', []):
-                    name = next((t['Value'] for t in rt.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Route Table')
-                    route_count = len(rt.get('Routes', []))
-                    resources.append({
-                        'type': 'rtb',
-                        'name': name,
-                        'id': rt['RouteTableId'],
-                        'state': 'active',
-                        'details': f"{route_count} routes",
-                        'project': project_name
+                s3 = boto3.client('s3')
+                response = s3.list_buckets()
+                for bucket in response.get('Buckets', []):
+                    try:
+                        loc = s3.get_bucket_location(Bucket=bucket['Name'])
+                        bucket_region = loc.get('LocationConstraint') or 'eu-central-1'
+                    except Exception:
+                        bucket_region = 'unknown'
+                    global_res.append({
+                        'type': 's3',
+                        'name': bucket['Name'],
+                        'id': bucket['Name'],
+                        'state': 'available',
+                        'details': f"Created: {bucket['CreationDate'].strftime('%Y-%m-%d')}",
+                        'project': '-',
+                        'region': bucket_region
                     })
             except Exception as e:
-                print(f"Error fetching route tables for {project_name}: {e}")
-            
-            # 11. VPC Peering Connections
+                print(f"Error fetching S3 buckets: {e}")
+
+            # Route 53 Hosted Zones
             try:
-                response = ec2.describe_vpc_peering_connections(
-                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-                )
-                for pcx in response.get('VpcPeeringConnections', []):
-                    name = next((t['Value'] for t in pcx.get('Tags', []) if t['Key'] == 'Name'), 'Unnamed Peering')
-                    requester = pcx.get('RequesterVpcInfo', {}).get('VpcId', 'N/A')
-                    accepter = pcx.get('AccepterVpcInfo', {}).get('VpcId', 'N/A')
-                    resources.append({
-                        'type': 'pcx',
-                        'name': name,
-                        'id': pcx['VpcPeeringConnectionId'],
-                        'state': pcx.get('Status', {}).get('Code', 'unknown'),
-                        'details': f"{requester} ↔ {accepter}",
-                        'project': project_name
-                    })
-            except Exception as e:
-                print(f"Error fetching VPC peering connections for {project_name}: {e}")
-            
-            # 12. Network Interfaces (ENIs)
-            try:
-                response = ec2.describe_network_interfaces(
-                    Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
-                )
-                for eni in response.get('NetworkInterfaces', []):
-                    name = next((t['Value'] for t in eni.get('TagSet', []) if t['Key'] == 'Name'), 'Unnamed ENI')
-                    private_ip = eni.get('PrivateIpAddress', 'N/A')
-                    resources.append({
-                        'type': 'eni',
-                        'name': name,
-                        'id': eni['NetworkInterfaceId'],
-                        'state': eni.get('Status', 'unknown'),
-                        'details': f"Private IP: {private_ip}",
-                        'project': project_name
-                    })
-            except Exception as e:
-                print(f"Error fetching network interfaces for {project_name}: {e}")
-            
-            # 13. IAM Roles (for CS download)
-            try:
-                iam = boto3.client('iam', region_name=aws_region)
-                project_prefix = project_name.lower().replace('_', '-')
-                # List roles and filter by project name prefix - must START with prefix to avoid substring matches
-                paginator = iam.get_paginator('list_roles')
-                for page in paginator.paginate():
-                    for role in page.get('Roles', []):
-                        role_name_lower = role['RoleName'].lower()
-                        # Must start with the project prefix to avoid matching longer project names
-                        if role_name_lower.startswith(project_prefix):
-                            resources.append({
-                                'type': 'iam-role',
-                                'name': role['RoleName'],
-                                'id': role['RoleId'],
-                                'state': 'active',
-                                'details': f"Created: {role['CreateDate'].strftime('%Y-%m-%d')}",
-                                'project': project_name
-                            })
-            except Exception as e:
-                print(f"Error fetching IAM roles for {project_name}: {e}")
-            
-            # 14. IAM Instance Profiles
-            try:
-                iam = boto3.client('iam', region_name=aws_region)
-                project_prefix = project_name.lower().replace('_', '-')
-                paginator = iam.get_paginator('list_instance_profiles')
-                for page in paginator.paginate():
-                    for profile in page.get('InstanceProfiles', []):
-                        profile_name_lower = profile['InstanceProfileName'].lower()
-                        # Must start with the project prefix to avoid matching longer project names
-                        if profile_name_lower.startswith(project_prefix):
-                            resources.append({
-                                'type': 'iam-profile',
-                                'name': profile['InstanceProfileName'],
-                                'id': profile['InstanceProfileId'],
-                                'state': 'active',
-                                'details': f"Roles: {len(profile.get('Roles', []))}",
-                                'project': project_name
-                            })
-            except Exception as e:
-                print(f"Error fetching IAM instance profiles for {project_name}: {e}")
-            
-            # 15. Route 53 Hosted Zones
-            try:
-                route53 = boto3.client('route53', region_name=aws_region)
-                project_prefix = project_name.lower().replace('_', '-')
+                route53 = boto3.client('route53')
                 response = route53.list_hosted_zones()
                 for zone in response.get('HostedZones', []):
-                    # Check if zone name matches any configured domain
                     zone_name = zone['Name'].rstrip('.')
-                    zone_name_lower = zone_name.lower()
-                    comment = zone.get('Config', {}).get('Comment', '')
-                    # Must start with project prefix or have exact project name in comment
-                    if zone_name_lower.startswith(project_prefix) or comment == project_name:
-                        resources.append({
-                            'type': 'route53-zone',
-                            'name': zone_name,
-                            'id': zone['Id'].split('/')[-1],
-                            'state': 'active',
-                            'details': f"Records: {zone.get('ResourceRecordSetCount', 0)}",
-                            'project': project_name
-                        })
+                    global_res.append({
+                        'type': 'route53-zone',
+                        'name': zone_name,
+                        'id': zone['Id'].split('/')[-1],
+                        'state': 'active',
+                        'details': f"Records: {zone.get('ResourceRecordSetCount', 0)}",
+                        'project': '-',
+                        'region': 'global'
+                    })
             except Exception as e:
-                print(f"Error fetching Route 53 hosted zones for {project_name}: {e}")
-            
-            # 16. ACM Certificates
-            try:
-                acm = boto3.client('acm', region_name=aws_region)
-                project_prefix = project_name.lower().replace('_', '-')
-                response = acm.list_certificates()
-                for cert in response.get('CertificateSummaryList', []):
-                    domain = cert.get('DomainName', '')
-                    domain_lower = domain.lower()
-                    # Check if certificate is for a project domain - must start with prefix
-                    if domain_lower.startswith(project_prefix):
-                        resources.append({
-                            'type': 'acm-cert',
-                            'name': domain,
-                            'id': cert['CertificateArn'].split('/')[-1],
-                            'state': cert.get('Status', 'unknown').lower(),
-                            'details': f"Type: {cert.get('Type', 'N/A')}",
-                            'project': project_name
-                        })
-            except Exception as e:
-                print(f"Error fetching ACM certificates for {project_name}: {e}")
-        
+                print(f"Error fetching Route 53 zones: {e}")
+
+            return global_res
+
+        # Query all regions in parallel
+        with ThreadPoolExecutor(max_workers=min(len(all_regions) + 1, 20)) as executor:
+            futures = {executor.submit(query_regional_resources, r): r for r in all_regions}
+            futures[executor.submit(query_global_resources)] = 'global'
+
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    resources.extend(result)
+                    for r in result:
+                        rgn = r.get('region', '')
+                        if rgn and rgn != 'global':
+                            regions_with_resources.add(rgn)
+                except Exception as e:
+                    print(f"Error in resource query thread: {e}")
+
         return jsonify({
             "success": True,
             "resources": resources,
             "total_count": len(resources),
-            "project_name": project_name,
-            "region": aws_region
+            "regions_queried": sorted(all_regions),
+            "regions_with_resources": sorted(regions_with_resources),
+            "account_id": aws_account_id,
+            "user_arn": aws_user_arn
         })
-        
+
     except Exception as e:
         return jsonify({
             "success": False,

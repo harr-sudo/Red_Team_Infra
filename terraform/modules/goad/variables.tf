@@ -8,12 +8,12 @@
 # =============================================================================
 
 variable "lab_type" {
-  description = "GOAD lab type: GOAD-Mini, MINILAB, GOAD-Light, SCCM, GOAD, NHA"
+  description = "GOAD lab type: GOAD-Mini, GOAD-Light, SCCM, GOAD, NHA"
   type        = string
 
   validation {
-    condition     = contains(["GOAD-Mini", "MINILAB", "GOAD-Light", "SCCM", "GOAD", "NHA"], var.lab_type)
-    error_message = "lab_type must be one of: GOAD-Mini, MINILAB, GOAD-Light, SCCM, GOAD, NHA"
+    condition     = contains(["GOAD-Mini", "GOAD-Light", "SCCM", "GOAD", "NHA"], var.lab_type)
+    error_message = "lab_type must be one of: GOAD-Mini, GOAD-Light, SCCM, GOAD, NHA"
   }
 }
 
@@ -72,11 +72,6 @@ variable "cobalt_strike_s3_path" {
   default     = ""
 }
 
-variable "cs_client_s3_path" {
-  description = "S3 path to Cobalt Strike Client archive (for Attack Box)"
-  type        = string
-  default     = ""
-}
 
 variable "cs_teamserver_password" {
   description = "Password for Cobalt Strike team server"
@@ -161,9 +156,9 @@ variable "aws_region" {
 # =============================================================================
 
 variable "jumpbox_instance_type" {
-  description = "Instance type for jumpbox (minimal SSH gateway)"
+  description = "Instance type for jumpbox (SSH gateway + Ansible controller for GOAD provisioning)"
   type        = string
-  default     = "t2.micro"  # Minimal - just SSH gateway
+  default     = "t2.small"  # 2GB RAM needed for Ansible GOAD provisioning
 }
 
 variable "jumpbox_disk_size" {
@@ -173,9 +168,9 @@ variable "jumpbox_disk_size" {
 }
 
 variable "jumpbox_username" {
-  description = "Username for jumpbox SSH access"
+  description = "Username for jumpbox SSH access (Ubuntu AMI default user)"
   type        = string
-  default     = "goad"
+  default     = "ubuntu"
 }
 
 # =============================================================================
@@ -194,28 +189,8 @@ variable "teamserver_disk_size" {
   default     = 30
 }
 
-# =============================================================================
-# Attack Box Configuration (Windows - CS Client + Tools)
-# =============================================================================
-
-variable "attackbox_instance_type" {
-  description = "Instance type for Windows attack box (CS Client + Tools)"
-  type        = string
-  default     = "t2.large"  # 8GB RAM for Windows + tools
-}
-
-variable "attackbox_disk_size" {
-  description = "Root disk size for Windows attack box in GB"
-  type        = number
-  default     = 100  # Windows needs more space
-}
-
-variable "attackbox_admin_password" {
-  description = "Administrator password for Windows attack box. If empty, a random password is generated."
-  type        = string
-  default     = ""  # Empty = use random_password.attackbox
-  sensitive   = true
-}
+# NOTE: Attack box variables migrated to standalone module (terraform/modules/attack_box/)
+# Attack box instance_type, disk_size, and admin_password are now root-level variables.
 
 variable "windows_admin_username" {
   description = "Windows administrator username for AD VMs"

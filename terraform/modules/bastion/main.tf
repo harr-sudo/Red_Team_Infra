@@ -34,6 +34,7 @@ resource "aws_instance" "bastion" {
   key_name               = var.key_pair_name
   subnet_id              = var.public_subnet_id
   vpc_security_group_ids = [var.security_group_id]
+  private_ip             = var.private_ip != "" ? var.private_ip : null
 
   # Root volume configuration
   root_block_device {

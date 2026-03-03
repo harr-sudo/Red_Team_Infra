@@ -28,7 +28,25 @@ fi
 # System setup
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y && apt-get upgrade -y
-apt-get install -y curl wget net-tools htop tmux vim jq netcat-openbsd awscli
+apt-get install -y curl wget net-tools htop tmux vim jq netcat-openbsd awscli git python3-pip sshpass
+
+# =============================================================================
+# Install Ansible + pywinrm for GOAD AD provisioning
+# =============================================================================
+echo "=== Installing Ansible for GOAD provisioning ==="
+pip3 install ansible-core==2.12.6 pywinrm
+
+# Clone GOAD repository for Ansible playbooks
+echo "=== Cloning GOAD repository ==="
+git clone https://github.com/Orange-Cyberdefense/GOAD.git /home/ubuntu/GOAD
+chown -R ubuntu:ubuntu /home/ubuntu/GOAD
+
+# Install Ansible Galaxy requirements
+cd /home/ubuntu/GOAD/ansible
+sudo -u ubuntu ansible-galaxy install -r requirements.yml
+cd /home/ubuntu
+
+echo "=== Ansible + GOAD setup complete ==="
 
 # Harden SSH
 cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak

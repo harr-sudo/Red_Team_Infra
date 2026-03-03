@@ -28,7 +28,7 @@ Write-Host "=============================================="
 # =============================================================================
 # 1. Set Hostname
 # =============================================================================
-Write-Host "[1/5] Setting hostname to: $Hostname"
+Write-Host "[1/7] Setting hostname to: $Hostname"
 try {
     Rename-Computer -NewName $Hostname -Force -ErrorAction SilentlyContinue
     Write-Host "Hostname set successfully"
@@ -37,36 +37,42 @@ try {
 }
 
 # =============================================================================
-# 2. Configure Administrator Account
+# 2. Configure Administrator Account (rename to goadmin per upstream GOAD)
 # =============================================================================
-Write-Host "[2/5] Configuring administrator account..."
+Write-Host "[2/7] Configuring administrator account..."
 try {
     $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
     Set-LocalUser -Name "Administrator" -Password $SecurePassword -PasswordNeverExpires $true
     Enable-LocalUser -Name "Administrator"
-    Write-Host "Administrator account configured"
+
+    # Rename Administrator to goadmin (upstream GOAD expects admin_user=goadmin)
+    Rename-LocalUser -Name "Administrator" -NewName $Username
+    Write-Host "Administrator renamed to: $Username"
 } catch {
     Write-Host "Error configuring administrator: $_"
 }
 
-# Create additional admin user if specified
-if ($Username -ne "Administrator" -and $Username -ne "") {
-    try {
-        $UserExists = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
-        if (-not $UserExists) {
-            New-LocalUser -Name $Username -Password $SecurePassword -PasswordNeverExpires -AccountNeverExpires
-            Add-LocalGroupMember -Group "Administrators" -Member $Username
-            Write-Host "Created user: $Username"
-        }
-    } catch {
-        Write-Host "Error creating user: $_"
+# =============================================================================
+# 3. Create Ansible User (required for upstream GOAD Ansible playbooks)
+# =============================================================================
+Write-Host "[3/7] Creating ansible user for GOAD provisioning..."
+try {
+    $AnsibleExists = Get-LocalUser -Name "ansible" -ErrorAction SilentlyContinue
+    if (-not $AnsibleExists) {
+        net user ansible $Password /add /expires:never /y
+        net localgroup administrators ansible /add
+        Write-Host "Created ansible user (password same as admin)"
+    } else {
+        Write-Host "Ansible user already exists"
     }
+} catch {
+    Write-Host "Error creating ansible user: $_"
 }
 
 # =============================================================================
-# 3. Configure WinRM for Ansible
+# 4. Configure WinRM for Ansible
 # =============================================================================
-Write-Host "[3/5] Configuring WinRM for Ansible..."
+Write-Host "[4/7] Configuring WinRM for Ansible..."
 try {
     # Enable WinRM
     winrm quickconfig -q
@@ -84,9 +90,9 @@ try {
 }
 
 # =============================================================================
-# 4. Configure Firewall
+# 5. Configure Firewall
 # =============================================================================
-Write-Host "[4/5] Configuring firewall..."
+Write-Host "[5/7] Configuring firewall..."
 try {
     # Allow WinRM
     netsh advfirewall firewall add rule name="WinRM HTTP" dir=in action=allow protocol=TCP localport=5985
@@ -104,15 +110,32 @@ try {
 }
 
 # =============================================================================
-# 5. Enable RDP
+# 6. Enable RDP
 # =============================================================================
-Write-Host "[5/5] Enabling Remote Desktop..."
+Write-Host "[6/7] Enabling Remote Desktop..."
 try {
     Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
     Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
     Write-Host "Remote Desktop enabled"
 } catch {
     Write-Host "Error enabling RDP: $_"
+}
+
+# =============================================================================
+# 7. Configure DNS Suffix (for domain discovery by Ansible)
+# =============================================================================
+Write-Host "[7/7] Configuring DNS suffix..."
+try {
+    # Set connection-specific DNS suffix on the primary network adapter
+    $Adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+    if ($Adapter) {
+        Set-DnsClient -InterfaceIndex $Adapter.ifIndex -ConnectionSpecificSuffix $Domain
+        Write-Host "DNS suffix set to: $Domain on adapter $($Adapter.Name)"
+    }
+    Set-DnsClientGlobalSetting -SuffixSearchList @($Domain)
+    Write-Host "DNS suffix search list configured"
+} catch {
+    Write-Host "Error configuring DNS suffix: $_"
 }
 
 # =============================================================================

@@ -147,7 +147,7 @@ The diagrams were integrated into the web application:
 3. **Documentation Structure**
    ```
    architecture.html
-   ├── Dropdown selector (13 architecture types)
+   ├── Dropdown selector (12 architecture types)
    ├── Diagram display (auto-loaded)
    └── Markdown content (dynamically fetched)
    ```
@@ -166,7 +166,6 @@ The dropdown selector provides access to:
 
 **GOAD Training Labs:**
 - GOAD Mini - Single DC Training Lab
-- GOAD MiniLab - DC + Workstation
 - GOAD Light - Multi-Domain Lab
 - GOAD Full - Complete AD Environment
 
