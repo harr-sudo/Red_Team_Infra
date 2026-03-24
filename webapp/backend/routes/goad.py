@@ -9,6 +9,7 @@ import os
 import json
 import boto3
 from pathlib import Path
+from webapp.backend.utils.config_parser import DEPLOYMENT_TYPE_MAP
 
 bp = Blueprint('goad', __name__, url_prefix='/api/goad')
 
@@ -89,7 +90,7 @@ GOAD_ANSIBLE_LAB_MAP = {
 # Get project root directory
 def get_project_root():
     """Get the project root directory"""
-    return Path(__file__).parent.parent.parent.parent.parent
+    return Path(__file__).parent.parent.parent.parent
 
 def get_goad_dir():
     """Get the GOAD tools directory"""
@@ -177,6 +178,27 @@ def get_goad_status():
                     deployment_info = marker_data
         except Exception:
             pass
+
+    # Check main terraform state for combined deployments (GOAD resources in main state)
+    if not deployed_lab:
+        main_tf_state = project_root / 'terraform' / 'terraform.tfstate'
+        if main_tf_state.exists():
+            try:
+                with open(main_tf_state, 'r') as f:
+                    state = json.load(f)
+                    for r in state.get('resources', []):
+                        if r.get('module', '').startswith('module.goad'):
+                            # Found GOAD resources in main state — combined deployment
+                            deployed_lab = 'GOAD-Mini'  # Default; could parse from config
+                            deployment_info = {
+                                'lab_name': deployed_lab,
+                                'lab_info': GOAD_LABS.get(deployed_lab, {}),
+                                'tf_state_path': str(main_tf_state),
+                                'combined_mode': True,
+                            }
+                            break
+            except Exception:
+                pass
     
     return jsonify({
         'success': True,
@@ -348,7 +370,7 @@ def provision_goad():
             try:
                 outputs = json.loads(result.stdout)
                 # Look for jumpbox IP in various output formats
-                for key in ['goad_jumpbox_ip', 'jumpbox_ip', 'jumpbox_public_ip']:
+                for key in ['goad_jumpbox_public_ip', 'goad_jumpbox_ip', 'jumpbox_ip', 'jumpbox_public_ip']:
                     if key in outputs:
                         val = outputs[key]
                         jumpbox_ip = val.get('value') if isinstance(val, dict) else val
@@ -393,7 +415,7 @@ def provision_goad():
         )
 
         # SSH command to run on jumpbox (using the user's SSH key)
-        ssh_key_path = config.get('ssh_private_key_path', '~/.ssh/goad_key')
+        ssh_key_path = config.get('ssh_private_key_path', '~/.ssh/id_ed25519')
         ssh_cmd = [
             'ssh', '-o', 'StrictHostKeyChecking=no',
             '-o', 'BatchMode=yes',
@@ -492,7 +514,7 @@ def provision_status():
 
         jumpbox_ip = prov_data.get('jumpbox_ip')
         remote_pid = prov_data.get('remote_pid')
-        ssh_key_path = prov_data.get('ssh_key_path', '~/.ssh/goad_key')
+        ssh_key_path = prov_data.get('ssh_key_path', '~/.ssh/id_ed25519')
 
         if not jumpbox_ip or not remote_pid:
             return jsonify({
@@ -807,22 +829,47 @@ def destroy_goad():
 @bp.route('/credentials', methods=['GET'])
 def get_credentials():
     """Get credentials for the deployed GOAD lab"""
-    goad_workspace = get_goad_workspace()
     goad_dir = get_goad_dir()
-    
-    # Find current deployment
-    deployment_marker = goad_workspace / 'current_deployment.json'
-    if not deployment_marker.exists():
-        return jsonify({
-            'success': False,
-            'error': 'No GOAD deployment found'
-        }), 404
-    
+    project_name = request.args.get('project')
+    lab_name = None
+
+    if project_name:
+        # Derive lab type from deployment state file
+        project_root_path = get_project_root()
+        state_file = project_root_path / "logs" / "deployment_state" / f"{project_name}.state.json"
+        if state_file.exists():
+            try:
+                state_data = json.loads(state_file.read_text())
+                deploy_type = state_data.get("deployment_type", "")
+                if deploy_type:
+                    from webapp.backend.utils.config_parser import get_goad_lab_type
+                    lab_name = get_goad_lab_type(deploy_type)
+            except Exception:
+                pass
+        # Fallback: parse from project name pattern
+        if not lab_name:
+            for dt, info in DEPLOYMENT_TYPE_MAP.items():
+                if dt.replace('-', '_') in project_name and info.get('goad_lab'):
+                    lab_name = info['goad_lab']
+                    break
+
+    # Existing marker-based fallback when no project specified or project lookup failed
+    if not lab_name:
+        goad_workspace = get_goad_workspace()
+        deployment_marker = goad_workspace / 'current_deployment.json'
+        if not deployment_marker.exists():
+            return jsonify({
+                'success': False,
+                'error': 'No GOAD deployment found'
+            }), 404
+        try:
+            with open(deployment_marker, 'r') as f:
+                deployment = json.load(f)
+            lab_name = deployment.get('lab_name')
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
     try:
-        with open(deployment_marker, 'r') as f:
-            deployment = json.load(f)
-        
-        lab_name = deployment.get('lab_name')
         lab_info = GOAD_LABS.get(lab_name, {})
         
         # Lab-specific credential configurations
