@@ -16,6 +16,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 
   # Backend configuration - uncomment and configure for remote state
@@ -202,8 +206,53 @@ data "aws_ami" "amazon_linux" {
 }
 
 # =============================================================================
-# CS STORAGE MODULE - S3 bucket for Cobalt Strike files
+# SSH KEY PAIRS - Auto-created from user's public key
 # =============================================================================
+# Linux instances: user's uploaded SSH public key (ed25519 or RSA)
+# Windows instances: auto-generated RSA key (ed25519 not supported on Windows)
+
+resource "aws_key_pair" "deployer" {
+  count = var.user_public_key != "" ? 1 : 0
+
+  key_name   = "${var.project_name}-${var.environment}-key"
+  public_key = var.user_public_key
+
+  tags = merge(local.enhanced_tags, {
+    Name      = "${var.project_name}-${var.environment}-key"
+    Component = "SSH"
+  })
+}
+
+# Auto-generated RSA key for Windows instances (AWS requires RSA for Windows AMIs)
+resource "tls_private_key" "windows" {
+  count     = local.deploy_attack_box || local.deploy_bastion ? 1 : 0
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+resource "aws_key_pair" "windows" {
+  count = local.deploy_attack_box || local.deploy_bastion ? 1 : 0
+
+  key_name   = "${var.project_name}-${var.environment}-windows-key"
+  public_key = tls_private_key.windows[0].public_key_openssh
+
+  tags = merge(local.enhanced_tags, {
+    Name      = "${var.project_name}-${var.environment}-windows-key"
+    Component = "SSH"
+  })
+}
+
+locals {
+  # Linux: user's key (ed25519/RSA) or manual key_pair_name
+  effective_key_pair_name = var.user_public_key != "" ? aws_key_pair.deployer[0].key_name : var.key_pair_name
+  # Windows: auto-generated RSA key, or fall back to manual key_pair_name
+  windows_key_pair_name = length(aws_key_pair.windows) > 0 ? aws_key_pair.windows[0].key_name : var.key_pair_name
+}
+
+# =============================================================================
+# DEPLOYMENT STORAGE MODULE - S3 bucket, IAM, and Secrets
+# =============================================================================
+# Stores: CS archives, init scripts, SSH keys, bootstrap status, secrets
 # Option C: Separate IAM Roles Per VPC (Maximum Security)
 # - C2 VPC instances use cs_download_c2 role
 # - GOAD VPC instances use cs_download_goad role
@@ -212,7 +261,7 @@ data "aws_ami" "amazon_linux" {
 
 module "cs_storage" {
   count  = var.cobalt_strike_archive_s3_path != "" || local.deploy_c2_infra || local.is_goad_only ? 1 : 0
-  source = "./modules/cs_storage"
+  source = "./modules/deployment_storage"
 
   project_name = var.project_name
   environment  = var.environment
@@ -232,6 +281,16 @@ module "cs_storage" {
 
   # Note: In Combined mode, BOTH roles are created, each restricted to its VPC
   # This provides maximum security - no cross-VPC access possible
+
+  # GitHub token for Secrets Manager (attack box retrieves at runtime)
+  github_token = var.tools_repo_https_token
+
+  # CS license secret name (pre-existing Secrets Manager secret, team servers retrieve at runtime)
+  cs_license_secret_name = var.cobalt_strike_license_secret_name
+
+  # Route53 DNS-01 validation (for Let's Encrypt on redirectors with round-robin DNS)
+  # Enabled when we're deploying redirectors with a domain and Let's Encrypt SSL
+  enable_route53_dns_validation = local.deploy_redirectors && var.primary_domain_name != "" && var.ssl_provider == "letsencrypt"
 }
 
 # =============================================================================
@@ -249,10 +308,12 @@ module "vpc" {
   management_subnet_cidrs = var.management_subnet_cidrs
   project_name            = var.project_name
   environment             = var.environment
+  aws_region              = var.aws_region
   enable_nat_gateway      = var.enable_nat_gateway
   enable_nacls            = var.enable_nacls
   management_cidr_blocks  = var.management_cidr_blocks
   c2_server_port          = var.c2_server_port
+  c2_listener_port        = var.c2_listener_port
   ssh_port                = var.ssh_port
   tags                    = local.enhanced_tags
 }
@@ -271,6 +332,7 @@ module "security" {
   management_cidr_blocks = var.management_cidr_blocks
   ssh_port               = var.ssh_port
   c2_server_port         = var.c2_server_port
+  c2_listener_port       = var.c2_listener_port
 
   # VPC Peering configuration (for combined mode)
   enable_vpc_peering = local.deploy_vpc_peering
@@ -278,6 +340,8 @@ module "security" {
 
   # Domain fronting (restrict redirector to CloudFront IPs only)
   enable_domain_fronting = var.enable_domain_fronting
+
+  enable_cs_rest_api = var.enable_cs_rest_api
 
   tags = var.tags
 }
@@ -294,7 +358,7 @@ module "c2_team_server" {
   c2_server_count            = local.c2_server_count
   instance_type              = var.c2_server_instance_type
   ami_id                     = var.c2_server_ami_id != "" ? var.c2_server_ami_id : data.aws_ami.ubuntu.id
-  key_pair_name              = var.key_pair_name
+  key_pair_name              = local.effective_key_pair_name
   private_subnet_ids         = module.vpc[0].private_subnet_ids
   security_group_id          = module.security[0].c2_team_server_security_group_id
   private_ips                = local.c2_server_private_ips
@@ -311,11 +375,26 @@ module "c2_team_server" {
   # Cobalt Strike configuration
   cobalt_strike_s3_path  = var.cobalt_strike_archive_s3_path
   cs_teamserver_password = var.cs_teamserver_password
-  tools_repo_url         = var.tools_repo_url
-  tools_repo_branch      = var.tools_repo_branch
+
+  # S3 bootstrap (bypasses 16KB user_data limit)
+  enable_s3_bootstrap = length(module.cs_storage) > 0
+  deployment_bucket   = length(module.cs_storage) > 0 ? module.cs_storage[0].bucket_name : ""
+  deployment_id       = var.project_name
+  aws_region          = var.aws_region
+
+  # Domain configuration (for CS Listener Guide auto-generation)
+  primary_domain         = var.primary_domain_name
+  c2_subdomain           = var.c2_subdomain
+  malleable_profile        = var.malleable_profile
+  custom_profile_content   = var.custom_profile_content
+  cs_license_secret_name   = length(module.cs_storage) > 0 ? module.cs_storage[0].cs_license_secret_name : ""
+  enable_rest_api        = var.enable_cs_rest_api
 
   # Custom user_data overrides centralized script if provided
   user_data = var.c2_server_user_data
+
+  # Ensure NAT Gateway + route are ready before instance boots (user_data needs internet)
+  depends_on = [module.vpc, module.cs_storage]
 }
 
 # =============================================================================
@@ -333,7 +412,7 @@ module "c2_phase_servers" {
   c2_server_count            = 1 # One server per phase
   instance_type              = each.value.instance_type
   ami_id                     = var.c2_server_ami_id != "" ? var.c2_server_ami_id : data.aws_ami.ubuntu.id
-  key_pair_name              = var.key_pair_name
+  key_pair_name              = local.effective_key_pair_name
   # Route each phase to its designated subnet
   private_subnet_ids         = [module.vpc[0].private_subnet_ids[lookup(local.c2_phase_subnet_indices, each.key, 0) % length(module.vpc[0].private_subnet_ids)]]
   security_group_id          = module.security[0].c2_team_server_security_group_id
@@ -351,11 +430,26 @@ module "c2_phase_servers" {
   # Cobalt Strike configuration
   cobalt_strike_s3_path  = var.cobalt_strike_archive_s3_path
   cs_teamserver_password = var.cs_teamserver_password
-  tools_repo_url         = var.tools_repo_url
-  tools_repo_branch      = var.tools_repo_branch
+
+  # S3 bootstrap (bypasses 16KB user_data limit)
+  enable_s3_bootstrap = length(module.cs_storage) > 0
+  deployment_bucket   = length(module.cs_storage) > 0 ? module.cs_storage[0].bucket_name : ""
+  deployment_id       = var.project_name
+  aws_region          = var.aws_region
+
+  # Domain configuration (for CS Listener Guide auto-generation)
+  primary_domain         = var.primary_domain_name
+  c2_subdomain           = var.c2_subdomain
+  malleable_profile        = var.malleable_profile
+  custom_profile_content   = var.custom_profile_content
+  cs_license_secret_name   = length(module.cs_storage) > 0 ? module.cs_storage[0].cs_license_secret_name : ""
+  enable_rest_api        = var.enable_cs_rest_api
 
   # Custom user_data per phase
   user_data = each.value.user_data != "" ? each.value.user_data : ""
+
+  # Ensure NAT Gateway + route are ready before instance boots (user_data needs internet)
+  depends_on = [module.vpc, module.cs_storage]
 }
 
 # =============================================================================
@@ -369,7 +463,7 @@ module "proxy_redirector" {
   proxy_redirector_count     = var.proxy_redirector_count
   instance_type              = var.proxy_redirector_instance_type
   ami_id                     = var.proxy_redirector_ami_id != "" ? var.proxy_redirector_ami_id : data.aws_ami.ubuntu.id
-  key_pair_name              = var.key_pair_name
+  key_pair_name              = local.effective_key_pair_name
   public_subnet_ids          = module.vpc[0].public_subnet_ids
   security_group_id          = module.security[0].proxy_redirector_security_group_id
   private_ips                = local.redirector_private_ips
@@ -377,15 +471,25 @@ module "proxy_redirector" {
   environment                = var.environment
   root_volume_size           = var.proxy_redirector_root_volume_size
   enable_detailed_monitoring = var.enable_detailed_monitoring
-  iam_instance_profile_name  = var.proxy_redirector_iam_instance_profile_name
+  # SECURITY: Use C2 instance profile for S3 bootstrap access (same VPC), fall back to user-provided
+  iam_instance_profile_name  = length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name_c2 : var.proxy_redirector_iam_instance_profile_name
   user_data                  = var.proxy_redirector_user_data
   tags                       = local.enhanced_tags
+
+  # S3 bootstrap (bypasses 16KB user_data limit)
+  enable_s3_bootstrap = length(module.cs_storage) > 0
+  deployment_bucket   = length(module.cs_storage) > 0 ? module.cs_storage[0].bucket_name : ""
+  deployment_id       = var.project_name
+  aws_region          = var.aws_region
 
   # Domain configuration for nginx redirector setup
   primary_domain = var.primary_domain_name
   c2_subdomain   = var.c2_subdomain
-  c2_server_ip   = length(module.c2_team_server) > 0 ? module.c2_team_server[0].first_server_private_ip : ""
-  c2_server_port = var.c2_server_port
+  # For single/redundancy mode, use the module output. For phases mode, use the staging server IP.
+  c2_server_ip   = length(module.c2_team_server) > 0 ? module.c2_team_server[0].first_server_private_ip : (
+    local.c2_deployment_mode == "phases" ? local.c2_phase_private_ips["staging"][0] : ""
+  )
+  c2_server_port = var.c2_listener_port
 
   # SSL configuration
   enable_ssl        = var.enable_ssl_certificate
@@ -393,10 +497,18 @@ module "proxy_redirector" {
   ssl_auto_retry    = var.ssl_auto_retry
   admin_email       = var.admin_email
   malleable_profile = var.malleable_profile
+  custom_c2_uris    = var.custom_c2_uris
+  decoy_theme       = var.decoy_theme
+
+  # File Portal
+  enable_file_portal     = var.enable_file_portal
+  portal_username        = var.portal_username
+  portal_password        = var.portal_password
+  portal_session_timeout = var.portal_session_timeout
 }
 
 # =============================================================================
-# BASTION/JUMP BOX MODULE (Windows Server)
+# BASTION HOST MODULE (Linux SSH Relay)
 # =============================================================================
 
 module "bastion" {
@@ -410,14 +522,13 @@ module "bastion" {
   # Falls back to public subnet if management subnet is not configured
   public_subnet_id           = length(module.vpc[0].management_subnet_ids) > 0 ? module.vpc[0].management_subnet_ids[0] : module.vpc[0].public_subnet_ids[0]
   security_group_id          = module.security[0].bastion_security_group_id
-  key_pair_name              = var.key_pair_name
+  key_pair_name              = local.effective_key_pair_name
   instance_type              = var.bastion_instance_type
   ami_id                     = var.bastion_ami_id
   root_volume_size           = var.bastion_root_volume_size
   enable_detailed_monitoring = var.enable_detailed_monitoring
-  iam_instance_profile_name  = var.bastion_iam_instance_profile_name
+  iam_instance_profile_name  = var.bastion_iam_instance_profile_name != "" ? var.bastion_iam_instance_profile_name : (length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name_c2 : "")
   private_ip                 = local.bastion_private_ip
-  windows_admin_password     = var.windows_admin_password
   tags                       = local.enhanced_tags
 }
 
@@ -444,14 +555,23 @@ module "attack_box" {
   instance_type              = var.attack_box_instance_type
   root_volume_size           = var.attack_box_root_volume_size
   admin_password             = var.attack_box_admin_password
-  key_pair_name              = var.key_pair_name
+  key_pair_name              = local.windows_key_pair_name
+  user_public_key            = var.user_public_key
   enable_detailed_monitoring = var.enable_detailed_monitoring
 
   # C2 Server connection (for CS Client shortcut)
   c2_server_ip   = local.is_goad_only ? "${local.goad_ip_range}.40" : local.c2_server_private_ips[0]
   c2_server_port = var.c2_server_port
 
+  # Domain configuration (for CS Listener Guide auto-generation)
+  primary_domain         = var.primary_domain_name
+  c2_subdomain           = var.c2_subdomain
+  malleable_profile      = var.malleable_profile
+  github_token_secret_name = length(module.cs_storage) > 0 ? module.cs_storage[0].github_token_secret_name : ""
+  cs_license_secret_name   = length(module.cs_storage) > 0 ? module.cs_storage[0].cs_license_secret_name : ""
+
   # S3 / Deployment artifacts
+  enable_s3_bootstrap       = length(module.cs_storage) > 0
   deployment_bucket         = length(module.cs_storage) > 0 ? module.cs_storage[0].bucket_name : ""
   deployment_id             = var.project_name
   aws_region                = var.aws_region
@@ -485,6 +605,7 @@ module "goad" {
   private_subnet_cidr = var.goad_private_subnet_cidr
   ip_range            = split("/", var.goad_vpc_cidr)[0] != "" ? join(".", slice(split(".", split("/", var.goad_vpc_cidr)[0]), 0, 3)) : "192.168.56"
   availability_zone   = local.availability_zones[0]
+  peer_vpc_cidr       = local.deploy_vpc_peering ? var.vpc_cidr : ""
 
   # Attack Box with Cobalt Strike (separate from jumpbox, for GOAD-only mode)
   install_cobalt_strike  = local.install_cs_on_jumpbox
@@ -493,7 +614,7 @@ module "goad" {
 
   # Access configuration
   management_cidr_blocks = var.management_cidr_blocks
-  key_pair_name          = var.key_pair_name
+  key_pair_name          = local.effective_key_pair_name
 
   # User's SSH public key (for jumpbox access)
   user_public_key = var.user_public_key
@@ -515,6 +636,9 @@ module "goad" {
   # Jumpbox uploads its PUBLIC key to S3, Team Server/Attack Box download it
   deployment_bucket = length(module.cs_storage) > 0 ? module.cs_storage[0].bucket_name : ""
   deployment_id     = var.project_name # Use project name as unique deployment ID
+
+  # CS license key for automated activation (team server retrieves at runtime)
+  cs_license_secret_name = length(module.cs_storage) > 0 ? module.cs_storage[0].cs_license_secret_name : ""
 
   tags = local.enhanced_tags
 }
@@ -591,11 +715,7 @@ module "certificates" {
   source = "./modules/certificates"
 
   primary_domain_name = var.primary_domain_name
-  c2_subdomain        = var.c2_subdomain
-  www_subdomain       = var.www_subdomain
-  cdn_subdomain       = var.cdn_subdomain
-
-  route53_zone_id = length(module.dns) > 0 ? module.dns[0].zone_id : ""
+  route53_zone_id     = length(module.dns) > 0 ? module.dns[0].zone_id : ""
 
   project_name = var.project_name
   environment  = var.environment
@@ -623,15 +743,13 @@ resource "aws_acm_certificate" "cloudfront_cert" {
   domain_name       = var.primary_domain_name
   validation_method = "DNS"
 
-  subject_alternative_names = compact(concat(
-    [
-      "*.${var.primary_domain_name}",
-      "${var.c2_subdomain}.${var.primary_domain_name}",
-    ],
-    var.enable_www_subdomain ? ["${var.www_subdomain}.${var.primary_domain_name}"] : [],
-    var.enable_cdn_subdomain ? ["${var.cdn_subdomain}.${var.primary_domain_name}"] : [],
+  # OPSEC: Wildcard-only SANs to minimize CT log exposure.
+  # Explicit subdomain SANs are publicly visible in Certificate Transparency logs.
+  # The wildcard covers all subdomains without revealing which are active.
+  subject_alternative_names = concat(
+    ["*.${var.primary_domain_name}"],
     var.backup_domains,
-  ))
+  )
 
   tags = merge(local.enhanced_tags, {
     Name      = "${var.project_name}-${var.environment}-cloudfront-cert"

@@ -101,12 +101,6 @@ variable "cs_teamserver_password" {
   sensitive   = true
 }
 
-variable "cs_teamserver_port" {
-  description = "Port for Cobalt Strike team server"
-  type        = number
-  default     = 50050
-}
-
 # =============================================================================
 # Domain Configuration
 # =============================================================================
@@ -146,9 +140,9 @@ variable "cdn_subdomain" {
 # =============================================================================
 
 variable "create_dns_hosted_zone" {
-  description = "Create a new Route 53 hosted zone. Set to false if domain is already in Route 53."
+  description = "Create a new Route 53 hosted zone. Set to false if domain is already in Route 53 (default: false, since the webapp selects from existing Route 53 zones)."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "dns_ttl" {
@@ -226,16 +220,29 @@ variable "enable_ssl_certificate" {
   default     = true
 }
 
-variable "use_letsencrypt" {
-  description = "DEPRECATED: Use ssl_provider instead. Kept for backward compatibility."
-  type        = bool
-  default     = false
-}
-
 variable "malleable_profile" {
-  description = "Name of Malleable C2 profile for nginx URI matching"
+  description = "Name of Malleable C2 profile for nginx URI matching (default/amazon/google/microsoft/wikipedia/custom)"
   type        = string
   default     = "default"
+}
+
+variable "custom_profile_content" {
+  description = "Base64-encoded custom Malleable C2 profile content (only used when malleable_profile = 'custom')"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "custom_c2_uris" {
+  description = "JSON-encoded custom C2 URIs parsed from the custom profile (e.g. {\"get\":[\"/uri\"],\"post\":[\"/uri\"],\"stager_x86\":[\"/uri\"],\"stager_x64\":[\"/uri\"]})"
+  type        = string
+  default     = ""
+}
+
+variable "decoy_theme" {
+  description = "Decoy website theme for redirectors: 'plexura' (Plexura Managed Solutions) or 'meridian-financial' (Meridian Financial Group)"
+  type        = string
+  default     = "plexura"
 }
 
 # =============================================================================
@@ -246,21 +253,6 @@ variable "enable_domain_fronting" {
   description = "Enable CloudFront domain fronting for C2 traffic. Hides redirector IPs behind CloudFront CDN and makes traffic appear as CDN traffic. Only applicable to C2 deployments."
   type        = bool
   default     = false
-}
-
-# =============================================================================
-# Legacy Engagement Type (Deprecated - use deployment_type instead)
-# =============================================================================
-
-variable "engagement_type" {
-  description = "DEPRECATED: Use deployment_type instead. Kept for backward compatibility."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = var.engagement_type == "" || contains(["adhoc", "purple-team", "full-red-team"], var.engagement_type)
-    error_message = "engagement_type must be 'adhoc', 'purple-team', 'full-red-team', or empty string"
-  }
 }
 
 # =============================================================================
@@ -326,9 +318,15 @@ variable "ssh_port" {
 }
 
 variable "c2_server_port" {
-  description = "Port used by C2 team servers (Cobalt Strike default: 50050)"
+  description = "CS client management port (Cobalt Strike default: 50050). Used for operator connections via SSH tunnel."
   type        = number
   default     = 50050
+}
+
+variable "c2_listener_port" {
+  description = "Port the CS HTTPS beacon listener binds on the team server. Redirectors forward beacon traffic here."
+  type        = number
+  default     = 443
 }
 
 # =============================================================================
@@ -495,22 +493,22 @@ variable "proxy_redirector_user_data" {
 }
 
 # =============================================================================
-# Bastion/Jump Box Configuration
+# Bastion Host Configuration (Linux SSH Relay)
 # =============================================================================
 variable "enable_bastion" {
-  description = "Enable bastion/jump box for management access"
+  description = "Enable bastion host for SSH relay access to private subnets"
   type        = bool
   default     = true
 }
 
 variable "bastion_instance_type" {
-  description = "EC2 instance type for bastion host (Windows Server)"
+  description = "EC2 instance type for bastion host (SSH relay only)"
   type        = string
-  default     = "t3.medium"
+  default     = "t3.micro"
 }
 
 variable "bastion_ami_id" {
-  description = "AMI ID for bastion host (leave empty to use latest Windows Server 2022)"
+  description = "AMI ID for bastion host (leave empty to use latest Ubuntu 22.04 LTS)"
   type        = string
   default     = ""
 }
@@ -518,20 +516,13 @@ variable "bastion_ami_id" {
 variable "bastion_root_volume_size" {
   description = "Root volume size in GB for bastion host"
   type        = number
-  default     = 30
+  default     = 20
 }
 
 variable "bastion_iam_instance_profile_name" {
   description = "IAM instance profile name for bastion host"
   type        = string
   default     = ""
-}
-
-variable "windows_admin_password" {
-  description = "Windows administrator password (leave empty to auto-generate)"
-  type        = string
-  default     = ""
-  sensitive   = true
 }
 
 # =============================================================================
@@ -553,7 +544,7 @@ variable "attack_box_instance_type" {
 variable "attack_box_root_volume_size" {
   description = "Root volume size in GB for Windows attack box"
   type        = number
-  default     = 100
+  default     = 40
 }
 
 variable "attack_box_admin_password" {
@@ -578,18 +569,53 @@ variable "tools_repo_branch" {
   default     = "main"
 }
 
-variable "tools_repo_ssh_key" {
-  description = "SSH private key for Git access (stored in AWS SSM Parameter Store). Leave empty if using HTTPS with token."
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
 variable "tools_repo_https_token" {
   description = "Personal access token for HTTPS Git access. Leave empty if using SSH."
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "cobalt_strike_license_secret_name" {
+  description = "Name of the AWS Secrets Manager secret containing your CS license key. Store once with: aws secretsmanager create-secret --name cs-license-key --secret-string YOUR_KEY --region YOUR_REGION. Set to empty string for manual activation."
+  type        = string
+  default     = "cs-license-key"
+}
+
+variable "enable_cs_rest_api" {
+  description = "Enable Cobalt Strike REST API server (requires CS 4.12+). Starts team server with --experimental-db and runs csrestapi service on port 50443."
+  type        = bool
+  default     = false
+}
+
+# =============================================================================
+# File Portal Configuration
+# =============================================================================
+
+variable "enable_file_portal" {
+  description = "Enable the /login file portal on redirectors for secure file sharing"
+  type        = bool
+  default     = false
+}
+
+variable "portal_username" {
+  description = "Portal login username (only used if enable_file_portal = true)"
+  type        = string
+  default     = "operator"
+  sensitive   = true
+}
+
+variable "portal_password" {
+  description = "Portal login password (only used if enable_file_portal = true)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "portal_session_timeout" {
+  description = "Portal session timeout in minutes"
+  type        = number
+  default     = 30
 }
 
 # =============================================================================

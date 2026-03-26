@@ -79,6 +79,34 @@ variable "tags" {
 }
 
 # =============================================================================
+# S3 BOOTSTRAP (bypasses 16KB EC2 user_data limit)
+# =============================================================================
+
+variable "enable_s3_bootstrap" {
+  description = "Upload setup script to S3 and use small bootstrap user_data (avoids 16KB limit)"
+  type        = bool
+  default     = false
+}
+
+variable "deployment_bucket" {
+  description = "S3 bucket name for deployment artifacts"
+  type        = string
+  default     = ""
+}
+
+variable "deployment_id" {
+  description = "Unique deployment ID for S3 path prefixes"
+  type        = string
+  default     = ""
+}
+
+variable "aws_region" {
+  description = "AWS region for S3 API calls"
+  type        = string
+  default     = "eu-central-1"
+}
+
+# =============================================================================
 # DOMAIN CONFIGURATION (for nginx setup)
 # =============================================================================
 
@@ -124,12 +152,6 @@ variable "ssl_auto_retry" {
   default     = true
 }
 
-variable "use_letsencrypt" {
-  description = "DEPRECATED: Use ssl_provider instead"
-  type        = bool
-  default     = false
-}
-
 variable "admin_email" {
   description = "Admin email for Let's Encrypt notifications"
   type        = string
@@ -140,4 +162,51 @@ variable "malleable_profile" {
   description = "Name of Malleable C2 profile for URI matching"
   type        = string
   default     = "default"
+}
+
+variable "custom_c2_uris" {
+  description = "JSON-encoded custom C2 URIs parsed from the custom profile"
+  type        = string
+  default     = ""
+}
+
+variable "decoy_theme" {
+  description = "Decoy website theme: 'plexura' (SaaS company) or 'meridian-financial' (financial advisory firm)"
+  type        = string
+  default     = "plexura"
+
+  validation {
+    condition     = contains(["plexura", "meridian-financial"], var.decoy_theme)
+    error_message = "decoy_theme must be 'plexura' or 'meridian-financial'."
+  }
+}
+
+# =============================================================================
+# File Portal Configuration
+# =============================================================================
+
+variable "enable_file_portal" {
+  description = "Enable the /login file portal on redirectors"
+  type        = bool
+  default     = false
+}
+
+variable "portal_username" {
+  description = "Portal login username"
+  type        = string
+  default     = "operator"
+  sensitive   = true
+}
+
+variable "portal_password" {
+  description = "Portal login password"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "portal_session_timeout" {
+  description = "Portal session timeout in minutes"
+  type        = number
+  default     = 30
 }

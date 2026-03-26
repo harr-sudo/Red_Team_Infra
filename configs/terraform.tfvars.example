@@ -108,17 +108,21 @@ proxy_redirector_root_volume_size = 8  # GB (minimal - pass-through only, no dat
 proxy_redirector_iam_instance_profile_name = ""  # Optional: IAM role for proxies
 proxy_redirector_user_data = ""  # Optional: User data script for proxy configuration
 
+# Decoy Website Theme
+# 'plexura'            = Plexura Managed Solutions (SaaS company, blocks crawlers)
+# 'meridian-financial' = Meridian Financial Group (financial advisory, allows crawlers for categorization)
+decoy_theme = "plexura"
+
 # =============================================================================
-# Bastion/Jump Box Configuration (Windows Server with WSL2)
+# Bastion Host Configuration (Linux SSH Relay)
 # =============================================================================
-# Dedicated jump box for management access - provides RDP for Windows management
-# and WSL2 (Ubuntu) for SSH access to C2 servers
+# Lightweight SSH relay for tunneling to private subnets (C2 servers, attack box)
+# All red team tools and operations happen on the attack box, not the bastion
 enable_bastion = true  # Set to false to disable bastion host
-bastion_instance_type = "t3.medium"  # Windows needs more resources (2 vCPU, 4 GB RAM)
-bastion_ami_id = ""  # Leave empty to use latest Windows Server 2022
-bastion_root_volume_size = 30  # GB (Windows needs more space)
+bastion_instance_type = "t3.micro"  # SSH relay only (1 vCPU, 1 GB RAM)
+bastion_ami_id = ""  # Leave empty to use latest Ubuntu 22.04 LTS
+bastion_root_volume_size = 20  # GB
 bastion_iam_instance_profile_name = ""  # Optional: IAM role for bastion
-windows_admin_password = ""  # Leave empty to retrieve from AWS using key pair (recommended)
 
 # =============================================================================
 # Tools Repository Configuration (Jump Box Only)
@@ -133,10 +137,22 @@ windows_admin_password = ""  # Leave empty to retrieve from AWS using key pair (
 tools_repo_url = "https://github.com/harr-sudo/red-team-tools.git"  # Repository URL (use HTTPS for PAT authentication)
 tools_repo_branch = "main"  # Branch to clone
 tools_repo_ssh_key = ""  # SSH private key stored in AWS SSM Parameter Store (e.g., "/red-team/tools-repo-ssh-key")
-# OR for multiple users (each user has their own token):
-tools_repo_https_token = ""  # Personal access token stored in AWS SSM Parameter Store (e.g., "/red-team/tools-repo-token-USERNAME")
+# OR for HTTPS authentication:
+tools_repo_https_token = ""  # GitHub PAT (e.g., "ghp_xxxx") -- Terraform stores in AWS Secrets Manager automatically
 # Note: Use either SSH key OR HTTPS token, not both
-# For multiple users, use HTTPS tokens (each user stores their own token in SSM)
+# HTTPS tokens are stored in Secrets Manager and fetched by instances at runtime via IAM role
+
+# Cobalt Strike License Key (auto-activated from Secrets Manager)
+# Store your license key ONCE in Secrets Manager:
+#   aws secretsmanager create-secret --name cs-license-key --secret-string "xxxx-xxxx-xxxx-xxxx" --region eu-central-1
+# Team servers fetch the key at boot and activate automatically.
+# Default: "cs-license-key". Set to "" for manual activation.
+cobalt_strike_license_secret_name = "cs-license-key"
+
+# Cobalt Strike REST API (requires CS 4.12+)
+# Enables --experimental-db on team server and starts csrestapi service on port 50443.
+# Required for beacon management via the web dashboard.
+enable_cs_rest_api = false
 
 # =============================================================================
 # Monitoring Configuration
@@ -193,10 +209,20 @@ backup_domains = [
 ]
 
 # Subdomain Configuration
-c2_subdomain = "c2"  # Subdomain for C2 team servers
+c2_subdomain = "api"  # Subdomain for beacon callbacks (avoid obvious names like "c2")
 www_subdomain = "www"  # Subdomain for public-facing (domain fronting)
 cdn_subdomain = "cdn"  # Subdomain for CDN endpoint
 
 # DNS Configuration
 dns_provider = "route53"  # Options: route53, cloudflare, external
 enable_dns_validation = true  # Enable DNS validation for ACM certificates
+
+# =============================================================================
+# File Portal Configuration (Optional)
+# =============================================================================
+# Deploys a secure file sharing portal on redirectors at /login
+# NOTE: When enabled, increase proxy_redirector_root_volume_size to at least 20 (GB)
+# enable_file_portal    = false
+# portal_username       = "operator"
+# portal_password       = "YourSecurePassword123"
+# portal_session_timeout = 30
