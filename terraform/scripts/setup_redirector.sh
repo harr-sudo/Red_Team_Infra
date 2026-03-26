@@ -19,6 +19,7 @@
 #   - ssl_auto_retry: Whether to auto-retry Let's Encrypt when DNS propagates
 #   - admin_email: Email for Let's Encrypt notifications
 #   - malleable_profile: Name of Malleable C2 profile (for URI matching)
+#   - decoy_theme: Decoy website theme ('plexura' or 'meridian-financial')
 # =============================================================================
 
 set -e
@@ -33,7 +34,60 @@ SSL_PROVIDER="${ssl_provider}"
 SSL_AUTO_RETRY="${ssl_auto_retry}"
 ADMIN_EMAIL="${admin_email}"
 MALLEABLE_PROFILE="${malleable_profile}"
+CUSTOM_C2_URIS='${custom_c2_uris}'
+DECOY_THEME="${decoy_theme}"
 HOSTNAME="${hostname}"
+ENABLE_FILE_PORTAL="${enable_file_portal}"
+PORTAL_USERNAME="${portal_username}"
+PORTAL_PASSWORD="${portal_password}"
+PORTAL_SESSION_TIMEOUT="${portal_session_timeout}"
+
+# =============================================================================
+# Setup Status Tracking (for Host Setup Checker dashboard feature)
+# =============================================================================
+SETUP_STATUS_FILE="/opt/setup-status.json"
+SETUP_ROLE="redirector"
+SETUP_TOTAL=5
+SETUP_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+SETUP_STEP_START=$(date +%s)
+CURRENT_STEP=0
+CURRENT_STEP_NAME=""
+
+write_step_status() {
+    local step_num=$1 step_name=$2 step_status=$3 message="${4:-}"
+    local now=$(date +%s)
+    local duration=$((now - SETUP_STEP_START))
+    SETUP_STEP_START=$now
+    CURRENT_STEP=$step_num
+    CURRENT_STEP_NAME=$step_name
+
+    if [ ! -f "$SETUP_STATUS_FILE" ] || [ "$step_num" -eq 1 ]; then
+        echo "{\"host\":\"$HOSTNAME\",\"role\":\"$SETUP_ROLE\",\"total_steps\":$SETUP_TOTAL,\"completed\":0,\"failed\":0,\"warnings\":0,\"status\":\"running\",\"steps\":[],\"started_at\":\"$SETUP_STARTED_AT\",\"finished_at\":null}" > "$SETUP_STATUS_FILE"
+    fi
+
+    local escaped_msg=$(echo "$message" | sed 's/"/\\"/g' | tr '\n' ' ')
+    local new_step="{\"step\":$step_num,\"name\":\"$step_name\",\"status\":\"$step_status\",\"duration_s\":$duration,\"message\":\"$escaped_msg\"}"
+
+    python3 -c "
+import json, sys
+with open('$SETUP_STATUS_FILE') as f:
+    data = json.load(f)
+step = json.loads('$new_step')
+data['steps'].append(step)
+data['completed'] = sum(1 for s in data['steps'] if s['status'] in ('ok','warning'))
+data['failed'] = sum(1 for s in data['steps'] if s['status'] == 'failed')
+data['warnings'] = sum(1 for s in data['steps'] if s['status'] == 'warning')
+if data['failed'] > 0:
+    data['status'] = 'partial'
+elif data['completed'] == data['total_steps']:
+    data['status'] = 'complete'
+data['finished_at'] = '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
+with open('$SETUP_STATUS_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null || echo "WARNING: Failed to write setup status for step $step_num"
+}
+
+trap 'write_step_status $CURRENT_STEP "$CURRENT_STEP_NAME" "failed" "Script exited unexpectedly"' ERR
 
 # Derived values
 C2_FQDN="$${C2_SUBDOMAIN}.$${PRIMARY_DOMAIN}"
@@ -49,6 +103,7 @@ echo "Domain: $PRIMARY_DOMAIN"
 echo "C2 FQDN: $C2_FQDN"
 echo "SSL Provider: $SSL_PROVIDER"
 echo "SSL Auto-Retry: $SSL_AUTO_RETRY"
+echo "Decoy Theme: $DECOY_THEME"
 echo "=============================================="
 
 # Set hostname
@@ -63,22 +118,29 @@ fi
 # =============================================================================
 echo "[1/5] Installing dependencies..."
 
-# Wait for cloud-init
+# Wait for cloud-init (timeout after 5 minutes)
+CLOUD_INIT_WAIT=0
 while [ ! -f /var/lib/cloud/instance/boot-finished ]; do
     sleep 5
+    CLOUD_INIT_WAIT=$((CLOUD_INIT_WAIT + 5))
+    if [ "$CLOUD_INIT_WAIT" -ge 300 ]; then
+        echo "WARNING: cloud-init did not complete within 5 minutes, continuing anyway"
+        break
+    fi
 done
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get upgrade -y
 
-# Install nginx and certbot
+# Install nginx and certbot (including DNS-01 Route53 plugin for round-robin DNS support)
 apt-get install -y \
     nginx \
     nginx-extras \
     libnginx-mod-http-headers-more-filter \
     certbot \
     python3-certbot-nginx \
+    python3-certbot-dns-route53 \
     curl \
     wget \
     net-tools \
@@ -87,6 +149,7 @@ apt-get install -y \
     fail2ban
 
 echo "Dependencies installed"
+write_step_status 1 "Dependencies" "ok"
 
 # =============================================================================
 # 2. Configure Nginx Base
@@ -124,7 +187,7 @@ limit_conn_zone $binary_remote_addr zone=connlimit:10m;
 
 # Upstream C2 server
 upstream c2_backend {
-    server ${C2_SERVER_IP}:${C2_SERVER_PORT};
+    server $${C2_SERVER_IP}:$${C2_SERVER_PORT};
     keepalive 32;
 }
 
@@ -138,7 +201,7 @@ map $http_user_agent $valid_agent {
     "~*Firefox" 1;
 }
 
-# Map to block known security scanners and crawlers
+# Map to block known security scanners (and crawlers for technology theme)
 map $http_user_agent $blocked_agent {
     default 0;
     "~*curl" 1;
@@ -152,16 +215,26 @@ map $http_user_agent $blocked_agent {
     "~*zgrab" 1;
     "~*censys" 1;
     "~*shodan" 1;
+%{ if decoy_theme == "plexura" ~}
+    # Plexura theme: block crawlers (hides from categorization)
     "~*bot" 1;
     "~*crawl" 1;
     "~*spider" 1;
+%{ endif ~}
+%{ if decoy_theme == "meridian-financial" ~}
+    # Meridian Financial: allow Googlebot, bingbot, Bluecoat, etc. for domain categorization
+    # Only block known malicious bots
+    "~*HTTrack" 1;
+    "~*clshttp" 1;
+    "~*harvest" 1;
+%{ endif ~}
 }
 
 # HTTP server (redirects to HTTPS)
 server {
     listen 80;
     listen [::]:80;
-    server_name ${C2_FQDN} ${PRIMARY_DOMAIN} www.${PRIMARY_DOMAIN} cdn.${PRIMARY_DOMAIN};
+    server_name $${C2_FQDN} $${PRIMARY_DOMAIN} www.$${PRIMARY_DOMAIN} cdn.$${PRIMARY_DOMAIN};
 
     # Hide nginx version
     server_tokens off;
@@ -181,7 +254,7 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name ${C2_FQDN} ${PRIMARY_DOMAIN} www.${PRIMARY_DOMAIN} cdn.${PRIMARY_DOMAIN};
+    server_name $${C2_FQDN} $${PRIMARY_DOMAIN} www.$${PRIMARY_DOMAIN} cdn.$${PRIMARY_DOMAIN};
 
     # Hide nginx version
     server_tokens off;
@@ -204,15 +277,10 @@ server {
     resolver 8.8.8.8 8.8.4.4 valid=300s;
     resolver_timeout 5s;
 
-    # Security headers (mimic legitimate web server)
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    
-    # Remove Server header (hide nginx)
-    more_clear_headers Server;
+    # OPSEC: Security headers applied per-location (not server-wide)
+    # Decoy site gets hardened headers; C2 locations pass upstream profile headers
+    # proxy_pass_header lets the Malleable profile's Server header reach the client
+    proxy_pass_header Server;
 
     # OPSEC: Disable all logging for C2 traffic
     # No data persistence on redirector - pass-through only
@@ -232,83 +300,23 @@ server {
     location / {
         root /var/www/html;
         index index.html index.htm;
-        try_files $uri $uri/ =404;
-        
+        try_files $uri $uri.html $uri/ =404;
+
+        # Security headers for decoy site (not applied to C2 proxy locations)
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        more_clear_headers Server;
+
         # Custom error pages
         error_page 404 /404.html;
         error_page 500 502 503 504 /50x.html;
     }
 
-    # C2 traffic patterns - MUST match your Malleable C2 profile URIs
-    # These are examples - customize based on your actual profile
-    
-    # jQuery Malleable profile example
-    location ~ ^/jquery-3\.[0-9]+\.[0-9]+\.min\.js$ {
-        # Validate request looks legitimate
-        if ($http_accept !~* "application/javascript|text/javascript|\*/\*") {
-            return 404;
-        }
-        
-        proxy_pass https://c2_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Connection "";
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 300s;
-        proxy_buffering on;
-    }
-
-    # API-style endpoints (common Malleable profile pattern)
-    location ~ ^/api/v[0-9]+/(status|update|sync|data)$ {
-        # Must have valid content-type for API
-        if ($http_content_type !~* "application/json|application/x-www-form-urlencoded") {
-            set $invalid_ct 1;
-        }
-        if ($request_method = POST) {
-            set $invalid_ct "${invalid_ct}1";
-        }
-        if ($invalid_ct = "11") {
-            return 400;
-        }
-        
-        proxy_pass https://c2_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        client_max_body_size 100M;
-    }
-
-    # Static assets pattern (CDN-style)
-    location ~ ^/(static|assets|dist|build)/(js|css|img|fonts)/[a-zA-Z0-9_-]+\.(js|css|png|jpg|gif|woff2?)$ {
-        proxy_pass https://c2_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_valid 200 1h;
-    }
-
-    # POST endpoint for beacon data (customize URI)
-    location = /api/telemetry {
-        if ($request_method != POST) {
-            return 405;
-        }
-        
-        proxy_pass https://c2_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        client_max_body_size 100M;
-    }
+    # C2 traffic patterns — auto-configured from Malleable C2 profile
+    # PLACEHOLDER_C2_LOCATIONS (replaced after heredoc by generate_nginx_c2_locations)
 
     # Health check (internal only - block from internet)
     location /health {
@@ -329,16 +337,324 @@ server {
 }
 NGINXEOF
 
+# Generate profile-specific nginx C2 location blocks based on Malleable profile selection
+generate_nginx_c2_locations() {
+    case "$MALLEABLE_PROFILE" in
+        default|"")
+            cat << 'LOCATIONS'
+    # jQuery Malleable C2 profile (default)
+    # Source: https://github.com/threatexpress/malleable-c2/blob/master/jquery-c2.4.9.profile
+    #
+    # Matches ALL jQuery profile URIs with a single location block:
+    #   GET:    /jquery-3.3.1.min.js       (http-get beacon check-in)
+    #   POST:   /jquery-3.3.2.min.js       (http-post beacon data)
+    #   Stager: /jquery-3.3.1.slim.min.js  (http-stager x86)
+    #           /jquery-3.3.2.slim.min.js  (http-stager x64)
+
+    location ~ ^/jquery-3\.[0-9]+\.[0-9]+(\.slim)?\.min\.js$ {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 300s;
+        proxy_buffering on;
+        client_max_body_size 100M;
+    }
+LOCATIONS
+            ;;
+        amazon)
+            cat << 'LOCATIONS'
+    # Amazon CDN Malleable C2 profile
+
+    # GET beacon (http-get uri: /latest/meta-data/instance-id)
+    location ~ ^/latest/(meta-data|api/plugins)/ {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 300s;
+    }
+
+    # POST beacon (http-post uri: /2/content/save)
+    location ~ ^/[0-9]+/content/(save|update|sync)$ {
+        if ($request_method != POST) {
+            return 405;
+        }
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 100M;
+    }
+
+    # Stager (http-stager uri: /latest/api/plugins/versionCheck*)
+    location ~ ^/latest/api/plugins/versionCheck(64)?$ {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+LOCATIONS
+            ;;
+        google)
+            cat << 'LOCATIONS'
+    # Google APIs Malleable C2 profile
+
+    # GET beacon (http-get uri: /safebrowsing/v4/threatListUpdates:fetch)
+    location ~ ^/safebrowsing/v[0-9]+/(threatListUpdates|fullHashes):(fetch|find)$ {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 300s;
+    }
+
+    # POST beacon (http-post uri: /drive/v3/files/upload)
+    location ~ ^/drive/v[0-9]+/files/(upload|copy|export)$ {
+        if ($request_method != POST) {
+            return 405;
+        }
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 100M;
+    }
+
+    # Stager (http-stager uri: /safebrowsing/v*/fullHashes:find)
+    location ~ ^/safebrowsing/v[0-9]+/fullHashes:find$ {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+LOCATIONS
+            ;;
+        microsoft)
+            cat << 'LOCATIONS'
+    # Microsoft Azure Malleable C2 profile
+
+    # GET beacon (http-get uri: /common/oauth2/v2.0/token)
+    location ~ ^/common/oauth2/v[0-9]+\.[0-9]+/(token|authorize)$ {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 300s;
+    }
+
+    # POST beacon (http-post uri: /v1.0/me/drive/root/children)
+    location ~ ^/v[0-9]+\.[0-9]+/me/drive/ {
+        if ($request_method != POST) {
+            return 405;
+        }
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 100M;
+    }
+
+    # Stager (http-stager uri: /connect/oauth2/authorize*)
+    location ~ ^/connect/oauth2/authorize(64)?$ {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+LOCATIONS
+            ;;
+        wikipedia)
+            cat << 'LOCATIONS'
+    # Wikipedia Malleable C2 profile
+    # Based on @bluscreenofjeff wikipedia.profile (modernized)
+    #
+    # GET:    /w/index.php             (beacon check-in as wiki search)
+    # POST:   /wiki/<session_id>       (beacon data as article view, uri-append)
+    # Stager: /w/load.php (x86)       (MediaWiki resource loader)
+    #         /w/api.php (x64)        (MediaWiki API)
+
+    # GET beacon + Stager (all /w/*.php MediaWiki endpoints)
+    location ~ ^/w/(index|load|api)\.php$ {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 300s;
+        proxy_buffering on;
+        client_max_body_size 100M;
+    }
+
+    # POST beacon (http-post: /wiki/<session_id> via uri-append)
+    # Prefix match handles the session ID appended as a path component
+    location ~ ^/wiki(/|$) {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 300s;
+        proxy_buffering on;
+        client_max_body_size 100M;
+    }
+LOCATIONS
+            ;;
+        custom)
+            # Custom profile — auto-generate nginx locations from parsed URIs if available
+            if [ -n "$CUSTOM_C2_URIS" ] && command -v jq &>/dev/null; then
+                echo "    # Custom Malleable C2 profile — auto-generated from parsed URIs"
+                echo "    # URIs extracted from the custom profile pasted in the web app"
+                echo ""
+
+                # Extract URIs from JSON: {"get":["/uri"],"post":["/uri"],"stager_x86":["/uri"],"stager_x64":["/uri"]}
+                GET_URIS=$(echo "$CUSTOM_C2_URIS" | jq -r '.get[]? // empty' 2>/dev/null)
+                POST_URIS=$(echo "$CUSTOM_C2_URIS" | jq -r '.post[]? // empty' 2>/dev/null)
+                STAGER_X86_URIS=$(echo "$CUSTOM_C2_URIS" | jq -r '.stager_x86[]? // empty' 2>/dev/null)
+                STAGER_X64_URIS=$(echo "$CUSTOM_C2_URIS" | jq -r '.stager_x64[]? // empty' 2>/dev/null)
+
+                # Combine all URIs and generate a single regex location block
+                ALL_URIS=""
+                for uri in $GET_URIS $POST_URIS $STAGER_X86_URIS $STAGER_X64_URIS; do
+                    # Escape regex special chars in URIs for nginx location ~
+                    escaped=$(echo "$uri" | sed 's/\./\\./g; s/\?/\\?/g')
+                    if [ -z "$ALL_URIS" ]; then
+                        ALL_URIS="$escaped"
+                    else
+                        ALL_URIS="$ALL_URIS|$escaped"
+                    fi
+                done
+
+                if [ -n "$ALL_URIS" ]; then
+                    cat << LOCATIONS
+    # GET URIs: $GET_URIS
+    # POST URIs: $POST_URIS
+    # Stager x86: $STAGER_X86_URIS
+    # Stager x64: $STAGER_X64_URIS
+    # NOTE: (/|$) allows uri-append profiles (e.g., /wiki/<session_id>)
+    location ~ ^($ALL_URIS)(/|$) {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 300s;
+        proxy_buffering on;
+        client_max_body_size 100M;
+    }
+LOCATIONS
+
+                    # Add stager fallback when profile doesn't define stager URIs
+                    if [ -z "$STAGER_X86_URIS" ] && [ -z "$STAGER_X64_URIS" ]; then
+                        cat << 'LOCATIONS'
+
+    # Stager fallback — profile has no explicit stager URIs
+    # Catches default CS stager paths (short checksum-based URIs)
+    # try_files serves decoy pages first; unknown paths proxy to C2
+    # For better OPSEC, add set uri_x86/uri_x64 to your Malleable profile
+    location ~ ^/[a-zA-Z0-9]{4}$ {
+        root /var/www/html;
+        try_files $uri $uri.html @c2_stager;
+    }
+
+    location @c2_stager {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 60s;
+        proxy_buffering off;
+    }
+LOCATIONS
+                    fi
+                else
+                    echo "    # WARNING: No URIs found in custom_c2_uris JSON"
+                    echo "    # SSH to this redirector and configure manually"
+                fi
+            else
+                # No custom URIs provided — fallback to generic catch-all
+                cat << 'LOCATIONS'
+    # Custom Malleable C2 profile — no auto-parsed URIs available
+    # SSH to this redirector and edit this file:
+    #   sudo nano /etc/nginx/sites-available/c2-redirector
+    # Replace this catch-all with specific URI location blocks
+
+    location ~ ^/(api|assets|static|content)/ {
+        proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 300s;
+        client_max_body_size 100M;
+    }
+LOCATIONS
+            fi
+            ;;
+    esac
+}
+
+# Inject profile-specific C2 location blocks into nginx config
+C2_LOCATIONS=$(generate_nginx_c2_locations)
+sed -i "/# PLACEHOLDER_C2_LOCATIONS/r /dev/stdin" /etc/nginx/sites-available/c2-redirector <<< "$C2_LOCATIONS"
+sed -i "/# PLACEHOLDER_C2_LOCATIONS/d" /etc/nginx/sites-available/c2-redirector
+
+echo "Nginx C2 locations configured for profile: $${MALLEABLE_PROFILE:-default}"
+
 # Replace variables in nginx config
-sed -i "s/\${C2_SERVER_IP}/$C2_SERVER_IP/g" /etc/nginx/sites-available/c2-redirector
-sed -i "s/\${C2_SERVER_PORT}/$C2_SERVER_PORT/g" /etc/nginx/sites-available/c2-redirector
-sed -i "s/\${C2_FQDN}/$C2_FQDN/g" /etc/nginx/sites-available/c2-redirector
-sed -i "s/\${PRIMARY_DOMAIN}/$PRIMARY_DOMAIN/g" /etc/nginx/sites-available/c2-redirector
+sed -i "s/\$${C2_SERVER_IP}/$C2_SERVER_IP/g" /etc/nginx/sites-available/c2-redirector
+sed -i "s/\$${C2_SERVER_PORT}/$C2_SERVER_PORT/g" /etc/nginx/sites-available/c2-redirector
+sed -i "s/\$${C2_FQDN}/$C2_FQDN/g" /etc/nginx/sites-available/c2-redirector
+sed -i "s/\$${PRIMARY_DOMAIN}/$PRIMARY_DOMAIN/g" /etc/nginx/sites-available/c2-redirector
 
 # Enable the site
 ln -sf /etc/nginx/sites-available/c2-redirector /etc/nginx/sites-enabled/
 
 echo "Nginx configured"
+write_step_status 2 "Nginx Config" "ok"
 
 # =============================================================================
 # 3. Create Decoy Website
@@ -347,185 +663,692 @@ echo "[3/5] Creating decoy website..."
 
 mkdir -p /var/www/html
 
-# Create a more realistic decoy website (corporate/SaaS style)
+if [ "$DECOY_THEME" = "meridian-financial" ]; then
+# =============================================================================
+# MERIDIAN FINANCIAL - Meridian Financial Group
+# Traditional financial advisory firm for domain categorization as "Finance"
+# Allows web crawlers to index for classification purposes
+# =============================================================================
+
+cat > /var/www/html/style.css << 'CSSEOF'
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: Georgia, 'Times New Roman', Times, serif;
+    line-height: 1.7;
+    color: #2c2c2c;
+    background: #fafaf8;
+}
+h1, h2, h3, h4 { font-family: Georgia, 'Times New Roman', Times, serif; font-weight: 400; }
+.header {
+    background: #0a1628;
+    padding: 14px 0;
+    border-bottom: 3px solid #8b7535;
+}
+.nav {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 0 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.logo {
+    color: #c9b06b;
+    font-size: 1.35em;
+    font-weight: 400;
+    text-decoration: none;
+    letter-spacing: 1px;
+}
+.nav-links a {
+    color: #b0b8c4;
+    text-decoration: none;
+    margin-left: 28px;
+    font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 0.85em;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+.nav-links a:hover { color: #c9b06b; }
+.hero {
+    background: #0a1628;
+    padding: 100px 20px 80px;
+    text-align: center;
+    color: #e8e4d9;
+    border-bottom: 3px solid #8b7535;
+}
+.hero h1 {
+    font-size: 2.4em;
+    margin-bottom: 18px;
+    font-weight: 400;
+    letter-spacing: 1px;
+    color: #fff;
+}
+.hero p {
+    font-size: 1.05em;
+    max-width: 560px;
+    margin: 0 auto 28px;
+    color: #b0b8c4;
+    line-height: 1.8;
+}
+.hero-sm { padding: 80px 20px 50px; }
+.hero-sm h1 { font-size: 2em; margin-bottom: 8px; }
+.btn {
+    display: inline-block;
+    padding: 12px 36px;
+    background: #8b7535;
+    color: #fff;
+    text-decoration: none;
+    font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 0.85em;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: background 0.3s;
+}
+.btn:hover { background: #a08940; }
+.section {
+    padding: 70px 20px;
+    max-width: 1000px;
+    margin: 0 auto;
+}
+.section h2 {
+    text-align: center;
+    margin-bottom: 16px;
+    font-size: 1.8em;
+    color: #0a1628;
+}
+.section-sub {
+    text-align: center;
+    color: #6b6b6b;
+    margin-bottom: 50px;
+    font-size: 0.95em;
+}
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 28px;
+}
+.card {
+    background: #fff;
+    padding: 32px 28px;
+    border: 1px solid #ddd;
+}
+.card h3 {
+    margin-bottom: 14px;
+    color: #0a1628;
+    font-size: 1.15em;
+}
+.card p { color: #555; font-size: 0.92em; }
+.card ul { color: #555; margin-top: 12px; padding-left: 18px; font-size: 0.92em; }
+.card ul li { margin-bottom: 6px; }
+.text-center { text-align: center; }
+.text-muted { color: #6b6b6b; }
+.mt-20 { margin-top: 20px; }
+.divider {
+    width: 60px;
+    height: 2px;
+    background: #8b7535;
+    margin: 0 auto 40px;
+}
+.footer {
+    background: #0a1628;
+    color: #7a8494;
+    padding: 40px 20px 20px;
+    font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 0.82em;
+}
+.footer-inner {
+    max-width: 1000px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    flex-wrap: wrap;
+    gap: 30px;
+}
+.footer-col h4 { color: #c9b06b; margin-bottom: 10px; font-size: 0.9em; letter-spacing: 1px; text-transform: uppercase; font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+.footer-col a { color: #7a8494; text-decoration: none; display: block; margin-bottom: 5px; }
+.footer-col a:hover { color: #c9b06b; }
+.footer-col p { line-height: 1.8; }
+.footer-bottom { margin-top: 30px; padding-top: 16px; border-top: 1px solid #1e2d44; text-align: center; }
+.footer-bottom p { font-size: 0.8em; color: #5a6474; }
+.disclaimer {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 20px 20px 0;
+    font-size: 0.72em;
+    color: #5a6474;
+    line-height: 1.7;
+    border-top: 1px solid #1e2d44;
+}
+/* Contact form */
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; margin-bottom: 4px; font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; font-size: 0.82em; color: #444; letter-spacing: 0.3px; }
+.form-group input, .form-group select, .form-group textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid #ccc; font-size: 0.92em; font-family: Georgia, 'Times New Roman', serif;
+}
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    outline: none; border-color: #8b7535;
+}
+CSSEOF
+
+# Homepage
 cat > /var/www/html/index.html << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Enterprise cloud solutions for modern businesses">
-    <meta name="robots" content="noindex, nofollow">
-    <title>CloudSync Solutions | Enterprise Data Management</title>
+    <meta name="description" content="Meridian Financial Group provides wealth management, investment advisory, and financial planning services for individuals and institutions.">
+    <meta name="keywords" content="wealth management, financial planning, investment advisory, portfolio management, retirement planning, estate planning, fiduciary, financial advisor">
+    <title>Meridian Financial Group | Wealth Management &amp; Investment Advisory</title>
     <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background: #f8f9fa;
-        }
-        .header {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            padding: 15px 0;
-            position: fixed;
-            width: 100%;
-            top: 0;
-            z-index: 1000;
-        }
-        .nav {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .logo {
-            color: #fff;
-            font-size: 1.5em;
-            font-weight: 700;
-            text-decoration: none;
-        }
-        .logo span { color: #4a9eff; }
-        .nav-links a {
-            color: #ccc;
-            text-decoration: none;
-            margin-left: 30px;
-            font-size: 0.95em;
-            transition: color 0.3s;
-        }
-        .nav-links a:hover { color: #fff; }
-        .hero {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-            padding: 150px 20px 100px;
-            text-align: center;
-            color: #fff;
-        }
-        .hero h1 {
-            font-size: 2.8em;
-            margin-bottom: 20px;
-            font-weight: 700;
-        }
-        .hero p {
-            font-size: 1.2em;
-            opacity: 0.9;
-            max-width: 600px;
-            margin: 0 auto 30px;
-        }
-        .btn {
-            display: inline-block;
-            padding: 15px 40px;
-            background: #4a9eff;
-            color: #fff;
-            text-decoration: none;
-            border-radius: 5px;
-            font-weight: 600;
-            transition: background 0.3s;
-        }
-        .btn:hover { background: #3a8eef; }
-        .features {
-            padding: 80px 20px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        .features h2 {
-            text-align: center;
-            margin-bottom: 50px;
-            font-size: 2em;
-        }
-        .feature-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 30px;
-        }
-        .feature-card {
-            background: #fff;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
-        }
-        .feature-card h3 {
-            margin-bottom: 15px;
-            color: #1a1a2e;
-        }
-        .feature-card p { color: #666; }
-        .footer {
-            background: #1a1a2e;
-            color: #999;
-            padding: 40px 20px;
-            text-align: center;
-        }
-        .footer p { font-size: 0.9em; }
-    </style>
+    <link rel="stylesheet" href="/style.css">
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "FinancialService",
+        "name": "Meridian Financial Group",
+        "description": "Wealth management and investment advisory services.",
+        "url": "https://meridianfinancialgroup.org",
+        "serviceType": ["Wealth Management", "Investment Advisory", "Financial Planning", "Retirement Planning"]
+    }
+    </script>
 </head>
 <body>
     <header class="header">
         <nav class="nav">
-            <a href="/" class="logo">Cloud<span>Sync</span></a>
+            <a href="/" class="logo">Meridian Financial Group</a>
             <div class="nav-links">
-                <a href="#">Solutions</a>
-                <a href="#">Pricing</a>
-                <a href="#">Documentation</a>
-                <a href="#">Contact</a>
+                <a href="/services">Services</a>
+                <a href="/approach">Our Approach</a>
+                <a href="/contact">Contact</a>
             </div>
         </nav>
     </header>
-    
+
     <section class="hero">
-        <h1>Enterprise Data Synchronization</h1>
-        <p>Secure, scalable cloud infrastructure for modern enterprises. Streamline your data workflows with our industry-leading platform.</p>
-        <a href="#" class="btn">Request Demo</a>
+        <h1>Disciplined Wealth Management</h1>
+        <p>Providing independent financial counsel and investment management to individuals, families, and institutions since 2008.</p>
+        <a href="/contact" class="btn">Schedule a Consultation</a>
     </section>
-    
-    <section class="features">
-        <h2>Why Choose CloudSync?</h2>
-        <div class="feature-grid">
-            <div class="feature-card">
-                <h3>🔒 Enterprise Security</h3>
-                <p>SOC 2 Type II certified with end-to-end encryption. Your data is protected with industry-leading security standards.</p>
+
+    <section class="section">
+        <h2>Our Services</h2>
+        <div class="divider"></div>
+        <div class="grid">
+            <div class="card">
+                <h3>Wealth Management</h3>
+                <p>Comprehensive wealth management built around your objectives. We work with clients to develop long-term strategies encompassing investment management, tax planning, and estate considerations.</p>
             </div>
-            <div class="feature-card">
-                <h3>⚡ Real-time Sync</h3>
-                <p>Millisecond latency data synchronization across all your systems. Keep your teams aligned in real-time.</p>
+            <div class="card">
+                <h3>Investment Advisory</h3>
+                <p>Objective, research-driven portfolio construction. Our investment committee employs a disciplined approach to asset allocation, diversification, and risk management across market cycles.</p>
             </div>
-            <div class="feature-card">
-                <h3>📊 Advanced Analytics</h3>
-                <p>Comprehensive dashboards and reporting tools to help you make data-driven decisions.</p>
+            <div class="card">
+                <h3>Retirement Planning</h3>
+                <p>Detailed retirement income analysis and distribution planning. We help clients evaluate their readiness and structure portfolios to support sustainable income through retirement.</p>
             </div>
         </div>
     </section>
-    
+
+    <section style="background: #fff; padding: 70px 20px; border-top: 1px solid #e8e4d9; border-bottom: 1px solid #e8e4d9;">
+        <div style="max-width: 1000px; margin: 0 auto;">
+            <h2 style="text-align: center; margin-bottom: 16px; font-size: 1.8em; color: #0a1628;">Why Clients Work With Us</h2>
+            <div class="divider"></div>
+            <div class="grid">
+                <div style="text-align: center; padding: 20px;">
+                    <div style="font-size: 1.1em; color: #0a1628; margin-bottom: 6px; font-weight: 600;">Fiduciary Standard</div>
+                    <p class="text-muted" style="font-size: 0.9em;">We act solely in our clients' interest. No commissions, no proprietary products, no conflicts of interest.</p>
+                </div>
+                <div style="text-align: center; padding: 20px;">
+                    <div style="font-size: 1.1em; color: #0a1628; margin-bottom: 6px; font-weight: 600;">Independent Counsel</div>
+                    <p class="text-muted" style="font-size: 0.9em;">We are not affiliated with any bank, brokerage, or insurance company. Our advice is independent.</p>
+                </div>
+                <div style="text-align: center; padding: 20px;">
+                    <div style="font-size: 1.1em; color: #0a1628; margin-bottom: 6px; font-weight: 600;">Disciplined Process</div>
+                    <p class="text-muted" style="font-size: 0.9em;">Our investment approach is grounded in fundamental analysis, long-term thinking, and cost-conscious implementation.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section text-center">
+        <h2>Begin a Conversation</h2>
+        <div class="divider"></div>
+        <p class="text-muted" style="max-width: 480px; margin: 0 auto 28px; font-size: 0.95em;">We welcome the opportunity to learn about your financial situation and discuss how we may be of service.</p>
+        <a href="/contact" class="btn">Contact Our Team</a>
+    </section>
+
     <footer class="footer">
-        <p>&copy; 2024 CloudSync Solutions. All rights reserved.</p>
+        <div class="footer-inner">
+            <div class="footer-col">
+                <a href="/" class="logo" style="font-size: 1.1em;">Meridian Financial Group</a>
+                <p style="margin-top: 8px;">Wealth management and<br>investment advisory services.</p>
+            </div>
+            <div class="footer-col">
+                <h4>Services</h4>
+                <a href="/services">Wealth Management</a>
+                <a href="/services">Investment Advisory</a>
+                <a href="/services">Retirement Planning</a>
+            </div>
+            <div class="footer-col">
+                <h4>Firm</h4>
+                <a href="/approach">Our Approach</a>
+                <a href="/contact">Contact</a>
+            </div>
+            <div class="footer-col">
+                <h4>Legal</h4>
+                <a href="#">Privacy Policy</a>
+                <a href="#">Disclosures</a>
+                <a href="#">Form ADV</a>
+            </div>
+        </div>
+        <div class="disclaimer">
+            <p>Meridian Financial Group is a registered investment adviser. Information presented is for educational purposes and does not intend to make an offer or solicitation for the sale or purchase of any securities. Investments involve risk and are not guaranteed. Past performance is not indicative of future results. Consult with a qualified financial adviser before making investment decisions.</p>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2024 Meridian Financial Group. All rights reserved.</p>
+        </div>
     </footer>
 </body>
 </html>
 HTMLEOF
 
-# Create custom error pages
+# Services page
+cat > /var/www/html/services.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Meridian Financial Group offers wealth management, investment advisory, retirement planning, and estate planning services.">
+    <meta name="keywords" content="wealth management services, financial advisory, portfolio management, retirement income planning, estate planning, tax planning, fiduciary advisor">
+    <title>Services | Meridian Financial Group</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">Meridian Financial Group</a>
+            <div class="nav-links">
+                <a href="/services">Services</a>
+                <a href="/approach">Our Approach</a>
+                <a href="/contact">Contact</a>
+            </div>
+        </nav>
+    </header>
+
+    <section class="hero hero-sm">
+        <h1>Our Services</h1>
+        <p>Comprehensive financial counsel tailored to each client relationship.</p>
+    </section>
+
+    <section class="section">
+        <div class="grid">
+            <div class="card">
+                <h3>Wealth Management</h3>
+                <p>A coordinated approach to managing your financial life. We integrate investment management with tax planning, cash flow analysis, and estate considerations to provide a complete picture.</p>
+                <ul>
+                    <li>Customised portfolio construction</li>
+                    <li>Tax-efficient investment strategies</li>
+                    <li>Ongoing financial plan reviews</li>
+                    <li>Coordination with your legal and tax advisers</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Investment Advisory</h3>
+                <p>Research-driven portfolio management grounded in long-term fundamentals. We focus on asset allocation, diversification, and cost management to pursue consistent outcomes.</p>
+                <ul>
+                    <li>Strategic and tactical asset allocation</li>
+                    <li>Fixed income and equity analysis</li>
+                    <li>Alternative investment evaluation</li>
+                    <li>Quarterly performance reporting</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Retirement Planning</h3>
+                <p>Detailed analysis of retirement readiness, income sourcing, and distribution strategies. We help clients approach retirement with clarity and confidence.</p>
+                <ul>
+                    <li>Retirement income projections</li>
+                    <li>Social Security optimisation</li>
+                    <li>Required minimum distribution planning</li>
+                    <li>Healthcare cost analysis</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <section style="background: #fff; padding: 70px 20px; border-top: 1px solid #e8e4d9;">
+        <div style="max-width: 1000px; margin: 0 auto;">
+            <h2 style="text-align: center; margin-bottom: 16px; font-size: 1.8em; color: #0a1628;">Additional Capabilities</h2>
+            <div class="divider"></div>
+            <div class="grid">
+                <div class="card">
+                    <h3>Estate Planning Coordination</h3>
+                    <p>We work alongside your solicitors and accountants to ensure your estate plan reflects your current wishes and is structured efficiently for wealth transfer.</p>
+                </div>
+                <div class="card">
+                    <h3>Institutional Advisory</h3>
+                    <p>Investment advisory and governance support for endowments, foundations, and corporate pension schemes. We bring the same discipline we apply to individual portfolios.</p>
+                </div>
+                <div class="card">
+                    <h3>Risk Management</h3>
+                    <p>Evaluation of insurance needs, liability exposure, and portfolio risk. We help clients understand and manage the risks that could affect their long-term financial position.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section text-center">
+        <h2>Discuss Your Needs</h2>
+        <div class="divider"></div>
+        <p class="text-muted" style="max-width: 480px; margin: 0 auto 28px; font-size: 0.95em;">Every engagement begins with understanding. We are happy to discuss how our services may align with your requirements.</p>
+        <a href="/contact" class="btn">Get in Touch</a>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-inner">
+            <div class="footer-col">
+                <a href="/" class="logo" style="font-size: 1.1em;">Meridian Financial Group</a>
+                <p style="margin-top: 8px;">Wealth management and<br>investment advisory services.</p>
+            </div>
+            <div class="footer-col">
+                <h4>Services</h4>
+                <a href="/services">Wealth Management</a>
+                <a href="/services">Investment Advisory</a>
+                <a href="/services">Retirement Planning</a>
+            </div>
+            <div class="footer-col">
+                <h4>Firm</h4>
+                <a href="/approach">Our Approach</a>
+                <a href="/contact">Contact</a>
+            </div>
+            <div class="footer-col">
+                <h4>Legal</h4>
+                <a href="#">Privacy Policy</a>
+                <a href="#">Disclosures</a>
+                <a href="#">Form ADV</a>
+            </div>
+        </div>
+        <div class="disclaimer">
+            <p>Meridian Financial Group is a registered investment adviser. Information presented is for educational purposes and does not intend to make an offer or solicitation for the sale or purchase of any securities. Investments involve risk and are not guaranteed. Past performance is not indicative of future results.</p>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2024 Meridian Financial Group. All rights reserved.</p>
+        </div>
+    </footer>
+</body>
+</html>
+HTMLEOF
+
+# Our Approach page
+cat > /var/www/html/approach.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Our investment philosophy and approach to wealth management. Meridian Financial Group employs a disciplined, long-term fiduciary approach to financial planning and portfolio management.">
+    <meta name="keywords" content="investment philosophy, fiduciary financial advisor, long-term investing, asset allocation strategy, risk management, financial planning process">
+    <title>Our Approach | Meridian Financial Group</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">Meridian Financial Group</a>
+            <div class="nav-links">
+                <a href="/services">Services</a>
+                <a href="/approach">Our Approach</a>
+                <a href="/contact">Contact</a>
+            </div>
+        </nav>
+    </header>
+
+    <section class="hero hero-sm">
+        <h1>Our Approach</h1>
+        <p>A principled framework for managing wealth across generations.</p>
+    </section>
+
+    <section class="section">
+        <h2>Investment Philosophy</h2>
+        <div class="divider"></div>
+        <div style="max-width: 700px; margin: 0 auto;">
+            <p style="color: #555; margin-bottom: 20px; font-size: 0.95em;">Our investment philosophy is built on the belief that disciplined, long-term investing produces better outcomes than attempting to time markets or chase short-term performance. We focus on fundamental value, broad diversification, and keeping costs low.</p>
+            <p style="color: #555; margin-bottom: 20px; font-size: 0.95em;">We construct portfolios using a combination of individual securities, index funds, and select active managers where we believe skill-based returns are achievable. Each portfolio is tailored to the client's risk tolerance, time horizon, income needs, and tax situation.</p>
+            <p style="color: #555; font-size: 0.95em;">We rebalance systematically and review allocations as client circumstances evolve. Our role is to provide steady counsel and prevent emotional decision-making during periods of market stress.</p>
+        </div>
+    </section>
+
+    <section style="background: #fff; padding: 70px 20px; border-top: 1px solid #e8e4d9;">
+        <div style="max-width: 1000px; margin: 0 auto;">
+            <h2 style="text-align: center; margin-bottom: 16px; font-size: 1.8em; color: #0a1628;">Our Process</h2>
+            <div class="divider"></div>
+            <div class="grid">
+                <div class="card">
+                    <h3>1. Discovery</h3>
+                    <p>We begin by understanding your complete financial picture, including assets, liabilities, income sources, tax situation, estate structure, and most importantly, your goals and concerns.</p>
+                </div>
+                <div class="card">
+                    <h3>2. Plan Development</h3>
+                    <p>Based on our findings, we develop a written financial plan and investment policy statement that serves as the foundation for all recommendations and portfolio decisions.</p>
+                </div>
+                <div class="card">
+                    <h3>3. Implementation</h3>
+                    <p>We implement the agreed strategy through careful security selection, account structuring, and tax-aware transitions. We handle custodial paperwork and coordinate with your other advisers.</p>
+                </div>
+            </div>
+            <div style="margin-top: 28px;">
+                <div class="grid">
+                    <div class="card">
+                        <h3>4. Ongoing Management</h3>
+                        <p>Portfolios are monitored continuously and rebalanced as needed. We provide quarterly reporting and make adjustments in response to changes in your life or the markets.</p>
+                    </div>
+                    <div class="card">
+                        <h3>5. Regular Review</h3>
+                        <p>We meet with clients at least annually to review progress, update assumptions, and ensure the financial plan remains aligned with evolving circumstances and objectives.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section text-center">
+        <h2>Start the Conversation</h2>
+        <div class="divider"></div>
+        <p class="text-muted" style="max-width: 480px; margin: 0 auto 28px; font-size: 0.95em;">We are committed to understanding each client before making any recommendations. There is no obligation and no cost for an initial discussion.</p>
+        <a href="/contact" class="btn">Schedule a Meeting</a>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-inner">
+            <div class="footer-col">
+                <a href="/" class="logo" style="font-size: 1.1em;">Meridian Financial Group</a>
+                <p style="margin-top: 8px;">Wealth management and<br>investment advisory services.</p>
+            </div>
+            <div class="footer-col">
+                <h4>Services</h4>
+                <a href="/services">Wealth Management</a>
+                <a href="/services">Investment Advisory</a>
+                <a href="/services">Retirement Planning</a>
+            </div>
+            <div class="footer-col">
+                <h4>Firm</h4>
+                <a href="/approach">Our Approach</a>
+                <a href="/contact">Contact</a>
+            </div>
+            <div class="footer-col">
+                <h4>Legal</h4>
+                <a href="#">Privacy Policy</a>
+                <a href="#">Disclosures</a>
+                <a href="#">Form ADV</a>
+            </div>
+        </div>
+        <div class="disclaimer">
+            <p>Meridian Financial Group is a registered investment adviser. Information presented is for educational purposes and does not intend to make an offer or solicitation for the sale or purchase of any securities. Investments involve risk and are not guaranteed. Past performance is not indicative of future results.</p>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2024 Meridian Financial Group. All rights reserved.</p>
+        </div>
+    </footer>
+</body>
+</html>
+HTMLEOF
+
+# Contact page
+cat > /var/www/html/contact.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Contact Meridian Financial Group to schedule a consultation about wealth management, investment advisory, or financial planning services.">
+    <meta name="keywords" content="contact financial advisor, wealth management consultation, investment advisory meeting, financial planning appointment">
+    <title>Contact | Meridian Financial Group</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">Meridian Financial Group</a>
+            <div class="nav-links">
+                <a href="/services">Services</a>
+                <a href="/approach">Our Approach</a>
+                <a href="/contact">Contact</a>
+            </div>
+        </nav>
+    </header>
+
+    <section class="hero hero-sm">
+        <h1>Contact Us</h1>
+        <p>We welcome the opportunity to discuss your financial needs.</p>
+    </section>
+
+    <section class="section">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 60px; max-width: 860px; margin: 0 auto;">
+            <div>
+                <h2 style="margin-bottom: 24px; font-size: 1.4em;">Request a Consultation</h2>
+                <form onsubmit="event.preventDefault(); this.innerHTML='<p style=padding:40px;text-align:center;color:#555;>Thank you for your enquiry. A member of our team will be in touch within two business days.</p>'; return false;">
+                    <div class="form-group">
+                        <label>Full Name</label>
+                        <input type="text" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Email Address</label>
+                        <input type="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Telephone</label>
+                        <input type="tel">
+                    </div>
+                    <div class="form-group">
+                        <label>Area of Interest</label>
+                        <select>
+                            <option>Wealth Management</option>
+                            <option>Investment Advisory</option>
+                            <option>Retirement Planning</option>
+                            <option>Estate Planning</option>
+                            <option>General Enquiry</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Message</label>
+                        <textarea rows="4"></textarea>
+                    </div>
+                    <button type="submit" class="btn" style="border: none; cursor: pointer; font-size: 0.85em;">Submit Enquiry</button>
+                </form>
+            </div>
+            <div style="padding-top: 50px;">
+                <div style="margin-bottom: 28px;">
+                    <h3 style="margin-bottom: 6px; color: #0a1628; font-size: 1.05em;">Office</h3>
+                    <p class="text-muted" style="font-size: 0.92em;">48 Moorgate, 3rd Floor<br>London, EC2R 6EJ</p>
+                </div>
+                <div style="margin-bottom: 28px;">
+                    <h3 style="margin-bottom: 6px; color: #0a1628; font-size: 1.05em;">Enquiries</h3>
+                    <p class="text-muted" style="font-size: 0.92em;">enquiries@meridianfinancialgroup.org</p>
+                </div>
+                <div style="margin-bottom: 28px;">
+                    <h3 style="margin-bottom: 6px; color: #0a1628; font-size: 1.05em;">Telephone</h3>
+                    <p class="text-muted" style="font-size: 0.92em;">+44 (0)20 7946 0328</p>
+                </div>
+                <div>
+                    <h3 style="margin-bottom: 6px; color: #0a1628; font-size: 1.05em;">Hours</h3>
+                    <p class="text-muted" style="font-size: 0.92em;">Monday to Friday, 9:00 - 17:30</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-inner">
+            <div class="footer-col">
+                <a href="/" class="logo" style="font-size: 1.1em;">Meridian Financial Group</a>
+                <p style="margin-top: 8px;">Wealth management and<br>investment advisory services.</p>
+            </div>
+            <div class="footer-col">
+                <h4>Services</h4>
+                <a href="/services">Wealth Management</a>
+                <a href="/services">Investment Advisory</a>
+                <a href="/services">Retirement Planning</a>
+            </div>
+            <div class="footer-col">
+                <h4>Firm</h4>
+                <a href="/approach">Our Approach</a>
+                <a href="/contact">Contact</a>
+            </div>
+            <div class="footer-col">
+                <h4>Legal</h4>
+                <a href="#">Privacy Policy</a>
+                <a href="#">Disclosures</a>
+                <a href="#">Form ADV</a>
+            </div>
+        </div>
+        <div class="disclaimer">
+            <p>Meridian Financial Group is a registered investment adviser. Information presented is for educational purposes and does not intend to make an offer or solicitation for the sale or purchase of any securities. Investments involve risk and are not guaranteed. Past performance is not indicative of future results.</p>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2024 Meridian Financial Group. All rights reserved.</p>
+        </div>
+    </footer>
+</body>
+</html>
+HTMLEOF
+
+# Error pages
 cat > /var/www/html/404.html << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Page Not Found | CloudSync</title>
-    <style>
-        body { font-family: -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f8f9fa; }
-        .container { text-align: center; padding: 40px; }
-        h1 { font-size: 6em; color: #1a1a2e; margin: 0; }
-        p { color: #666; margin: 20px 0; }
-        a { color: #4a9eff; text-decoration: none; }
-    </style>
+    <title>Page Not Found | Meridian Financial Group</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>404</h1>
-        <p>The page you're looking for doesn't exist.</p>
-        <a href="/">Return to Homepage</a>
-    </div>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">Meridian Financial Group</a>
+            <div class="nav-links">
+                <a href="/services">Services</a>
+                <a href="/approach">Our Approach</a>
+                <a href="/contact">Contact</a>
+            </div>
+        </nav>
+    </header>
+    <section class="hero hero-sm">
+        <h1 style="font-size: 4em; margin-bottom: 10px;">404</h1>
+        <p>The page you requested could not be found.</p>
+        <div class="mt-20"><a href="/" class="btn">Return to Home</a></div>
+    </section>
+    <footer class="footer">
+        <div class="footer-bottom" style="border: none; margin: 0; padding: 0;">
+            <p>&copy; 2024 Meridian Financial Group. All rights reserved.</p>
+        </div>
+    </footer>
 </body>
 </html>
 HTMLEOF
@@ -536,30 +1359,1314 @@ cat > /var/www/html/50x.html << 'HTMLEOF'
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Service Unavailable | CloudSync</title>
-    <style>
-        body { font-family: -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f8f9fa; }
-        .container { text-align: center; padding: 40px; }
-        h1 { font-size: 3em; color: #1a1a2e; margin: 0; }
-        p { color: #666; margin: 20px 0; }
-    </style>
+    <title>Service Unavailable | Meridian Financial Group</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>Service Temporarily Unavailable</h1>
-        <p>We're performing scheduled maintenance. Please try again later.</p>
-    </div>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">Meridian Financial Group</a>
+            <div class="nav-links">
+                <a href="/services">Services</a>
+                <a href="/approach">Our Approach</a>
+                <a href="/contact">Contact</a>
+            </div>
+        </nav>
+    </header>
+    <section class="hero hero-sm">
+        <h1>Temporarily Unavailable</h1>
+        <p>We are performing scheduled maintenance. Please try again shortly.</p>
+    </section>
+    <footer class="footer">
+        <div class="footer-bottom" style="border: none; margin: 0; padding: 0;">
+            <p>&copy; 2024 Meridian Financial Group. All rights reserved.</p>
+        </div>
+    </footer>
 </body>
 </html>
 HTMLEOF
 
-# Create robots.txt to discourage crawlers
+# robots.txt - ALLOW crawlers for domain categorization
+cat > /var/www/html/robots.txt << 'ROBOTSEOF'
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /wp-admin
+
+Sitemap: https://meridianfinancialgroup.org/sitemap.xml
+ROBOTSEOF
+
+# sitemap.xml - helps categorization crawlers discover all pages
+cat > /var/www/html/sitemap.xml << 'SITEMAPEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url><loc>https://meridianfinancialgroup.org/</loc><priority>1.0</priority></url>
+    <url><loc>https://meridianfinancialgroup.org/services</loc><priority>0.8</priority></url>
+    <url><loc>https://meridianfinancialgroup.org/approach</loc><priority>0.8</priority></url>
+    <url><loc>https://meridianfinancialgroup.org/contact</loc><priority>0.7</priority></url>
+</urlset>
+SITEMAPEOF
+
+echo "Finance decoy website created (Meridian Financial Group)"
+
+else
+# =============================================================================
+# PLEXURA - Plexura Managed Solutions (default)
+# Generic SaaS company, blocks crawlers
+# =============================================================================
+
+cat > /var/www/html/style.css << 'CSSEOF'
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background: #f8f9fa;
+}
+.header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    padding: 15px 0;
+    position: fixed;
+    width: 100%;
+    top: 0;
+    z-index: 1000;
+}
+.nav {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.logo {
+    color: #fff;
+    font-size: 1.5em;
+    font-weight: 700;
+    text-decoration: none;
+}
+.logo span { color: #4a9eff; }
+.nav-links a {
+    color: #ccc;
+    text-decoration: none;
+    margin-left: 30px;
+    font-size: 0.95em;
+    transition: color 0.3s;
+}
+.nav-links a:hover { color: #fff; }
+.hero {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    padding: 150px 20px 100px;
+    text-align: center;
+    color: #fff;
+}
+.hero h1 {
+    font-size: 2.8em;
+    margin-bottom: 20px;
+    font-weight: 700;
+}
+.hero p {
+    font-size: 1.2em;
+    opacity: 0.9;
+    max-width: 600px;
+    margin: 0 auto 30px;
+}
+.hero-sm { padding: 130px 20px 60px; }
+.hero-sm h1 { font-size: 2.2em; margin-bottom: 10px; }
+.btn {
+    display: inline-block;
+    padding: 15px 40px;
+    background: #4a9eff;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 5px;
+    font-weight: 600;
+    transition: background 0.3s;
+}
+.btn:hover { background: #3a8eef; }
+.btn-outline {
+    background: transparent;
+    border: 2px solid #4a9eff;
+    color: #4a9eff;
+}
+.btn-outline:hover { background: #4a9eff; color: #fff; }
+.section {
+    padding: 80px 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+.section h2 {
+    text-align: center;
+    margin-bottom: 50px;
+    font-size: 2em;
+}
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 30px;
+}
+.card {
+    background: #fff;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+}
+.card h3 {
+    margin-bottom: 15px;
+    color: #1a1a2e;
+}
+.card p { color: #666; }
+.card ul { color: #666; margin-top: 10px; padding-left: 20px; }
+.card ul li { margin-bottom: 8px; }
+.text-center { text-align: center; }
+.text-muted { color: #666; }
+.mt-20 { margin-top: 20px; }
+.mt-40 { margin-top: 40px; }
+.mb-20 { margin-bottom: 20px; }
+.footer {
+    background: #1a1a2e;
+    color: #999;
+    padding: 40px 20px;
+    text-align: center;
+}
+.footer-inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    flex-wrap: wrap;
+    gap: 30px;
+    text-align: left;
+}
+.footer-col h4 { color: #ccc; margin-bottom: 12px; font-size: 0.95em; }
+.footer-col a { color: #888; text-decoration: none; display: block; margin-bottom: 6px; font-size: 0.85em; }
+.footer-col a:hover { color: #4a9eff; }
+.footer-col p { font-size: 0.85em; line-height: 1.8; }
+.footer-bottom { margin-top: 30px; padding-top: 20px; border-top: 1px solid #2a2a4e; text-align: center; }
+.footer-bottom p { font-size: 0.85em; }
+/* Pricing */
+.price { font-size: 2em; font-weight: 700; color: #1a1a2e; margin: 15px 0 5px; }
+.price-sub { font-size: 0.85em; color: #999; margin-bottom: 20px; }
+.card-highlight { border: 2px solid #4a9eff; }
+/* Contact form */
+.form-group { margin-bottom: 18px; }
+.form-group label { display: block; margin-bottom: 5px; font-weight: 500; color: #444; font-size: 0.9em; }
+.form-group input, .form-group select, .form-group textarea {
+    width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 5px;
+    font-size: 0.95em; font-family: inherit; transition: border 0.3s;
+}
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    outline: none; border-color: #4a9eff;
+}
+/* Trusted by bar */
+.trusted {
+    background: #fff;
+    padding: 40px 20px;
+    text-align: center;
+    border-bottom: 1px solid #eee;
+}
+.trusted p { color: #999; font-size: 0.85em; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 15px; }
+.trusted-logos { display: flex; justify-content: center; gap: 50px; flex-wrap: wrap; opacity: 0.4; font-size: 1.4em; color: #666; font-weight: 600; }
+CSSEOF
+
+# Homepage
+cat > /var/www/html/index.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Enterprise cloud solutions for modern businesses">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Plexura Managed Solutions | Managed Cloud Services</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">Plexura<span>MS</span></a>
+            <div class="nav-links">
+                <a href="/solutions">Solutions</a>
+                <a href="/pricing">Pricing</a>
+                <a href="/contact">Contact</a>
+            </div>
+        </nav>
+    </header>
+
+    <section class="hero">
+        <h1>Managed Cloud Infrastructure</h1>
+        <p>Secure, scalable managed services for modern enterprises. Simplify your cloud operations with our end-to-end platform.</p>
+        <a href="/contact" class="btn">Request Demo</a>
+    </section>
+
+    <div class="trusted">
+        <p>Trusted by teams worldwide</p>
+        <div class="trusted-logos">
+            <span>Meridian Corp</span>
+            <span>Axion Systems</span>
+            <span>NovaBridge</span>
+            <span>Stratos.io</span>
+        </div>
+    </div>
+
+    <section class="section">
+        <h2>Why Choose Plexura MS?</h2>
+        <div class="grid">
+            <div class="card">
+                <h3>Enterprise Security</h3>
+                <p>SOC 2 Type II certified with end-to-end encryption. Your data is protected with industry-leading security standards and zero-trust architecture.</p>
+            </div>
+            <div class="card">
+                <h3>Real-time Sync</h3>
+                <p>Millisecond latency data synchronization across all your systems. Keep your teams aligned with bi-directional replication.</p>
+            </div>
+            <div class="card">
+                <h3>Advanced Analytics</h3>
+                <p>Comprehensive dashboards and reporting tools to help you make data-driven decisions with real-time visibility.</p>
+            </div>
+        </div>
+    </section>
+
+    <section style="background: #fff; padding: 80px 20px;">
+        <div style="max-width: 1200px; margin: 0 auto;">
+            <h2 style="text-align: center; margin-bottom: 50px; font-size: 2em;">Built for Scale</h2>
+            <div class="grid">
+                <div style="text-align: center; padding: 20px;">
+                    <div style="font-size: 2.5em; font-weight: 700; color: #4a9eff;">99.99%</div>
+                    <p class="text-muted">Uptime SLA</p>
+                </div>
+                <div style="text-align: center; padding: 20px;">
+                    <div style="font-size: 2.5em; font-weight: 700; color: #4a9eff;">50+</div>
+                    <p class="text-muted">Global Regions</p>
+                </div>
+                <div style="text-align: center; padding: 20px;">
+                    <div style="font-size: 2.5em; font-weight: 700; color: #4a9eff;">10M+</div>
+                    <p class="text-muted">Events per Second</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section text-center">
+        <h2>Ready to get started?</h2>
+        <p class="text-muted" style="max-width: 500px; margin: 0 auto 30px;">Join hundreds of organisations already using Plexura to manage their cloud infrastructure.</p>
+        <a href="/contact" class="btn">Talk to Sales</a>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-inner">
+            <div class="footer-col">
+                <a href="/" class="logo" style="font-size: 1.3em;">Plexura<span>MS</span></a>
+                <p style="margin-top: 10px;">Managed cloud infrastructure<br>for modern enterprises.</p>
+            </div>
+            <div class="footer-col">
+                <h4>Product</h4>
+                <a href="/solutions">Solutions</a>
+                <a href="/pricing">Pricing</a>
+                <a href="#">Changelog</a>
+            </div>
+            <div class="footer-col">
+                <h4>Company</h4>
+                <a href="#">About</a>
+                <a href="#">Careers</a>
+                <a href="/contact">Contact</a>
+            </div>
+            <div class="footer-col">
+                <h4>Legal</h4>
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2024 Plexura Managed Solutions. All rights reserved.</p>
+        </div>
+    </footer>
+</body>
+</html>
+HTMLEOF
+
+# Solutions page
+cat > /var/www/html/solutions.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Solutions | Plexura</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">Plexura<span>MS</span></a>
+            <div class="nav-links">
+                <a href="/solutions">Solutions</a>
+                <a href="/pricing">Pricing</a>
+                <a href="/contact">Contact</a>
+            </div>
+        </nav>
+    </header>
+
+    <section class="hero hero-sm">
+        <h1>Solutions</h1>
+        <p>Purpose-built data infrastructure for every team and use case.</p>
+    </section>
+
+    <section class="section">
+        <div class="grid">
+            <div class="card">
+                <h3>Data Replication</h3>
+                <p>Real-time, bi-directional data replication across cloud providers, on-premises databases, and hybrid environments.</p>
+                <ul>
+                    <li>Cross-cloud sync (AWS, Azure, GCP)</li>
+                    <li>Schema migration and versioning</li>
+                    <li>Conflict resolution policies</li>
+                    <li>Sub-second replication lag</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Stream Processing</h3>
+                <p>Process and transform data streams in real-time with our managed event pipeline infrastructure.</p>
+                <ul>
+                    <li>Event-driven architecture</li>
+                    <li>Custom transformation rules</li>
+                    <li>Dead letter queue handling</li>
+                    <li>Exactly-once delivery guarantees</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Managed ETL</h3>
+                <p>Fully managed extract, transform, and load pipelines with built-in monitoring and error handling.</p>
+                <ul>
+                    <li>200+ pre-built connectors</li>
+                    <li>Visual pipeline builder</li>
+                    <li>Incremental loading</li>
+                    <li>Data quality checks</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <section style="background: #fff; padding: 80px 20px;">
+        <div style="max-width: 1200px; margin: 0 auto;">
+            <h2 style="text-align: center; margin-bottom: 50px; font-size: 2em;">Enterprise Ready</h2>
+            <div class="grid">
+                <div class="card">
+                    <h3>Security & Compliance</h3>
+                    <p>SOC 2 Type II, HIPAA, and GDPR compliant. All data encrypted in transit and at rest with customer-managed keys.</p>
+                </div>
+                <div class="card">
+                    <h3>High Availability</h3>
+                    <p>Multi-region deployment with automatic failover. 99.99% uptime SLA backed by enterprise support agreements.</p>
+                </div>
+                <div class="card">
+                    <h3>Observability</h3>
+                    <p>Built-in monitoring, alerting, and tracing. Integrates with Datadog, PagerDuty, Splunk, and more.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section text-center">
+        <h2>See Plexura in action</h2>
+        <p class="text-muted" style="max-width: 500px; margin: 0 auto 30px;">Our team can walk you through a personalized demo based on your use case.</p>
+        <a href="/contact" class="btn">Schedule a Demo</a>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-inner">
+            <div class="footer-col">
+                <a href="/" class="logo" style="font-size: 1.3em;">Plexura<span>MS</span></a>
+                <p style="margin-top: 10px;">Managed cloud infrastructure<br>for modern enterprises.</p>
+            </div>
+            <div class="footer-col">
+                <h4>Product</h4>
+                <a href="/solutions">Solutions</a>
+                <a href="/pricing">Pricing</a>
+                <a href="#">Changelog</a>
+            </div>
+            <div class="footer-col">
+                <h4>Company</h4>
+                <a href="#">About</a>
+                <a href="#">Careers</a>
+                <a href="/contact">Contact</a>
+            </div>
+            <div class="footer-col">
+                <h4>Legal</h4>
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2024 Plexura Managed Solutions. All rights reserved.</p>
+        </div>
+    </footer>
+</body>
+</html>
+HTMLEOF
+
+# Pricing page (brief and vague)
+cat > /var/www/html/pricing.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Pricing | Plexura</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">Plexura<span>MS</span></a>
+            <div class="nav-links">
+                <a href="/solutions">Solutions</a>
+                <a href="/pricing">Pricing</a>
+                <a href="/contact">Contact</a>
+            </div>
+        </nav>
+    </header>
+
+    <section class="hero hero-sm">
+        <h1>Simple, Transparent Pricing</h1>
+        <p>Plans that scale with your business. No hidden fees.</p>
+    </section>
+
+    <section class="section">
+        <div class="grid">
+            <div class="card text-center">
+                <h3>Starter</h3>
+                <p class="text-muted">For small teams getting started</p>
+                <div class="price">Custom</div>
+                <p class="price-sub">Based on usage</p>
+                <ul style="text-align: left;">
+                    <li>Up to 5 data sources</li>
+                    <li>Standard replication</li>
+                    <li>Community support</li>
+                    <li>Basic monitoring</li>
+                </ul>
+                <div class="mt-20"><a href="/contact" class="btn btn-outline">Get Started</a></div>
+            </div>
+            <div class="card card-highlight text-center">
+                <h3>Business</h3>
+                <p class="text-muted">For growing organizations</p>
+                <div class="price">Custom</div>
+                <p class="price-sub">Volume-based pricing</p>
+                <ul style="text-align: left;">
+                    <li>Unlimited data sources</li>
+                    <li>Real-time replication</li>
+                    <li>Priority support</li>
+                    <li>Advanced analytics</li>
+                    <li>SSO & RBAC</li>
+                </ul>
+                <div class="mt-20"><a href="/contact" class="btn">Contact Sales</a></div>
+            </div>
+            <div class="card text-center">
+                <h3>Enterprise</h3>
+                <p class="text-muted">For mission-critical workloads</p>
+                <div class="price">Custom</div>
+                <p class="price-sub">Annual agreement</p>
+                <ul style="text-align: left;">
+                    <li>Everything in Business</li>
+                    <li>Dedicated infrastructure</li>
+                    <li>24/7 premium support</li>
+                    <li>Custom SLAs</li>
+                    <li>On-premises deployment</li>
+                </ul>
+                <div class="mt-20"><a href="/contact" class="btn btn-outline">Talk to Sales</a></div>
+            </div>
+        </div>
+    </section>
+
+    <section style="background: #fff; padding: 60px 20px;">
+        <div style="max-width: 700px; margin: 0 auto; text-align: center;">
+            <h2 style="margin-bottom: 20px;">Need a custom plan?</h2>
+            <p class="text-muted">We work with teams of all sizes to build pricing that fits. Reach out and we will put together a tailored proposal.</p>
+            <div class="mt-20"><a href="/contact" class="btn">Contact Us</a></div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-inner">
+            <div class="footer-col">
+                <a href="/" class="logo" style="font-size: 1.3em;">Plexura<span>MS</span></a>
+                <p style="margin-top: 10px;">Managed cloud infrastructure<br>for modern enterprises.</p>
+            </div>
+            <div class="footer-col">
+                <h4>Product</h4>
+                <a href="/solutions">Solutions</a>
+                <a href="/pricing">Pricing</a>
+                <a href="#">Changelog</a>
+            </div>
+            <div class="footer-col">
+                <h4>Company</h4>
+                <a href="#">About</a>
+                <a href="#">Careers</a>
+                <a href="/contact">Contact</a>
+            </div>
+            <div class="footer-col">
+                <h4>Legal</h4>
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2024 Plexura Managed Solutions. All rights reserved.</p>
+        </div>
+    </footer>
+</body>
+</html>
+HTMLEOF
+
+# Contact page
+cat > /var/www/html/contact.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Contact | Plexura</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">Plexura<span>MS</span></a>
+            <div class="nav-links">
+                <a href="/solutions">Solutions</a>
+                <a href="/pricing">Pricing</a>
+                <a href="/contact">Contact</a>
+            </div>
+        </nav>
+    </header>
+
+    <section class="hero hero-sm">
+        <h1>Get in Touch</h1>
+        <p>Talk to our team about your data infrastructure needs.</p>
+    </section>
+
+    <section class="section">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 60px; max-width: 900px; margin: 0 auto;">
+            <div>
+                <h2 style="margin-bottom: 30px; font-size: 1.5em;">Contact Sales</h2>
+                <form onsubmit="event.preventDefault(); this.innerHTML='<p style=padding:40px;text-align:center;color:#666;>Thanks for reaching out. Our team will be in touch within one business day.</p>'; return false;">
+                    <div class="form-group">
+                        <label>Full Name</label>
+                        <input type="text" placeholder="Jane Smith" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Work Email</label>
+                        <input type="email" placeholder="jane@company.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Company</label>
+                        <input type="text" placeholder="Acme Inc.">
+                    </div>
+                    <div class="form-group">
+                        <label>What are you looking for?</label>
+                        <select>
+                            <option>Data Replication</option>
+                            <option>Stream Processing</option>
+                            <option>Managed ETL</option>
+                            <option>Enterprise Plan</option>
+                            <option>Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Message</label>
+                        <textarea rows="4" placeholder="Tell us about your use case..."></textarea>
+                    </div>
+                    <button type="submit" class="btn" style="border: none; cursor: pointer; font-size: 1em;">Send Message</button>
+                </form>
+            </div>
+            <div style="padding-top: 60px;">
+                <div style="margin-bottom: 30px;">
+                    <h3 style="margin-bottom: 8px; color: #1a1a2e;">Sales</h3>
+                    <p class="text-muted">sales@plexuramanagedsolutions.com</p>
+                </div>
+                <div style="margin-bottom: 30px;">
+                    <h3 style="margin-bottom: 8px; color: #1a1a2e;">Support</h3>
+                    <p class="text-muted">support@plexuramanagedsolutions.com</p>
+                </div>
+                <div style="margin-bottom: 30px;">
+                    <h3 style="margin-bottom: 8px; color: #1a1a2e;">Office</h3>
+                    <p class="text-muted">71 Queen Victoria Street, 3rd Floor<br>London, EC4V 4AY</p>
+                </div>
+                <div>
+                    <h3 style="margin-bottom: 8px; color: #1a1a2e;">Response Time</h3>
+                    <p class="text-muted">We typically respond within one business day.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-inner">
+            <div class="footer-col">
+                <a href="/" class="logo" style="font-size: 1.3em;">Plexura<span>MS</span></a>
+                <p style="margin-top: 10px;">Managed cloud infrastructure<br>for modern enterprises.</p>
+            </div>
+            <div class="footer-col">
+                <h4>Product</h4>
+                <a href="/solutions">Solutions</a>
+                <a href="/pricing">Pricing</a>
+                <a href="#">Changelog</a>
+            </div>
+            <div class="footer-col">
+                <h4>Company</h4>
+                <a href="#">About</a>
+                <a href="#">Careers</a>
+                <a href="/contact">Contact</a>
+            </div>
+            <div class="footer-col">
+                <h4>Legal</h4>
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2024 Plexura Managed Solutions. All rights reserved.</p>
+        </div>
+    </footer>
+</body>
+</html>
+HTMLEOF
+
+# Custom error pages
+cat > /var/www/html/404.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Page Not Found | Plexura</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">Plexura<span>MS</span></a>
+            <div class="nav-links">
+                <a href="/solutions">Solutions</a>
+                <a href="/pricing">Pricing</a>
+                <a href="/contact">Contact</a>
+            </div>
+        </nav>
+    </header>
+    <section class="hero hero-sm">
+        <h1 style="font-size: 5em; margin-bottom: 10px;">404</h1>
+        <p>The page you are looking for does not exist.</p>
+        <div class="mt-20"><a href="/" class="btn">Back to Home</a></div>
+    </section>
+    <footer class="footer">
+        <div class="footer-bottom" style="border: none; margin: 0; padding: 0;">
+            <p>&copy; 2024 Plexura Managed Solutions. All rights reserved.</p>
+        </div>
+    </footer>
+</body>
+</html>
+HTMLEOF
+
+cat > /var/www/html/50x.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Service Unavailable | Plexura</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="logo">Plexura<span>MS</span></a>
+            <div class="nav-links">
+                <a href="/solutions">Solutions</a>
+                <a href="/pricing">Pricing</a>
+                <a href="/contact">Contact</a>
+            </div>
+        </nav>
+    </header>
+    <section class="hero hero-sm">
+        <h1>Service Temporarily Unavailable</h1>
+        <p>We are performing scheduled maintenance. Please try again later.</p>
+    </section>
+    <footer class="footer">
+        <div class="footer-bottom" style="border: none; margin: 0; padding: 0;">
+            <p>&copy; 2024 Plexura Managed Solutions. All rights reserved.</p>
+        </div>
+    </footer>
+</body>
+</html>
+HTMLEOF
+
+# robots.txt
 cat > /var/www/html/robots.txt << 'ROBOTSEOF'
 User-agent: *
 Disallow: /
 ROBOTSEOF
 
+echo "Technology decoy website created (Plexura Managed Solutions)"
+
+fi # End decoy theme conditional
+
 echo "Decoy website created"
+write_step_status 3 "Decoy Website" "ok"
+
+# =============================================================================
+# 3b. File Portal (Optional)
+# =============================================================================
+if [ "$ENABLE_FILE_PORTAL" = "true" ]; then
+    echo "[3b] Setting up file portal..."
+
+    # Validate password is set
+    if [ -z "$PORTAL_PASSWORD" ]; then
+        echo "ERROR: portal_password must be set when enable_file_portal is true"
+        write_step_status 3 "File Portal" "failed" "portal_password not set"
+        exit 1
+    fi
+
+    # Install dependencies (pinned versions)
+    pip3 install 'flask==3.1.*' 'bcrypt==4.2.*' 'gunicorn==23.*'
+
+    # Create directories
+    mkdir -p /opt/portal
+    mkdir -p /var/www/uploads/unsorted
+    chown -R www-data:www-data /var/www/uploads
+    mkdir -p /etc/portal
+
+    # Generate bcrypt hash and write credentials (password via stdin to avoid shell injection)
+    PORTAL_HASH=$(echo -n "$PORTAL_PASSWORD" | python3 -c "import sys, bcrypt; pw=sys.stdin.buffer.read(); print(bcrypt.hashpw(pw, bcrypt.gensalt()).decode())")
+    cat > /etc/portal/credentials << CREDEOF
+${PORTAL_USERNAME}
+${PORTAL_HASH}
+CREDEOF
+    chmod 600 /etc/portal/credentials
+    chown www-data:www-data /etc/portal/credentials
+
+    # Write Flask application
+    cat > /opt/portal/app.py << 'APPEOF'
+import os
+import re
+import time
+import secrets
+import shutil
+import logging
+from functools import wraps
+from pathlib import Path
+
+import bcrypt
+from flask import (Flask, Blueprint, request, redirect, make_response,
+                   jsonify, send_file, render_template_string)
+from werkzeug.utils import secure_filename
+
+# =============================================================================
+# Configuration
+# =============================================================================
+UPLOAD_DIR = '/var/www/uploads'
+CREDENTIALS_FILE = os.environ.get('PORTAL_CONFIG', '/etc/portal/credentials')
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+MAX_PASSWORD_LENGTH = 128
+MAX_SESSIONS = 50
+STORAGE_CAP = 5 * 1024 * 1024 * 1024  # 5GB aggregate
+MIN_FREE_DISK = 2 * 1024 * 1024 * 1024  # 2GB
+SESSION_TIMEOUT = int(os.environ.get('PORTAL_SESSION_TIMEOUT', '30')) * 60  # minutes -> seconds
+FOLDER_REGEX = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+# =============================================================================
+# Auth logging (tmpfs — OPSEC safe)
+# =============================================================================
+auth_logger = logging.getLogger('portal_auth')
+auth_handler = logging.FileHandler('/dev/shm/portal-auth.log')
+auth_handler.setFormatter(logging.Formatter('%(asctime)s PORTAL_AUTH_FAIL ip=%(message)s'))
+auth_logger.addHandler(auth_handler)
+auth_logger.setLevel(logging.WARNING)
+
+# =============================================================================
+# Credentials
+# =============================================================================
+with open(CREDENTIALS_FILE) as f:
+    lines = f.read().strip().split('\n')
+    STORED_USERNAME = lines[0]
+    STORED_HASH = lines[1].encode()
+
+DUMMY_HASH = bcrypt.hashpw(b'dummy', bcrypt.gensalt())
+
+# =============================================================================
+# Session store
+# =============================================================================
+sessions = {}  # session_id -> {"issued_at": float, "csrf_token": str}
+
+
+def purge_expired():
+    """Lazy purge of expired sessions on every request."""
+    now = time.time()
+    expired = [sid for sid, data in sessions.items()
+               if now - data['issued_at'] > SESSION_TIMEOUT]
+    for sid in expired:
+        del sessions[sid]
+
+
+def get_real_ip():
+    """Get real client IP from X-Real-IP header (set by nginx to $remote_addr)."""
+    return request.environ.get('HTTP_X_REAL_IP', request.remote_addr)
+
+
+def get_dir_size(path):
+    """Get total size of directory in bytes."""
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            if os.path.isfile(fp):
+                total += os.path.getsize(fp)
+    return total
+
+
+def safe_path(folder, filename=None):
+    """Validate and return a safe filesystem path within UPLOAD_DIR."""
+    if not FOLDER_REGEX.match(folder):
+        return None
+    if filename:
+        filename = secure_filename(filename)
+        if not filename:
+            return None
+        target = os.path.realpath(os.path.join(UPLOAD_DIR, folder, filename))
+    else:
+        target = os.path.realpath(os.path.join(UPLOAD_DIR, folder))
+    if not target.startswith(os.path.realpath(UPLOAD_DIR)):
+        return None
+    return target
+
+
+def human_size(nbytes):
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if nbytes < 1024:
+            return f"{nbytes:.1f} {unit}"
+        nbytes /= 1024
+    return f"{nbytes:.1f} TB"
+
+
+# =============================================================================
+# Flask App
+# =============================================================================
+app = Flask(__name__)
+app.debug = False
+app.config['PROPAGATE_EXCEPTIONS'] = False
+app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
+app.config['SESSION_COOKIE_DOMAIN'] = False  # Prevent cookie leaking to C2 subdomains
+
+
+@app.after_request
+def add_security_headers(response):
+    """Add security headers to all portal responses."""
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'"
+    return response
+
+portal_bp = Blueprint('portal', __name__)
+
+
+@portal_bp.before_request
+def require_auth():
+    """Enforce auth on all /portal/* routes. Login routes are public."""
+    purge_expired()
+    if request.endpoint in ('portal.login_get', 'portal.login_post'):
+        return
+    session_id = request.cookies.get('session_id')
+    if not session_id or session_id not in sessions:
+        return redirect('/login')
+    if time.time() - sessions[session_id]['issued_at'] > SESSION_TIMEOUT:
+        del sessions[session_id]
+        return redirect('/login')
+
+
+def check_csrf(f):
+    """CSRF check decorator for mutating endpoints."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        session_id = request.cookies.get('session_id')
+        if not session_id or session_id not in sessions:
+            return jsonify({"error": "Not authenticated"}), 401
+        expected = sessions[session_id].get('csrf_token', '')
+        provided = request.headers.get('X-CSRF-Token', '')
+        if not expected or not provided or expected != provided:
+            return jsonify({"error": "CSRF token invalid"}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+# --- Auth routes ---
+
+@portal_bp.route('/login', methods=['GET'])
+def login_get():
+    error = request.args.get('error', '')
+    return render_template_string(LOGIN_TEMPLATE, error=error)
+
+
+@portal_bp.route('/login', methods=['POST'])
+def login_post():
+    username = request.form.get('username', '')
+    password = request.form.get('password', '')
+
+    # Password length check (DoS prevention — before bcrypt)
+    if len(password) > MAX_PASSWORD_LENGTH:
+        auth_logger.warning(get_real_ip())
+        return redirect('/login?error=1')
+
+    # Timing-safe auth
+    if username != STORED_USERNAME:
+        bcrypt.checkpw(password.encode(), DUMMY_HASH)
+        auth_logger.warning(get_real_ip())
+        return redirect('/login?error=1')
+    if not bcrypt.checkpw(password.encode(), STORED_HASH):
+        auth_logger.warning(get_real_ip())
+        return redirect('/login?error=1')
+
+    # Check session limit
+    if len(sessions) >= MAX_SESSIONS:
+        return "Service temporarily unavailable", 503
+
+    # Create session
+    session_id = secrets.token_hex(32)
+    csrf_token = secrets.token_hex(32)
+    sessions[session_id] = {'issued_at': time.time(), 'csrf_token': csrf_token}
+
+    resp = make_response(redirect('/portal/'))
+    resp.set_cookie('session_id', session_id,
+                    httponly=True, secure=True, samesite='Strict',
+                    max_age=SESSION_TIMEOUT)
+    return resp
+
+
+@portal_bp.route('/portal/logout')
+def logout():
+    session_id = request.cookies.get('session_id')
+    if session_id and session_id in sessions:
+        del sessions[session_id]
+    resp = make_response(redirect('/login'))
+    resp.delete_cookie('session_id')
+    return resp
+
+
+# --- File API routes ---
+
+@portal_bp.route('/portal/')
+def portal_index():
+    session_id = request.cookies.get('session_id')
+    csrf_token = sessions.get(session_id, {}).get('csrf_token', '')
+    # Regenerate CSRF token on each full page load
+    new_csrf = secrets.token_hex(32)
+    sessions[session_id]['csrf_token'] = new_csrf
+    return render_template_string(PORTAL_TEMPLATE, csrf_token=new_csrf)
+
+
+@portal_bp.route('/portal/api/folders')
+def list_folders():
+    folders = []
+    for name in sorted(os.listdir(UPLOAD_DIR)):
+        full = os.path.join(UPLOAD_DIR, name)
+        if os.path.isdir(full) and FOLDER_REGEX.match(name):
+            folders.append(name)
+    return jsonify({"folders": folders})
+
+
+@portal_bp.route('/portal/api/folders', methods=['POST'])
+@check_csrf
+def create_folder():
+    name = request.json.get('name', '').strip()
+    if not name or not FOLDER_REGEX.match(name):
+        return jsonify({"error": "Invalid folder name (alphanumeric, hyphens, underscores only)"}), 400
+    path = safe_path(name)
+    if not path:
+        return jsonify({"error": "Invalid folder name"}), 400
+    if os.path.exists(path):
+        return jsonify({"error": "Folder already exists"}), 409
+    os.makedirs(path)
+    return jsonify({"ok": True, "folder": name}), 201
+
+
+@portal_bp.route('/portal/api/files')
+def list_files():
+    folder = request.args.get('folder', 'unsorted')
+    sort_by = request.args.get('sort', 'modified')
+    path = safe_path(folder)
+    if not path or not os.path.isdir(path):
+        return jsonify({"error": "Folder not found"}), 404
+    files = []
+    for name in os.listdir(path):
+        full = os.path.join(path, name)
+        if os.path.isfile(full):
+            stat = os.stat(full)
+            files.append({
+                "name": name,
+                "size": stat.st_size,
+                "size_human": human_size(stat.st_size),
+                "modified": stat.st_mtime,
+            })
+    if sort_by == 'name':
+        files.sort(key=lambda f: f['name'].lower())
+    else:
+        files.sort(key=lambda f: f['modified'], reverse=True)
+    return jsonify({"folder": folder, "files": files})
+
+
+@portal_bp.route('/portal/api/upload', methods=['POST'])
+@check_csrf
+def upload_file():
+    folder = request.form.get('folder', 'unsorted')
+    path = safe_path(folder)
+    if not path or not os.path.isdir(path):
+        return jsonify({"error": "Folder not found"}), 404
+
+    # Disk space checks
+    free = shutil.disk_usage(UPLOAD_DIR).free
+    if free < MIN_FREE_DISK:
+        return jsonify({"error": "Storage full"}), 507
+    total_used = get_dir_size(UPLOAD_DIR)
+    if total_used >= STORAGE_CAP:
+        return jsonify({"error": "Storage cap reached"}), 507
+
+    uploaded = []
+    for key in request.files:
+        f = request.files[key]
+        if not f.filename:
+            continue
+        safe_name = secure_filename(f.filename)
+        if not safe_name:
+            continue
+        dest = safe_path(folder, safe_name)
+        if not dest:
+            continue
+        if os.path.exists(dest):
+            return jsonify({"error": f"File already exists: {safe_name}"}), 409
+        f.save(dest)
+        uploaded.append(safe_name)
+
+    return jsonify({"ok": True, "uploaded": uploaded}), 201
+
+
+@portal_bp.route('/portal/api/download/<folder>/<filename>')
+def download_file(folder, filename):
+    path = safe_path(folder, filename)
+    if not path or not os.path.isfile(path):
+        return jsonify({"error": "File not found"}), 404
+    return send_file(path, as_attachment=True, download_name=filename)
+
+
+@portal_bp.route('/portal/api/files/<folder>/<filename>', methods=['DELETE'])
+@check_csrf
+def delete_file(folder, filename):
+    path = safe_path(folder, filename)
+    if not path or not os.path.isfile(path):
+        return jsonify({"error": "File not found"}), 404
+    os.remove(path)
+    return jsonify({"ok": True})
+
+
+# --- Error handlers ---
+
+@app.errorhandler(404)
+def not_found(e):
+    return render_template_string(ERROR_TEMPLATE, code=404), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    return render_template_string(ERROR_TEMPLATE, code=500), 500
+
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({"error": "File too large (100MB max)"}), 413
+
+
+# =============================================================================
+# Templates (themed — injected by setup script based on DECOY_THEME)
+# =============================================================================
+LOGIN_TEMPLATE = '''PLACEHOLDER_LOGIN_TEMPLATE'''
+PORTAL_TEMPLATE = '''PLACEHOLDER_PORTAL_TEMPLATE'''
+ERROR_TEMPLATE = '''PLACEHOLDER_ERROR_TEMPLATE'''
+
+# =============================================================================
+# Register and run
+# =============================================================================
+app.register_blueprint(portal_bp)
+
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=8443)
+APPEOF
+
+    # Write systemd service
+    cat > /etc/systemd/system/portal.service << 'SVCEOF'
+[Unit]
+Description=File Portal
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/opt/portal
+ExecStart=/usr/bin/gunicorn --bind 127.0.0.1:8443 --workers 2 --timeout 120 app:app
+Restart=always
+Environment=PORTAL_CONFIG=/etc/portal/credentials
+Environment=PORTAL_SESSION_TIMEOUT=PLACEHOLDER_TIMEOUT
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+    # Replace timeout placeholder
+    sed -i "s/PLACEHOLDER_TIMEOUT/${PORTAL_SESSION_TIMEOUT}/" /etc/systemd/system/portal.service
+
+    # Configure fail2ban jail
+    cat > /etc/fail2ban/jail.d/portal.conf << 'F2BEOF'
+[portal]
+enabled = true
+port = http,https
+filter = portal
+logpath = /dev/shm/portal-auth.log
+maxretry = 5
+findtime = 600
+bantime = 1800
+F2BEOF
+
+    cat > /etc/fail2ban/filter.d/portal.conf << 'F2BFILTEREOF'
+[Definition]
+failregex = PORTAL_AUTH_FAIL ip=<HOST>
+ignoreregex =
+F2BFILTEREOF
+
+    # Touch auth log on tmpfs so fail2ban can start
+    touch /dev/shm/portal-auth.log
+    chown www-data:www-data /dev/shm/portal-auth.log
+
+    # Logrotate — aggressive shredding (every 10 min via cron)
+    cat > /etc/cron.d/portal-logrotate << 'CRONEOF'
+*/10 * * * * root /usr/sbin/logrotate -f /etc/logrotate.d/portal-auth
+CRONEOF
+
+    cat > /etc/logrotate.d/portal-auth << 'LREOF'
+/dev/shm/portal-auth.log {
+    rotate 1
+    size 0
+    missingok
+    notifempty
+    shred
+    shredcycles 3
+    postrotate
+        touch /dev/shm/portal-auth.log
+        chown www-data:www-data /dev/shm/portal-auth.log
+    endscript
+}
+LREOF
+
+    # Modify nginx configs using Python for reliability (avoids fragile sed regex escaping)
+    NGINX_CONF="/etc/nginx/sites-available/c2-redirector"
+    python3 << 'NGINXPATCH'
+import re
+
+# 1. Add rate limit zones and portal_path map to nginx.conf http{} context
+with open('/etc/nginx/nginx.conf') as f:
+    content = f.read()
+
+http_additions = """
+    # File Portal rate limiting
+    limit_req_zone $binary_remote_addr zone=login:5m rate=5r/m;
+    limit_req_zone $binary_remote_addr zone=portal:10m rate=30r/m;
+
+    # File Portal path detection (for blocked_agent exemption)
+    map $uri $portal_path {
+        ~^/login   1;
+        ~^/portal/ 1;
+        default    0;
+    }
+"""
+content = content.replace('http {', 'http {' + http_additions, 1)
+with open('/etc/nginx/nginx.conf', 'w') as f:
+    f.write(content)
+
+# 2. Add portal location blocks to site config (before location /health)
+with open('/etc/nginx/sites-available/c2-redirector') as f:
+    content = f.read()
+
+portal_locations = """
+    # Block direct access to uploads
+    location /uploads/ {
+        deny all;
+        return 404;
+    }
+
+    # File Portal - Login
+    location /login {
+        limit_req zone=login burst=3 nodelay;
+        proxy_pass http://127.0.0.1:8443/login;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+    }
+
+    # File Portal - Portal routes
+    location /portal/ {
+        limit_req zone=portal burst=10 nodelay;
+        client_max_body_size 100M;
+        proxy_request_buffering off;
+        proxy_pass http://127.0.0.1:8443/portal/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+
+"""
+content = content.replace('    location /health', portal_locations + '    location /health', 1)
+
+# 3. Update blocked_agent check to exempt portal paths
+content = content.replace(
+    'if ($blocked_agent) {',
+    'set $block_check "${blocked_agent}${portal_path}";\n        if ($block_check = "10") {',
+    1
+)
+
+with open('/etc/nginx/sites-available/c2-redirector', 'w') as f:
+    f.write(content)
+
+print("nginx configs patched successfully")
+NGINXPATCH
+
+    # Enable and start services
+    systemctl daemon-reload
+    systemctl enable portal.service
+    systemctl start portal.service
+    systemctl restart fail2ban
+    nginx -t && systemctl reload nginx
+
+    echo "File portal deployed successfully"
+    write_step_status 3 "File Portal" "ok" "Portal deployed on /login"
+else
+    echo "File portal not enabled (enable_file_portal=false)"
+fi
 
 # =============================================================================
 # 4. SSL Certificate Setup
@@ -596,38 +2703,62 @@ STATUSEOF
 }
 
 # Function to check if DNS resolves to this server
+# Handles multiple A records (e.g., 2 redirectors behind round-robin DNS)
 check_dns_ready() {
-    local resolved_ip=$(dig +short "$C2_FQDN" 2>/dev/null | head -1)
-    if [ "$resolved_ip" = "$MY_PUBLIC_IP" ]; then
+    local resolved_ips=$(dig +short "$C2_FQDN" 2>/dev/null)
+    if echo "$resolved_ips" | grep -qF "$MY_PUBLIC_IP"; then
         return 0
     fi
     return 1
 }
 
-# Function to request Let's Encrypt certificate
+# Function to request Let's Encrypt certificate using DNS-01 validation
+# DNS-01 creates a TXT record in Route53 to prove domain ownership
+# This works reliably with round-robin DNS (multiple A records / multiple redirectors)
+# unlike HTTP-01 which fails when the validation request hits the wrong server
 request_letsencrypt_cert() {
-    echo "Requesting Let's Encrypt certificate for $C2_FQDN..."
-    
-    # Request certificate
-    if certbot --nginx -d "$C2_FQDN" -d "$PRIMARY_DOMAIN" -d "www.$PRIMARY_DOMAIN" \
+    echo "Requesting Let's Encrypt certificate for $C2_FQDN (DNS-01 via Route53)..."
+
+    # Step 1: Get the certificate using DNS-01 challenge (certonly, no nginx plugin needed)
+    # Include all subdomains (www, cdn, apex) so the cert covers the full nginx server_name list
+    if certbot certonly \
+        --dns-route53 \
+        -d "$C2_FQDN" \
+        -d "$PRIMARY_DOMAIN" \
+        -d "www.$PRIMARY_DOMAIN" \
+        -d "cdn.$PRIMARY_DOMAIN" \
         --non-interactive --agree-tos --email "$ADMIN_EMAIL" \
-        --redirect 2>&1; then
-        
-        echo "Let's Encrypt certificate obtained successfully!"
-        
+        2>&1; then
+
+        echo "Let's Encrypt certificate obtained successfully via DNS-01!"
+
+        # Step 2: Point nginx at the Let's Encrypt cert instead of the self-signed one
+        local LE_CERT="/etc/letsencrypt/live/$C2_FQDN/fullchain.pem"
+        local LE_KEY="/etc/letsencrypt/live/$C2_FQDN/privkey.pem"
+
+        if [ -f "$LE_CERT" ] && [ -f "$LE_KEY" ]; then
+            # Update nginx SSL paths to use Let's Encrypt cert
+            sed -i "s|ssl_certificate .*|ssl_certificate $LE_CERT;|" /etc/nginx/sites-available/c2-redirector
+            sed -i "s|ssl_certificate_key .*|ssl_certificate_key $LE_KEY;|" /etc/nginx/sites-available/c2-redirector
+
+            # Reload nginx to pick up the new cert
+            nginx -t && systemctl reload nginx
+            echo "Nginx updated with Let's Encrypt certificate"
+        fi
+
         # Get certificate expiry
-        local expiry=$(openssl x509 -enddate -noout -in /etc/letsencrypt/live/$C2_FQDN/fullchain.pem 2>/dev/null | cut -d= -f2 || echo "unknown")
-        
-        update_ssl_status "valid" "Let's Encrypt certificate active" "letsencrypt" "$expiry"
-        
+        local expiry=$(openssl x509 -enddate -noout -in "$LE_CERT" 2>/dev/null | cut -d= -f2 || echo "unknown")
+
+        update_ssl_status "valid" "Lets Encrypt certificate active" "letsencrypt" "$expiry"
+
         # Disable the auto-retry service since we succeeded
         systemctl disable ssl-auto-request.timer 2>/dev/null || true
         systemctl stop ssl-auto-request.timer 2>/dev/null || true
-        
+
         return 0
     else
-        echo "Let's Encrypt request failed"
-        update_ssl_status "pending" "Let's Encrypt request failed - will retry" "self-signed" "N/A"
+        echo "Let's Encrypt DNS-01 request failed"
+        update_ssl_status "pending" "Lets Encrypt request failed - will retry" "self-signed" "N/A"
         return 1
     fi
 }
@@ -638,7 +2769,7 @@ create_self_signed_cert() {
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout /etc/nginx/ssl/server.key \
         -out /etc/nginx/ssl/server.crt \
-        -subj "/CN=$C2_FQDN/O=CloudSync Solutions/C=US"
+        -subj "/CN=$C2_FQDN/O=Plexura Managed Solutions/C=US"
     
     chmod 600 /etc/nginx/ssl/server.key
     chmod 644 /etc/nginx/ssl/server.crt
@@ -667,89 +2798,91 @@ source /opt/ssl-scripts/ssl-config.env
 MY_PUBLIC_IP=$(curl -s --max-time 10 https://api.ipify.org || echo "unknown")
 
 # Check if DNS resolves to this server
-RESOLVED_IP=$(dig +short "$C2_FQDN" 2>/dev/null | head -1)
+RESOLVED_IPS=$(dig +short "$C2_FQDN" 2>/dev/null)
 
 echo "Domain: $C2_FQDN"
-echo "Expected IP: $MY_PUBLIC_IP"
-echo "Resolved IP: $RESOLVED_IP"
+echo "This server IP: $MY_PUBLIC_IP"
+echo "DNS resolved IPs: $RESOLVED_IPS"
+echo "(DNS-01 validation does NOT require DNS to resolve to this server)"
 
-if [ "$RESOLVED_IP" = "$MY_PUBLIC_IP" ]; then
-    echo "DNS is ready! Requesting Let's Encrypt certificate..."
-    
-    # Check if we already have a valid Let's Encrypt cert
-    if [ -f "/etc/letsencrypt/live/$C2_FQDN/fullchain.pem" ]; then
-        echo "Let's Encrypt certificate already exists"
-        
-        # Update status
-        EXPIRY=$(openssl x509 -enddate -noout -in /etc/letsencrypt/live/$C2_FQDN/fullchain.pem 2>/dev/null | cut -d= -f2 || echo "unknown")
-        cat > /opt/ssl-status.json << EOF
-{
-    "status": "valid",
-    "message": "Let's Encrypt certificate active",
-    "cert_type": "letsencrypt",
-    "expiry": "$EXPIRY",
-    "domain": "$C2_FQDN",
-    "provider": "letsencrypt",
-    "last_updated": "$(date -Iseconds)",
-    "public_ip": "$MY_PUBLIC_IP"
-}
-EOF
-        
-        # Disable timer
-        systemctl disable ssl-auto-request.timer
-        systemctl stop ssl-auto-request.timer
-        exit 0
-    fi
-    
-    # Request certificate
-    if certbot --nginx -d "$C2_FQDN" -d "$PRIMARY_DOMAIN" -d "www.$PRIMARY_DOMAIN" \
-        --non-interactive --agree-tos --email "$ADMIN_EMAIL" \
-        --redirect; then
-        
-        echo "SUCCESS: Let's Encrypt certificate obtained!"
-        
-        EXPIRY=$(openssl x509 -enddate -noout -in /etc/letsencrypt/live/$C2_FQDN/fullchain.pem 2>/dev/null | cut -d= -f2 || echo "unknown")
-        cat > /opt/ssl-status.json << EOF
-{
-    "status": "valid",
-    "message": "Let's Encrypt certificate active",
-    "cert_type": "letsencrypt",
-    "expiry": "$EXPIRY",
-    "domain": "$C2_FQDN",
-    "provider": "letsencrypt",
-    "last_updated": "$(date -Iseconds)",
-    "public_ip": "$MY_PUBLIC_IP"
-}
-EOF
-        
-        # Disable timer since we succeeded
-        systemctl disable ssl-auto-request.timer
-        systemctl stop ssl-auto-request.timer
-        
-        echo "Timer disabled - certificate obtained"
-    else
-        echo "FAILED: Let's Encrypt request failed - will retry"
-        cat > /opt/ssl-status.json << EOF
-{
-    "status": "pending",
-    "message": "Let's Encrypt request failed - will retry in 5 minutes",
-    "cert_type": "self-signed",
-    "expiry": "N/A",
-    "domain": "$C2_FQDN",
-    "provider": "letsencrypt",
-    "last_updated": "$(date -Iseconds)",
-    "public_ip": "$MY_PUBLIC_IP"
-}
-EOF
-    fi
-else
-    echo "DNS not ready yet (resolved: $RESOLVED_IP, expected: $MY_PUBLIC_IP)"
-    echo "Will retry in 5 minutes..."
-    
+# Check if we already have a valid Let's Encrypt cert
+if [ -f "/etc/letsencrypt/live/$C2_FQDN/fullchain.pem" ]; then
+    echo "Let's Encrypt certificate already exists"
+
+    # Update status
+    EXPIRY=$(openssl x509 -enddate -noout -in /etc/letsencrypt/live/$C2_FQDN/fullchain.pem 2>/dev/null | cut -d= -f2 || echo "unknown")
     cat > /opt/ssl-status.json << EOF
 {
-    "status": "waiting_dns",
-    "message": "Waiting for DNS to propagate (resolved: $RESOLVED_IP)",
+    "status": "valid",
+    "message": "Lets Encrypt certificate active",
+    "cert_type": "letsencrypt",
+    "expiry": "$EXPIRY",
+    "domain": "$C2_FQDN",
+    "provider": "letsencrypt",
+    "last_updated": "$(date -Iseconds)",
+    "public_ip": "$MY_PUBLIC_IP"
+}
+EOF
+
+    # Disable timer
+    systemctl disable ssl-auto-request.timer
+    systemctl stop ssl-auto-request.timer
+    exit 0
+fi
+
+# Request certificate using DNS-01 via Route53
+# DNS-01 validates via TXT record in Route53 — does NOT need the domain to resolve to this server
+# This means we can request the cert even before the registrar nameservers are updated
+echo "Requesting Let's Encrypt certificate via DNS-01 (Route53)..."
+
+if certbot certonly \
+    --dns-route53 \
+    -d "$C2_FQDN" \
+    -d "$PRIMARY_DOMAIN" \
+    -d "www.$PRIMARY_DOMAIN" \
+    -d "cdn.$PRIMARY_DOMAIN" \
+    --non-interactive --agree-tos --email "$ADMIN_EMAIL" 2>&1; then
+
+    echo "SUCCESS: Let's Encrypt certificate obtained via DNS-01!"
+
+    # Update nginx to use the Let's Encrypt cert
+    LE_CERT="/etc/letsencrypt/live/$C2_FQDN/fullchain.pem"
+    LE_KEY="/etc/letsencrypt/live/$C2_FQDN/privkey.pem"
+    if [ -f "$LE_CERT" ] && [ -f "$LE_KEY" ]; then
+        sed -i "s|ssl_certificate .*|ssl_certificate $LE_CERT;|" /etc/nginx/sites-available/c2-redirector
+        sed -i "s|ssl_certificate_key .*|ssl_certificate_key $LE_KEY;|" /etc/nginx/sites-available/c2-redirector
+        nginx -t && systemctl reload nginx
+    fi
+
+    EXPIRY=$(openssl x509 -enddate -noout -in "$LE_CERT" 2>/dev/null | cut -d= -f2 || echo "unknown")
+    cat > /opt/ssl-status.json << EOF
+{
+    "status": "valid",
+    "message": "Lets Encrypt certificate active",
+    "cert_type": "letsencrypt",
+    "expiry": "$EXPIRY",
+    "domain": "$C2_FQDN",
+    "provider": "letsencrypt",
+    "last_updated": "$(date -Iseconds)",
+    "public_ip": "$MY_PUBLIC_IP"
+}
+EOF
+
+    # Disable timer since we succeeded
+    systemctl disable ssl-auto-request.timer
+    systemctl stop ssl-auto-request.timer
+
+    echo "Timer disabled - certificate obtained"
+else
+    echo "FAILED: Let's Encrypt DNS-01 request failed - will retry in 5 minutes"
+
+    # Log possible causes
+    echo "Possible causes: IAM role not ready (eventual consistency), Route53 hosted zone not found, rate limit"
+
+    cat > /opt/ssl-status.json << EOF
+{
+    "status": "pending",
+    "message": "Lets Encrypt request failed - will retry in 5 minutes",
     "cert_type": "self-signed",
     "expiry": "N/A",
     "domain": "$C2_FQDN",
@@ -823,18 +2956,17 @@ if [ "$ENABLE_SSL" = "true" ]; then
         create_ssl_auto_retry_script
         create_ssl_auto_retry_service
         
-        # Check if DNS is already ready
-        if check_dns_ready; then
-            echo "DNS is already configured! Requesting Let's Encrypt certificate now..."
-            
-            # Start nginx first (needed for HTTP-01 challenge)
-            systemctl start nginx || true
-            
-            # Request certificate
-            request_letsencrypt_cert || true
+        # DNS-01 validation via Route53 doesn't need DNS to resolve to this server
+        # It validates by creating a TXT record, so we can try immediately
+        # Start nginx first (it needs the self-signed cert to boot)
+        systemctl start nginx || true
+
+        echo "Attempting Let's Encrypt DNS-01 certificate request..."
+        if request_letsencrypt_cert; then
+            echo "Certificate obtained on first attempt!"
         else
-            echo "DNS not yet configured (expected: $MY_PUBLIC_IP)"
-            update_ssl_status "waiting_dns" "Waiting for DNS to propagate" "self-signed" "N/A"
+            echo "First attempt failed (IAM role may not be ready yet)"
+            update_ssl_status "pending" "Lets Encrypt request failed - will retry" "self-signed" "N/A"
             
             if [ "$SSL_AUTO_RETRY" = "true" ]; then
                 echo "Enabling auto-retry timer..."
@@ -865,6 +2997,7 @@ else
 fi
 
 echo "SSL setup complete"
+write_step_status 4 "SSL Setup" "ok"
 
 # =============================================================================
 # 5. Start Services
@@ -878,9 +3011,10 @@ nginx -t
 systemctl enable nginx
 systemctl restart nginx
 
-# Setup automatic cert renewal (if using Let's Encrypt)
-if [ "$USE_LETSENCRYPT" = "true" ]; then
-    echo "0 12 * * * root certbot renew --quiet" > /etc/cron.d/certbot-renew
+# Setup automatic cert renewal (if using Let's Encrypt with DNS-01)
+# The --deploy-hook reloads nginx after successful renewal
+if [ "$SSL_PROVIDER" = "letsencrypt" ]; then
+    echo "0 12 * * * root certbot renew --quiet --deploy-hook 'systemctl reload nginx'" > /etc/cron.d/certbot-renew
 fi
 
 # Configure fail2ban for nginx
@@ -900,6 +3034,8 @@ FAIL2BANEOF
 
 systemctl enable fail2ban
 systemctl restart fail2ban
+
+write_step_status 5 "Services" "ok"
 
 echo ""
 echo "=============================================="
