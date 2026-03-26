@@ -64,11 +64,16 @@ class ConfigValidator:
         """Validate list of CIDR blocks"""
         if not cidr_blocks:
             return False, "At least one CIDR block is required"
-        
+
+        # OPSEC: Block overly permissive CIDRs that expose management ports to the internet
+        dangerous_cidrs = ["0.0.0.0/0", "::/0"]
+
         for cidr in cidr_blocks:
             if not ConfigValidator.validate_ip_cidr(cidr):
                 return False, f"Invalid CIDR block: {cidr}"
-        
+            if cidr in dangerous_cidrs:
+                return False, f"CIDR block {cidr} is too permissive for management access. Use your specific IP (e.g., 1.2.3.4/32)"
+
         return True, ""
     
     @staticmethod
@@ -126,10 +131,15 @@ class ConfigValidator:
             backup_domains = config.get('backup_domains', [])
             if isinstance(backup_domains, list) and len(backup_domains) > 0:
                 for i, backup in enumerate(backup_domains):
+                    # Support both plain strings and objects with domain_name key
                     if isinstance(backup, dict):
                         backup_domain = backup.get('domain_name', '').strip()
-                        if backup_domain and not ConfigValidator.validate_domain(backup_domain):
-                            errors.append(f"Invalid backup_domains[{i}].domain_name format: {backup_domain}")
+                    elif isinstance(backup, str):
+                        backup_domain = backup.strip()
+                    else:
+                        backup_domain = ''
+                    if backup_domain and not ConfigValidator.validate_domain(backup_domain):
+                        errors.append(f"Invalid backup_domains[{i}] format: {backup_domain}")
         
         # Validate domain fronting requirements
         enable_domain_fronting = config.get('enable_domain_fronting', False)
@@ -179,6 +189,19 @@ class ConfigValidator:
             if not valid:
                 errors.append(error)
         
+        # Validate instance types (soft check — warn on non-standard types)
+        valid_c2_types = ['t3.small', 't2.medium', 't2.large', 't3.medium', 't3.large', 't3.xlarge', 'm5.large', 'm5.xlarge']
+        valid_redirector_types = ['t2.micro', 't2.small', 't3.micro', 't3.small', 't3.medium']
+        valid_bastion_types = ['t2.micro', 't2.small', 't3.micro', 't3.small']
+
+        c2_type = config.get('c2_server_instance_type', '')
+        if c2_type and c2_type not in valid_c2_types:
+            errors.append(f"Unusual c2_server_instance_type: {c2_type}. Common: {', '.join(valid_c2_types[:4])}")
+
+        redirector_type = config.get('proxy_redirector_instance_type', '')
+        if redirector_type and redirector_type not in valid_redirector_types:
+            errors.append(f"Unusual proxy_redirector_instance_type: {redirector_type}. Common: {', '.join(valid_redirector_types[:3])}")
+
         # Validate VPC CIDR (only for C2/Combined which create their own VPC)
         if not is_goad_only:
             vpc_cidr = config.get('vpc_cidr', '')
@@ -194,6 +217,31 @@ class ConfigValidator:
         attack_box_valid, attack_box_errors = ConfigValidator.validate_attack_box_config(config)
         if not attack_box_valid:
             errors.extend(attack_box_errors)
+
+        # Validate SSL / Let's Encrypt admin email
+        # Required when: C2/Combined deployment + SSL enabled + letsencrypt provider + not domain fronting
+        enable_ssl = config.get('enable_ssl', True)
+        ssl_provider = config.get('ssl_provider', 'letsencrypt')
+        enable_domain_fronting = config.get('enable_domain_fronting', False)
+
+        if not is_goad_only and enable_ssl and ssl_provider == 'letsencrypt' and not enable_domain_fronting:
+            admin_email = config.get('admin_email', '').strip()
+            if not admin_email:
+                errors.append("admin_email is required for Let's Encrypt SSL (use a burner email for OPSEC)")
+
+        # Validate passwords (soft — warn on weak, don't block)
+        cs_pw = config.get('cs_teamserver_password', '')
+        if cs_pw and len(cs_pw) < 8:
+            errors.append("cs_teamserver_password must be at least 8 characters")
+
+        ab_pw = config.get('attack_box_admin_password', '')
+        if ab_pw and len(ab_pw) < 8:
+            errors.append("attack_box_admin_password must be at least 8 characters")
+
+        # Validate file portal configuration
+        fp_valid, fp_errors = ConfigValidator.validate_file_portal_config(config)
+        if not fp_valid:
+            errors.extend(fp_errors)
 
         return len(errors) == 0, errors
 
@@ -217,6 +265,34 @@ class ConfigValidator:
         if isinstance(disk_size, (int, float)):
             if disk_size < 50 or disk_size > 500:
                 errors.append(f"attack_box_root_volume_size must be between 50 and 500 GB (got {disk_size})")
+
+        return len(errors) == 0, errors
+
+    @staticmethod
+    def validate_file_portal_config(config: Dict) -> Tuple[bool, List[str]]:
+        """Validate file portal configuration."""
+        errors = []
+        enable = config.get('enable_file_portal', False)
+        if not enable:
+            return True, errors
+
+        username = config.get('portal_username', '').strip()
+        if not username:
+            errors.append("portal_username is required when file portal is enabled")
+        elif len(username) < 3:
+            errors.append("portal_username must be at least 3 characters")
+        elif not re.match(r'^[a-zA-Z0-9_-]+$', username):
+            errors.append("portal_username can only contain alphanumeric characters, hyphens, and underscores")
+
+        password = config.get('portal_password', '').strip()
+        if not password:
+            errors.append("portal_password is required when file portal is enabled")
+        elif len(password) < 8:
+            errors.append("portal_password must be at least 8 characters")
+
+        timeout = config.get('portal_session_timeout', 30)
+        if not isinstance(timeout, (int, float)) or timeout < 1 or timeout > 1440:
+            errors.append("portal_session_timeout must be between 1 and 1440 minutes")
 
         return len(errors) == 0, errors
 

@@ -142,12 +142,13 @@ class ConfigParser:
             (r'(\w+)\s*=\s*(\d+)', int),
             # Boolean values: key = true/false
             (r'(\w+)\s*=\s*(true|false)', lambda x: x == 'true'),
-            # List values: key = ["value1", "value2"]
-            (r'(\w+)\s*=\s*\[(.*?)\]', lambda x: [v.strip().strip('"') for v in x.split(',')]),
+            # List values: key = ["value1", "value2"] (supports multi-line)
+            (r'(\w+)\s*=\s*\[(.*?)\]', lambda x: [v.strip().strip('"') for v in x.split(',') if v.strip().strip('"')]),
         ]
-        
+
         for pattern, converter in patterns:
-            matches = re.finditer(pattern, content)
+            # Use re.DOTALL so list patterns can span multiple lines
+            matches = re.finditer(pattern, content, re.DOTALL)
             for match in matches:
                 key = match.group(1)
                 value = match.group(2)
@@ -168,13 +169,14 @@ class ConfigParser:
             'AWS Configuration': ['aws_region', 'aws_profile'],
             'Project Configuration': ['project_name', 'environment', 'deployment_type', 'engagement_type'],
             'GOAD Configuration': ['goad_lab_type', 'goad_vpc_cidr', 'goad_public_subnet_cidr', 'goad_private_subnet_cidr'],
-            'Cobalt Strike Configuration': ['cobalt_strike_archive_s3_path', 'cs_teamserver_password', 'cs_teamserver_port'],
+            'Cobalt Strike Configuration': ['cobalt_strike_archive_s3_path', 'cs_teamserver_password', 'cs_teamserver_port', 'cobalt_strike_license_secret_name', 'enable_cs_rest_api'],
             'VPC Configuration': ['vpc_cidr', 'availability_zones', 'public_subnet_cidrs', 'private_subnet_cidrs', 'enable_nat_gateway'],
             'Security Configuration': ['management_cidr_blocks', 'ssh_port', 'c2_server_port'],
             'SSH Key Configuration': ['key_pair_name', 'user_public_key'],
             'Domain Configuration': ['primary_domain_name', 'primary_domain_hosted_zone_id', 'backup_domains', 'c2_subdomain', 'www_subdomain', 'cdn_subdomain', 'dns_provider', 'enable_dns_validation', 'enable_domain_fronting'],
             'C2 Team Server Configuration': ['c2_deployment_mode', 'c2_server_count', 'c2_server_instance_type', 'c2_server_ami_id', 'c2_server_root_volume_size', 'c2_server_enable_elastic_ips', 'c2_server_iam_instance_profile_name', 'c2_server_user_data'],
-            'Proxy/Redirector Configuration': ['proxy_redirector_count', 'proxy_redirector_instance_type', 'proxy_redirector_ami_id', 'proxy_redirector_root_volume_size', 'proxy_redirector_iam_instance_profile_name', 'proxy_redirector_user_data'],
+            'Proxy/Redirector Configuration': ['proxy_redirector_count', 'proxy_redirector_instance_type', 'proxy_redirector_ami_id', 'proxy_redirector_root_volume_size', 'proxy_redirector_iam_instance_profile_name', 'proxy_redirector_user_data', 'malleable_profile', 'custom_profile_content', 'custom_c2_uris', 'decoy_theme'],
+            'File Portal Configuration': ['enable_file_portal', 'portal_username', 'portal_password', 'portal_session_timeout'],
             'Attack Box Configuration': ['enable_attack_box', 'attack_box_instance_type', 'attack_box_root_volume_size', 'attack_box_admin_password'],
             'Tools Configuration': ['tools_repo_url', 'tools_repo_branch', 'tools_repo_ssh_key', 'tools_repo_https_token'],
             'Monitoring Configuration': ['enable_detailed_monitoring'],
