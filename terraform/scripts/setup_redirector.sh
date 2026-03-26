@@ -2278,7 +2278,7 @@ def add_security_headers(response):
     response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     response.headers['Referrer-Policy'] = 'no-referrer'
     response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
-    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'"
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; form-action 'self'"
     return response
 
 portal_bp = Blueprint('portal', __name__)
@@ -2511,6 +2511,1680 @@ app.register_blueprint(portal_bp)
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8443)
 APPEOF
+
+    # Inject themed templates based on DECOY_THEME
+    if [ "$DECOY_THEME" = "meridian-financial" ]; then
+        python3 << 'TEMPLATEEOF'
+# Read app.py and replace placeholder template strings with Meridian Financial themed HTML
+with open('/opt/portal/app.py') as f:
+    content = f.read()
+
+LOGIN_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employee Portal | Meridian Financial Group</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Georgia, 'Times New Roman', Times, serif;
+            background: #f5f4f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: #0a1628;
+            padding: 16px 0;
+            border-bottom: 3px solid #8b7535;
+        }
+        .header-inner {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+        }
+        .logo {
+            color: #c9b06b;
+            font-size: 1.35em;
+            font-weight: 400;
+            letter-spacing: 1px;
+            text-decoration: none;
+        }
+        .main {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+        }
+        .login-card {
+            background: #fff;
+            border: 1px solid #ddd;
+            width: 100%;
+            max-width: 400px;
+            padding: 48px 40px 40px;
+        }
+        .login-card h1 {
+            font-size: 1.5em;
+            font-weight: 400;
+            color: #0a1628;
+            margin-bottom: 6px;
+            letter-spacing: 0.5px;
+        }
+        .login-card .subtitle {
+            color: #6b6b6b;
+            font-size: 0.92em;
+            margin-bottom: 32px;
+            font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+        }
+        .login-error {
+            background: #fef2f2;
+            border: 1px solid #f5c6cb;
+            color: #842029;
+            padding: 10px 14px;
+            font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+            font-size: 0.85em;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+            font-size: 0.82em;
+            color: #555;
+            margin-bottom: 6px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 11px 14px;
+            border: 1px solid #ccc;
+            font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+            font-size: 0.95em;
+            color: #333;
+            background: #fafaf8;
+            transition: border-color 0.2s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #8b7535;
+        }
+        .btn-login {
+            width: 100%;
+            padding: 12px;
+            background: #8b7535;
+            color: #fff;
+            border: none;
+            font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+            font-size: 0.85em;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .btn-login:hover {
+            background: #a08940;
+        }
+        .footer {
+            background: #0a1628;
+            color: #5a6474;
+            text-align: center;
+            padding: 16px 20px;
+            font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+            font-size: 0.78em;
+        }
+        @media (max-width: 480px) {
+            .login-card { padding: 32px 24px 28px; }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-inner">
+            <span class="logo">Meridian Financial Group</span>
+        </div>
+    </header>
+    <main class="main">
+        <div class="login-card">
+            <h1>Meridian Financial Group</h1>
+            <p class="subtitle">Employee Portal</p>
+            {% if error %}<div class="login-error">Invalid credentials. Please try again.</div>{% endif %}
+            <form method="POST" action="/login">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" required autocomplete="username" autofocus>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn-login">Sign In</button>
+            </form>
+        </div>
+    </main>
+    <footer class="footer">
+        <p>&copy; 2024 Meridian Financial Group. All rights reserved.</p>
+    </footer>
+</body>
+</html>"""
+
+PORTAL_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Document Portal | Meridian Financial Group</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: #f5f4f0;
+            color: #333;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .topbar {
+            background: #0a1628;
+            padding: 0 20px;
+            height: 54px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 3px solid #8b7535;
+        }
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+        }
+        .topbar-logo {
+            color: #c9b06b;
+            font-family: Georgia, 'Times New Roman', Times, serif;
+            font-size: 1.15em;
+            font-weight: 400;
+            letter-spacing: 1px;
+        }
+        .topbar-title {
+            color: #b0b8c4;
+            font-size: 0.85em;
+            letter-spacing: 0.5px;
+        }
+        .topbar-right a {
+            color: #b0b8c4;
+            text-decoration: none;
+            font-size: 0.82em;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            transition: color 0.2s;
+        }
+        .topbar-right a:hover { color: #c9b06b; }
+        .layout {
+            flex: 1;
+            display: flex;
+            min-height: 0;
+        }
+        .sidebar {
+            width: 230px;
+            background: #fff;
+            border-right: 1px solid #ddd;
+            padding: 20px 0;
+            flex-shrink: 0;
+            overflow-y: auto;
+        }
+        .sidebar-header {
+            padding: 0 16px 14px;
+            font-size: 0.72em;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: #999;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 6px;
+        }
+        .folder-list {
+            list-style: none;
+        }
+        .folder-list li {
+            padding: 9px 16px;
+            cursor: pointer;
+            font-size: 0.9em;
+            color: #444;
+            transition: background 0.15s;
+            border-left: 3px solid transparent;
+        }
+        .folder-list li:hover { background: #f5f4f0; }
+        .folder-list li.active {
+            background: #f5f4f0;
+            color: #0a1628;
+            font-weight: 600;
+            border-left-color: #8b7535;
+        }
+        .folder-list li::before {
+            content: "\1F4C1 ";
+            margin-right: 6px;
+        }
+        .btn-new-folder {
+            display: block;
+            margin: 14px 16px 0;
+            padding: 8px 0;
+            background: none;
+            border: 1px dashed #ccc;
+            color: #888;
+            font-size: 0.82em;
+            cursor: pointer;
+            text-align: center;
+            transition: border-color 0.2s, color 0.2s;
+        }
+        .btn-new-folder:hover { border-color: #8b7535; color: #8b7535; }
+        .content {
+            flex: 1;
+            padding: 24px 28px;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .content-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .content-header h2 {
+            font-family: Georgia, 'Times New Roman', Times, serif;
+            font-weight: 400;
+            font-size: 1.3em;
+            color: #0a1628;
+        }
+        .btn-browse {
+            padding: 8px 20px;
+            background: #8b7535;
+            color: #fff;
+            border: none;
+            font-size: 0.82em;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-browse:hover { background: #a08940; }
+        .file-input { display: none; }
+        .upload-progress {
+            display: none;
+            margin-bottom: 16px;
+        }
+        .progress-bar-outer {
+            background: #eee;
+            height: 6px;
+            width: 100%;
+            overflow: hidden;
+        }
+        .progress-bar-inner {
+            background: #8b7535;
+            height: 100%;
+            width: 0%;
+            transition: width 0.2s;
+        }
+        .progress-text {
+            font-size: 0.78em;
+            color: #888;
+            margin-top: 4px;
+        }
+        .file-table-wrap {
+            flex: 1;
+            position: relative;
+            overflow: auto;
+        }
+        .file-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #fff;
+            border: 1px solid #ddd;
+        }
+        .file-table thead th {
+            background: #0a1628;
+            color: #c9b06b;
+            padding: 10px 14px;
+            text-align: left;
+            font-size: 0.78em;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .file-table thead th:hover { color: #fff; }
+        .file-table thead th .sort-arrow { margin-left: 4px; font-size: 0.8em; }
+        .file-table tbody td {
+            padding: 10px 14px;
+            border-bottom: 1px solid #eee;
+            font-size: 0.88em;
+        }
+        .file-table tbody tr:hover { background: #fafaf8; }
+        .file-name-link {
+            color: #0a1628;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .file-name-link:hover { color: #8b7535; text-decoration: underline; }
+        .btn-delete {
+            background: none;
+            border: 1px solid #d9534f;
+            color: #d9534f;
+            padding: 4px 10px;
+            font-size: 0.78em;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s;
+        }
+        .btn-delete:hover { background: #d9534f; color: #fff; }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+            font-size: 0.95em;
+        }
+        .drop-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(10, 22, 40, 0.85);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            color: #c9b06b;
+            font-family: Georgia, 'Times New Roman', Times, serif;
+            font-size: 1.3em;
+            pointer-events: none;
+        }
+        .drop-overlay .drop-icon { font-size: 2.5em; margin-bottom: 12px; }
+        .modal-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 500;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-backdrop.active { display: flex; }
+        .modal {
+            background: #fff;
+            border: 1px solid #ddd;
+            padding: 28px 32px;
+            max-width: 400px;
+            width: 90%;
+        }
+        .modal h3 {
+            font-family: Georgia, 'Times New Roman', Times, serif;
+            font-weight: 400;
+            margin-bottom: 12px;
+            color: #0a1628;
+        }
+        .modal p { font-size: 0.9em; color: #555; margin-bottom: 20px; }
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        .modal-actions button {
+            padding: 8px 20px;
+            font-size: 0.82em;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            background: #fff;
+            color: #555;
+            transition: background 0.2s;
+        }
+        .modal-actions button:hover { background: #f5f4f0; }
+        .modal-actions .btn-confirm-delete {
+            background: #d9534f;
+            color: #fff;
+            border-color: #d9534f;
+        }
+        .modal-actions .btn-confirm-delete:hover { background: #c9302c; }
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: #0a1628;
+            color: #e8e4d9;
+            padding: 12px 20px;
+            font-size: 0.85em;
+            z-index: 600;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.3s, transform 0.3s;
+            max-width: 360px;
+        }
+        .toast.visible { opacity: 1; transform: translateY(0); }
+        .toast.error { border-left: 3px solid #d9534f; }
+        .toast.success { border-left: 3px solid #8b7535; }
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .content { padding: 16px; }
+            .topbar-title { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-left">
+            <span class="topbar-logo">Meridian Financial Group</span>
+            <span class="topbar-title">Document Portal</span>
+        </div>
+        <div class="topbar-right">
+            <a href="/portal/logout">Sign Out</a>
+        </div>
+    </header>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="sidebar-header">Folders</div>
+            <ul class="folder-list" id="folder-list"></ul>
+            <button class="btn-new-folder" id="btn-new-folder">+ New Folder</button>
+        </aside>
+        <main class="content">
+            <div class="content-header">
+                <h2 id="current-folder-title">Documents</h2>
+                <div>
+                    <input type="file" class="file-input" id="file-input" multiple>
+                    <button class="btn-browse" id="btn-browse">Browse Files</button>
+                </div>
+            </div>
+            <div class="upload-progress" id="upload-progress">
+                <div class="progress-bar-outer"><div class="progress-bar-inner" id="progress-bar"></div></div>
+                <div class="progress-text" id="progress-text">Uploading...</div>
+            </div>
+            <div class="file-table-wrap" id="file-table-wrap">
+                <div class="drop-overlay" id="drop-overlay">
+                    <div class="drop-icon">&uarr;</div>
+                    <div>Drop files here to upload</div>
+                </div>
+                <table class="file-table" id="file-table">
+                    <thead>
+                        <tr>
+                            <th data-sort="name">Name <span class="sort-arrow"></span></th>
+                            <th data-sort="size">Size <span class="sort-arrow"></span></th>
+                            <th data-sort="modified">Modified <span class="sort-arrow"></span></th>
+                            <th style="width: 80px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="file-tbody"></tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+    <div class="modal-backdrop" id="delete-modal">
+        <div class="modal">
+            <h3>Confirm Deletion</h3>
+            <p>Are you sure you want to delete <strong id="delete-filename"></strong>?</p>
+            <div class="modal-actions">
+                <button id="btn-cancel-delete">Cancel</button>
+                <button class="btn-confirm-delete" id="btn-confirm-delete">Delete</button>
+            </div>
+        </div>
+    </div>
+    <div class="toast" id="toast"></div>
+    <script>
+    (function() {
+        var csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        var currentFolder = 'unsorted';
+        var currentSort = 'modified';
+        var sortAsc = false;
+        var pendingDelete = null;
+
+        function showToast(msg, type) {
+            var t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'toast ' + (type || 'success') + ' visible';
+            setTimeout(function() { t.className = 'toast'; }, 3500);
+        }
+
+        function apiFetch(url, opts) {
+            opts = opts || {};
+            opts.headers = opts.headers || {};
+            opts.headers['X-CSRF-Token'] = csrfToken;
+            return fetch(url, opts).then(function(r) {
+                if (r.status === 401) { window.location.href = '/login'; return Promise.reject('auth'); }
+                return r;
+            });
+        }
+
+        function loadFolders() {
+            fetch('/portal/api/folders').then(function(r) { return r.json(); }).then(function(data) {
+                var list = document.getElementById('folder-list');
+                list.innerHTML = '';
+                (data.folders || []).forEach(function(name) {
+                    var li = document.createElement('li');
+                    li.textContent = name;
+                    if (name === currentFolder) li.className = 'active';
+                    li.addEventListener('click', function() { currentFolder = name; loadFolders(); loadFiles(); });
+                    list.appendChild(li);
+                });
+            });
+        }
+
+        function loadFiles() {
+            document.getElementById('current-folder-title').textContent = currentFolder;
+            fetch('/portal/api/files?folder=' + encodeURIComponent(currentFolder) + '&sort=' + currentSort)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var tbody = document.getElementById('file-tbody');
+                    tbody.innerHTML = '';
+                    var files = data.files || [];
+                    if (files.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No files in this folder</td></tr>';
+                        return;
+                    }
+                    files.forEach(function(f) {
+                        var tr = document.createElement('tr');
+                        var tdName = document.createElement('td');
+                        var a = document.createElement('a');
+                        a.className = 'file-name-link';
+                        a.href = '/portal/api/download/' + encodeURIComponent(currentFolder) + '/' + encodeURIComponent(f.name);
+                        a.textContent = f.name;
+                        tdName.appendChild(a);
+
+                        var tdSize = document.createElement('td');
+                        tdSize.textContent = f.size_human;
+
+                        var tdMod = document.createElement('td');
+                        var d = new Date(f.modified * 1000);
+                        tdMod.textContent = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+
+                        var tdAct = document.createElement('td');
+                        var btn = document.createElement('button');
+                        btn.className = 'btn-delete';
+                        btn.textContent = 'Delete';
+                        btn.addEventListener('click', function() {
+                            pendingDelete = { folder: currentFolder, name: f.name };
+                            document.getElementById('delete-filename').textContent = f.name;
+                            document.getElementById('delete-modal').className = 'modal-backdrop active';
+                        });
+                        tdAct.appendChild(btn);
+
+                        tr.appendChild(tdName);
+                        tr.appendChild(tdSize);
+                        tr.appendChild(tdMod);
+                        tr.appendChild(tdAct);
+                        tbody.appendChild(tr);
+                    });
+                });
+        }
+
+        function uploadFiles(files) {
+            if (!files || files.length === 0) return;
+            var formData = new FormData();
+            formData.append('folder', currentFolder);
+            for (var i = 0; i < files.length; i++) {
+                formData.append('file' + i, files[i]);
+            }
+            var progWrap = document.getElementById('upload-progress');
+            var progBar = document.getElementById('progress-bar');
+            var progText = document.getElementById('progress-text');
+            progWrap.style.display = 'block';
+            progBar.style.width = '0%';
+            progText.textContent = 'Uploading...';
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/portal/api/upload');
+            xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+            xhr.upload.addEventListener('progress', function(e) {
+                if (e.lengthComputable) {
+                    var pct = Math.round((e.loaded / e.total) * 100);
+                    progBar.style.width = pct + '%';
+                    progText.textContent = 'Uploading... ' + pct + '%';
+                }
+            });
+            xhr.addEventListener('load', function() {
+                progWrap.style.display = 'none';
+                if (xhr.status === 201) {
+                    var resp = JSON.parse(xhr.responseText);
+                    showToast('Uploaded ' + (resp.uploaded || []).length + ' file(s)', 'success');
+                    loadFiles();
+                } else {
+                    var err = 'Upload failed';
+                    try { err = JSON.parse(xhr.responseText).error || err; } catch(e) {}
+                    showToast(err, 'error');
+                }
+            });
+            xhr.addEventListener('error', function() {
+                progWrap.style.display = 'none';
+                showToast('Upload failed', 'error');
+            });
+            xhr.send(formData);
+        }
+
+        // Sort headers
+        document.querySelectorAll('.file-table thead th[data-sort]').forEach(function(th) {
+            th.addEventListener('click', function() {
+                var newSort = th.getAttribute('data-sort');
+                if (newSort === currentSort) { sortAsc = !sortAsc; } else { currentSort = newSort; sortAsc = true; }
+                document.querySelectorAll('.file-table thead th .sort-arrow').forEach(function(s) { s.textContent = ''; });
+                th.querySelector('.sort-arrow').textContent = sortAsc ? ' \u25B2' : ' \u25BC';
+                loadFiles();
+            });
+        });
+
+        // Browse button
+        document.getElementById('btn-browse').addEventListener('click', function() {
+            document.getElementById('file-input').click();
+        });
+        document.getElementById('file-input').addEventListener('change', function(e) {
+            uploadFiles(e.target.files);
+            e.target.value = '';
+        });
+
+        // Drag and drop
+        var wrap = document.getElementById('file-table-wrap');
+        var overlay = document.getElementById('drop-overlay');
+        var dragCounter = 0;
+        wrap.addEventListener('dragenter', function(e) {
+            e.preventDefault();
+            dragCounter++;
+            overlay.style.display = 'flex';
+        });
+        wrap.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter <= 0) { overlay.style.display = 'none'; dragCounter = 0; }
+        });
+        wrap.addEventListener('dragover', function(e) { e.preventDefault(); });
+        wrap.addEventListener('drop', function(e) {
+            e.preventDefault();
+            dragCounter = 0;
+            overlay.style.display = 'none';
+            uploadFiles(e.dataTransfer.files);
+        });
+
+        // New folder
+        document.getElementById('btn-new-folder').addEventListener('click', function() {
+            var name = prompt('Folder name (alphanumeric, hyphens, underscores):');
+            if (!name) return;
+            apiFetch('/portal/api/folders', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name })
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.ok) { showToast('Folder created', 'success'); currentFolder = name; loadFolders(); loadFiles(); }
+                else { showToast(data.error || 'Failed', 'error'); }
+            }).catch(function() { showToast('Failed to create folder', 'error'); });
+        });
+
+        // Delete modal
+        document.getElementById('btn-cancel-delete').addEventListener('click', function() {
+            document.getElementById('delete-modal').className = 'modal-backdrop';
+            pendingDelete = null;
+        });
+        document.getElementById('btn-confirm-delete').addEventListener('click', function() {
+            if (!pendingDelete) return;
+            var folder = pendingDelete.folder;
+            var name = pendingDelete.name;
+            document.getElementById('delete-modal').className = 'modal-backdrop';
+            apiFetch('/portal/api/files/' + encodeURIComponent(folder) + '/' + encodeURIComponent(name), {
+                method: 'DELETE'
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.ok) { showToast('File deleted', 'success'); loadFiles(); }
+                else { showToast(data.error || 'Failed', 'error'); }
+            }).catch(function() { showToast('Failed to delete file', 'error'); });
+            pendingDelete = null;
+        });
+
+        // Init
+        loadFolders();
+        loadFiles();
+    })();
+    </script>
+</body>
+</html>"""
+
+ERROR_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Page Not Found | Meridian Financial Group</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Georgia, 'Times New Roman', Times, serif;
+            background: #f5f4f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: #0a1628;
+            padding: 16px 0;
+            border-bottom: 3px solid #8b7535;
+        }
+        .header-inner {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        .logo {
+            color: #c9b06b;
+            font-size: 1.35em;
+            font-weight: 400;
+            letter-spacing: 1px;
+        }
+        .main {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        .error-card {
+            max-width: 440px;
+        }
+        .error-card h1 {
+            font-size: 1.6em;
+            font-weight: 400;
+            color: #0a1628;
+            margin-bottom: 12px;
+        }
+        .error-card p {
+            color: #6b6b6b;
+            font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+            font-size: 0.92em;
+            margin-bottom: 28px;
+            line-height: 1.6;
+        }
+        .error-card a {
+            display: inline-block;
+            padding: 10px 32px;
+            background: #8b7535;
+            color: #fff;
+            text-decoration: none;
+            font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+            font-size: 0.82em;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            transition: background 0.3s;
+        }
+        .error-card a:hover { background: #a08940; }
+        .footer {
+            background: #0a1628;
+            color: #5a6474;
+            text-align: center;
+            padding: 16px 20px;
+            font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+            font-size: 0.78em;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-inner">
+            <span class="logo">Meridian Financial Group</span>
+        </div>
+    </header>
+    <main class="main">
+        <div class="error-card">
+            <h1>Page Not Found</h1>
+            <p>The page you are looking for could not be found. Please check the URL or return to the home page.</p>
+            <a href="/login">Return to Login</a>
+        </div>
+    </main>
+    <footer class="footer">
+        <p>&copy; 2024 Meridian Financial Group. All rights reserved.</p>
+    </footer>
+</body>
+</html>"""
+
+content = content.replace("PLACEHOLDER_LOGIN_TEMPLATE", LOGIN_HTML)
+content = content.replace("PLACEHOLDER_PORTAL_TEMPLATE", PORTAL_HTML)
+content = content.replace("PLACEHOLDER_ERROR_TEMPLATE", ERROR_HTML)
+
+with open('/opt/portal/app.py', 'w') as f:
+    f.write(content)
+print("Meridian Financial templates injected")
+TEMPLATEEOF
+
+    elif [ "$DECOY_THEME" = "plexura" ]; then
+        python3 << 'TEMPLATEEOF'
+# Read app.py and replace placeholder template strings with Plexura themed HTML
+with open('/opt/portal/app.py') as f:
+    content = f.read()
+
+LOGIN_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Client Portal | Plexura Managed Solutions</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f8f9fa;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 16px 0;
+        }
+        .header-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+        }
+        .logo {
+            color: #fff;
+            font-size: 1.5em;
+            font-weight: 700;
+            text-decoration: none;
+        }
+        .logo span { color: #4a9eff; }
+        .main {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+        }
+        .login-card {
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.08);
+            width: 100%;
+            max-width: 400px;
+            padding: 48px 36px 40px;
+        }
+        .login-card h1 {
+            font-size: 1.4em;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 4px;
+        }
+        .login-card .subtitle {
+            color: #666;
+            font-size: 0.92em;
+            margin-bottom: 28px;
+        }
+        .login-error {
+            background: #fef2f2;
+            border: 1px solid #f5c6cb;
+            border-radius: 5px;
+            color: #842029;
+            padding: 10px 14px;
+            font-size: 0.85em;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 18px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 0.85em;
+            color: #555;
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 11px 14px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 0.95em;
+            color: #333;
+            background: #f8f9fa;
+            transition: border-color 0.2s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #4a9eff;
+            box-shadow: 0 0 0 3px rgba(74,158,255,0.12);
+        }
+        .btn-login {
+            width: 100%;
+            padding: 12px;
+            background: #4a9eff;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            font-size: 0.95em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .btn-login:hover {
+            background: #3a8eef;
+        }
+        .footer {
+            background: #1a1a2e;
+            color: #666;
+            text-align: center;
+            padding: 16px 20px;
+            font-size: 0.8em;
+        }
+        @media (max-width: 480px) {
+            .login-card { padding: 32px 24px 28px; }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-inner">
+            <span class="logo">Plexura<span>MS</span></span>
+        </div>
+    </header>
+    <main class="main">
+        <div class="login-card">
+            <h1>Plexura Managed Solutions</h1>
+            <p class="subtitle">Client Portal</p>
+            {% if error %}<div class="login-error">Invalid credentials. Please try again.</div>{% endif %}
+            <form method="POST" action="/login">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" required autocomplete="username" autofocus>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn-login">Sign In</button>
+            </form>
+        </div>
+    </main>
+    <footer class="footer">
+        <p>&copy; 2024 Plexura Managed Solutions. All rights reserved.</p>
+    </footer>
+</body>
+</html>"""
+
+PORTAL_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Document Portal | Plexura Managed Solutions</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f8f9fa;
+            color: #333;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .topbar {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 0 20px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+        }
+        .topbar-logo {
+            color: #fff;
+            font-size: 1.25em;
+            font-weight: 700;
+        }
+        .topbar-logo span { color: #4a9eff; }
+        .topbar-title {
+            color: #aaa;
+            font-size: 0.88em;
+        }
+        .topbar-right a {
+            color: #aaa;
+            text-decoration: none;
+            font-size: 0.85em;
+            transition: color 0.2s;
+        }
+        .topbar-right a:hover { color: #fff; }
+        .layout {
+            flex: 1;
+            display: flex;
+            min-height: 0;
+        }
+        .sidebar {
+            width: 240px;
+            background: #fff;
+            border-right: 1px solid #e8e8e8;
+            padding: 20px 0;
+            flex-shrink: 0;
+            overflow-y: auto;
+        }
+        .sidebar-header {
+            padding: 0 18px 14px;
+            font-size: 0.72em;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: #999;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+        .folder-list {
+            list-style: none;
+        }
+        .folder-list li {
+            padding: 10px 18px;
+            cursor: pointer;
+            font-size: 0.9em;
+            color: #555;
+            transition: background 0.15s;
+            border-left: 3px solid transparent;
+            border-radius: 0;
+        }
+        .folder-list li:hover { background: #f0f4ff; }
+        .folder-list li.active {
+            background: #f0f4ff;
+            color: #1a1a2e;
+            font-weight: 600;
+            border-left-color: #4a9eff;
+        }
+        .folder-list li::before {
+            content: "\1F4C1 ";
+            margin-right: 6px;
+        }
+        .btn-new-folder {
+            display: block;
+            margin: 14px 18px 0;
+            padding: 8px 0;
+            background: none;
+            border: 1px dashed #ccc;
+            border-radius: 5px;
+            color: #888;
+            font-size: 0.82em;
+            cursor: pointer;
+            text-align: center;
+            transition: border-color 0.2s, color 0.2s;
+        }
+        .btn-new-folder:hover { border-color: #4a9eff; color: #4a9eff; }
+        .content {
+            flex: 1;
+            padding: 24px 28px;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .content-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .content-header h2 {
+            font-size: 1.3em;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+        .btn-browse {
+            padding: 9px 22px;
+            background: #4a9eff;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            font-size: 0.85em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-browse:hover { background: #3a8eef; }
+        .file-input { display: none; }
+        .upload-progress {
+            display: none;
+            margin-bottom: 16px;
+        }
+        .progress-bar-outer {
+            background: #e8e8e8;
+            height: 6px;
+            border-radius: 3px;
+            width: 100%;
+            overflow: hidden;
+        }
+        .progress-bar-inner {
+            background: #4a9eff;
+            height: 100%;
+            width: 0%;
+            border-radius: 3px;
+            transition: width 0.2s;
+        }
+        .progress-text {
+            font-size: 0.78em;
+            color: #888;
+            margin-top: 4px;
+        }
+        .file-table-wrap {
+            flex: 1;
+            position: relative;
+            overflow: auto;
+        }
+        .file-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #fff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .file-table thead th {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #ccc;
+            padding: 11px 14px;
+            text-align: left;
+            font-size: 0.78em;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .file-table thead th:hover { color: #fff; }
+        .file-table thead th .sort-arrow { margin-left: 4px; font-size: 0.8em; }
+        .file-table tbody td {
+            padding: 11px 14px;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 0.88em;
+        }
+        .file-table tbody tr:hover { background: #f8faff; }
+        .file-name-link {
+            color: #1a1a2e;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .file-name-link:hover { color: #4a9eff; text-decoration: underline; }
+        .btn-delete {
+            background: none;
+            border: 1px solid #e74c3c;
+            color: #e74c3c;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.78em;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s;
+        }
+        .btn-delete:hover { background: #e74c3c; color: #fff; }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+            font-size: 0.95em;
+        }
+        .drop-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(26, 26, 46, 0.88);
+            border-radius: 8px;
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            color: #4a9eff;
+            font-size: 1.3em;
+            font-weight: 600;
+            pointer-events: none;
+        }
+        .drop-overlay .drop-icon { font-size: 2.5em; margin-bottom: 12px; }
+        .modal-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.4);
+            z-index: 500;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-backdrop.active { display: flex; }
+        .modal {
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            padding: 28px 32px;
+            max-width: 400px;
+            width: 90%;
+        }
+        .modal h3 {
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: #1a1a2e;
+        }
+        .modal p { font-size: 0.9em; color: #555; margin-bottom: 20px; }
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        .modal-actions button {
+            padding: 8px 20px;
+            font-size: 0.85em;
+            cursor: pointer;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #fff;
+            color: #555;
+            transition: background 0.2s;
+        }
+        .modal-actions button:hover { background: #f8f9fa; }
+        .modal-actions .btn-confirm-delete {
+            background: #e74c3c;
+            color: #fff;
+            border-color: #e74c3c;
+        }
+        .modal-actions .btn-confirm-delete:hover { background: #c0392b; }
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 12px 20px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            z-index: 600;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.3s, transform 0.3s;
+            max-width: 360px;
+        }
+        .toast.visible { opacity: 1; transform: translateY(0); }
+        .toast.error { border-left: 3px solid #e74c3c; }
+        .toast.success { border-left: 3px solid #4a9eff; }
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .content { padding: 16px; }
+            .topbar-title { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-left">
+            <span class="topbar-logo">Plexura<span>MS</span></span>
+            <span class="topbar-title">Document Portal</span>
+        </div>
+        <div class="topbar-right">
+            <a href="/portal/logout">Sign Out</a>
+        </div>
+    </header>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="sidebar-header">Folders</div>
+            <ul class="folder-list" id="folder-list"></ul>
+            <button class="btn-new-folder" id="btn-new-folder">+ New Folder</button>
+        </aside>
+        <main class="content">
+            <div class="content-header">
+                <h2 id="current-folder-title">Documents</h2>
+                <div>
+                    <input type="file" class="file-input" id="file-input" multiple>
+                    <button class="btn-browse" id="btn-browse">Browse Files</button>
+                </div>
+            </div>
+            <div class="upload-progress" id="upload-progress">
+                <div class="progress-bar-outer"><div class="progress-bar-inner" id="progress-bar"></div></div>
+                <div class="progress-text" id="progress-text">Uploading...</div>
+            </div>
+            <div class="file-table-wrap" id="file-table-wrap">
+                <div class="drop-overlay" id="drop-overlay">
+                    <div class="drop-icon">&uarr;</div>
+                    <div>Drop files here to upload</div>
+                </div>
+                <table class="file-table" id="file-table">
+                    <thead>
+                        <tr>
+                            <th data-sort="name">Name <span class="sort-arrow"></span></th>
+                            <th data-sort="size">Size <span class="sort-arrow"></span></th>
+                            <th data-sort="modified">Modified <span class="sort-arrow"></span></th>
+                            <th style="width: 80px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="file-tbody"></tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+    <div class="modal-backdrop" id="delete-modal">
+        <div class="modal">
+            <h3>Confirm Deletion</h3>
+            <p>Are you sure you want to delete <strong id="delete-filename"></strong>?</p>
+            <div class="modal-actions">
+                <button id="btn-cancel-delete">Cancel</button>
+                <button class="btn-confirm-delete" id="btn-confirm-delete">Delete</button>
+            </div>
+        </div>
+    </div>
+    <div class="toast" id="toast"></div>
+    <script>
+    (function() {
+        var csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        var currentFolder = 'unsorted';
+        var currentSort = 'modified';
+        var sortAsc = false;
+        var pendingDelete = null;
+
+        function showToast(msg, type) {
+            var t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'toast ' + (type || 'success') + ' visible';
+            setTimeout(function() { t.className = 'toast'; }, 3500);
+        }
+
+        function apiFetch(url, opts) {
+            opts = opts || {};
+            opts.headers = opts.headers || {};
+            opts.headers['X-CSRF-Token'] = csrfToken;
+            return fetch(url, opts).then(function(r) {
+                if (r.status === 401) { window.location.href = '/login'; return Promise.reject('auth'); }
+                return r;
+            });
+        }
+
+        function loadFolders() {
+            fetch('/portal/api/folders').then(function(r) { return r.json(); }).then(function(data) {
+                var list = document.getElementById('folder-list');
+                list.innerHTML = '';
+                (data.folders || []).forEach(function(name) {
+                    var li = document.createElement('li');
+                    li.textContent = name;
+                    if (name === currentFolder) li.className = 'active';
+                    li.addEventListener('click', function() { currentFolder = name; loadFolders(); loadFiles(); });
+                    list.appendChild(li);
+                });
+            });
+        }
+
+        function loadFiles() {
+            document.getElementById('current-folder-title').textContent = currentFolder;
+            fetch('/portal/api/files?folder=' + encodeURIComponent(currentFolder) + '&sort=' + currentSort)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var tbody = document.getElementById('file-tbody');
+                    tbody.innerHTML = '';
+                    var files = data.files || [];
+                    if (files.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No files in this folder</td></tr>';
+                        return;
+                    }
+                    files.forEach(function(f) {
+                        var tr = document.createElement('tr');
+                        var tdName = document.createElement('td');
+                        var a = document.createElement('a');
+                        a.className = 'file-name-link';
+                        a.href = '/portal/api/download/' + encodeURIComponent(currentFolder) + '/' + encodeURIComponent(f.name);
+                        a.textContent = f.name;
+                        tdName.appendChild(a);
+
+                        var tdSize = document.createElement('td');
+                        tdSize.textContent = f.size_human;
+
+                        var tdMod = document.createElement('td');
+                        var d = new Date(f.modified * 1000);
+                        tdMod.textContent = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+
+                        var tdAct = document.createElement('td');
+                        var btn = document.createElement('button');
+                        btn.className = 'btn-delete';
+                        btn.textContent = 'Delete';
+                        btn.addEventListener('click', function() {
+                            pendingDelete = { folder: currentFolder, name: f.name };
+                            document.getElementById('delete-filename').textContent = f.name;
+                            document.getElementById('delete-modal').className = 'modal-backdrop active';
+                        });
+                        tdAct.appendChild(btn);
+
+                        tr.appendChild(tdName);
+                        tr.appendChild(tdSize);
+                        tr.appendChild(tdMod);
+                        tr.appendChild(tdAct);
+                        tbody.appendChild(tr);
+                    });
+                });
+        }
+
+        function uploadFiles(files) {
+            if (!files || files.length === 0) return;
+            var formData = new FormData();
+            formData.append('folder', currentFolder);
+            for (var i = 0; i < files.length; i++) {
+                formData.append('file' + i, files[i]);
+            }
+            var progWrap = document.getElementById('upload-progress');
+            var progBar = document.getElementById('progress-bar');
+            var progText = document.getElementById('progress-text');
+            progWrap.style.display = 'block';
+            progBar.style.width = '0%';
+            progText.textContent = 'Uploading...';
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/portal/api/upload');
+            xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+            xhr.upload.addEventListener('progress', function(e) {
+                if (e.lengthComputable) {
+                    var pct = Math.round((e.loaded / e.total) * 100);
+                    progBar.style.width = pct + '%';
+                    progText.textContent = 'Uploading... ' + pct + '%';
+                }
+            });
+            xhr.addEventListener('load', function() {
+                progWrap.style.display = 'none';
+                if (xhr.status === 201) {
+                    var resp = JSON.parse(xhr.responseText);
+                    showToast('Uploaded ' + (resp.uploaded || []).length + ' file(s)', 'success');
+                    loadFiles();
+                } else {
+                    var err = 'Upload failed';
+                    try { err = JSON.parse(xhr.responseText).error || err; } catch(e) {}
+                    showToast(err, 'error');
+                }
+            });
+            xhr.addEventListener('error', function() {
+                progWrap.style.display = 'none';
+                showToast('Upload failed', 'error');
+            });
+            xhr.send(formData);
+        }
+
+        // Sort headers
+        document.querySelectorAll('.file-table thead th[data-sort]').forEach(function(th) {
+            th.addEventListener('click', function() {
+                var newSort = th.getAttribute('data-sort');
+                if (newSort === currentSort) { sortAsc = !sortAsc; } else { currentSort = newSort; sortAsc = true; }
+                document.querySelectorAll('.file-table thead th .sort-arrow').forEach(function(s) { s.textContent = ''; });
+                th.querySelector('.sort-arrow').textContent = sortAsc ? ' \u25B2' : ' \u25BC';
+                loadFiles();
+            });
+        });
+
+        // Browse button
+        document.getElementById('btn-browse').addEventListener('click', function() {
+            document.getElementById('file-input').click();
+        });
+        document.getElementById('file-input').addEventListener('change', function(e) {
+            uploadFiles(e.target.files);
+            e.target.value = '';
+        });
+
+        // Drag and drop
+        var wrap = document.getElementById('file-table-wrap');
+        var overlay = document.getElementById('drop-overlay');
+        var dragCounter = 0;
+        wrap.addEventListener('dragenter', function(e) {
+            e.preventDefault();
+            dragCounter++;
+            overlay.style.display = 'flex';
+        });
+        wrap.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter <= 0) { overlay.style.display = 'none'; dragCounter = 0; }
+        });
+        wrap.addEventListener('dragover', function(e) { e.preventDefault(); });
+        wrap.addEventListener('drop', function(e) {
+            e.preventDefault();
+            dragCounter = 0;
+            overlay.style.display = 'none';
+            uploadFiles(e.dataTransfer.files);
+        });
+
+        // New folder
+        document.getElementById('btn-new-folder').addEventListener('click', function() {
+            var name = prompt('Folder name (alphanumeric, hyphens, underscores):');
+            if (!name) return;
+            apiFetch('/portal/api/folders', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name })
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.ok) { showToast('Folder created', 'success'); currentFolder = name; loadFolders(); loadFiles(); }
+                else { showToast(data.error || 'Failed', 'error'); }
+            }).catch(function() { showToast('Failed to create folder', 'error'); });
+        });
+
+        // Delete modal
+        document.getElementById('btn-cancel-delete').addEventListener('click', function() {
+            document.getElementById('delete-modal').className = 'modal-backdrop';
+            pendingDelete = null;
+        });
+        document.getElementById('btn-confirm-delete').addEventListener('click', function() {
+            if (!pendingDelete) return;
+            var folder = pendingDelete.folder;
+            var name = pendingDelete.name;
+            document.getElementById('delete-modal').className = 'modal-backdrop';
+            apiFetch('/portal/api/files/' + encodeURIComponent(folder) + '/' + encodeURIComponent(name), {
+                method: 'DELETE'
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.ok) { showToast('File deleted', 'success'); loadFiles(); }
+                else { showToast(data.error || 'Failed', 'error'); }
+            }).catch(function() { showToast('Failed to delete file', 'error'); });
+            pendingDelete = null;
+        });
+
+        // Init
+        loadFolders();
+        loadFiles();
+    })();
+    </script>
+</body>
+</html>"""
+
+ERROR_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Page Not Found | Plexura Managed Solutions</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f8f9fa;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 16px 0;
+        }
+        .header-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        .logo {
+            color: #fff;
+            font-size: 1.5em;
+            font-weight: 700;
+        }
+        .logo span { color: #4a9eff; }
+        .main {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        .error-card {
+            max-width: 440px;
+        }
+        .error-card h1 {
+            font-size: 1.6em;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 12px;
+        }
+        .error-card p {
+            color: #666;
+            font-size: 0.92em;
+            margin-bottom: 28px;
+            line-height: 1.6;
+        }
+        .error-card a {
+            display: inline-block;
+            padding: 11px 32px;
+            background: #4a9eff;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 600;
+            font-size: 0.9em;
+            transition: background 0.3s;
+        }
+        .error-card a:hover { background: #3a8eef; }
+        .footer {
+            background: #1a1a2e;
+            color: #666;
+            text-align: center;
+            padding: 16px 20px;
+            font-size: 0.8em;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-inner">
+            <span class="logo">Plexura<span>MS</span></span>
+        </div>
+    </header>
+    <main class="main">
+        <div class="error-card">
+            <h1>Page Not Found</h1>
+            <p>The page you are looking for could not be found. Please check the URL or return to the home page.</p>
+            <a href="/login">Return to Login</a>
+        </div>
+    </main>
+    <footer class="footer">
+        <p>&copy; 2024 Plexura Managed Solutions. All rights reserved.</p>
+    </footer>
+</body>
+</html>"""
+
+content = content.replace("PLACEHOLDER_LOGIN_TEMPLATE", LOGIN_HTML)
+content = content.replace("PLACEHOLDER_PORTAL_TEMPLATE", PORTAL_HTML)
+content = content.replace("PLACEHOLDER_ERROR_TEMPLATE", ERROR_HTML)
+
+with open('/opt/portal/app.py', 'w') as f:
+    f.write(content)
+print("Plexura templates injected")
+TEMPLATEEOF
+    fi
 
     # Write systemd service
     cat > /etc/systemd/system/portal.service << 'SVCEOF'
