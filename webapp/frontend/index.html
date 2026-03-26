@@ -15,7 +15,9 @@
             <button class="tab-btn" data-target="configuration">Configuration</button>
             <button class="tab-btn" data-target="deployment">Deploy</button>
             <button class="tab-btn" data-target="deployments">Deployment Manager</button>
+            <button class="tab-btn" data-target="tools">Tools</button>
             <button class="tab-btn" data-target="architecture">Architecture</button>
+            <button class="tab-btn" data-target="beacon">Beacon</button>
             <button class="tab-btn" data-target="settings">Settings</button>
             <button class="theme-toggle" id="theme-toggle" title="Toggle dark/light mode" aria-label="Toggle theme">
                 <span id="theme-icon">&#9790;</span>
@@ -27,7 +29,7 @@
 
             <!-- Dashboard Page -->
             <div class="tab-page active" data-page="dashboard">
-                <h2 style="color: var(--gold); margin-bottom: 20px; font-size: 1.7em;">Infrastructure Overview</h2>
+                <h2 class="page-title">Infrastructure Overview</h2>
                 <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
                     <strong style="color: var(--gold);">Region:</strong> All deployments, resource queries, and purge operations are restricted to <strong>eu-central-1</strong> (Frankfurt).
                     <span style="margin-left: 8px; opacity: 0.8;">Note: If CloudFront domain fronting is enabled, ACM certificates are provisioned in us-east-1 (AWS requirement for CloudFront).</span>
@@ -35,40 +37,33 @@
                 <div id="dashboard-status">
                     <p>Loading...</p>
                 </div>
-                <div class="quick-actions">
-                    <button class="btn btn-info" onclick="APP.navigateTo('aws-check')">Check Prerequisites</button>
-                    <button class="btn btn-primary" onclick="APP.navigateTo('configuration')">Configure</button>
-                    <button class="btn btn-success" onclick="APP.navigateTo('deployment')">Deploy</button>
-                    <button class="btn btn-primary" onclick="APP.navigateTo('architecture')">Architecture Docs</button>
-                </div>
             </div>
 
             <!-- Configuration Page -->
             <div class="tab-page" data-page="configuration">
-                    <h2 style="color: var(--gold); margin-bottom: 20px; font-size: 1.7em;">Configuration Editor</h2>
+                    <h2 class="page-title">Configuration Editor</h2>
 
                     <!-- What to Deploy Section -->
                     <div class="deploy-selector">
                         <h3>What do you want to deploy?</h3>
-                        <div class="form-group" style="margin-bottom: 0;">
+                        <div class="form-group form-group--compact">
                             <select id="deployment-type" onchange="updateDeploymentType()">
-                                <option value="" disabled selected>Select what to deploy...</option>
                                 <optgroup label="Full C2 Infrastructure (Internet-Facing Ops)">
-                                    <option value="c2-adhoc">C2 Ad-Hoc: 1 Server + Redirectors + Bastion - ~$125/mo</option>
-                                    <option value="c2-purple">C2 Purple Team: 2+ Servers + Redirectors + Bastion - ~$155/mo</option>
-                                    <option value="c2-full">C2 Full Red Team: 3 Phased Servers + Redirectors + Bastion - ~$185/mo</option>
+                                    <option value="c2-adhoc" selected>C2 Ad-Hoc: 1 Server + Redirectors + Bastion + Attack Box - ~$245/mo</option>
+                                    <option value="c2-purple">C2 Purple Team: 2+ Servers + Redirectors + Bastion + Attack Box - ~$280/mo</option>
+                                    <option value="c2-full">C2 Full Red Team: 3 Phased Servers + Redirectors + Bastion + Attack Box - ~$310/mo</option>
                                 </optgroup>
                                 <optgroup label="GOAD + Cobalt Strike (Training Labs)">
-                                    <option value="goad-mini">GOAD Mini + CS: 1 VM, 1 domain + Jumpbox w/CS - ~$145/mo</option>
-                                    <option value="goad-light">GOAD Light + CS: 3 VMs, 2 domains + Jumpbox w/CS - ~$310/mo</option>
-                                    <option value="goad-sccm">GOAD SCCM + CS: 4 VMs, 1 domain + SCCM + Jumpbox w/CS - ~$765/mo</option>
-                                    <option value="goad-full">GOAD Full + CS: 5 VMs, 3 domains, 2 forests + Jumpbox w/CS - ~$470/mo</option>
-                                    <option value="goad-nha">GOAD NHA + CS: 5 VMs, 2 domains (CTF) + Jumpbox w/CS - ~$470/mo</option>
+                                    <option value="goad-mini">GOAD Mini + CS: 1 VM, 1 domain + Jumpbox w/CS - ~$260/mo</option>
+                                    <option value="goad-light">GOAD Light + CS: 3 VMs, 2 domains + Jumpbox w/CS - ~$425/mo</option>
+                                    <option value="goad-sccm">GOAD SCCM + CS: 4 VMs, 1 domain + SCCM + Jumpbox w/CS - ~$550/mo</option>
+                                    <option value="goad-full">GOAD Full + CS: 5 VMs, 3 domains, 2 forests + Jumpbox w/CS - ~$595/mo</option>
+                                    <option value="goad-nha">GOAD NHA + CS: 5 VMs, 2 domains (CTF) + Jumpbox w/CS - ~$595/mo</option>
                                 </optgroup>
                                 <optgroup label="Full C2 + GOAD Lab (Realistic Training)">
-                                    <option value="combined-adhoc-mini">Full C2 Ad-Hoc + GOAD Mini - ~$240/mo</option>
-                                    <option value="combined-adhoc-light">Full C2 Ad-Hoc + GOAD Light - ~$400/mo</option>
-                                    <option value="combined-full-full">Full C2 Red Team + GOAD Full - ~$620/mo</option>
+                                    <option value="combined-adhoc-mini">Full C2 Ad-Hoc + GOAD Mini - ~$380/mo</option>
+                                    <option value="combined-adhoc-light">Full C2 Ad-Hoc + GOAD Light - ~$545/mo</option>
+                                    <option value="combined-full-full">Full C2 Red Team + GOAD Full - ~$780/mo</option>
                                 </optgroup>
                         </select>
                         </div>
@@ -115,13 +110,8 @@
                         </small>
                     </div>
 
-                    <div class="form-group">
-                        <label for="aws-region">AWS Region:</label>
-                        <select id="aws-region">
-                            <option value="eu-central-1" selected>Europe (Frankfurt) - eu-central-1</option>
-                        </select>
-                        <small>All deployments are restricted to eu-central-1</small>
-                    </div>
+                    <!-- Region fixed to eu-central-1 — hidden from UI -->
+                    <input type="hidden" id="aws-region" value="eu-central-1">
 
                     <div class="form-group" id="key-pair-name-group">
                         <label for="key-pair-name">Key Pair Name:</label>
@@ -132,7 +122,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="management-cidr">Management CIDR Blocks: <span style="color: var(--danger-text);">*</span></label>
+                        <label for="management-cidr">Management CIDR Blocks: <span class="t-danger">*</span></label>
                         <div style="display: flex; gap: 10px; align-items: flex-start;">
                             <input type="text" id="management-cidr" placeholder="e.g. 203.0.113.50/32, 198.51.100.0/24" style="flex: 1;">
                             <button type="button" class="btn btn-secondary" onclick="fetchMyPublicIP()" id="fetch-ip-btn" style="white-space: nowrap;">
@@ -142,7 +132,13 @@
                         <small>
                             <strong>Required:</strong> Without this, you won't be able to access your infrastructure.<br>
                             Only these IPs can SSH/RDP/connect to CS. Use <code>/32</code> for a single IP.<br>
-                            <span style="color: var(--text-muted); font-size: 0.9em;">Examples: <code>1.2.3.4/32</code> (single IP) &middot; <code>10.0.0.0/24</code> (IP range) &middot; <code>1.2.3.4/32, 5.6.7.8/32</code> (multiple)</span>
+                            <span style="color: var(--text-muted); font-size: 0.9em;">Examples: <code>1.2.3.4/32</code> (single IP) &middot; <code>10.0.0.0/24</code> (IP range) &middot; <code>1.2.3.4/32, 5.6.7.8/32</code> (multiple)</span><br>
+                            <span style="color: var(--text-muted); font-size: 0.9em;">
+                                <strong>Fetch My IP</strong> uses a server-side <code>curl</code> to detect your real public IP &mdash; this bypasses iCloud Private Relay and VPN split-tunnelling, which would otherwise return a relay IP that AWS security groups won't recognise for SSH/RDP.
+                            </span><br>
+                            <span style="color: var(--text-muted); font-size: 0.9em;">
+                                <strong>IP changed post-deploy?</strong> Update directly in AWS Console: EC2 &rarr; Security Groups &rarr; filter by your project name &rarr; Edit inbound rules &rarr; replace your old IP with new <code>/32</code>.
+                            </span>
                         </small>
                     </div>
 
@@ -156,29 +152,44 @@
 
                         <div class="form-group">
                             <label for="primary-domain">Primary Domain:</label>
-                            <input type="text" id="primary-domain" placeholder="e.g. example-business-services.com">
-                            <small>A domain you have registered (e.g. from Namecheap, GoDaddy, Route 53 Domains). Nameservers must point to AWS Route 53 after deployment.</small>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <select id="primary-domain" style="flex: 1;">
+                                    <option value="">-- Select a domain from your AWS account --</option>
+                                </select>
+                                <button class="btn btn-secondary" onclick="_route53DomainsCache = null; loadRoute53Domains()" title="Refresh domains from Route 53" style="padding: 6px 12px; white-space: nowrap;">Refresh</button>
+                            </div>
+                            <small>Domains registered in your AWS Route 53 account. <a href="https://console.aws.amazon.com/route53/home#DomainListing:" target="_blank" style="color: var(--accent-muted);">Register a new domain</a> if none are listed.</small>
                         </div>
 
                         <div class="form-group">
                             <label for="backup-domains">Backup Domains:</label>
-                            <input type="text" id="backup-domains" placeholder="e.g. backup1.com, backup2.net">
-                            <small>Additional domains you own, for rotation if the primary is burned. Comma-separated (recommended: 2-3).</small>
+                            <select id="backup-domains" multiple style="min-height: 60px;">
+                            </select>
+                            <small>Hold Ctrl/Cmd to select multiple. These are for rotation if the primary is burned (recommended: 1-2).</small>
                         </div>
 
                         <div class="grid-3">
-                            <div class="form-group" style="margin-bottom: 0;">
-                                <label for="c2-subdomain">C2 Subdomain:</label>
+                            <div class="form-group form-group--compact">
+                                <label for="c2-subdomain">Callback Subdomain:</label>
                                 <input type="text" id="c2-subdomain" value="api" placeholder="api">
+                                <small>Beacon callback DNS record (avoid obvious names like "c2")</small>
                             </div>
-                            <div class="form-group" style="margin-bottom: 0;">
-                                <label for="www-subdomain">WWW Subdomain:</label>
+                            <div class="form-group form-group--compact">
+                                <label for="www-subdomain">Web Subdomain:</label>
                                 <input type="text" id="www-subdomain" value="www" placeholder="www">
+                                <small>Decoy site on redirector</small>
                             </div>
-                            <div class="form-group" style="margin-bottom: 0;">
+                            <div class="form-group form-group--compact">
                                 <label for="cdn-subdomain">CDN Subdomain:</label>
                                 <input type="text" id="cdn-subdomain" value="cdn" placeholder="cdn">
+                                <small>Used for domain fronting via CloudFront</small>
                             </div>
+                        </div>
+
+                        <!-- Domain Availability Check -->
+                        <div style="margin-top: 12px;">
+                            <button class="btn btn-sm btn-info" onclick="checkDomainAvailability()">Check Subdomain Availability</button>
+                            <div id="domain-availability-status" style="margin-top: 8px;"></div>
                         </div>
 
                         <!-- Domain Setup Instructions -->
@@ -255,54 +266,59 @@ ns-143.awsdns-17.org
                                     <small>Both options are free. Let's Encrypt gives you a trusted cert that browsers accept without warnings.</small>
                                 </div>
 
-                                <!-- OPSEC warning for self-signed -->
-                                <div id="ssl-opsec-warning" class="callout callout--danger">
-                                    <h4 style="margin: 0 0 10px 0;">OPSEC: Self-Signed vs Let's Encrypt</h4>
-                                    <p style="margin: 0 0 10px 0; font-size: 0.9em;">
-                                        <strong>Self-signed certificates are a major red flag for blue teams.</strong> Only use self-signed as a temporary fallback — always aim for Let's Encrypt in production.
-                                    </p>
-                                    <table>
-                                        <thead>
-                                            <tr>
-                                                <th>Risk</th>
-                                                <th>Self-Signed</th>
-                                                <th>Let's Encrypt</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <tr>
-                                                <td>Browser warnings</td>
-                                                <td>"Your connection is not private" — suspicious if an analyst visits</td>
-                                                <td>No warnings — looks like any legitimate site</td>
-                                            </tr>
-                                            <tr>
-                                                <td>SSL inspection</td>
-                                                <td>Corporate proxies (Zscaler, Palo Alto) flag or block self-signed certs</td>
-                                                <td>Passes SSL inspection — trusted CA chain</td>
-                                            </tr>
-                                            <tr>
-                                                <td>Threat intel scanning</td>
-                                                <td>Shodan and Censys flag self-signed certs — routinely used to hunt C2</td>
-                                                <td>Blends in with millions of Let's Encrypt sites</td>
-                                            </tr>
-                                            <tr>
-                                                <td>CT logs</td>
-                                                <td style="color: var(--success-text);">Not logged — no public record</td>
-                                                <td style="color: var(--warning-text);">Cert appears in Certificate Transparency logs — blue teams can monitor for new certs on suspicious domains</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                    <p style="margin: 10px 0 0 0; font-size: 0.88em; color: var(--text-muted);">
-                                        The only advantage of self-signed is that it's immediate (no DNS dependency) and doesn't appear in CT logs.
-                                        Let's Encrypt is better in every other way. The redirector always starts with self-signed and upgrades to Let's Encrypt once DNS propagates.
-                                    </p>
+                                <!-- OPSEC warning for self-signed (collapsed by default) -->
+                                <div id="ssl-opsec-warning" class="callout callout--danger collapsed">
+                                    <h4 style="margin: 0; cursor: pointer; display: flex; align-items: center; justify-content: space-between;" onclick="this.parentElement.classList.toggle('collapsed'); this.querySelector('.collapse-icon').textContent = this.parentElement.classList.contains('collapsed') ? '+' : '-';">
+                                        OPSEC: Self-Signed vs Let's Encrypt
+                                        <span class="collapse-icon" style="font-size: 1.2em; font-weight: bold; color: inherit;">+</span>
+                                    </h4>
+                                    <div class="ssl-opsec-body" style="display: none;">
+                                        <p style="margin: 10px 0 10px 0; font-size: 0.9em;">
+                                            <strong>Self-signed certificates are a major red flag for blue teams.</strong> Only use self-signed as a temporary fallback — always aim for Let's Encrypt in production.
+                                        </p>
+                                        <table>
+                                            <thead>
+                                                <tr>
+                                                    <th>Risk</th>
+                                                    <th>Self-Signed</th>
+                                                    <th>Let's Encrypt</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td>Browser warnings</td>
+                                                    <td>"Your connection is not private" — suspicious if an analyst visits</td>
+                                                    <td>No warnings — looks like any legitimate site</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>SSL inspection</td>
+                                                    <td>Corporate proxies (Zscaler, Palo Alto) flag or block self-signed certs</td>
+                                                    <td>Passes SSL inspection — trusted CA chain</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>Threat intel scanning</td>
+                                                    <td>Shodan and Censys flag self-signed certs — routinely used to hunt C2</td>
+                                                    <td>Blends in with millions of Let's Encrypt sites</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>CT logs</td>
+                                                    <td class="t-success">Not logged — no public record</td>
+                                                    <td class="t-warning">Cert appears in Certificate Transparency logs — blue teams can monitor for new certs on suspicious domains</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                        <p style="margin: 10px 0 0 0; font-size: 0.88em; color: var(--text-muted);">
+                                            The only advantage of self-signed is that it's immediate (no DNS dependency) and doesn't appear in CT logs.
+                                            Let's Encrypt is better in every other way. The redirector always starts with self-signed and upgrades to Let's Encrypt once DNS propagates.
+                                        </p>
+                                    </div>
                                 </div>
 
                                 <div id="letsencrypt-options">
                                     <div class="form-group">
-                                        <label for="admin-email">Admin Email: <span style="color: var(--danger-text);">*</span></label>
+                                        <label for="admin-email">Admin Email: <span class="t-danger">*</span></label>
                                         <input type="email" id="admin-email" placeholder="admin@yourcompany.com">
-                                        <small>Let's Encrypt sends certificate expiry reminders to this address. Use a burner email if preferred.</small>
+                                        <small>Required by Let's Encrypt for expiry reminders. <strong>OPSEC:</strong> This email is registered with Let's Encrypt's ACME servers — not visible in the certificate or CT logs, but stored in their account database. Use a burner/disposable email for red team ops.</small>
                                     </div>
 
                                     <div class="form-group">
@@ -332,8 +348,9 @@ ns-143.awsdns-17.org
 
                     <!-- Domain Fronting Configuration Section -->
                     <div id="domain-fronting-section" class="section-card section-card--highlight" style="display: none;">
-                        <h3>CloudFront Domain Fronting (Advanced)</h3>
-                        <p>
+                        <details id="domain-fronting-details">
+                        <summary style="cursor: pointer; font-weight: bold; font-size: 1.15em; padding: 4px 0;">CloudFront Domain Fronting (Advanced)</summary>
+                        <p style="margin-top: 10px;">
                             Route C2 traffic through AWS CloudFront CDN to hide redirector IPs and blend with legitimate CDN traffic.
                         </p>
 
@@ -355,23 +372,23 @@ ns-143.awsdns-17.org
                                     </tr>
                                     <tr>
                                         <td style="font-weight: 500;">IP exposure</td>
-                                        <td style="color: var(--warning-text);">Redirector IP visible in DNS and network logs</td>
-                                        <td style="color: var(--success-text);">Redirector IP hidden — only CloudFront IPs visible</td>
+                                        <td class="t-warning">Redirector IP visible in DNS and network logs</td>
+                                        <td class="t-success">Redirector IP hidden — only CloudFront IPs visible</td>
                                     </tr>
                                     <tr>
                                         <td style="font-weight: 500;">If domain blocked</td>
-                                        <td style="color: var(--warning-text);">Beacons go dark. Blue team can also block the IP.</td>
-                                        <td style="color: var(--success-text);">Rotate to backup domain instantly (no redeploy)</td>
+                                        <td class="t-warning">Beacons go dark. Blue team can also block the IP.</td>
+                                        <td class="t-success">Rotate to backup domain instantly (no redeploy)</td>
                                     </tr>
                                     <tr>
                                         <td style="font-weight: 500;">If IP blocked</td>
-                                        <td style="color: var(--warning-text);">Must redeploy new redirectors (new IPs) — downtime</td>
-                                        <td style="color: var(--success-text);">N/A — redirector IP is never exposed to the target</td>
+                                        <td class="t-warning">Must redeploy new redirectors (new IPs) — downtime</td>
+                                        <td class="t-success">N/A — redirector IP is never exposed to the target</td>
                                     </tr>
                                     <tr>
                                         <td style="font-weight: 500;">Complexity</td>
-                                        <td style="color: var(--success-text);">Simpler, deploys faster</td>
-                                        <td style="color: var(--warning-text);">Extra 15-30 min deploy, may breach CDN ToS</td>
+                                        <td class="t-success">Simpler, deploys faster</td>
+                                        <td class="t-warning">Extra 15-30 min deploy, may breach CDN ToS</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -431,6 +448,39 @@ ns-143.awsdns-17.org
                                 </ul>
                             </div>
                         </div>
+                        </details>
+                    </div>
+
+                    <!-- File Portal Configuration Section -->
+                    <div id="file-portal-section" class="section-card" style="display: none;">
+                        <h3>File Portal</h3>
+                        <p>Deploy a secure file sharing portal on redirectors. Accessible at <code>/login</code> on your redirector domain. Themed to match your decoy website.</p>
+
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                                <input type="checkbox" id="enable-file-portal" style="width: 18px; height: 18px;">
+                                <span>Enable File Portal</span>
+                            </label>
+                        </div>
+
+                        <div id="file-portal-options" style="opacity: 0.5; pointer-events: none;">
+                            <div class="form-group">
+                                <label for="portal-username">Portal Username:</label>
+                                <input type="text" id="portal-username" value="operator" placeholder="operator">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="portal-password">Portal Password:</label>
+                                <input type="password" id="portal-password" placeholder="Enter a strong password">
+                                <small style="color: var(--text-secondary);">Minimum 8 characters. Required when portal is enabled.</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="portal-session-timeout">Session Timeout (minutes):</label>
+                                <input type="number" id="portal-session-timeout" value="30" min="1" max="1440">
+                                <small style="color: var(--text-secondary);">Sessions expire after this many minutes of inactivity. Default: 30.</small>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Attack Box Configuration Section -->
@@ -460,12 +510,61 @@ ns-143.awsdns-17.org
                                 </div>
                                 <div class="form-group">
                                     <label for="attack-box-disk-size">Disk Size (GB):</label>
-                                    <input type="number" id="attack-box-disk-size" value="100" min="50" max="500" step="10">
+                                    <input type="number" id="attack-box-disk-size" value="50" min="50" max="500" step="10">
                                 </div>
                             </div>
+
+                            <!-- Attack Box Password -->
+                            <div style="margin-top: 15px; padding: 15px; background: var(--bg-section); border-radius: var(--radius); border: 1px solid var(--border);">
+                                <label style="font-weight: bold; display: block; margin-bottom: 6px;">RDP Password</label>
+                                <p style="font-size: 0.88em; color: var(--text-muted); margin-bottom: 12px;">
+                                    RDP requires Windows credentials — SSH keys cannot authenticate RDP sessions.
+                                    The SSH tunnel encrypts the connection but Windows still prompts for a username and password.
+                                </p>
+                                <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                        <input type="radio" name="attack-box-pw-mode" value="auto" checked>
+                                        <span>Auto-generate bootstrap password (Recommended)</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                        <input type="radio" name="attack-box-pw-mode" value="custom">
+                                        <span>Set custom password</span>
+                                    </label>
+                                </div>
+                                <div id="attack-box-custom-pw" style="display: none; margin-bottom: 12px;">
+                                    <input type="password" id="attack-box-password" placeholder="Minimum 8 characters"
+                                           style="width: 100%; max-width: 300px;">
+                                </div>
+                                <div style="background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: 6px; padding: 10px 12px;">
+                                    <div style="font-weight: bold; color: var(--warning-text); margin-bottom: 4px;">OPSEC Warning</div>
+                                    <p style="margin: 0; font-size: 0.88em; color: var(--warning-text);">
+                                        The bootstrap password is stored in <strong>EC2 user_data</strong> (readable by anyone with <code>ec2:DescribeInstanceAttribute</code>) and <strong>Terraform state</strong>.
+                                        Change it on first RDP login:
+                                    </p>
+                                    <code style="display: block; margin-top: 6px; padding: 6px 10px; background: var(--bg-terminal); border-radius: 4px; color: var(--text-terminal); font-size: 0.9em;">net user Administrator YourNewPassword</code>
+                                </div>
+                            </div>
+
                             <small>
-                                Includes: C:\Tools (red team tools repo), C:\Payloads (staging), C:\CobaltStrike (CS Client)
+                                Includes: C:\Tools (red team tools repo), C:\Payloads (staging), C:\Tools\CobaltStrike (CS Client)
                             </small>
+                        </div>
+                    </div>
+
+                    <!-- Decoy Website Theme -->
+                    <div id="decoy-theme-section" class="section-card" style="display: none;">
+                        <h3>Redirector Decoy Website</h3>
+                        <p>
+                            The redirector serves a decoy website to non-C2 visitors and web categorization crawlers.
+                            Choose a theme that matches your domain for proper classification.
+                        </p>
+                        <div class="form-group">
+                            <label for="decoy-theme">Decoy Theme:</label>
+                            <select id="decoy-theme">
+                                <option value="plexura">Plexura Managed Solutions (blocks crawlers)</option>
+                                <option value="meridian-financial">Meridian Financial Group (allows crawlers for finance categorization)</option>
+                            </select>
+                            <small>The finance theme allows web crawlers to index the site so domain categorization services classify it as "Financial Services"</small>
                         </div>
                     </div>
 
@@ -473,19 +572,34 @@ ns-143.awsdns-17.org
                     <div id="malleable-profile-section" class="section-card section-card--highlight" style="display: none;">
                         <h3>Malleable C2 Profile (Advanced)</h3>
                         <p>
-                            The redirector uses nginx to route C2 traffic. URIs must match your Cobalt Strike Malleable C2 profile.
+                            Select a traffic profile for your C2 beacons. The team server Malleable profile and nginx redirector URI patterns are
+                            <strong>automatically configured</strong> for all preset profiles. Only "Custom" requires manual setup.
                         </p>
 
                         <div class="form-group">
                             <label for="malleable-profile">Profile Type:</label>
                             <select id="malleable-profile">
-                                <option value="default">Default (jQuery-style URIs)</option>
-                                <option value="amazon">Amazon CDN Profile</option>
-                                <option value="google">Google APIs Profile</option>
-                                <option value="microsoft">Microsoft Azure Profile</option>
-                                <option value="custom">Custom (Manual Configuration)</option>
+                                <optgroup label="Built-in (Fully Automated)">
+                                    <option value="default">jQuery CDN (Default)</option>
+                                    <option value="amazon">Amazon CDN</option>
+                                    <option value="google">Google APIs</option>
+                                    <option value="microsoft">Microsoft Azure</option>
+                                    <option value="wikipedia">Wikipedia</option>
+                                </optgroup>
+                                <optgroup label="Normal" id="profiles-normal">
+                                    <!-- Populated dynamically from /api/profiles/ -->
+                                </optgroup>
+                                <optgroup label="APT" id="profiles-apt">
+                                    <!-- Populated dynamically -->
+                                </optgroup>
+                                <optgroup label="Crimeware" id="profiles-crimeware">
+                                    <!-- Populated dynamically -->
+                                </optgroup>
+                                <option value="custom">Custom (Paste Your Own)</option>
                             </select>
-                            <small>Select a profile that matches your Malleable C2 configuration</small>
+                            <small id="profile-type-hint">
+                                Preset profiles auto-configure both the team server and nginx redirectors. No manual URI setup needed.
+                            </small>
                         </div>
 
                         <!-- Front Domain (only shown when domain fronting is enabled) -->
@@ -511,7 +625,83 @@ ns-143.awsdns-17.org
                             </div>
                         </div>
 
-                        <!-- Profile Preview -->
+                        <!-- Auto-configured status banner (shown for preset profiles) -->
+                        <div id="profile-auto-status" class="callout callout--success" style="margin-bottom: 15px;">
+                            <p style="margin: 0; font-size: 0.9em;">
+                                <strong>Fully automated.</strong> The selected profile will be loaded on the team server at startup and nginx redirector
+                                URI patterns will be auto-configured to match. No manual setup required.
+                            </p>
+                        </div>
+
+                        <!-- Catalog profile info (shown for BC-SECURITY catalog profiles) -->
+                        <div id="profile-catalog-status" class="callout callout--info" style="margin-bottom: 15px; display: none;">
+                            <p style="margin: 0 0 8px 0; font-size: 0.9em;">
+                                <strong>Catalog profile selected.</strong> This profile is from the
+                                <a href="https://github.com/BC-SECURITY/Malleable-C2-Profiles" target="_blank" style="color: var(--accent-muted);">BC-SECURITY Malleable C2 Profiles</a> collection.
+                            </p>
+                            <ol style="margin: 0; padding-left: 20px; font-size: 0.88em;">
+                                <li>Profile will be deployed to <code>/opt/cobaltstrike/profiles/custom.profile</code> on the team server</li>
+                                <li>It will be validated with <code>c2lint</code> and auto-loaded at startup</li>
+                                <li>Nginx redirector URI patterns will be auto-generated from parsed URIs</li>
+                            </ol>
+                        </div>
+
+                        <!-- Custom profile info (shown only for custom) -->
+                        <div id="profile-custom-status" class="callout callout--info" style="margin-bottom: 15px; display: none;">
+                            <p style="margin: 0 0 8px 0; font-size: 0.9em;">
+                                <strong>Automated deployment.</strong> Paste your Malleable C2 profile below. During deployment:
+                            </p>
+                            <ol style="margin: 0; padding-left: 20px; font-size: 0.88em;">
+                                <li>Your profile will be deployed to <code>/opt/cobaltstrike/profiles/custom.profile</code> on the team server</li>
+                                <li>It will be validated with <code>c2lint</code> and auto-loaded at team server startup</li>
+                                <li>Nginx redirector URI patterns will be auto-generated from the parsed URIs below</li>
+                            </ol>
+                            <p style="margin: 8px 0 0 0; font-size: 0.85em; color: var(--text-muted);">
+                                A verification step will appear in the Post-Deployment Checklist to confirm everything is working.
+                            </p>
+                        </div>
+
+                        <!-- Custom Profile Paste Area (only shown for custom) -->
+                        <div id="custom-profile-paste" style="display: none; margin-bottom: 15px;">
+                            <div class="form-group">
+                                <label for="custom-profile-content">Your Malleable C2 Profile:</label>
+                                <textarea id="custom-profile-content" class="code-preview" rows="12"
+                                    style="width: 100%; font-family: var(--font-mono); font-size: 0.85em; resize: vertical; background: var(--bg-terminal); color: var(--text-terminal); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px;"
+                                    placeholder="# Paste your Malleable C2 profile here...
+#
+# Example:
+# set sample_name &quot;My Custom Profile&quot;;
+# set sleeptime &quot;60000&quot;;
+#
+# http-get {
+#     set uri &quot;/your-get-uri&quot;;
+#     ...
+# }
+#
+# http-post {
+#     set uri &quot;/your-post-uri&quot;;
+#     ...
+# }"></textarea>
+                                <small>
+                                    Paste the full <code>.profile</code> file contents. URIs are automatically extracted
+                                    and used to configure both the team server and nginx redirectors during deployment.
+                                </small>
+                            </div>
+
+                            <!-- Profile validation status -->
+                            <div id="profile-validation-status" style="display: none; margin-top: 10px;"></div>
+
+                            <!-- Auto-parsed URI preview (populated by JS on paste) -->
+                            <div id="custom-uri-preview" style="display: none; margin-top: 10px;"></div>
+
+                            <!-- Auto-generated nginx config preview -->
+                            <div id="custom-nginx-preview" style="display: none; margin-top: 10px;">
+                                <div style="font-size: 0.88em; margin-bottom: 6px;"><strong>Auto-generated Nginx Config:</strong></div>
+                                <pre style="background: var(--bg-terminal); color: var(--text-terminal); padding: 12px; border-radius: var(--radius); font-size: 0.82em; overflow-x: auto; margin: 0;"><code></code></pre>
+                            </div>
+                        </div>
+
+                        <!-- Profile Preview (shown for preset profiles) -->
                         <div id="malleable-profile-preview">
                             <!-- Preview tabs -->
                             <div style="display: flex; gap: 0;">
@@ -521,43 +711,46 @@ ns-143.awsdns-17.org
                                 <button type="button" class="profile-preview-tab preview-tab" data-tab="nginx-uris">
                                     Nginx URI Patterns
                                 </button>
+                                <button type="button" class="profile-preview-tab preview-tab" data-tab="example-traffic">
+                                    Example Traffic
+                                </button>
                             </div>
                             <!-- CS Profile tab -->
                             <div id="preview-tab-cs-profile" class="profile-preview-content" style="display: block;">
-                                <pre id="cs-profile-code" class="code-preview" style="border-radius: 0 var(--radius) var(--radius) var(--radius);"></pre>
+                                <pre id="cs-profile-code" class="code-preview code-preview--tabbed"></pre>
                             </div>
                             <!-- Nginx URIs tab -->
                             <div id="preview-tab-nginx-uris" class="profile-preview-content" style="display: none;">
-                                <pre id="nginx-uris-code" class="code-preview" style="border-radius: 0 var(--radius) var(--radius) var(--radius);"></pre>
+                                <pre id="nginx-uris-code" class="code-preview code-preview--tabbed"></pre>
                             </div>
-                            <small>
-                                This is a reference preview. Copy and adapt these snippets for your Cobalt Strike teamserver and redirector nginx config.
+                            <!-- Example Traffic tab -->
+                            <div id="preview-tab-example-traffic" class="profile-preview-content" style="display: none;">
+                                <pre id="example-traffic-code" class="code-preview code-preview--tabbed"></pre>
+                            </div>
+                            <small id="profile-preview-hint">
+                                Preview of the profile and nginx config that will be deployed automatically.
                             </small>
                         </div>
 
-                        <!-- OPSEC Warning -->
-                        <div class="callout callout--danger" style="margin-top: 15px;">
-                            <h4 style="margin: 0 0 10px 0;">Critical OPSEC Note</h4>
-                            <p style="margin: 0; font-size: 0.9em;">
-                                <strong>You MUST customize the redirector nginx configuration</strong> to match your actual Malleable C2 profile URIs.
-                                The deployed nginx config includes the URI patterns shown above. If you modify the CS profile, update nginx to match.
-                            </p>
-                            <details>
-                                <summary>How to Customize Redirector URIs</summary>
-                                <div style="font-size: 0.88em;">
-                                    <p>After deployment, SSH into the redirector and edit:</p>
-                                    <code style="display: block; padding: 10px; margin: 10px 0;">
-                                        sudo nano /etc/nginx/sites-available/c2-redirector
-                                    </code>
-                                    <p>Update the <code>location</code> blocks to match your Malleable profile's:</p>
-                                    <ul style="margin-left: 20px;">
-                                        <li><code>http-get { uri }</code> - GET request URIs</li>
-                                        <li><code>http-post { uri }</code> - POST request URIs</li>
-                                        <li><code>http-stager { uri }</code> - Stager URIs</li>
-                                    </ul>
-                                    <p>Then reload nginx: <code>sudo systemctl reload nginx</code></p>
-                                </div>
-                            </details>
+                    </div>
+
+                    <!-- GOAD Network Configuration (shown for GOAD/Combined deployments) -->
+                    <div id="goad-network-config-section" class="section-card section-card--highlight" style="display: none;">
+                        <h3>GOAD Network Configuration</h3>
+                        <p class="t-secondary" style="font-size: 0.88em;">
+                            Network settings for the GOAD lab VPC. Defaults work for most deployments. Only change these if you have overlapping networks or specific requirements.
+                        </p>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="goad-vpc-cidr">GOAD VPC CIDR:</label>
+                                <input type="text" id="goad-vpc-cidr" class="form-input" value="192.168.56.0/24" placeholder="192.168.56.0/24" oninput="updateGoadIpRange()">
+                                <small class="t-secondary">CIDR block for the GOAD VPC. Subnet CIDRs are derived automatically.</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="goad-ip-range" class="t-secondary">VM IP Range Prefix (derived):</label>
+                                <input type="text" id="goad-ip-range" class="form-input" value="192.168.56" readonly style="opacity: 0.7; cursor: default;">
+                                <small class="t-secondary">First 3 octets of the VPC CIDR. GOAD VMs use IPs in this range (e.g. .10, .11, .12...).</small>
+                            </div>
                         </div>
                     </div>
 
@@ -572,10 +765,10 @@ ns-143.awsdns-17.org
                     <div class="form-group" id="c2-instance-type-group">
                         <label for="c2-instance-type">C2 Instance Type:</label>
                         <select id="c2-instance-type">
-                            <option value="t3.small">t3.small (~$15/mo)</option>
-                            <option value="t3.medium" selected>t3.medium (~$30/mo)</option>
-                            <option value="t3.large">t3.large (~$60/mo)</option>
-                            <option value="t3.xlarge">t3.xlarge (~$120/mo)</option>
+                            <option value="t3.small">t3.small (2 vCPU, 2 GB RAM — ~$15/mo)</option>
+                            <option value="t3.medium" selected>t3.medium (2 vCPU, 4 GB RAM — ~$30/mo)</option>
+                            <option value="t3.large">t3.large (2 vCPU, 8 GB RAM — ~$60/mo)</option>
+                            <option value="t3.xlarge">t3.xlarge (4 vCPU, 16 GB RAM — ~$120/mo)</option>
                         </select>
                         <small id="c2-instance-type-hint">
                             Applies to Adhoc and Purple Team. Full Red Team uses per-phase instance types (default: t3.medium).
@@ -593,19 +786,17 @@ ns-143.awsdns-17.org
 
             <!-- Deployment Page -->
             <div class="tab-page" data-page="deployment">
-                    <h2 style="color: var(--gold); margin-bottom: 20px; font-size: 1.7em;">Deployment Control</h2>
+                    <h2 class="page-title">Deployment Control</h2>
 
                     <!-- Prerequisites Section -->
                     <div style="margin-bottom: 30px;">
                         <h3 style="margin-bottom: 20px;">Deployment Prerequisites</h3>
 
-                        <!-- Deployment Type Info -->
-                        <div id="deploy-type-info" class="deploy-type-banner" style="display: none;">
-                            <span class="icon" id="deploy-type-icon"></span>
-                            <div>
-                                <strong id="deploy-type-name">Deployment Type</strong>
-                                <div style="font-size: 0.88em; opacity: 0.8;" id="deploy-type-arch">Architecture info</div>
-                            </div>
+                        <!-- Deployment Type Overview (mirrors config page) -->
+                        <div id="deploy-type-info" class="deployment-overview" style="display: none;">
+                            <h4><span id="deploy-type-title">Deployment Overview</span></h4>
+                            <div id="deploy-type-components" class="overview-grid"></div>
+                            <div id="deploy-type-details" class="overview-detail"></div>
                         </div>
 
                         <!-- Configuration Summary Section -->
@@ -704,18 +895,21 @@ ns-143.awsdns-17.org
                             <!-- Upload form (hidden when file exists) -->
                             <div id="cs-client-upload-form-container">
                                 <p style="margin-bottom: 15px;">
-                                    Upload your Cobalt Strike <strong>client</strong> archive to have it pre-installed on the Windows Attack Box.
-                                    This is optional - you can also manually install the client later.
+                                    Upload your Cobalt Strike <strong>client distribution</strong> (.zip/.tar.gz of the CS folder) to have it pre-installed on the Windows Attack Box.
+                                    This is optional &mdash; you can also manually copy the client after deployment.
                                 </p>
 
                                 <details>
-                                    <summary>What to Upload</summary>
+                                    <summary>What to Upload &amp; Post-Deploy Steps</summary>
                                     <div>
                                         <p style="margin: 10px 0; font-size: 0.9em;">
-                                            Upload the same Cobalt Strike archive or a client-only package. The client will be extracted to <code>C:\Tools\CobaltStrike\</code> on the Attack Box.
+                                            <strong>What to upload:</strong> Zip or tar.gz the Cobalt Strike distribution folder (the one containing <code>cobaltstrike.jar</code>, <code>update.jar</code>, <code>update.bat</code>, and <code>client/</code>). It will be extracted to <code>C:\Tools\CobaltStrike\</code> on the Attack Box.
                                         </p>
-                                        <p style="margin: 0; font-size: 0.88em;">
-                                            The Attack Box connects to the Team Server at <code>192.168.56.40:50050</code> via the internal network.
+                                        <p style="margin: 10px 0; font-size: 0.9em;">
+                                            <strong>After deployment:</strong> RDP to the Attack Box and run <code>C:\Tools\CobaltStrike\update.bat</code>. This requires your <strong>Cobalt Strike license key</strong> &mdash; the updater will download the latest version and generate the authorization file needed to launch CS.
+                                        </p>
+                                        <p style="margin: 0; font-size: 0.88em; color: var(--text-muted);">
+                                            The Attack Box connects to the Team Server via the internal network. Java 17+ is pre-installed on the Attack Box.
                                         </p>
                                     </div>
                                 </details>
@@ -723,12 +917,12 @@ ns-143.awsdns-17.org
                                 <form id="upload-cs-client-form" enctype="multipart/form-data" style="margin: 15px 0;">
                                     <div style="margin-bottom: 10px;">
                                         <label for="cs-client-file-input" style="display: block; margin-bottom: 5px; font-weight: bold;">
-                                            Select Cobalt Strike Client Archive:
+                                            Select Cobalt Strike Client:
                                         </label>
                                         <input type="file" id="cs-client-file-input" name="file"
-                                               accept=".tar.gz,.tgz,.zip,.tar,application/gzip,application/x-gzip,application/x-tar,application/zip,application/x-compressed-tar">
+                                               accept=".exe,.tar.gz,.tgz,.zip,.tar,application/gzip,application/x-gzip,application/x-tar,application/zip,application/x-compressed-tar,application/x-msdownload">
                                         <small>
-                                            Supported formats: .tar.gz, .tgz, .tar, .zip (Max: 500MB)
+                                            Supported formats: .exe, .tar.gz, .tgz, .tar, .zip (Max: 500MB)
                                         </small>
                                     </div>
                                     <button type="submit" class="btn btn-info" id="upload-cs-client-btn">
@@ -756,12 +950,94 @@ ns-143.awsdns-17.org
                             </div>
                         </div>
 
+                        <!-- Team Server Password Section -->
+                        <div class="upload-section" id="cs-password-section">
+                            <h4>Team Server Password</h4>
+                            <small style="display: block; margin-bottom: 10px; color: var(--text-muted);">
+                                The team server requires a password for CS client connections on port 50050.
+                            </small>
+                            <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px;">
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="radio" name="cs-pw-mode" value="manual" checked>
+                                    <span>Set manually after deployment (Recommended)</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="radio" name="cs-pw-mode" value="preset">
+                                    <span>Set password now (auto-start team server)</span>
+                                </label>
+                            </div>
+                            <div id="cs-pw-manual-info" style="padding: 10px; background: var(--success-bg); border: 1px solid var(--success-border); border-radius: 6px; font-size: 0.9em;">
+                                After deployment, SSH to the C2 server and run:
+                                <code style="display: block; margin-top: 5px;">sudo /opt/cobaltstrike/set-password.sh</code>
+                                <span style="color: var(--text-muted); font-size: 0.9em;">Password never touches EC2 user_data or Terraform state.</span>
+                            </div>
+                            <div id="cs-pw-preset-fields" style="display: none;">
+                                <div style="background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px;">
+                                    <div style="font-weight: bold; color: var(--warning-text); margin-bottom: 4px;">OPSEC Warning</div>
+                                    <p style="margin: 0; font-size: 0.88em; color: var(--warning-text);">
+                                        Password will be embedded in <strong>EC2 user_data</strong> (readable by anyone with <code>ec2:DescribeInstanceAttribute</code>), stored in <strong>Terraform state</strong>, and visible in <strong>systemd service args</strong> (<code>/proc/&lt;pid&gt;/cmdline</code>) while the team server is running.
+                                    </p>
+                                </div>
+                                <input type="password" id="cs-teamserver-password" placeholder="Team server password (min 8 chars)"
+                                       style="width: 100%; max-width: 300px;">
+                            </div>
+                        </div>
+
+                        <!-- CS License Activation Section -->
+                        <div class="upload-section" id="cs-license-section">
+                            <h4>License Activation</h4>
+                            <small style="display: block; margin-bottom: 10px; color: var(--text-muted);">
+                                Cobalt Strike license is auto-activated at boot from AWS Secrets Manager.
+                            </small>
+                            <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px;">
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="radio" name="cs-license-mode" value="secret" checked>
+                                    <span>Auto-activate from Secrets Manager</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="radio" name="cs-license-mode" value="manual">
+                                    <span>Activate manually after deployment</span>
+                                </label>
+                            </div>
+                            <div id="cs-license-secret-fields">
+                                <div style="margin-bottom: 10px; padding: 10px; background: var(--info-bg); border: 1px solid var(--info-border); border-radius: 6px; font-size: 0.88em;">
+                                    <strong>One-time setup:</strong> Store your license key in Secrets Manager if you haven't already:<br>
+                                    <code style="display: block; margin-top: 5px; font-size: 0.95em;">aws secretsmanager create-secret --name cs-license-key --secret-string "xxxx-xxxx-xxxx-xxxx" --region eu-central-1</code>
+                                </div>
+                            </div>
+                            <div id="cs-license-manual-info" style="display: none; padding: 10px; background: var(--success-bg); border: 1px solid var(--success-border); border-radius: 6px; font-size: 0.9em;">
+                                After deployment, SSH to the C2 server and run:
+                                <code style="display: block; margin-top: 5px;">cd /opt/cobaltstrike && sudo ./update</code>
+                                <span style="color: var(--text-muted); font-size: 0.9em;">Enter your license key when prompted.</span>
+                            </div>
+                        </div>
+
+                        <!-- REST API Configuration -->
+                        <div class="form-group" id="rest-api-group" style="margin-top: 16px;">
+                            <label class="form-label">
+                                REST API (Beacon Management)
+                                <span class="label-hint">Requires Cobalt Strike 4.12+</span>
+                            </label>
+                            <div class="toggle-row" style="display: flex; align-items: center; gap: 12px; margin-top: 8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="enable-rest-api" name="enable-rest-api">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span class="t-secondary">Enable REST API for beacon management dashboard</span>
+                            </div>
+                            <div id="rest-api-info" class="status-display info" style="display: none; margin-top: 12px;">
+                                <strong>What this does:</strong> Starts the team server with <code>--experimental-db</code> and runs the <code>csrestapi</code> service on port 50443. After deployment, use the Beacon tab to manage beacons.
+                                <br><br>
+                                <strong>Password:</strong> The team server password will be pre-set to <code>password</code> for REST API authentication. Change it post-deployment for real engagements via <code>/opt/cobaltstrike/set-password.sh</code>.
+                            </div>
+                        </div>
+
                         <!-- SSH Public Key Section -->
                         <div class="upload-section" id="ssh-key-section">
                             <h4>SSH Public Key (Required for Lab Access)</h4>
 
                             <!-- Status (hidden by default) -->
-                            <div id="ssh-key-status" class="status-display" style="display: none;"></div>
+                            <div id="ssh-key-setup-status" class="status-display" style="display: none;"></div>
 
                             <!-- Input form (hidden when key exists) -->
                             <div id="ssh-key-form-container">
@@ -793,7 +1069,7 @@ ns-143.awsdns-17.org
                                               style="width: 100%; height: 80px; resize: vertical;"></textarea>
                                     <small>
                                         Supported: <code>ssh-ed25519</code> (recommended), <code>ssh-rsa</code>, <code>ecdsa-sha2-*</code>
-                                        <span style="color: var(--danger-text);"> &middot; PUBLIC key only!</span>
+                                        <span class="t-danger"> &middot; PUBLIC key only!</span>
                                     </small>
                                 </div>
 
@@ -824,7 +1100,18 @@ ns-143.awsdns-17.org
                         <p>Ready to deploy</p>
                     </div>
 
-                    <div class="deployment-actions">
+                    <!-- Validate before deploying -->
+                    <div id="validate-deploy-section" style="text-align: center; margin: 20px 0;">
+                        <button class="btn btn-primary" onclick="validateAndUnlockDeploy()" id="validate-deploy-btn" style="padding: 12px 32px; font-size: 1.05em;">
+                            Validate Configuration
+                        </button>
+                        <p id="validate-deploy-hint" style="margin-top: 8px; font-size: 0.88em; color: var(--text-muted);">
+                            Validate your configuration to unlock deployment
+                        </p>
+                    </div>
+
+                    <!-- Hidden until validation passes -->
+                    <div class="deployment-actions" id="deployment-actions" style="display: none; opacity: 0; transform: translateY(-10px); transition: opacity 0.4s ease, transform 0.4s ease;">
                         <button class="btn btn-success" onclick="startDeployment()" id="deploy-btn">Deploy Infrastructure</button>
                         <button class="btn btn-warning" onclick="runPlan()">Run Plan (Preview)</button>
                     </div>
@@ -876,7 +1163,20 @@ ns-143.awsdns-17.org
                         </div>
 
                         <div style="margin-bottom: 15px;">
-                            <h5 style="margin: 0 0 8px 0;">4. Configure Cobalt Strike</h5>
+                            <h5 style="margin: 0 0 8px 0;">4. Activate CS Client on Attack Box (if uploaded)</h5>
+                            <p style="margin: 0; font-size: 0.9em;">
+                                RDP to the Attack Box and run the CS updater to activate your license:
+                            </p>
+                            <code style="display: block; padding: 8px 12px; margin-top: 8px;">
+                                C:\Tools\CobaltStrike\update.bat
+                            </code>
+                            <p style="margin: 8px 0 0 0; font-size: 0.88em; color: var(--text-muted);">
+                                Enter your Cobalt Strike <strong>license key</strong> when prompted. The updater downloads the latest client and generates the authorization file. Java 17+ is pre-installed.
+                            </p>
+                        </div>
+
+                        <div style="margin-bottom: 15px;">
+                            <h5 style="margin: 0 0 8px 0;">5. Configure Cobalt Strike Team Server</h5>
                             <p style="margin: 0; font-size: 0.9em;">
                                 Connect to your C2 team server and configure your Malleable C2 profile to use your domain.
                                 Set the <code>host</code> header to match your configured subdomain.
@@ -884,7 +1184,7 @@ ns-143.awsdns-17.org
                         </div>
 
                         <div>
-                            <h5 style="margin: 0 0 8px 0;">5. Test Connectivity</h5>
+                            <h5 style="margin: 0 0 8px 0;">6. Test Connectivity</h5>
                             <p style="margin: 0; font-size: 0.9em;">
                                 Test that your domain resolves correctly: <code>curl -k https://api.yourdomain.com/health</code>
                             </p>
@@ -906,41 +1206,19 @@ ns-143.awsdns-17.org
 
             <!-- AWS Check Page -->
             <div class="tab-page" data-page="aws-check">
-                    <h2 style="color: var(--gold); margin-bottom: 20px; font-size: 1.7em;">Prerequisites Check</h2>
+                    <h2 class="page-title">Prerequisites Check</h2>
                     <p style="margin-bottom: 20px;">
                         Verify all required tools and credentials are properly configured before deploying infrastructure.
                     </p>
-                    <div class="callout callout--warning" style="margin-bottom: 20px;">
-                        <p style="margin: 0;"><strong>Note:</strong> All checks must pass before you can deploy. Click each button to verify your setup.</p>
-                    </div>
-
-                    <!-- Terraform Check Section -->
-                    <div class="section-card section-card--highlight section-card--compact">
-                        <h3>Terraform CLI</h3>
-                        <p>Terraform is required to provision AWS infrastructure.</p>
-                        <button class="btn btn-primary btn-sm" onclick="checkTerraform()">Check Terraform</button>
-                        <div id="terraform-status" class="status-display"></div>
-                        <div id="terraform-install-help" style="display: none; margin-top: 10px;">
-                            <div class="callout callout--info">
-                                <h4 style="margin: 0 0 8px 0;">How to Install Terraform</h4>
-                                <p style="margin-bottom: 8px; font-size: 0.88em;"><strong>Option 1: Homebrew (Recommended for macOS)</strong></p>
-                                <code style="display: block; padding: 8px; margin-bottom: 10px;">brew install terraform</code>
-                                <p style="margin-bottom: 8px; font-size: 0.88em;"><strong>Option 2: Direct Download</strong></p>
-                                <ol style="margin: 0; padding-left: 20px; font-size: 0.88em;">
-                                    <li>Visit <a href="https://developer.hashicorp.com/terraform/downloads" target="_blank">terraform.io/downloads</a></li>
-                                    <li>Download the appropriate version for your OS</li>
-                                    <li>Unzip and move to a directory in your PATH</li>
-                                </ol>
-                            </div>
+                    <!-- System Dependencies -->
+                    <div class="section-card section-card--highlight section-card--compact" style="margin-bottom: 20px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                            <h3 style="margin: 0;">System Dependencies</h3>
+                            <button class="btn btn-primary btn-sm" onclick="checkSystemDeps()">Check All</button>
                         </div>
-                    </div>
-
-                    <!-- AWS CLI Check Section -->
-                    <div class="section-card section-card--highlight section-card--compact">
-                        <h3>AWS CLI</h3>
-                        <p>AWS CLI is required for credential management and some operations.</p>
-                        <button class="btn btn-primary btn-sm" onclick="checkAWSCLI()">Check AWS CLI</button>
-                        <div id="aws-cli-status" class="status-display"></div>
+                        <div id="system-deps-status">
+                            <small class="t-muted">Click "Check All" to verify installed tools.</small>
+                        </div>
                     </div>
 
                     <!-- AWS Credentials Check Section -->
@@ -959,6 +1237,14 @@ ns-143.awsdns-17.org
                         <div id="aws-permissions-status" class="status-display"></div>
                     </div>
 
+                    <!-- SSH Key Check Section -->
+                    <div class="section-card section-card--highlight section-card--compact">
+                        <h3>SSH Key Pair</h3>
+                        <p>Required for EC2 instance access (bastion, jumpbox, team server). Your public key is uploaded to AWS during deployment. The private key is used for SSH tunnels and GOAD provisioning.</p>
+                        <button class="btn btn-primary btn-sm" onclick="checkSSHKey()">Check SSH Key</button>
+                        <div id="ssh-key-status" class="status-display"></div>
+                    </div>
+
                     <!-- GitHub CLI Check Section -->
                     <div class="section-card section-card--highlight section-card--compact">
                         <h3>GitHub CLI Authentication</h3>
@@ -968,14 +1254,114 @@ ns-143.awsdns-17.org
                     </div>
             </div>
 
+            <!-- Tools Upload Page -->
+            <div class="tab-page" data-page="tools">
+                <h2 style="color: var(--accent); margin-bottom: 20px; font-size: 1.7em;">Tools Upload</h2>
+                <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
+                    Upload files to the Windows Attack Box via SCP through the bastion host. Use this for Outflank tools, custom loaders, or any binaries your operators need.
+                </div>
+
+                <!-- Target Deployment Selector -->
+                <div class="section-card" style="margin-bottom: 16px;">
+                    <label for="tools-project-select" style="display: block; font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">Target Deployment:</label>
+                    <select id="tools-project-select" class="form-select">
+                        <option value="">Loading deployments...</option>
+                    </select>
+                </div>
+
+                <!-- Connection Status -->
+                <div class="section-card" id="tools-connection-card" style="margin-bottom: 16px;">
+                    <h3 style="color: var(--gold-muted); margin-bottom: 12px; font-size: 1.1em;">Connection Status</h3>
+                    <div id="tools-connection-status">
+                        <p class="t-muted">Select a deployment above</p>
+                    </div>
+                </div>
+
+                <!-- File Upload -->
+                <div class="section-card" style="margin-bottom: 16px;">
+                    <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Upload Files</h3>
+                    <div id="tools-upload-area" style="border: 2px dashed var(--border); border-radius: var(--radius); padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s ease; margin-bottom: 12px;"
+                         ondragover="event.preventDefault(); this.style.borderColor='var(--gold)'; this.style.background='rgba(143, 164, 100, 0.05)';"
+                         ondragleave="this.style.borderColor='var(--border)'; this.style.background='transparent';"
+                         ondrop="event.preventDefault(); this.style.borderColor='var(--border)'; this.style.background='transparent'; handleToolsDrop(event);"
+                         onclick="document.getElementById('tools-file-input').click();">
+                        <p style="color: var(--text-secondary); margin: 0;">Drag & drop files or folders here, or click to browse</p>
+                        <p style="color: var(--text-muted); font-size: 0.8em; margin: 6px 0 0 0;">Any file type accepted, up to 500MB. Folders preserve directory structure.</p>
+                    </div>
+                    <input type="file" id="tools-file-input" multiple style="display: none;" onchange="handleToolsFileSelect(event)">
+                    <button class="btn btn-sm btn-secondary" style="margin-bottom: 12px;" onclick="document.getElementById('tools-folder-input').click();">Browse Folder</button>
+                    <input type="file" id="tools-folder-input" webkitdirectory directory multiple style="display: none;" onchange="handleToolsFolderSelect(event)">
+                    <div id="tools-upload-progress" style="display: none; margin-bottom: 12px;">
+                        <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
+                            <div id="tools-upload-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
+                        </div>
+                        <p id="tools-upload-progress-text" style="font-size: 0.8em; color: var(--text-muted); margin-top: 4px;">Uploading...</p>
+                    </div>
+
+                    <!-- Staged Files List -->
+                    <div id="tools-staged-container">
+                        <div id="tools-staged-list" style="margin-bottom: 8px;"></div>
+                        <div id="tools-staged-actions" style="display: none; text-align: right;">
+                            <button class="btn btn-sm btn-secondary" onclick="clearAllToolsFiles()">Clear All</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Destination Picker -->
+                <div class="section-card" style="margin-bottom: 16px;">
+                    <h3 style="color: var(--gold-muted); margin-bottom: 12px; font-size: 1.1em;">Destination</h3>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                            <input type="radio" name="tools-dest" value="C:\Outflank\" checked style="accent-color: var(--gold);">
+                            <code style="font-size: 0.9em;">C:\Outflank\</code>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                            <input type="radio" name="tools-dest" value="C:\Tools\" style="accent-color: var(--gold);">
+                            <code style="font-size: 0.9em;">C:\Tools\</code>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                            <input type="radio" name="tools-dest" value="custom" style="accent-color: var(--gold);">
+                            <span>Custom:</span>
+                            <input type="text" id="tools-custom-dest" placeholder="C:\MyTools\" disabled
+                                   style="flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text-primary); font-family: monospace; font-size: 0.9em;">
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Command Preview -->
+                <div class="section-card" id="tools-command-preview-card" style="margin-bottom: 16px;">
+                    <h3 style="color: var(--accent-muted); margin-bottom: 10px; font-size: 1.1em;">Command Preview</h3>
+                    <div id="tools-command-preview" style="background: var(--bg-terminal); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font-family: monospace; font-size: 0.82em; white-space: pre-wrap; word-break: break-all; color: var(--text-terminal);">Select a deployment and stage files to see the SCP command</div>
+                </div>
+
+                <!-- Transfer Controls -->
+                <div style="margin-bottom: 16px;">
+                    <button id="tools-transfer-btn" class="btn btn-primary" onclick="startToolsTransfer()" disabled style="width: 100%; padding: 12px; font-size: 1.05em;">
+                        Transfer to Attack Box
+                    </button>
+                </div>
+
+                <!-- Transfer Log -->
+                <div class="section-card" id="tools-transfer-log-card" style="display: none;">
+                    <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Transfer Log</h3>
+                    <div id="tools-transfer-progress" style="margin-bottom: 10px;">
+                        <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
+                            <div id="tools-transfer-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
+                        </div>
+                        <p id="tools-transfer-progress-text" style="font-size: 0.85em; color: var(--text-muted); margin-top: 4px;"></p>
+                    </div>
+                    <div id="tools-transfer-log" class="output-display" style="max-height: 300px;"></div>
+                </div>
+            </div>
+
             <!-- Settings Page -->
             <!-- Architecture Docs Page -->
             <div class="tab-page" data-page="architecture">
-                <h2 style="color: var(--gold); margin-bottom: 20px; font-size: 1.7em;">Infrastructure Architecture</h2>
+                <h2 class="page-title">Infrastructure Architecture</h2>
 
                 <div class="section-card" style="margin-bottom: 20px;">
                     <label for="architecture-select" style="display: block; font-weight: 600; margin-bottom: 10px; color: var(--gold-muted);">Select Deployment Architecture:</label>
-                    <select id="architecture-select" class="form-group" style="width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text-primary); font-size: 1em; cursor: pointer;">
+                    <select id="architecture-select" class="form-select">
                         <optgroup label="Full C2 Infrastructure (Internet-Facing Ops)">
                             <option value="c2-adhoc">C2 Ad-Hoc: Single Server + Redirectors</option>
                             <option value="c2-adhoc-domain-fronting">C2 Ad-Hoc: Domain Fronting Mode</option>
@@ -997,6 +1383,7 @@ ns-143.awsdns-17.org
                         </optgroup>
                         <optgroup label="Component Architecture (Technical Details)">
                             <option value="attack-box">Windows Attack Box - Detailed Architecture</option>
+                            <option value="s3-storage">S3 Deployment Storage - Security Architecture</option>
                             <option value="iam-security">IAM Security - Roles & Permissions</option>
                             <option value="ssh-key-management">SSH Key Management - Automation</option>
                         </optgroup>
@@ -1010,8 +1397,557 @@ ns-143.awsdns-17.org
                 </div>
             </div>
 
+            <!-- Beacon Management Page -->
+            <div class="tab-page" data-page="beacon">
+                <h2>Beacon Management</h2>
+
+                <!-- Deployment Selector -->
+                <div class="section-card" id="beacon-deployment-selector">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <label style="font-weight: 500; white-space: nowrap; color: var(--text-secondary);">Deployment:</label>
+                        <select id="beacon-deployment-select" class="form-select" style="flex: 1;" onchange="BEACON.onDeploymentSelected()">
+                            <option value="">Loading deployments...</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- No Deployment -->
+                <div id="beacon-no-deployment" class="section-card" style="display: none;">
+                    <div style="text-align: center; padding: 40px 20px;">
+                        <h3 style="color: var(--gold-muted); margin-bottom: 16px;">No Active Deployments</h3>
+                        <p style="color: var(--text-muted); max-width: 500px; margin: 0 auto; line-height: 1.6;">
+                            Deploy infrastructure with REST API enabled to manage beacons. Enable it in the <strong>Configuration</strong> tab under Cobalt Strike settings.
+                        </p>
+                        <button class="btn btn-primary" onclick="APP.navigateTo('configuration')" style="margin-top: 16px;">Go to Configuration</button>
+                    </div>
+                </div>
+
+                <!-- REST API not enabled for selected deployment -->
+                <div id="beacon-not-enabled" class="section-card" style="display: none;">
+                    <div style="text-align: center; padding: 40px 20px;">
+                        <h3 style="color: var(--warning-text); margin-bottom: 16px;">REST API Not Enabled</h3>
+                        <p style="color: var(--text-muted); max-width: 500px; margin: 0 auto; line-height: 1.6;">
+                            This deployment does not have the REST API enabled. Enable it in the <strong>Configuration</strong> tab and redeploy.
+                        </p>
+                        <button class="btn btn-primary" onclick="APP.navigateTo('configuration')" style="margin-top: 16px;">Go to Configuration</button>
+                    </div>
+                </div>
+
+                <!-- Main beacon content (hidden until deployment selected) -->
+                <div id="beacon-main-content" style="display: none;">
+
+                    <!-- Connection Status Bar -->
+                    <div class="section-card" id="beacon-connection-bar">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <span class="beacon-status-dot" id="beacon-status-dot"></span>
+                            <span id="beacon-status-text" style="font-weight: 500; color: var(--text-muted);">Not connected</span>
+                            <button class="btn btn-success" id="beacon-connect-btn" onclick="BEACON.connect()">Connect</button>
+                            <button class="btn btn-sm btn-info" id="beacon-refresh-btn" onclick="BEACON.refreshBeacons()" style="display: none;">Refresh</button>
+                        </div>
+
+                        <!-- Error Detail (shown when connection fails) -->
+                        <div id="beacon-error-detail" style="display: none;"></div>
+
+                        <!-- SSH Tunnel Instructions -->
+                        <div id="beacon-tunnel-instructions" style="margin-top: 16px;">
+                            <p style="color: var(--text-muted); margin-bottom: 8px; font-size: 0.9em;">
+                                Run this SSH tunnel command in a separate terminal, then click <strong>Connect</strong>:
+                            </p>
+                            <div style="position: relative; background: var(--bg-terminal); border-radius: 4px; overflow: hidden;">
+                                <button id="beacon-tunnel-copy-btn" onclick="BEACON.copyTunnelCmd(this)"
+                                        style="position: absolute; top: 8px; right: 8px; background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-light); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75em; z-index: 10;">
+                                    Copy
+                                </button>
+                                <div id="beacon-tunnel-cmd-text" style="color: var(--text-terminal); padding: 12px; padding-right: 80px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 0.88em; overflow-x: auto; white-space: nowrap;">
+                                    ssh -L 50443:&lt;team_server_ip&gt;:50443 ubuntu@&lt;bastion_ip&gt; -i ~/.ssh/key
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Beacon Table -->
+                    <div class="section-card" id="beacon-table-section" style="display: none;">
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+                            <h3 style="margin: 0;">Active Beacons</h3>
+                            <span id="beacon-count" class="badge badge-info" style="font-size: 0.85em;">0 beacons</span>
+                            <input type="text" id="beacon-filter" class="beacon-filter-input" placeholder="Filter beacons..." oninput="BEACON.filterTable(this.value)" style="max-width: 250px;">
+                        </div>
+                        <div class="table-responsive">
+                            <table class="beacon-table" id="beacon-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>User</th>
+                                        <th>Computer</th>
+                                        <th>Internal IP</th>
+                                        <th>OS</th>
+                                        <th>PID</th>
+                                        <th>Sleep</th>
+                                        <th>Last Seen</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="beacon-table-body">
+                                </tbody>
+                            </table>
+                        </div>
+                        <div id="beacon-empty-state" style="display: none; text-align: center; padding: 40px 20px; color: var(--text-muted);">
+                            <p>No active beacons. Waiting for callbacks...</p>
+                        </div>
+                    </div>
+
+                    <!-- Beacon Interaction Panel (shown when a beacon is selected) -->
+                    <div class="section-card" id="beacon-interact-panel" style="display: none;">
+                        <div class="interact-drag-bar" id="interact-drag-bar"></div>
+                        <div style="display: flex; align-items: center; gap: 12px; padding-top: 8px;">
+                            <h3 style="margin: 0;">
+                                Interact — <span id="interact-beacon-label" style="color: var(--gold-muted);"></span>
+                            </h3>
+                            <button class="btn btn-danger" onclick="BEACON.closeInteract()">Close</button>
+                        </div>
+
+                        <!-- Beacon Metadata Badges -->
+                        <div class="beacon-meta-badges" id="beacon-meta-badges"></div>
+
+                        <!-- Beacon Feature Tabs -->
+                        <div class="beacon-feature-tabs" id="beacon-feature-tabs">
+                            <button class="beacon-ftab active" data-panel="console" onclick="BEACON.switchTab('console')">Console</button>
+                            <button class="beacon-ftab" data-panel="files" onclick="BEACON.switchTab('files')">Files</button>
+                            <button class="beacon-ftab" data-panel="processes" onclick="BEACON.switchTab('processes')">Processes</button>
+                            <button class="beacon-ftab" data-panel="screenshots" onclick="BEACON.switchTab('screenshots')">Screenshots</button>
+                            <button class="beacon-ftab" data-panel="tokens" onclick="BEACON.switchTab('tokens')">Tokens <span class="badge-beta">BETA</span></button>
+                            <button class="beacon-ftab" data-panel="jobs" onclick="BEACON.switchTab('jobs')">Jobs</button>
+                            <button class="beacon-ftab" data-panel="creds" onclick="BEACON.switchTab('creds')">Creds <span class="badge-beta">BETA</span></button>
+                            <button class="beacon-ftab" data-panel="recon" onclick="BEACON.switchTab('recon')">Recon</button>
+                            <button class="beacon-ftab" data-panel="pivoting" onclick="BEACON.switchTab('pivoting')">Pivoting</button>
+                            <button class="beacon-ftab" data-panel="config" onclick="BEACON.switchTab('config')">Config <span class="badge-beta">BETA</span></button>
+                            <button class="beacon-ftab" data-panel="listeners" onclick="BEACON.switchTab('listeners')">Listeners</button>
+                        </div>
+
+                        <!-- Console Panel (default active) -->
+                        <div class="beacon-fpanel active" id="beacon-panel-console">
+                            <!-- Beacon Console (unified terminal block) -->
+                            <div class="beacon-console" style="margin-top: 0;">
+                                <div class="output-display" id="beacon-command-output" style="min-height: 400px; height: 575px; max-height: 800px;">
+                                    <span class="t-terminal">Select a beacon and enter a command below.</span>
+                                </div>
+                                <div id="opsec-live-bar" class="opsec-live-bar"></div>
+                                <div class="console-resize-bar">
+                                    <input type="range" id="console-height-slider" min="300" max="900" value="575" class="console-slider" title="Resize console"
+                                           oninput="document.getElementById('beacon-command-output').style.height = this.value + 'px'; document.getElementById('beacon-command-output').style.maxHeight = this.value + 'px';">
+                                </div>
+                                <div class="process-context-bar" id="beacon-process-context">
+                                    <span class="t-terminal" style="font-size: 0.82em; opacity: 0.5;">No beacon selected</span>
+                                </div>
+                                <div class="beacon-console-wrap">
+                                    <div id="cmd-autocomplete" class="cmd-autocomplete"></div>
+                                    <input type="text" id="beacon-command-input" class="beacon-console-input" placeholder="Tab to autocomplete, Up/Down for history" autocomplete="off"
+                                           onkeydown="BEACON.handleInputKeydown(event)">
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.sendCommand()">Send</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- File Browser Panel -->
+                        <div class="beacon-fpanel" id="beacon-panel-files" style="display: none;">
+                            <div class="beacon-panel-toolbar">
+                                <div class="flex-row" style="flex: 1; min-width: 0;">
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.fileRefresh()" title="Refresh current directory">Refresh</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="BEACON.filePwd()" title="Print working directory">PWD</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="BEACON.fileDrives()" title="List drives">Drives</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="BEACON.fileUp()" title="Go up one directory">Up</button>
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.fileMkdir()">New Folder</button>
+                                    <input type="text" class="file-path-bar" id="file-path-bar" placeholder="Enter path and press Enter" onkeydown="if(event.key==='Enter'){BEACON.loadFiles(this.value.trim()); BEACON.currentPath=this.value.trim();}">
+                                </div>
+                            </div>
+                            <div class="beacon-panel-body" id="file-browser-body">
+                                <div class="t-muted" style="padding: 20px; text-align: center;">Click "Drives" or use the console to run <code class="code-inline">ls</code></div>
+                            </div>
+                        </div>
+
+                        <!-- Process Browser Panel -->
+                        <div class="beacon-fpanel" id="beacon-panel-processes" style="display: none;">
+                            <div class="beacon-panel-toolbar">
+                                <button class="btn btn-sm btn-info" onclick="BEACON.loadProcesses()">Refresh Processes</button>
+                                <input type="text" class="beacon-filter-input" id="process-filter" placeholder="Filter processes..." oninput="BEACON.filterProcesses(this.value)">
+                            </div>
+                            <div class="beacon-panel-body" id="process-browser-body">
+                                <div class="t-muted" style="padding: 20px; text-align: center;">Click "Refresh Processes" to load the process list</div>
+                            </div>
+                        </div>
+
+                        <!-- Screenshot Viewer Panel -->
+                        <div class="beacon-fpanel" id="beacon-panel-screenshots" style="display: none;">
+                            <div class="beacon-panel-toolbar">
+                                <button class="btn btn-sm btn-success" onclick="BEACON.takeScreenshot()">Capture Screenshot</button>
+                                <button class="btn btn-sm btn-success" onclick="BEACON.startScreenwatch()">Start Screenwatch</button>
+                                <button class="btn btn-sm btn-info" onclick="BEACON.loadScreenshots()">Refresh</button>
+                            </div>
+                            <div class="beacon-panel-body" id="screenshot-gallery">
+                                <div class="t-muted" style="padding: 20px; text-align: center;">Capture a screenshot or click Refresh to load existing captures</div>
+                            </div>
+                        </div>
+
+                        <!-- Token Store Panel -->
+                        <div class="beacon-fpanel" id="beacon-panel-tokens" style="display: none;">
+                            <div class="beacon-panel-toolbar">
+                                <div class="flex-row">
+                                    <span class="t-secondary" style="font-weight: 600;">Current:</span>
+                                    <span id="token-current-uid" class="t-primary">Unknown</span>
+                                </div>
+                                <div class="flex-row">
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.getUid()">Get UID</button>
+                                    <button class="btn btn-sm btn-danger" onclick="BEACON.revToSelf()">Rev2Self</button>
+                                    <button class="btn btn-sm btn-danger" onclick="BEACON.tokenStoreClearAll()">Clear All</button>
+                                </div>
+                            </div>
+                            <div class="beacon-panel-body">
+                                <!-- Token Store Wallet (BETA) -->
+                                <div style="padding: 12px;">
+                                    <div class="feature-section-header">
+                                        <h4>Token Wallet <span class="badge-beta">BETA</span></h4>
+                                        <button class="btn btn-sm btn-info" onclick="BEACON.loadTokenStore()">Refresh Store</button>
+                                    </div>
+                                    <div id="token-store-body">
+                                        <div class="feature-empty">Click "Refresh Store" to load stored tokens</div>
+                                    </div>
+
+                                    <h4 class="t-secondary" style="margin: 16px 0 12px;">Steal Token</h4>
+                                    <div class="flex-row" style="gap: 8px;">
+                                        <input type="number" class="form-input" id="token-steal-pid" placeholder="PID" style="width: 120px;">
+                                        <button class="btn btn-sm btn-info" onclick="BEACON.tokenStoreSteal()">Steal & Store</button>
+                                        <button class="btn btn-sm btn-success" onclick="BEACON.tokenStoreStealAndUse()">Steal & Use</button>
+                                        <button class="btn btn-sm btn-secondary" onclick="BEACON.stealToken()">Legacy Steal</button>
+                                    </div>
+
+                                    <h4 class="t-secondary" style="margin: 16px 0 12px;">Make Token</h4>
+                                    <div class="flex-row" style="flex-wrap: wrap; gap: 8px;">
+                                        <input type="text" class="form-input" id="token-domain" placeholder="DOMAIN" style="flex: 1; min-width: 100px;">
+                                        <input type="text" class="form-input" id="token-user" placeholder="username" style="flex: 1; min-width: 100px;">
+                                        <input type="password" class="form-input" id="token-pass" placeholder="password" style="flex: 1; min-width: 100px;">
+                                        <button class="btn btn-sm btn-info" onclick="BEACON.makeToken()">Create</button>
+                                    </div>
+                                </div>
+                                <div id="token-output" class="output-display tab-output-panel"></div>
+                            </div>
+                        </div>
+
+                        <!-- Jobs & Downloads Panel -->
+                        <div class="beacon-fpanel" id="beacon-panel-jobs" style="display: none;">
+                            <div class="beacon-panel-toolbar">
+                                <span class="t-secondary" style="font-weight: 600;">Active Jobs & Downloads</span>
+                                <button class="btn btn-sm btn-info" onclick="BEACON.loadJobs()">Refresh</button>
+                            </div>
+                            <div class="beacon-panel-body">
+                                <h4 class="t-secondary" style="padding: 12px 12px 8px;">Active Jobs</h4>
+                                <div id="jobs-table-body">
+                                    <div class="t-muted" style="padding: 12px; text-align: center;">Click Refresh to load active jobs</div>
+                                </div>
+                                <h4 class="t-secondary" style="padding: 12px 12px 8px; border-top: 1px solid var(--border);">Downloads</h4>
+                                <div id="downloads-table-body">
+                                    <div class="t-muted" style="padding: 12px; text-align: center;">Downloads will appear here</div>
+                                </div>
+                                <div style="border-top: 1px solid var(--border); padding-top: 8px;">
+                                    <div style="display: flex; align-items: center; gap: 12px; padding: 8px 12px;">
+                                        <h4 class="t-secondary" style="margin: 0;">All Jobs</h4>
+                                        <button class="btn btn-sm btn-info" onclick="BEACON.startActivityLogPoll()">Load</button>
+                                        <button class="btn btn-sm btn-secondary" onclick="BEACON.stopActivityLogPoll()">Stop</button>
+                                        <span class="t-muted" style="font-size: 0.85em;">Auto-updates every 5s</span>
+                                    </div>
+                                    <div id="activity-log-body" style="max-height: 500px; overflow-y: auto; margin: 0 12px 12px;">
+                                        <div class="t-muted" style="padding: 12px; text-align: center;">Click "Load" to fetch job history</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Credential Vault Panel -->
+                        <div class="beacon-fpanel" id="beacon-panel-creds" style="display: none;">
+                            <div class="beacon-panel-toolbar">
+                                <div class="flex-row">
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.loadCredentialVault()">Refresh Vault</button>
+                                    <button class="btn btn-sm btn-danger" onclick="BEACON.runHashdump()">Hashdump</button>
+                                    <button class="btn btn-sm btn-danger" onclick="BEACON.runLogonPasswords()">LogonPasswords</button>
+                                </div>
+                                <div class="flex-row">
+                                    <input type="text" class="form-input" id="dcsync-domain" placeholder="DOMAIN" style="width: 120px;">
+                                    <input type="text" class="form-input" id="dcsync-user" placeholder="user" style="width: 120px;">
+                                    <button class="btn btn-sm btn-danger" onclick="BEACON.runDcsync()">DCSync</button>
+                                </div>
+                            </div>
+                            <div class="beacon-panel-body">
+                                <!-- Credential Vault (BETA — server-wide) -->
+                                <div style="padding: 12px;">
+                                    <div class="feature-section-header">
+                                        <h4>Credential Vault <span class="badge-beta">BETA</span> <span class="t-muted" style="font-size: 0.85em;">(all beacons)</span></h4>
+                                        <input type="text" class="form-input" id="creds-filter" placeholder="Filter credentials..." oninput="BEACON.filterCredentials(this.value)" style="width: 200px;">
+                                    </div>
+                                    <div id="creds-vault-body">
+                                        <div class="feature-empty">Click "Refresh Vault" to load credentials from all beacons</div>
+                                    </div>
+                                </div>
+                                <div id="creds-output" class="output-display tab-output-panel">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Network Recon Panel -->
+                        <div class="beacon-fpanel" id="beacon-panel-recon" style="display: none;">
+                            <div class="beacon-panel-toolbar" style="flex-wrap: wrap; gap: 6px;">
+                                <button class="btn btn-sm btn-secondary" onclick="BEACON.showReconDetail('domain')">Domain</button>
+                                <button class="btn btn-sm btn-secondary" onclick="BEACON.showReconDetail('computers')">Computers</button>
+                                <button class="btn btn-sm btn-secondary" onclick="BEACON.showReconDetail('dclist')">DCs</button>
+                                <button class="btn btn-sm btn-secondary" onclick="BEACON.showReconDetail('users')">Users</button>
+                                <button class="btn btn-sm btn-secondary" onclick="BEACON.showReconDetail('groups')">Groups</button>
+                                <button class="btn btn-sm btn-secondary" onclick="BEACON.showReconDetail('shares')">Shares</button>
+                                <button class="btn btn-sm btn-secondary" onclick="BEACON.showReconDetail('sessions')">Sessions</button>
+                                <button class="btn btn-sm btn-secondary" onclick="BEACON.showReconDetail('logons')">Logons</button>
+                                <button class="btn btn-sm btn-secondary" onclick="BEACON.showReconDetail('trusts')">Trusts</button>
+                            </div>
+                            <div id="recon-detail" style="display: none; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; max-width: 700px;">
+                                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                                    <div>
+                                        <strong id="recon-detail-name" class="t-primary"></strong>
+                                        <span id="recon-detail-opsec" class="opsec-warning" style="margin-left: 8px;"></span>
+                                    </div>
+                                </div>
+                                <div id="recon-detail-desc" class="t-secondary" style="margin-bottom: 4px; font-size: 0.95em;"></div>
+                                <div style="display: flex; gap: 12px; margin-bottom: 8px;">
+                                    <span id="recon-detail-mitre" class="t-muted" style="font-size: 0.85em; font-family: monospace;"></span>
+                                </div>
+                                <div id="recon-detail-note" class="t-muted" style="font-size: 0.85em; font-style: italic; margin-bottom: 8px;"></div>
+                                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                    <code id="recon-detail-cmd" class="code-inline"></code>
+                                    <div id="recon-target-wrap" style="display: none;">
+                                        <input type="text" class="form-input" id="recon-target" placeholder="\\\\target (optional)" style="flex: 2;">
+                                    </div>
+                                    <div id="recon-domain-wrap" style="display: none; align-items: center; gap: 6px;">
+                                        <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap;">
+                                            <input type="checkbox" id="recon-domain-flag"> <span class="t-secondary">/domain</span>
+                                        </label>
+                                        <input type="text" class="form-input" id="recon-domain" placeholder="specific domain (optional)" style="flex: 2;">
+                                    </div>
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.runRecon()">Run</button>
+                                </div>
+                            </div>
+                            <div class="beacon-panel-toolbar" style="border-top: 1px solid var(--border);">
+                                <div class="flex-row" style="flex: 1;">
+                                    <input type="text" class="form-input" id="portscan-targets" placeholder="10.0.0.0/24" style="flex: 2;">
+                                    <input type="text" class="form-input" id="portscan-ports" placeholder="22,80,443,445,3389" style="flex: 2;">
+                                    <select class="form-input" id="portscan-method" style="width: 80px;">
+                                        <option value="arp">ARP</option>
+                                        <option value="icmp">ICMP</option>
+                                        <option value="none">None</option>
+                                    </select>
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.runPortscan()">Portscan</button>
+                                </div>
+                            </div>
+                            <div class="beacon-panel-body">
+                                <div id="recon-output" class="output-display tab-output-panel"></div>
+                            </div>
+                        </div>
+
+                        <!-- Pivoting Manager Panel -->
+                        <div class="beacon-fpanel" id="beacon-panel-pivoting" style="display: none;">
+                            <div class="beacon-panel-toolbar">
+                                <span class="t-secondary" style="font-weight: 600;">SOCKS Proxy</span>
+                                <div class="flex-row">
+                                    <input type="number" class="form-input" id="socks-port" placeholder="Port" style="width: 100px;">
+                                    <select class="form-input" id="socks-version" style="width: 100px;">
+                                        <option value="socks5">SOCKS5</option>
+                                        <option value="socks4a">SOCKS4a</option>
+                                    </select>
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.startSocks()">Start</button>
+                                    <button class="btn btn-sm btn-danger" onclick="BEACON.stopSocks()">Stop</button>
+                                </div>
+                            </div>
+                            <div class="beacon-panel-toolbar" style="border-top: 1px solid var(--border);">
+                                <span class="t-secondary" style="font-weight: 600;">Reverse Port Forward</span>
+                                <div class="flex-row">
+                                    <input type="number" class="form-input" id="rportfwd-bind" placeholder="Bind Port" style="width: 100px;">
+                                    <input type="text" class="form-input" id="rportfwd-host" placeholder="Forward Host" style="width: 130px;">
+                                    <input type="number" class="form-input" id="rportfwd-port" placeholder="Fwd Port" style="width: 100px;">
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.startRportfwd()">Start</button>
+                                    <button class="btn btn-sm btn-danger" onclick="BEACON.stopRportfwd()">Stop</button>
+                                </div>
+                            </div>
+                            <div class="beacon-panel-body" id="pivot-output">
+                                <div class="t-muted" style="padding: 20px; text-align: center;">Configure and start pivoting above. Active pivots will appear here.</div>
+                            </div>
+                        </div>
+
+                        <!-- Beacon Config Panel -->
+                        <div class="beacon-fpanel" id="beacon-panel-config" style="display: none;">
+                            <div class="beacon-panel-body" style="padding: 16px;">
+                                <div class="config-grid">
+                                    <div class="config-field">
+                                        <label class="t-secondary">Sleep (seconds)</label>
+                                        <div class="flex-row">
+                                            <input type="number" class="form-input" id="config-sleep" placeholder="60" style="width: 100px;" min="0">
+                                            <input type="number" class="form-input" id="config-jitter" placeholder="Jitter %" style="width: 100px;" min="0" max="99">
+                                            <button class="btn btn-sm btn-info" onclick="BEACON.setSleep()">Set</button>
+                                        </div>
+                                    </div>
+                                    <div class="config-field">
+                                        <label class="t-secondary">Spawnto (x64)</label>
+                                        <div class="flex-row">
+                                            <input type="text" class="form-input" id="config-spawnto-x64" placeholder="%windir%\\sysnative\\rundll32.exe" style="flex: 1;">
+                                            <button class="btn btn-sm btn-info" onclick="BEACON.setSpawnto('x64')">Set</button>
+                                        </div>
+                                    </div>
+                                    <div class="config-field">
+                                        <label class="t-secondary">Spawnto (x86)</label>
+                                        <div class="flex-row">
+                                            <input type="text" class="form-input" id="config-spawnto-x86" placeholder="%windir%\\syswow64\\rundll32.exe" style="flex: 1;">
+                                            <button class="btn btn-sm btn-info" onclick="BEACON.setSpawnto('x86')">Set</button>
+                                        </div>
+                                    </div>
+                                    <div class="config-field">
+                                        <label class="t-secondary">Parent PID</label>
+                                        <div class="flex-row">
+                                            <input type="number" class="form-input" id="config-ppid" placeholder="PID" style="width: 120px;">
+                                            <button class="btn btn-sm btn-info" onclick="BEACON.setPpid()">Set</button>
+                                            <button class="btn btn-sm btn-danger" onclick="BEACON.clearPpid()">Clear</button>
+                                        </div>
+                                    </div>
+                                    <div class="config-field">
+                                        <label class="t-secondary">Block DLLs (non-Microsoft)</label>
+                                        <div class="flex-row">
+                                            <button class="btn btn-sm btn-success" id="config-blockdlls-btn" onclick="BEACON.toggleBlockdlls()">Enable</button>
+                                        </div>
+                                    </div>
+                                    <div class="config-field">
+                                        <label class="t-secondary">Argument Spoofing</label>
+                                        <div class="flex-row">
+                                            <input type="text" class="form-input" id="config-argue-cmd" placeholder="Command" style="width: 160px;">
+                                            <input type="text" class="form-input" id="config-argue-args" placeholder="Fake args" style="flex: 1;">
+                                            <button class="btn btn-sm btn-info" onclick="BEACON.setArgue()">Set</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Evasion Settings (BETA — CS 4.10+/4.11+) -->
+                                <div class="feature-section-header" style="margin-top: 20px;">
+                                    <h4>Evasion Settings <span class="badge-beta">BETA</span></h4>
+                                </div>
+                                <div class="evasion-toggle-row">
+                                    <span class="evasion-label">Beacon Gate (Sleep Mask)</span>
+                                    <button class="btn btn-sm btn-success" onclick="BEACON.enableBeaconGate()">Enable</button>
+                                    <button class="btn btn-sm btn-danger" onclick="BEACON.disableBeaconGate()">Disable</button>
+                                    <span class="evasion-desc">Proxy APIs through BeaconGate for obfuscation</span>
+                                </div>
+                                <div class="evasion-toggle-row">
+                                    <span class="evasion-label">Syscall Method</span>
+                                    <select class="form-input" id="config-syscall-method" style="width: 140px;">
+                                        <option value="None">None (WinAPI)</option>
+                                        <option value="Direct">Direct</option>
+                                        <option value="Indirect" selected>Indirect</option>
+                                    </select>
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.setSyscallMethod()">Set</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="BEACON.getSyscallMethod()">Query</button>
+                                    <span class="evasion-desc">Indirect = most evasive</span>
+                                </div>
+                                <div class="evasion-toggle-row">
+                                    <span class="evasion-label">Failover Notifications</span>
+                                    <button class="btn btn-sm btn-success" onclick="BEACON.enableFailover()">Enable</button>
+                                    <button class="btn btn-sm btn-danger" onclick="BEACON.disableFailover()">Disable</button>
+                                    <span class="evasion-desc">Alert on C2 host rotation</span>
+                                </div>
+
+                                <!-- C2 Host Management (BETA) -->
+                                <div class="feature-section-header" style="margin-top: 20px;">
+                                    <h4>C2 Callback Hosts <span class="badge-beta">BETA</span></h4>
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.loadC2Hosts()">Refresh</button>
+                                    <button class="btn btn-sm btn-success" onclick="BEACON.showAddC2Host()">Add Host</button>
+                                </div>
+                                <div style="color: var(--text-muted); font-size: 0.9em; margin-bottom: 10px; max-width: 700px; line-height: 1.6;">
+                                    Beacons rotate through callback hosts when connecting. If a domain gets burned by defenders, <strong>Hold</strong> it to skip during rotation,
+                                    then <strong>Add</strong> a new backup domain. Your deployment has:
+                                    <code style="color: var(--info-text);">api.meridianfinancialgroup.org</code>,
+                                    <code style="color: var(--info-text);">cdn.meridianfinancialgroup.org</code>,
+                                    <code style="color: var(--info-text);">www.meridianfinancialgroup.org</code>
+                                    all round-robin to both redirectors.
+                                    Backup domain <code style="color: var(--info-text);">plexuramanagedsolutions.com</code> CNAMEs to the primary.
+                                    Add any of these as callback hosts if not already in the beacon's list.
+                                </div>
+                                <div id="c2-host-add-form" style="display: none; margin-bottom: 12px;">
+                                    <div class="flex-row" style="gap: 8px;">
+                                        <input type="text" class="form-input" id="c2-host-name" placeholder="hostname (e.g., cdn.example.com)" style="flex: 2;">
+                                        <input type="text" class="form-input" id="c2-host-uri" placeholder="URI (e.g., /api)" style="flex: 1;">
+                                        <button class="btn btn-sm btn-success" onclick="BEACON.addC2Host()">Add</button>
+                                        <button class="btn btn-sm btn-secondary" onclick="document.getElementById('c2-host-add-form').style.display='none'">Cancel</button>
+                                    </div>
+                                </div>
+                                <div id="c2-hosts-table-body">
+                                    <div class="feature-empty">Click "Refresh" to load C2 callback hosts</div>
+                                </div>
+
+                                <!-- Beacon Management -->
+                                <div class="feature-section-header" style="margin-top: 20px;">
+                                    <h4>Beacon Management <span class="badge-beta">BETA</span></h4>
+                                </div>
+                                <div class="flex-row" style="gap: 8px; flex-wrap: wrap;">
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.forceCheckin()">Force Check-In</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="BEACON.clearQueue()">Clear Queue</button>
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.getBeaconInfo()">Memory Info</button>
+                                    <input type="text" class="form-input" id="config-beacon-note" placeholder="Beacon note..." style="width: 200px;">
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.setNote()">Set Note</button>
+                                    <button class="btn btn-sm btn-danger" onclick="if(confirm('Delete this beacon permanently?')) BEACON.deleteBeacon()">Delete Beacon</button>
+                                </div>
+
+                                <div id="config-output" class="output-display tab-output-panel"></div>
+                            </div>
+                        </div>
+
+                        <!-- Listener Management Panel -->
+                        <div class="beacon-fpanel" id="beacon-panel-listeners" style="display: none;">
+                            <div class="beacon-panel-toolbar">
+                                <span class="t-secondary" style="font-weight: 600;">Listener Management</span>
+                                <span id="listeners-last-updated" class="t-muted" style="font-size: 0.85em;"></span>
+                                <div class="flex-row">
+                                    <button class="btn btn-sm btn-info" onclick="BEACON.loadListeners()">Refresh</button>
+                                    <button class="btn btn-sm btn-success" onclick="BEACON.showCreateListener()">+ New Listener</button>
+                                </div>
+                            </div>
+                            <div id="listener-create-form" style="display: none; padding: 12px; border-bottom: 1px solid var(--border); max-width: 700px;">
+                                <div class="flex-row" style="flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">
+                                    <select class="form-input" id="listener-type" style="width: 120px;" onchange="BEACON.onListenerTypeChange()">
+                                        <option value="http">HTTP</option>
+                                        <option value="https">HTTPS</option>
+                                        <option value="dns">DNS</option>
+                                        <option value="smb">SMB</option>
+                                        <option value="tcp">TCP</option>
+                                    </select>
+                                    <input type="text" class="form-input" id="listener-name" placeholder="Listener name" style="flex: 1; min-width: 140px;">
+                                </div>
+                                <div id="listener-fields-http" class="flex-row" style="flex-wrap: wrap; gap: 8px;">
+                                    <input type="text" class="form-input" id="listener-host" placeholder="Host (0.0.0.0)" style="flex: 1; min-width: 120px;">
+                                    <input type="number" class="form-input" id="listener-port" placeholder="Port (80)" style="width: 100px;">
+                                    <input type="text" class="form-input" id="listener-beacons" placeholder="Callback hosts" style="flex: 2; min-width: 160px;">
+                                </div>
+                                <div id="listener-fields-smb" class="flex-row" style="display: none; gap: 8px;">
+                                    <input type="text" class="form-input" id="listener-pipename" placeholder="Pipe name (msagent_##)" style="flex: 1;">
+                                </div>
+                                <div id="listener-fields-tcp" class="flex-row" style="display: none; gap: 8px;">
+                                    <input type="number" class="form-input" id="listener-tcp-port" placeholder="Port (4444)" style="width: 120px;">
+                                </div>
+                                <div class="flex-row" style="margin-top: 8px; gap: 8px;">
+                                    <button class="btn btn-sm btn-success" onclick="BEACON.createListener()">Create</button>
+                                    <button class="btn btn-sm btn-secondary" onclick="BEACON.hideCreateListener()">Cancel</button>
+                                </div>
+                            </div>
+                            <div class="beacon-panel-body" id="listeners-body">
+                                <div class="t-muted" style="padding: 20px; text-align: center;">Click Refresh to load active listeners</div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            </div>
+
             <div class="tab-page" data-page="settings">
-                    <h2 style="color: var(--gold); margin-bottom: 20px; font-size: 1.7em;">Settings</h2>
+                    <h2 class="page-title">Settings</h2>
                     <p style="margin-bottom: 20px;">
                         Application settings and preferences.
                     </p>
@@ -1022,28 +1958,177 @@ ns-143.awsdns-17.org
                         <p>Local management interface for deploying and managing red team infrastructure on AWS.</p>
                     </div>
 
-                    <div style="margin-top: 30px;">
-                        <h3>General Settings</h3>
-                        <p style="color: var(--text-muted);">Additional settings will be configured here.</p>
+                    <div class="section-card" style="margin-top: 24px;">
+                        <h3>Deployment Manager</h3>
+                        <div class="form-group form-group--compact">
+                            <label for="auto-refresh-interval">Auto-Refresh Interval</label>
+                            <select id="auto-refresh-interval" onchange="applyAutoRefreshSetting()">
+                                <option value="0">Off — manual refresh only</option>
+                                <option value="10">Every 10 seconds</option>
+                                <option value="30" selected>Every 30 seconds</option>
+                                <option value="60">Every 60 seconds</option>
+                                <option value="120">Every 2 minutes</option>
+                            </select>
+                            <small>Automatically refreshes resources and status on the Deployment Manager page.</small>
+                        </div>
                     </div>
 
-                    <div style="margin-top: 30px;">
-                        <h3>Advanced Options</h3>
-                        <p style="color: var(--text-muted);">Advanced configuration options will be added here.</p>
+                    <!-- Cost Tracker Display -->
+                    <div class="section-card" style="margin-top: 24px;">
+                        <h3 style="margin: 0 0 15px 0;">Cost Tracker</h3>
+
+                        <!-- Refresh button -->
+                        <button class="btn btn-secondary" onclick="refreshCosts()" id="cost-refresh-btn" style="width: 100%; margin-bottom: 20px; padding: 10px; border: 1px solid var(--gold-muted); font-weight: 600;">
+                            Refresh Costs — never refreshed
+                        </button>
+
+                        <!-- Summary cards -->
+                        <div id="cost-summary-cards" class="grid-auto" style="margin-bottom: 20px;">
+                        </div>
+
+                        <!-- Budget progress bar -->
+                        <div id="cost-budget-bar-section" style="margin-bottom: 20px; display: none;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="font-size: 0.88em; font-weight: 600; color: var(--text-secondary);">Budget Usage</span>
+                                <span id="cost-budget-pct" style="font-size: 0.88em; color: var(--text-muted);"></span>
+                            </div>
+                            <div id="cost-budget-bar" class="cost-budget-bar">
+                                <div id="cost-budget-fill" class="cost-budget-bar__fill cost-budget-bar__fill--ok" style="width: 0%;"></div>
+                                <span id="cost-budget-label" class="cost-budget-bar__label"></span>
+                            </div>
+                        </div>
+
+                        <!-- Daily cost trend -->
+                        <div id="cost-trend-section" style="margin-bottom: 20px; display: none;">
+                            <h4 style="margin: 0 0 10px 0; color: var(--gold-muted); font-size: 1em;">Daily Cost Trend (Last 14 Days)</h4>
+                            <div id="cost-trend-chart"></div>
+                        </div>
+
+                        <!-- Component breakdown -->
+                        <div id="cost-breakdown-section" style="margin-bottom: 20px; display: none;">
+                            <h4 style="margin: 0 0 10px 0; color: var(--gold-muted); font-size: 1em;">Cost Breakdown</h4>
+                            <div id="cost-breakdown-table"></div>
+                        </div>
+
+                        <!-- Untracked costs disclosure — shown after cost data loads -->
+                        <div id="cost-untracked-callout" class="callout callout--info" style="margin-top: 15px; display: none;">
+                            <strong>Costs not tracked:</strong> Domain registration (varies by TLD), Cobalt Strike license,
+                            data transfer (varies with beacon frequency), CloudFront usage (if domain fronting enabled),
+                            CloudWatch logs/metrics, Secrets Manager ($0.40/secret/month),
+                            Cost Explorer API calls ($0.01/call — ~$7.20/mo at 1hr interval, ~$14.40/mo at 30min).
+                            These are excluded from estimates.
+                        </div>
+
+                        <!-- Empty state -->
+                        <div id="cost-empty-state" class="cost-empty-state" style="display: none;">
+                            <h4>No Deployments to Track</h4>
+                            <p>Deploy infrastructure to see cost tracking here.</p>
+                            <button class="btn btn-success btn-sm" onclick="APP.navigateTo('deployment')">Go to Deploy</button>
+                        </div>
+                    </div>
+
+                    <!-- Roadmap / TODO -->
+                    <div class="section-card" style="margin-top: 24px;">
+                        <h3>Roadmap</h3>
+                        <p style="color: var(--text-secondary); font-size: 0.9em; margin-bottom: 16px;">Planned features and outstanding work items.</p>
+
+                        <!-- Beacon API Features -->
+                        <details style="margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
+                            <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; background: var(--bg-section);">
+                                Beacon Web App &mdash; Unimplemented API Features
+                                <span style="float: right; font-weight: 400; font-size: 0.85em; color: var(--text-muted);">beacon-api-features-backlog.md</span>
+                            </summary>
+                            <div style="padding: 16px; font-size: 0.9em;">
+                                <p style="color: var(--text-secondary); margin-bottom: 12px;">Features available via the CS REST API (219 endpoints) not yet in the web app UI. Backend service methods exist for most.</p>
+                                <h4 style="color: var(--success-text); margin: 12px 0 8px;">Priority 1 &mdash; High Impact</h4>
+                                <ul style="margin: 0; padding-left: 20px; line-height: 1.8; color: var(--text-primary);">
+                                    <li><input type="checkbox" disabled> <strong>Payload Generation</strong> &mdash; Generate stageless/stager payloads from web app without CS client</li>
+                                    <li><input type="checkbox" disabled> <strong>Credential Store Viewer</strong> &mdash; Single pane for all harvested creds across beacons</li>
+                                    <li><input type="checkbox" disabled> <strong>Screenshot &amp; Keystroke Gallery</strong> &mdash; Visual gallery with timeline, keystroke search</li>
+                                    <li><input type="checkbox" disabled> <strong>Lateral Movement</strong> &mdash; jump (psexec, winrm), remote-exec from web app</li>
+                                    <li><input type="checkbox" disabled> <strong>Execute-Assembly (.NET)</strong> &mdash; Run Rubeus, Seatbelt, SharpHound in-memory</li>
+                                </ul>
+                                <h4 style="color: var(--warning-text); margin: 12px 0 8px;">Priority 2 &mdash; Medium Impact</h4>
+                                <ul style="margin: 0; padding-left: 20px; line-height: 1.8; color: var(--text-primary);">
+                                    <li><input type="checkbox" disabled> <strong>Privilege Escalation</strong> &mdash; elevate, runasadmin</li>
+                                    <li><input type="checkbox" disabled> <strong>Kerberos Ticket Management</strong> &mdash; ticket use/purge</li>
+                                    <li><input type="checkbox" disabled> <strong>SSH Pivoting</strong> &mdash; SSH to Linux hosts from Windows beacon</li>
+                                    <li><input type="checkbox" disabled> <strong>PowerShell Variants</strong> &mdash; import, powerpick, psinject</li>
+                                    <li><input type="checkbox" disabled> <strong>Browser Pivot</strong> &mdash; Man-in-the-browser</li>
+                                </ul>
+                                <h4 style="color: var(--text-muted); margin: 12px 0 8px;">Priority 3 &mdash; Nice to Have</h4>
+                                <ul style="margin: 0; padding-left: 20px; line-height: 1.8; color: var(--text-secondary);">
+                                    <li><input type="checkbox" disabled> Shellcode &amp; DLL injection</li>
+                                    <li><input type="checkbox" disabled> File operations (cp, mv, timestomp)</li>
+                                    <li><input type="checkbox" disabled> Registry browser</li>
+                                    <li><input type="checkbox" disabled> Clipboard capture</li>
+                                    <li><input type="checkbox" disabled> Pass-the-Hash (spawn/inject)</li>
+                                    <li><input type="checkbox" disabled> Team server diagnostics (kill date, malleable profile, system info)</li>
+                                </ul>
+                                <p style="margin-top: 12px; font-size: 0.85em; color: var(--text-muted);">Full details: <code>docs/superpowers/plans/beacon-api-features-backlog.md</code></p>
+                            </div>
+                        </details>
+
+                        <!-- API Test Plan -->
+                        <details style="margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
+                            <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; background: var(--bg-section);">
+                                CS REST API &mdash; Test Plan
+                                <span style="float: right; font-weight: 400; font-size: 0.85em; color: var(--text-muted);">API_TEST_PLAN.md</span>
+                            </summary>
+                            <div style="padding: 16px; font-size: 0.9em;">
+                                <p style="color: var(--text-secondary); margin-bottom: 12px;">Endpoint-by-endpoint test coverage for the CS REST API (219 endpoints). Tracks what's been tested live vs outstanding.</p>
+                                <ul style="margin: 0; padding-left: 20px; line-height: 1.8; color: var(--text-primary);">
+                                    <li><input type="checkbox" checked disabled> Authentication, beacon info, console commands</li>
+                                    <li><input type="checkbox" checked disabled> File browser, process list, jobs/tasks</li>
+                                    <li><input type="checkbox" checked disabled> Sleep, spawnto, ppid, blockdlls, argue</li>
+                                    <li><input type="checkbox" checked disabled> Screenshots, credentials (hashdump, logonpasswords, dcsync)</li>
+                                    <li><input type="checkbox" checked disabled> Token management, SOCKS proxy, port forwarding</li>
+                                    <li><input type="checkbox" checked disabled> BOF execution, listeners, beacon gate</li>
+                                    <li><input type="checkbox" disabled> Network recon (net commands) &mdash; needs domain-joined environment</li>
+                                    <li><input type="checkbox" disabled> Lateral movement (jump, remote-exec) &mdash; needs multiple hosts</li>
+                                    <li><input type="checkbox" disabled> Kerberos ticket operations &mdash; needs domain environment</li>
+                                    <li><input type="checkbox" disabled> Payload generation &mdash; needs listener configured</li>
+                                    <li><input type="checkbox" disabled> SSH pivoting &mdash; needs Linux target</li>
+                                </ul>
+                                <p style="margin-top: 12px; font-size: 0.85em; color: var(--text-muted);">Full details: <code>docs/cobalt-strike-api/API_TEST_PLAN.md</code></p>
+                            </div>
+                        </details>
+
+                        <!-- Golden Image / Attack Box AMI -->
+                        <details style="margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
+                            <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; background: var(--bg-section);">
+                                Attack Box &mdash; Golden AMI
+                                <span style="float: right; font-weight: 400; font-size: 0.85em; color: var(--text-muted);">planned</span>
+                            </summary>
+                            <div style="padding: 16px; font-size: 0.9em;">
+                                <p style="color: var(--text-secondary); margin-bottom: 12px;">Create a reusable AMI from the current c2-adhoc attack box (46GB, 40+ tools pre-installed). Eliminates 15-20 min bootstrap on future deployments.</p>
+                                <ul style="margin: 0; padding-left: 20px; line-height: 1.8; color: var(--text-primary);">
+                                    <li><input type="checkbox" disabled> <strong>Snapshot current attack box</strong> &mdash; <code>aws ec2 create-image</code> from <code>i-0049220811f67cff4</code></li>
+                                    <li><input type="checkbox" disabled> <strong>Clean sensitive data</strong> &mdash; Clear C:\Payloads, CS client profiles, listener configs before snapshot</li>
+                                    <li><input type="checkbox" disabled> <strong>Add <code>attack_box_ami_id</code> to web app config</strong> &mdash; Module already supports <code>ami_id</code> variable</li>
+                                    <li><input type="checkbox" disabled> <strong>First-boot script</strong> &mdash; Pull fresh CS client config + tools repo updates from S3 on launch</li>
+                                    <li><input type="checkbox" disabled> <strong>Cross-region copy</strong> &mdash; AMI is region-locked; add copy step for multi-region deployments</li>
+                                </ul>
+                                <p style="margin-top: 12px; font-size: 0.85em; color: var(--text-secondary);">
+                                    <strong>Pre-installed:</strong> CS Client, PowerSploit, Rubeus, Seatbelt, BloodHound, mimikatz, SharpHound, hashcat, ligolo-ng, Sysinternals, VS Code, WSL2, Python, .NET SDK, 7-Zip, Git + 20 more tools.
+                                </p>
+                            </div>
+                        </details>
                     </div>
             </div>
 
             <!-- Deployments Page (Active Infrastructure) -->
             <div class="tab-page" data-page="deployments">
-                    <h2 style="color: var(--gold); margin-bottom: 20px; font-size: 1.7em;">Deployment Manager</h2>
-                    <p style="margin-bottom: 20px;">
-                        Monitor and manage your running infrastructure. View deployed resources, connection info, and manage lifecycle.
-                    </p>
-
-                    <div style="margin-bottom: 20px;">
-                        <button id="refresh-all-btn" class="btn btn-info" onclick="refreshAll()">Refresh All</button>
-                        <span id="deployments-last-updated" style="margin-left: 15px; color: var(--text-muted); font-size: 0.9em;"></span>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h2 style="color: var(--gold); margin: 0; font-size: 1.7em;">Deployment Manager</h2>
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <span id="deployments-last-updated" style="color: var(--text-muted); font-size: 0.9em;"></span>
+                            <button id="refresh-all-btn" class="btn btn-info" onclick="refreshAll()">Refresh All</button>
+                        </div>
                     </div>
+
+                    <!-- Budget Alert Banner (lightweight — links to Settings for details) -->
+                    <div id="cost-budget-alert" style="display: none; margin-bottom: 20px;"></div>
 
                     <!-- Deployment Status Overview -->
                     <div id="deployments-overview" style="margin-bottom: 30px;">
@@ -1051,18 +2136,7 @@ ns-143.awsdns-17.org
 
                     <!-- Lifecycle Management Section -->
                     <div id="lifecycle-section" style="margin-bottom: 30px; display: none;">
-                        <h3>Lifecycle Management</h3>
-
-                        <!-- Explanation Banner -->
-                        <div class="callout callout--warning" style="margin: 15px 0;">
-                            <p style="margin: 0; font-size: 0.9em;">
-                                <strong>How Stop/Start Works:</strong> Only <strong>EC2 instances</strong> can be stopped and started.
-                                Other resources (VPCs, NAT Gateways, Elastic IPs, S3) remain active and may still incur charges.
-                                To fully stop all billing, use <strong>Destroy Infrastructure</strong> instead.
-                            </p>
-                        </div>
-
-                        <div class="grid-auto" style="margin-top: 15px;">
+                        <div class="grid-auto">
 
                             <!-- Stop Infrastructure -->
                             <div class="lifecycle-card">
@@ -1071,11 +2145,6 @@ ns-143.awsdns-17.org
                                     <strong>Pause compute without deleting.</strong> All EC2 instances (C2 servers, jumpbox, Windows VMs) will be stopped.
                                     Data and configuration preserved.
                                 </p>
-                                <div class="billing-info">
-                                    <div style="color: var(--success-text);">Stops: EC2 compute charges (~60-80% savings)</div>
-                                    <div style="color: var(--warning-text);">Still billed: EBS storage (~$0.10/GB), NAT Gateway (~$32/mo), idle Elastic IPs (~$3.60/mo each)</div>
-                                    <div style="color: var(--info-text);">Preserved: All data, IPs, security groups, VPC</div>
-                                </div>
                                 <button class="btn btn-warning" onclick="stopInfrastructure()" style="width: 100%;">
                                     Stop All EC2 Instances
                                 </button>
@@ -1088,11 +2157,6 @@ ns-143.awsdns-17.org
                                     <strong>Resume stopped instances.</strong> Bring your EC2 instances back online.
                                     All configurations and data preserved from when you stopped.
                                 </p>
-                                <div class="billing-info">
-                                    <div style="color: var(--info-text);">Restores: All EC2 instances to running state</div>
-                                    <div style="color: var(--warning-text);">Time: ~2-5 minutes to fully boot</div>
-                                    <div>Note: Public IPs preserved (Elastic IPs assigned)</div>
-                                </div>
                                 <button class="btn btn-success" onclick="startInfrastructure()" style="width: 100%;">
                                     Start All EC2 Instances
                                 </button>
@@ -1100,78 +2164,46 @@ ns-143.awsdns-17.org
 
                         </div>
 
-                        <!-- AWS Resource Info -->
-                        <div class="callout callout--info" style="margin-top: 20px;">
-                            <h4 style="margin: 0 0 10px 0;">Finding Resources in AWS Console</h4>
-                            <p style="margin: 0; font-size: 0.9em;">
-                                All resources are tagged with your <strong>Project Name</strong> for easy identification.
-                                In AWS Console, filter by tag: <code>Project = <span id="aws-project-tag">your-project-name</span></code>
-                            </p>
-                            <div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
-                                <a href="https://console.aws.amazon.com/ec2/home#Instances:" target="_blank" class="btn btn-secondary btn-sm">
-                                    EC2 Instances
-                                </a>
-                                <a href="https://console.aws.amazon.com/vpc/home#vpcs:" target="_blank" class="btn btn-secondary btn-sm">
-                                    VPCs
-                                </a>
-                                <a href="https://console.aws.amazon.com/ec2/home#SecurityGroups:" target="_blank" class="btn btn-secondary btn-sm">
-                                    Security Groups
-                                </a>
-                            </div>
-                        </div>
                     </div>
 
-                    <!-- Full Resource List Section -->
+                    <!-- Full Resource List Section (collapsed by default) -->
                     <div id="resource-list-section" style="margin-bottom: 30px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <h3 style="margin: 0;">All Deployed Resources</h3>
+                        <details class="details-card">
+                            <summary>All Deployed Resources</summary>
                             <div>
-                                <button class="btn btn-secondary btn-sm" onclick="refreshResourceList()">
-                                    Refresh
-                                </button>
-                                <button class="btn btn-secondary btn-sm" onclick="exportResourceList()" style="margin-left: 5px;">
-                                    Export CSV
-                                </button>
+                                <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
+                                    <div id="resource-scope-info" style="color: var(--text-muted); font-size: 0.88em;"></div>
+                                    <div style="display: flex; gap: 5px;">
+                                        <button class="btn btn-secondary btn-sm" onclick="refreshResourceList()">
+                                            Refresh
+                                        </button>
+                                        <button class="btn btn-secondary btn-sm" onclick="exportResourceList()">
+                                            Export CSV
+                                        </button>
+                                    </div>
+                                </div>
+                                <div style="margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
+                                    <select id="resource-type-filter" onchange="filterResources()">
+                                        <option value="all">All Types</option>
+                                        <option value="ec2">EC2 Instances</option>
+                                        <option value="vpc">VPC</option>
+                                        <option value="subnet">Subnets</option>
+                                        <option value="sg">Security Groups</option>
+                                        <option value="eip">Elastic IPs</option>
+                                        <option value="nat">NAT Gateways</option>
+                                        <option value="s3">S3 Buckets</option>
+                                    </select>
+                                    <input type="text" id="resource-search" placeholder="Search by name or ID..."
+                                           onkeyup="filterResources()"
+                                           style="flex: 1; min-width: 200px;">
+                                </div>
+                                <div id="resource-list-container" style="border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;">
+                                    <div id="resource-table-body" style="max-height: 520px; overflow-y: auto;">
+                                    </div>
+                                </div>
+                                <div id="resource-count" style="margin-top: 8px; color: var(--text-muted); font-size: 0.88em;"></div>
                             </div>
-                        </div>
-                        <div id="resource-scope-info" style="margin-bottom: 15px; color: var(--text-muted); font-size: 0.88em;"></div>
-
-                        <!-- Resource Filter -->
-                        <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-                            <select id="resource-type-filter" onchange="filterResources()">
-                                <option value="all">All Types</option>
-                                <option value="ec2">EC2 Instances</option>
-                                <option value="vpc">VPC</option>
-                                <option value="subnet">Subnets</option>
-                                <option value="sg">Security Groups</option>
-                                <option value="eip">Elastic IPs</option>
-                                <option value="nat">NAT Gateways</option>
-                                <option value="s3">S3 Buckets</option>
-                            </select>
-                            <input type="text" id="resource-search" placeholder="Search by name or ID..."
-                                   onkeyup="filterResources()"
-                                   style="flex: 1; min-width: 200px;">
-                        </div>
-
-                        <!-- Resource Table -->
-                        <div style="overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-lg);">
-                            <table id="resource-table">
-                                <thead>
-                                    <tr>
-                                        <th>Type</th>
-                                        <th>Name</th>
-                                        <th>Resource ID</th>
-                                        <th>State</th>
-                                        <th>Project</th>
-                                        <th>Details</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="resource-table-body">
-                                    <!-- Populated by JavaScript -->
-                                </tbody>
-                            </table>
-                        </div>
-                        <div id="resource-count" style="margin-top: 10px; color: var(--text-muted); font-size: 0.88em;"></div>
+                        </details>
                     </div>
 
                     <!-- Deployment History & Logs Section -->
@@ -1198,7 +2230,7 @@ ns-143.awsdns-17.org
                         <!-- Detailed Logs -->
                         <div style="background: var(--bg-terminal); border-radius: var(--radius-lg); overflow: hidden; border: 1px solid var(--border);">
                             <div style="background: var(--bg-elevated); padding: 10px 15px; display: flex; justify-content: space-between; align-items: center;">
-                                <span style="font-weight: bold;">Detailed Logs</span>
+                                <span style="font-weight: bold; color: var(--text-terminal);">Detailed Logs</span>
                                 <div>
                                     <button onclick="copyLogs()" class="btn btn-secondary btn-sm">
                                         Copy
@@ -1229,83 +2261,29 @@ ns-143.awsdns-17.org
                                 </label>
                             </div>
                             <div id="deployment-logs" style="padding: 15px; max-height: 400px; overflow-y: auto; font-family: 'SF Mono', 'Consolas', monospace; font-size: 0.88em; line-height: 1.6;">
-                                <div style="color: var(--text-muted);">No deployment logs yet. Deploy infrastructure to see logs here.</div>
+                                <div class="t-muted">No deployment logs yet. Deploy infrastructure to see logs here.</div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Infrastructure Components -->
-                    <div id="infrastructure-components">
-
-                        <!-- GOAD Lab Section -->
-                        <div id="goad-lab-section" class="section-card section-card--highlight" style="margin-bottom: 25px; display: none;">
-                            <h3>GOAD Lab (Active Directory)</h3>
-                            <p>Vulnerable Active Directory environment for testing.</p>
-                            <div id="goad-lab-details" class="infrastructure-details">
-                                <!-- Populated by JavaScript -->
-                            </div>
-                            <div id="goad-lab-actions" style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-                                <!-- Populated by JavaScript -->
-                            </div>
-                            <div id="goad-provision-section" style="margin-top: 15px; display: none;">
-                                <div style="border-top: 1px solid var(--border); padding-top: 15px;">
-                                    <h4>Active Directory Provisioning</h4>
-                                    <div id="goad-provision-status-panel">
-                                        <!-- Populated by JavaScript -->
-                                    </div>
+                    <!-- GOAD Lab Section -->
+                    <div id="goad-lab-section" class="section-card section-card--highlight" style="margin-bottom: 25px; display: none;">
+                        <h3>GOAD Lab (Active Directory)</h3>
+                        <p>Vulnerable Active Directory environment for testing.</p>
+                        <div id="goad-lab-details" class="infrastructure-details">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                        <div id="goad-lab-actions" style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                        <div id="goad-provision-section" style="margin-top: 15px; display: none;">
+                            <div style="border-top: 1px solid var(--border); padding-top: 15px;">
+                                <h4>Active Directory Provisioning</h4>
+                                <div id="goad-provision-status-panel">
+                                    <!-- Populated by JavaScript -->
                                 </div>
                             </div>
                         </div>
-
-                        <!-- Bastion/Jump Box Section -->
-                        <div id="bastion-section" class="section-card section-card--highlight" style="margin-bottom: 25px; display: none;">
-                            <h3>Bastion Host (Jump Box)</h3>
-                            <p>Windows Server with WSL2 for SSH access to internal infrastructure.</p>
-                            <div id="bastion-details" class="infrastructure-details">
-                                <!-- Populated by JavaScript -->
-                            </div>
-                        </div>
-
-                        <!-- C2 Team Servers Section -->
-                        <div id="c2-servers-section" class="section-card section-card--brand" style="margin-bottom: 25px; display: none;">
-                            <h3>C2 Team Servers</h3>
-                            <p>Command and Control servers running in private subnets.</p>
-                            <div id="c2-servers-details" class="infrastructure-details">
-                                <!-- Populated by JavaScript -->
-                            </div>
-                        </div>
-
-                        <!-- Proxy/Redirectors Section -->
-                        <div id="redirectors-section" class="section-card section-card--highlight" style="margin-bottom: 25px; display: none;">
-                            <h3>Proxy Redirectors</h3>
-                            <p>Public-facing redirectors that route traffic to C2 servers.</p>
-                            <div id="redirectors-details" class="infrastructure-details">
-                                <!-- Populated by JavaScript -->
-                            </div>
-
-                            <!-- SSL Status Section -->
-                            <div id="ssl-status-section" style="margin-top: 20px; padding: 15px; background: var(--bg-card); border-radius: var(--radius-lg); border: 1px solid var(--border);">
-                                <h4 style="margin: 0 0 15px 0; display: flex; align-items: center; gap: 10px;">
-                                    SSL Certificate Status
-                                    <button class="btn btn-secondary btn-sm" onclick="refreshSSLStatus()" style="margin-left: auto;">
-                                        Refresh
-                                    </button>
-                                </h4>
-                                <div id="ssl-status-content">
-                                    <p style="font-style: italic;">Loading SSL status...</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Network/VPC Section -->
-                        <div id="network-section" class="section-card section-card--highlight" style="margin-bottom: 25px; display: none;">
-                            <h3>Network Configuration</h3>
-                            <p>VPC, subnets, and security groups.</p>
-                            <div id="network-details" class="infrastructure-details">
-                                <!-- Populated by JavaScript -->
-                            </div>
-                        </div>
-
                     </div>
 
                     <!-- No Deployment State -->
@@ -1315,39 +2293,7 @@ ns-143.awsdns-17.org
                         <button class="btn btn-success" onclick="APP.navigateTo('deployment')">Go to Deploy Tab</button>
                     </div>
 
-                    <!-- Connection Info Section -->
-                    <div id="connection-info-section" style="margin-top: 30px; display: none;">
-                        <h3>Quick Connection Reference</h3>
-                        <div style="background: var(--bg-section); padding: 20px; border-radius: var(--radius-lg); margin-top: 15px; border: 1px solid var(--border);">
-                            <div id="connection-commands">
-                                <!-- Populated by JavaScript -->
-                            </div>
-                        </div>
-                    </div>
 
-                    <!-- Danger Zone - Destroy Infrastructure -->
-                    <div id="destroy-section" style="margin-top: 30px; display: none;">
-                        <h3>Danger Zone - Complete Deletion</h3>
-                        <div style="background: var(--danger-bg); padding: 20px; border-radius: var(--radius-lg); margin-top: 15px; border: 2px solid var(--danger);">
-                            <h4 style="margin: 0 0 10px 0; color: var(--danger-text);">Destroy Infrastructure</h4>
-                            <p style="font-size: 0.9em; margin-bottom: 15px;">
-                                <strong>Permanently delete ALL resources.</strong> This cannot be undone.
-                                All EC2 instances, VPCs, security groups, and data will be destroyed.
-                            </p>
-                            <div style="background: var(--bg-card); padding: 10px; border-radius: var(--radius); margin-bottom: 15px; font-size: 0.88em;">
-                                <div style="color: var(--danger-text);">Deleted: All EC2 instances, EBS volumes, VPCs</div>
-                                <div style="color: var(--danger-text);">Deleted: Security groups, subnets, route tables</div>
-                                <div style="color: var(--danger-text);">Deleted: NAT Gateways, Elastic IPs, S3 data</div>
-                                <div style="color: var(--success-text);">Result: $0 ongoing AWS charges</div>
-                            </div>
-                            <button class="btn btn-danger" onclick="destroyInfrastructure()" style="width: 100%;">
-                                Destroy All Infrastructure
-                            </button>
-                            <p style="color: var(--text-muted); font-size: 0.8em; margin: 10px 0 0 0; text-align: center;">
-                                You will be asked to confirm by typing "DESTROY"
-                            </p>
-                        </div>
-                    </div>
 
             </div>
 
@@ -1355,6 +2301,7 @@ ns-143.awsdns-17.org
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+    <script src="js/elastic-rules.js"></script>
     <script src="js/architecture.js"></script>
     <script src="js/app.js"></script>
 </body>

@@ -72,10 +72,16 @@ const APP = {
         // Setup event handlers
         this.setupEventHandlers();
 
-        // Restore active deployment project from sessionStorage
+        // Restore active deployment projects from sessionStorage
+        try {
+            const saved = sessionStorage.getItem('activeDeploymentProjects');
+            window.activeDeploymentProjects = saved ? new Set(JSON.parse(saved)) : new Set();
+        } catch { window.activeDeploymentProjects = new Set(); }
+        // Backward compat — currentDeploymentProject returns the most recent active project
         const savedProject = sessionStorage.getItem('activeDeploymentProject');
         if (savedProject) {
             window.currentDeploymentProject = savedProject;
+            window.activeDeploymentProjects.add(savedProject);
         }
 
         console.log('✅ Application initialized successfully');
@@ -351,6 +357,9 @@ const APP = {
         // Domain fronting handlers
         this.setupDomainFrontingHandlers();
 
+        // File portal handlers
+        this.setupFilePortalHandlers();
+
         // Malleable C2 profile preview handlers
         this.setupMalleableProfileHandlers();
     },
@@ -408,6 +417,22 @@ const APP = {
         const frontDomainInput = document.getElementById('front-domain');
         if (frontDomainInput) {
             frontDomainInput.addEventListener('input', () => APP.updateProfilePreview());
+        }
+    },
+
+    /**
+     * Setup File Portal configuration event handlers
+     */
+    setupFilePortalHandlers() {
+        const fpCheckbox = document.getElementById('enable-file-portal');
+        if (fpCheckbox) {
+            fpCheckbox.addEventListener('change', (e) => {
+                const options = document.getElementById('file-portal-options');
+                if (options) {
+                    options.style.opacity = e.target.checked ? '1' : '0.5';
+                    options.style.pointerEvents = e.target.checked ? 'auto' : 'none';
+                }
+            });
         }
     },
 
@@ -2414,7 +2439,19 @@ const BEACON = {
 
         // Build tunnel command
         if (tsIp && bastionIp) {
-            const keyPath = outputs.ssh_key_path?.value || '~/.ssh/red_team_key';
+            let keyPath = outputs.ssh_key_path?.value || '';
+            if (!keyPath && cachedSshKeyData) {
+                const comment = cachedSshKeyData.comment || '';
+                const keyType = cachedSshKeyData.key_type || '';
+                if (comment.includes('/.ssh/')) {
+                    keyPath = comment.trim();
+                } else if (comment.match(/^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$/)) {
+                    keyPath = keyType === 'ssh-ed25519' ? '~/.ssh/id_ed25519' : '~/.ssh/id_rsa';
+                } else if (comment && !comment.includes('@') && !comment.includes(' ')) {
+                    keyPath = `~/.ssh/${comment}`;
+                }
+            }
+            if (!keyPath) keyPath = '~/.ssh/id_ed25519';
             this.tunnelCmd = `ssh -L 50443:${tsIp}:50443 ubuntu@${bastionIp} -i ${keyPath}`;
             const cmdEl = document.getElementById('beacon-tunnel-cmd-text');
             if (cmdEl) cmdEl.textContent = this.tunnelCmd;
@@ -2547,10 +2584,13 @@ const BEACON = {
             const bid = tr.dataset.bid;
             const b = this.cachedBeacons.find(x => String(x.bid) === bid);
             if (!b) return;
-            const elapsedMs = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
+            // Prefer absolute timestamp for accuracy, fall back to relative
+            const elapsedMs = b.lastCheckinAbsolute
+                ? (Date.now() - b.lastCheckinAbsolute)
+                : (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
             const td = tr.querySelector('.beacon-last-seen');
             if (td) {
-                td.textContent = this.formatElapsed(elapsedMs);
+                td.textContent = this.formatElapsed(Math.max(0, elapsedMs));
                 td.className = `beacon-last-seen ${this.getElapsedClass(elapsedMs, b.sleep)}`;
             }
         });
@@ -2569,6 +2609,12 @@ const BEACON = {
             const fetchTime = Date.now();
             const beacons = (data.beacons || []).map(b => {
                 const sleepIsObj = typeof b.sleep === 'object' && b.sleep !== null;
+                // Use lastCheckinTime (absolute timestamp) for accurate "last seen"
+                // Falls back to lastCheckinMs (relative) + fetchTime if timestamp missing
+                let lastCheckinAbsolute = null;
+                if (b.lastCheckinTime) {
+                    lastCheckinAbsolute = new Date(b.lastCheckinTime).getTime();
+                }
                 return {
                     bid: b.bid || b.id,
                     user: b.user,
@@ -2580,10 +2626,11 @@ const BEACON = {
                     process: b.process,
                     arch: b.arch || (b.is64 ? 'x64' : 'x86'),
                     isAdmin: b.isAdmin,
-                    // Server-side elapsed ms at time of fetch — stays accurate between refreshes
+                    lastCheckinAbsolute: lastCheckinAbsolute,
+                    // Fallback: server-side elapsed ms at time of fetch
                     lastCheckinMs: b.lastCheckinMs,
                     fetchedAt: fetchTime,
-                    sleep: sleepIsObj ? (b.sleep.sleep * 1000) : (b.sleep || 0),
+                    sleep: sleepIsObj ? (b.sleep.sleep * 1000) : (b.sleep != null ? b.sleep : 0),
                     jitter: sleepIsObj ? (b.sleep.jitter || 0) : (b.jitter || 0),
                 };
             });
@@ -2623,11 +2670,13 @@ const BEACON = {
             const isAdmin = b.isAdmin ? ' *' : '';
             const userClass = b.isAdmin ? 'beacon-admin' : '';
             // Compute elapsed: server-side ms at fetch time + time since fetch
-            const elapsedMs = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
-            const lastSeen = this.formatElapsed(elapsedMs);
+            const elapsedMs = b.lastCheckinAbsolute
+                ? (Date.now() - b.lastCheckinAbsolute)
+                : (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
+            const lastSeen = this.formatElapsed(Math.max(0, elapsedMs));
             const lastSeenClass = this.getElapsedClass(elapsedMs, b.sleep);
             const selected = b.bid === this.selectedBid ? 'selected' : '';
-            const sleepStr = b.sleep ? `${Math.round(b.sleep / 1000)}s` : '\u2014';
+            const sleepStr = b.sleep != null && b.sleep !== '' ? (b.sleep === 0 ? 'interactive' : `${Math.round(b.sleep / 1000)}s`) : '\u2014';
             const jitterStr = b.jitter ? ` (${b.jitter}%)` : '';
             const eBid = this.escapeHtml(b.bid || '\u2014');
             const eUser = this.escapeHtml(b.user || '\u2014');
@@ -2699,7 +2748,7 @@ const BEACON = {
             <span class="beacon-badge"><span class="beacon-badge__label">IP</span> ${this.escapeHtml(b.internal || '—')}</span>
             <span class="beacon-badge"><span class="beacon-badge__label">OS</span> ${this.escapeHtml(b.os || '—')}</span>
             <span class="beacon-badge"><span class="beacon-badge__label">PID</span> ${this.escapeHtml(String(b.pid || '—'))}</span>
-            <span class="beacon-badge"><span class="beacon-badge__label">Sleep</span> ${b.sleep ? Math.round(b.sleep / 1000) + 's' : '—'}${b.jitter ? ' (' + b.jitter + '%)' : ''}</span>
+            <span class="beacon-badge"><span class="beacon-badge__label">Sleep</span> ${b.sleep != null && b.sleep !== '' ? (b.sleep === 0 ? 'interactive' : Math.round(b.sleep / 1000) + 's') : '—'}${b.jitter ? ' (' + b.jitter + '%)' : ''}</span>
             ${adminBadge}
         `;
     },
@@ -3357,8 +3406,8 @@ const BEACON = {
 
         // Sleep — use dedicated endpoint (value in seconds, not ms)
         if (base === 'sleep' && parts.length >= 2) {
-            const sleepSec = parseInt(parts[1]) || 60;
-            const jitter = parseInt(parts[2]) || 0;
+            const sleepSec = parts[1] !== undefined ? parseInt(parts[1]) : 60;
+            const jitter = parts[2] !== undefined ? parseInt(parts[2]) : 0;
             return { url: `/api/beacon/${bid}/sleep`, body: { sleep: sleepSec, jitter } };
         }
 
@@ -3619,11 +3668,86 @@ const BEACON = {
         this._taskFeedKnown.clear();
         this._taskFeedPolling.clear();
         console.log('[TaskFeed] Starting live feed for beacon', bid);
-        // First poll seeds known IDs without rendering
-        this._pollTaskFeed(true).then(() => {
-            console.log('[TaskFeed] Seeded', this._taskFeedKnown.size, 'existing tasks');
+        // Load full task history on connect, then poll for new tasks
+        this._loadTaskHistory(bid).then(() => {
+            console.log('[TaskFeed] History loaded,', this._taskFeedKnown.size, 'tasks');
             this._taskFeedTimer = setInterval(() => this._pollTaskFeed(false), 3000);
         });
+    },
+
+    async _loadTaskHistory(bid) {
+        const output = document.getElementById('beacon-command-output');
+        if (!output) return;
+
+        // Check if we already have saved history (from this session)
+        const saved = this._loadHistory(bid);
+        if (saved && saved.includes('task-card')) {
+            // Already have rendered history — just seed the known IDs
+            return this._pollTaskFeed(true);
+        }
+
+        try {
+            const resp = await fetch(`/api/beacon/activity/${bid}?format=structured`);
+            const data = await resp.json();
+            if (!data.success || !data.data) {
+                // Fall back to seeding only
+                return this._pollTaskFeed(true);
+            }
+
+            const tasks = Array.isArray(data.data) ? data.data : [];
+            if (tasks.length === 0) {
+                return this._pollTaskFeed(true);
+            }
+
+            // Sort by created timestamp
+            tasks.sort((a, b) => new Date(a.created) - new Date(b.created));
+
+            // Render header
+            output.innerHTML = `<span style="color: var(--terminal-info);">[*] Loaded ${tasks.length} task(s) from server history</span>\n\n`;
+
+            for (const t of tasks) {
+                const tid = t.taskId;
+                if (tid) this._taskFeedKnown.add(tid);
+
+                const ts = t.created ? new Date(t.created).toLocaleTimeString() : '';
+                const cmd = t.taskCommand || '?';
+                const user = (t.user || '').split('@')[0] || 'operator';
+                const status = t.taskStatus || '';
+
+                // Render the command line
+                output.innerHTML += `<div class="task-card task-card--${status === 'COMPLETED' || status === 'OUTPUT_RECEIVED' ? 'done' : 'queued'}"><span style="color: var(--text-terminal); opacity: 0.6;">[${ts}]</span> <span style="color: var(--terminal-warning);">[${this.escapeHtml(user)}]</span> <span style="color: var(--terminal-prompt);">beacon&gt;</span> <span style="color: var(--text-terminal);">${this.escapeHtml(cmd)}</span></div>`;
+
+                // Render acknowledgements
+                if (t.taskAcknowledgements && t.taskAcknowledgements.length > 0) {
+                    for (const ack of t.taskAcknowledgements) {
+                        const ackTs = ack.timestamp ? new Date(ack.timestamp).toLocaleTimeString() : '';
+                        output.innerHTML += `<span style="color: var(--terminal-info);">[${ackTs}] [*] ${this.escapeHtml(ack.text || '')}</span>\n`;
+                    }
+                }
+
+                // Render results
+                if (t.result && t.result.length > 0) {
+                    for (const r of t.result) {
+                        output.innerHTML += this.formatTaskResult(r);
+                    }
+                }
+
+                // Render errors
+                if (t.error && t.error.length > 0) {
+                    for (const e of t.error) {
+                        output.innerHTML += `<span style="color: var(--terminal-error);">[-] ${this.escapeHtml(e.message || e)}</span>\n`;
+                    }
+                }
+            }
+
+            output.scrollTop = output.scrollHeight;
+            this._saveHistory(bid);
+            console.log(`[TaskFeed] Rendered ${tasks.length} historical tasks`);
+
+        } catch (e) {
+            console.error('[TaskFeed] Failed to load history:', e);
+            return this._pollTaskFeed(true);
+        }
     },
 
     stopTaskFeed() {
@@ -3693,20 +3817,31 @@ const BEACON = {
             return header + `<div style="overflow-x: auto; white-space: pre;">` + colHead + rows + `</div>\n`;
         }
 
-        // Structured: ps (process list)
+        // Structured: ps (process list) — tree view matching CS client
         if (rtype === 'ps' && r.processList) {
             const procs = r.processList;
-            const header = `<span style="color: var(--terminal-info);">[*] Process List (${procs.length} processes)</span>\n\n`;
-            const colHead = `<span class="t-terminal"> PID    PPID   Name                          Arch   Session  User</span>\n`
-                          + `<span class="t-terminal"> ---    ----   ----                          ----   -------  ----</span>\n`;
-            const rows = procs.map(p => {
+            const tree = this._buildProcessTree(procs);
+            const beaconPid = this._getBeaconPid();
+            const header = `<span style="color: var(--terminal-info);">[*] Process List (${procs.length} processes)</span>\n`;
+            if (beaconPid) {
+                header;
+            }
+            const colHead = `<span class="t-terminal"> PID    PPID   Name                                   Arch   Session  User</span>\n`
+                          + `<span class="t-terminal"> ---    ----   ----                                   ----   -------  ----</span>\n`;
+            const rows = tree.map(({ proc: p, depth }) => {
                 const pid = String(p.pid ?? '').padStart(5);
                 const ppid = String(p.ppid ?? '').padStart(5);
-                const name = this.escapeHtml((p.process || '').padEnd(28));
+                const indent = depth > 0 ? '    '.repeat(depth - 1) + '    ' : '';
+                const rawName = p.process || p.name || '';
+                const isBeacon = beaconPid && String(p.pid) === String(beaconPid);
+                const nameStr = indent + rawName;
+                const name = this.escapeHtml(nameStr.padEnd(38));
                 const arch = (p.arch || '').padEnd(6);
                 const sess = String(p.sessid ?? '').padEnd(8);
                 const user = this.escapeHtml(p.user || '');
-                return `<span class="t-terminal">${pid}  ${ppid}   ${name}  ${arch} ${sess} ${user}</span>`;
+                const highlight = isBeacon ? 'color: var(--terminal-warning); font-weight: bold;' : '';
+                const marker = isBeacon ? ' ◀ BEACON' : '';
+                return `<span class="t-terminal" style="${highlight}">${pid}  ${ppid}   ${name}  ${arch} ${sess} ${user}${marker}</span>`;
             }).join('\n');
             return header + `<div style="overflow-x: auto; white-space: pre;">` + colHead + rows + `</div>\n`;
         }
@@ -4344,9 +4479,67 @@ const BEACON = {
         this._drawProcessTable(procs, container);
     },
 
+    /**
+     * Build a depth-first process tree from a flat process list.
+     * Returns array of { proc, depth } in tree-walk order.
+     */
+    _buildProcessTree(procs) {
+        const pidKey = p => String(p.pid ?? p.PID ?? 0);
+        const ppidKey = p => String(p.ppid ?? p.PPID ?? 0);
+
+        // Build children map
+        const children = {};
+        const byPid = {};
+        procs.forEach(p => {
+            const pid = pidKey(p);
+            const ppid = ppidKey(p);
+            byPid[pid] = p;
+            if (!children[ppid]) children[ppid] = [];
+            children[ppid].push(p);
+        });
+
+        // Sort children by PID at each level
+        for (const k in children) {
+            children[k].sort((a, b) => (pidKey(a)) - (pidKey(b)));
+        }
+
+        // DFS walk
+        const result = [];
+        const visited = new Set();
+        const walk = (pid, depth) => {
+            if (visited.has(pid)) return;
+            visited.add(pid);
+            (children[pid] || []).forEach(child => {
+                result.push({ proc: child, depth });
+                walk(pidKey(child), depth + 1);
+            });
+        };
+
+        // Start from roots (processes whose PPID isn't in the list, or PPID=0)
+        const allPids = new Set(procs.map(pidKey));
+        const roots = procs.filter(p => !allPids.has(ppidKey(p)) || ppidKey(p) === '0');
+        roots.sort((a, b) => pidKey(a) - pidKey(b));
+        roots.forEach(r => {
+            if (!visited.has(pidKey(r))) {
+                result.push({ proc: r, depth: 0 });
+                visited.add(pidKey(r));
+                walk(pidKey(r), 1);
+            }
+        });
+
+        // Add any orphans not yet visited
+        procs.forEach(p => {
+            if (!visited.has(pidKey(p))) {
+                result.push({ proc: p, depth: 0 });
+            }
+        });
+
+        return result;
+    },
+
     _drawProcessTable(procs, container) {
-        // Build parent chain set — walk up PPIDs from beacon's PID
         const beaconPid = this._getBeaconPid();
+        // Build parent chain set — walk up PPIDs from beacon's PID
         const parentPids = new Set();
         if (beaconPid) {
             const pidMap = {};
@@ -4360,11 +4553,16 @@ const BEACON = {
             }
         }
 
+        // Tree-sort the processes
+        const tree = this._buildProcessTree(procs);
+
         let html = `<table class="process-table"><thead><tr><th>PID</th><th>PPID</th><th>Name</th><th>Arch</th><th>User</th><th>Session</th><th>Actions</th></tr></thead><tbody>`;
-        procs.forEach(p => {
+        tree.forEach(({ proc: p, depth }) => {
             const pid = p.pid || p.PID || '';
             const ppid = p.ppid || p.PPID || '';
-            const name = this.escapeHtml(p.name || p.Name || p.process || '');
+            const rawName = p.name || p.Name || p.process || '';
+            const indent = depth > 0 ? '&nbsp;&nbsp;'.repeat(depth) + '└ ' : '';
+            const name = indent + this.escapeHtml(rawName);
             const arch = p.arch || p.Arch || '';
             const user = this.escapeHtml(p.user || p.User || p.owner || '');
             const session = p.session || p.Session || p.sessid || '';
@@ -6138,6 +6336,29 @@ async function loadConfig() {
             APP.updateSSLForDomainFronting(enableDomainFronting);
             APP.updateFrontDomainVisibility(enableDomainFronting);
 
+            // Restore file portal settings
+            const fpCheckbox = document.getElementById('enable-file-portal');
+            if (fpCheckbox) {
+                fpCheckbox.checked = config.enable_file_portal === true;
+                const fpOptions = document.getElementById('file-portal-options');
+                if (fpOptions) {
+                    fpOptions.style.opacity = fpCheckbox.checked ? '1' : '0.5';
+                    fpOptions.style.pointerEvents = fpCheckbox.checked ? 'auto' : 'none';
+                }
+            }
+            if (config.portal_username) {
+                const el = document.getElementById('portal-username');
+                if (el) el.value = config.portal_username;
+            }
+            if (config.portal_password) {
+                const el = document.getElementById('portal-password');
+                if (el) el.value = config.portal_password;
+            }
+            if (config.portal_session_timeout) {
+                const el = document.getElementById('portal-session-timeout');
+                if (el) el.value = config.portal_session_timeout;
+            }
+
             // Restore GOAD VPC CIDR and update derived IP range
             const goadVpcCidr = document.getElementById('goad-vpc-cidr');
             if (goadVpcCidr && config.goad_vpc_cidr) {
@@ -6871,6 +7092,14 @@ function updateDeploymentType() {
             domainFrontingSection.style.display = hasC2 ? 'block' : 'none';
         }
 
+        // Show/hide File Portal section — only for deployments with redirectors (C2 and Combined)
+        const supportsFilePortal = ['c2-adhoc', 'c2-purple', 'c2-full',
+            'combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full'].includes(deploymentType);
+        const fpSection = document.getElementById('file-portal-section');
+        if (fpSection) {
+            fpSection.style.display = supportsFilePortal ? 'block' : 'none';
+        }
+
         // Show/hide GOAD Network config section for GOAD and Combined deployments
         const goadNetworkSection = document.getElementById('goad-network-config-section');
         if (goadNetworkSection) {
@@ -7122,6 +7351,11 @@ async function saveConfig() {
             admin_email: domainFrontingEnabled ? '' : adminEmail,
             // Domain fronting
             enable_domain_fronting: document.getElementById('enable-domain-fronting')?.checked ?? false,
+            // File Portal
+            enable_file_portal: document.getElementById('enable-file-portal')?.checked ?? false,
+            portal_username: document.getElementById('portal-username')?.value?.trim() || 'operator',
+            portal_password: document.getElementById('portal-password')?.value || '',
+            portal_session_timeout: parseInt(document.getElementById('portal-session-timeout')?.value) || 30,
             // Server configuration
             c2_server_count: parseInt(document.getElementById('c2-server-count').value),
             c2_server_instance_type: document.getElementById('c2-instance-type').value,
@@ -7661,9 +7895,10 @@ function initSettingsPage() {
     if (select) {
         select.value = String(getAutoRefreshSeconds());
     }
-    // Load cost tracker settings + project data
+    // Load cost tracker settings + cached cost data
     loadCostSettings();
     loadCostProjectSelector();
+    loadProjectCosts(false); // Load from cache, no API call
 }
 
 async function checkDeploymentStatus() {
@@ -8262,6 +8497,7 @@ function pollDeploymentStatus(projectName = null) {
     // Store project name for polling
     if (projectName) {
         window.currentDeploymentProject = projectName;
+        window.activeDeploymentProjects.add(projectName);
     }
 
     // Immediately fetch status once before starting interval
@@ -8329,8 +8565,12 @@ async function fetchAndUpdateDeploymentStatus() {
                     clearInterval(deploymentPollInterval);
                     deploymentPollInterval = null;
             // Clear the project tracking
-            window.currentDeploymentProject = null;
-            sessionStorage.removeItem('activeDeploymentProject');
+            const finishedProject = window.currentDeploymentProject;
+            if (finishedProject) window.activeDeploymentProjects.delete(finishedProject);
+            window.currentDeploymentProject = window.activeDeploymentProjects.size > 0
+                ? [...window.activeDeploymentProjects][window.activeDeploymentProjects.size - 1] : null;
+            sessionStorage.setItem('activeDeploymentProjects', JSON.stringify([...window.activeDeploymentProjects]));
+            if (!window.currentDeploymentProject) sessionStorage.removeItem('activeDeploymentProject');
 
             // Auto-trigger setup check 3 minutes after successful deploy
             if (status.status === 'success' && !window._setupCheckScheduled) {
@@ -9131,7 +9371,9 @@ async function startDeployment() {
     
     // Store current project name for polling (persist across page refresh)
     window.currentDeploymentProject = projectName;
+    window.activeDeploymentProjects.add(projectName);
     sessionStorage.setItem('activeDeploymentProject', projectName);
+    sessionStorage.setItem('activeDeploymentProjects', JSON.stringify([...window.activeDeploymentProjects]));
     
     try {
         const response = await fetch(`${API_BASE}/deploy/deploy`, { 
@@ -9480,8 +9722,9 @@ async function destroyInfrastructure(projectName = null) {
     // Store project name for polling
     if (projectName) {
         window.currentDeploymentProject = projectName;
+        window.activeDeploymentProjects.add(projectName);
     }
-    
+
     try {
         const requestBody = { confirm: 'DESTROY' };
         if (projectName) {
@@ -9768,6 +10011,7 @@ async function executeDestroyConfirmation(projectName, mode) {
 
     if (projectName) {
         window.currentDeploymentProject = projectName;
+        window.activeDeploymentProjects.add(projectName);
     }
 
     try {
@@ -10807,7 +11051,17 @@ async function loadConnectionInfo(projectName, sessionId) {
             console.log('Could not fetch SSH key info, using default path');
         }
         
-        // Build connection info HTML
+        // For C2 deployments, use the dedicated C2 connection renderer
+        const deployType = outputs.deployment_type || '';
+        if (deployType.startsWith('c2-') || deployType.startsWith('combined-')) {
+            const projectData = getProjectData(projectName);
+            if (projectData) {
+                contentDiv.innerHTML = renderC2ConnectionInfo(projectData);
+                return;
+            }
+        }
+
+        // Build connection info HTML (GOAD deployments)
         let html = '<div style="font-size: 0.95em;">';
         
         const keyPathDisplay = userKeyPath.replace('~/', '~/');
@@ -11026,7 +11280,10 @@ async function loadConnectionInfo(projectName, sessionId) {
                         <div style="font-weight: 600; color: var(--success-text); margin-bottom: 8px;">🖥️ Windows Attack Box (CS Client + Tools)</div>
                         <div style="margin-bottom: 5px;"><strong>Private IP:</strong> <code class="code-inline">${outputs.attackbox_private_ip}</code></div>
                         <div style="margin-bottom: 5px;"><strong>OS:</strong> <code class="code-inline">Windows Server 2019</code></div>
-                        <div style="margin-bottom: 5px;"><strong>Login:</strong> <code class="code-inline">Administrator / ${attackboxPassword}</code></div>
+                        <div style="margin-bottom: 5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <strong>Login:</strong> <code class="code-inline">Administrator / ${attackboxPassword}</code>
+                            <button onclick="copyToClipboard('${attackboxPassword.replace(/'/g, "\\'")}', this)" style="background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-light); padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75em;">📋 Copy Password</button>
+                        </div>
                         <div style="margin-bottom: 10px; font-size: 0.9em; color: var(--text-secondary);">
                             Your attack workstation with CS Client, PowerSploit, and WSL2.
                         </div>
@@ -13000,8 +13257,11 @@ async function refreshAll({ silent = false } = {}) {
             loadBudgetAlert(),
             loadCachedSetupCheck(),
         ]);
-        // Re-render timeline so deployment cards can lazy-load per-project data
-        renderDeploymentTimeline();
+        // Only re-render timeline on explicit refresh (not silent auto-refresh)
+        // Silent re-renders wipe loaded <details> content (connection info, checklist)
+        if (!silent) {
+            renderDeploymentTimeline();
+        }
         if (!silent) {
             showMessage('All sections refreshed', 'success');
         }
@@ -13831,9 +14091,22 @@ function _renderDeploymentTimelineNow() {
     // Don't rebuild while a destroy is in progress — it would wipe the inline progress UI
     if (window._destroyInProgress) return;
 
+    // Don't rebuild if any session is expanded with loaded content — re-rendering
+    // wipes lazy-loaded connection info, checklist, and credentials HTML.
+    // Only skip if the timeline already has content (not initial render).
+    if (timelineContent.children.length > 0 && expandedSessions.size > 0) {
+        const hasLoadedContent = Array.from(expandedSessions).some(sid => {
+            const connDiv = document.getElementById(`${sid}-connection-content`);
+            if (connDiv) {
+                const text = connDiv.textContent.trim();
+                return text !== 'Loading connection details...' && text !== '';
+            }
+            return false;
+        });
+        if (hasLoadedContent) return;
+    }
+
     // Preserve open state of <details> elements inside expanded sessions.
-    // Without this, every re-render collapses user-opened sections (post-deploy
-    // checklist, connection info, credentials, etc.) — causing the "random collapse" bug.
     const openDetails = new Set();
     timelineContent.querySelectorAll('details[data-details-id][open]').forEach(el => {
         openDetails.add(el.getAttribute('data-details-id'));
@@ -14408,7 +14681,7 @@ function buildSessionDetails(session, sessionId) {
                             Refresh
                         </button>
                     </div>
-                    <div id="ssl-status-content" data-needs-load="true" style="color: var(--text-secondary); font-size: 0.9em;">
+                    <div id="ssl-status-content" data-needs-load="true" data-project-name="${projectName}" style="color: var(--text-secondary); font-size: 0.9em;">
                     </div>
                 </div>
             </details>
@@ -14420,11 +14693,11 @@ function buildSessionDetails(session, sessionId) {
                 <summary style="font-weight: 600;">Host Setup Status <span id="setup-check-badge" style="font-weight: 400; margin-left: 8px; font-size: 0.78em;"></span><span id="setup-check-last-checked" style="font-weight: 400; margin-left: 8px; font-size: 0.78em; color: var(--text-muted);"></span></summary>
                 <div>
                     <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
-                        <button onclick="runSetupCheck()" id="setup-check-btn" class="btn btn-secondary" style="font-size: 0.75em; padding: 4px 10px;">
+                        <button onclick="runSetupCheck('${projectName}')" id="setup-check-btn" class="btn btn-secondary" style="font-size: 0.75em; padding: 4px 10px;">
                             Check Setup
                         </button>
                     </div>
-                    <div id="setup-check-content" style="color: var(--text-secondary); font-size: 0.9em;">
+                    <div id="setup-check-content" data-project-name="${projectName}" style="color: var(--text-secondary); font-size: 0.9em;">
                         <p style="color: var(--text-muted); font-style: italic;">No setup check results yet. Click "Check Setup" or wait for the automatic check after deployment.</p>
                     </div>
                 </div>
@@ -16142,9 +16415,9 @@ async function loadSSLStatus() {
     `;
 
     try {
-        // Get project name from the current deployment context
-        const projectName = document.getElementById('aws-project-tag')?.textContent?.trim()
-            || document.querySelector('[data-project-name]')?.dataset.projectName
+        // Get project name from the SSL content div's data attribute
+        const projectName = sslContent?.dataset?.projectName
+            || document.getElementById('project-name')?.value?.trim()
             || '';
 
         const response = await fetch(`${API_BASE}/deploy/ssl-status?project=${encodeURIComponent(projectName)}`);
@@ -16387,8 +16660,8 @@ async function autoLoadSSLStatus() {
     if (!sslContent) return;
 
     // Resolve current project and restore its cache
-    const projectName = document.getElementById('aws-project-tag')?.textContent?.trim()
-        || document.querySelector('[data-project-name]')?.dataset.projectName
+    const projectName = sslContent?.dataset?.projectName
+        || document.getElementById('aws-project-tag')?.textContent?.trim()
         || '';
     _restoreSSLCache(projectName);
 
@@ -16446,8 +16719,7 @@ async function toggleRedirectorDNS(ip, enabled) {
     }
 
     try {
-        const projectName = document.getElementById('aws-project-tag')?.textContent?.trim()
-            || document.querySelector('[data-project-name]')?.dataset?.projectName
+        const projectName = document.querySelector('[data-project-name]')?.dataset?.projectName
             || document.getElementById('project-name')?.value?.trim()
             || '';
 
@@ -17578,19 +17850,13 @@ async function loadCostProjectSelector() {
     }
 }
 
-async function loadProjectCosts() {
-    const selector = document.getElementById('cost-project-selector');
-    const project = selector?.value;
+async function loadProjectCosts(forceRefresh = false) {
+    const project = 'account';
     const btn = document.getElementById('cost-refresh-btn');
-
-    if (!project) {
-        if (btn) btn.textContent = 'Refresh Costs — no project selected';
-        return;
-    }
     if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
 
     try {
-        const url = `/api/costs/summary?project=${encodeURIComponent(project)}&force=true`;
+        const url = `/api/costs/summary?project=${encodeURIComponent(project)}${forceRefresh ? '&force=true' : ''}`;
         const resp = await fetch(url);
         const data = await resp.json();
 
@@ -17635,7 +17901,7 @@ async function loadProjectCosts() {
 }
 
 function refreshCosts() {
-    loadProjectCosts();
+    loadProjectCosts(true);
 }
 
 function renderCostSummaryCards(data) {
@@ -17968,12 +18234,12 @@ async function loadCachedSetupCheck() {
 /**
  * Trigger a fresh SSM setup check.
  */
-async function runSetupCheck() {
+async function runSetupCheck(projectNameArg) {
     const contentEl = document.getElementById('setup-check-content');
     const btn = document.getElementById('setup-check-btn');
     if (!contentEl) return;
 
-    const project = _getSetupCheckProject();
+    const project = projectNameArg || contentEl.dataset?.projectName || _getSetupCheckProject();
     if (!project) {
         contentEl.innerHTML = '<p class="t-muted">No active deployment found.</p>';
         return;
@@ -18112,6 +18378,10 @@ function renderSetupCheckResults(data) {
             icon = '🔘'; statusText = host.message || 'Instance not reachable'; rowColor = 'var(--text-muted)';
         } else if (host.check_status === 'parse_error') {
             icon = '⚠️'; statusText = 'Could not parse status'; rowColor = 'var(--warning)';
+        } else if (host.check_status === 'ok') {
+            icon = '✅'; statusText = host.message || 'Healthy'; rowColor = 'var(--success)';
+        } else if (host.check_status === 'warning') {
+            icon = '⚠️'; statusText = host.message || 'Warning'; rowColor = 'var(--warning)';
         } else if (sd) {
             if (sd.status === 'complete') { icon = '✅'; statusText = ''; rowColor = 'var(--success)'; }
             else if (sd.status === 'partial') { icon = '❌'; statusText = `${sd.failed} step(s) failed`; rowColor = 'var(--error)'; }
@@ -18160,6 +18430,68 @@ function renderSetupCheckResults(data) {
             stepDetailHtml += '</div>';
         }
 
+        // Build detail from live check or status file when no steps exist
+        if (!stepDetailHtml && sd) {
+            const services = sd.detected_services || (typeof sd.services === 'string' ? sd.services.split(',').filter(Boolean) : sd.services) || [];
+            // Also show key=value fields from bootstrap status files
+            if (services.length === 0 && sd.status === 'found') {
+                stepDetailHtml = '<div style="margin-top: 8px; padding-left: 24px;">';
+                for (const [k, v] of Object.entries(sd)) {
+                    if (['status', 'status_file', 'detected_services', 'services'].includes(k)) continue;
+                    const valDisplay = v || '(empty)';
+                    const valColor = v === 'needs_activation' ? 'var(--warning)' : 'var(--text-secondary)';
+                    stepDetailHtml += `
+                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                            <span>${v ? '✅' : '⚠️'}</span>
+                            <span>${k}:</span>
+                            <span style="color: ${valColor};">${valDisplay}</span>
+                        </div>`;
+                }
+                if (sd.status_file) {
+                    stepDetailHtml += `
+                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                            <span>📄</span>
+                            <span style="color: var(--text-muted);">Status file: ${sd.status_file}</span>
+                        </div>`;
+                }
+                stepDetailHtml += '</div>';
+            }
+            if (services.length > 0) {
+                const serviceLabels = {
+                    teamserver: 'Cobalt Strike Team Server', csrestapi: 'CS REST API',
+                    nginx: 'Nginx Redirector', sshd: 'SSH Server', ssh: 'SSH Server',
+                    rdp: 'Remote Desktop (RDP)', winrm: 'WinRM',
+                    cs_installed: 'Cobalt Strike Installed', cs_client: 'CS Client Installed',
+                    goad_installed: 'GOAD Installed', tools_dir: 'Tools Directory (C:\\Tools)',
+                    powersploit: 'PowerSploit',
+                };
+                stepDetailHtml = '<div style="margin-top: 8px; padding-left: 24px;">';
+                for (const svc of services) {
+                    const label = serviceLabels[svc] || svc;
+                    stepDetailHtml += `
+                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                            <span>✅</span>
+                            <span>${label}</span>
+                        </div>`;
+                }
+                if (sd.uptime) {
+                    stepDetailHtml += `
+                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                            <span>🕐</span>
+                            <span style="color: var(--text-muted);">Up since: ${sd.uptime}</span>
+                        </div>`;
+                }
+                if (sd.status_file) {
+                    stepDetailHtml += `
+                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                            <span>📄</span>
+                            <span style="color: var(--text-muted);">Status file: ${sd.status_file}</span>
+                        </div>`;
+                }
+                stepDetailHtml += '</div>';
+            }
+        }
+
         const hasDetail = stepDetailHtml !== '';
         html += `
             <details style="margin-bottom: 4px; border-bottom: 1px solid var(--border); padding-bottom: 4px;">
@@ -18182,6 +18514,10 @@ function renderSetupCheckResults(data) {
  * Get the project name for setup check from the current session context.
  */
 function _getSetupCheckProject() {
+    // Try data-project-name on the setup check content div
+    const setupDiv = document.getElementById('setup-check-content');
+    if (setupDiv?.dataset?.projectName) return setupDiv.dataset.projectName;
+
     // Try the current deployment project
     if (window.currentDeploymentProject) return window.currentDeploymentProject;
 
