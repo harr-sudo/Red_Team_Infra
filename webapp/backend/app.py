@@ -18,6 +18,7 @@ frontend_path = Path(__file__).parent.parent / 'frontend'
 from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_cors import CORS
 from webapp.backend.routes import config, deploy, aws_check, health, goad, architecture, tools, profiles, costs, setup_check, beacon, terminal
+from webapp.backend.middleware import identity
 
 # Initialize Flask app
 app = Flask(__name__, 
@@ -42,6 +43,7 @@ app.register_blueprint(costs.bp, url_prefix='/api/costs')
 app.register_blueprint(setup_check.bp, url_prefix='/api/setup-check')
 app.register_blueprint(beacon.bp, url_prefix='/api/beacon')
 app.register_blueprint(terminal.bp)
+app.register_blueprint(identity.bp)
 
 # Initialize WebSocket support for terminal
 terminal.init_sock(app)

@@ -21,6 +21,7 @@ sys.path.insert(0, str(project_root))
 
 from webapp.backend.services.terraform_service import TerraformService, get_terraform_service
 from webapp.backend.utils.goad_template_processor import get_lab_info, extract_vm_info
+from webapp.backend.middleware.identity import get_operator
 
 bp = Blueprint('deploy', __name__)
 
@@ -259,6 +260,10 @@ def add_history_entry(message, level='info', details=None, project_name=None, en
         entry['project_name'] = project_name
     if entry_type:
         entry['entry_type'] = entry_type
+    try:
+        entry['initiated_by'] = get_operator()
+    except:
+        entry['initiated_by'] = 'system'
     history.append(entry)
     save_deployment_history(history)
 
