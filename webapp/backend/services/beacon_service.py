@@ -27,11 +27,15 @@ class BeaconService:
         self.session.verify = False  # Self-signed cert through SSH tunnel
         self.session.timeout = 10
 
-    def configure(self, password=None, port=None):
+    def configure(self, password=None, port=None, host=None):
         """Update connection settings."""
         if password:
             self.password = password
-        if port:
+        if host and port:
+            self.base_url = f"https://{host}:{port}"
+        elif host:
+            self.base_url = f"https://{host}:50443"
+        elif port:
             self.base_url = f"https://localhost:{port}"
         # Clear cached token when config changes
         self.token = None

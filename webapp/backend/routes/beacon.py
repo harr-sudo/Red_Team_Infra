@@ -27,8 +27,9 @@ def configure():
     data = request.get_json() or {}
     password = data.get("password")
     port = data.get("port")
+    host = data.get("host")
 
-    beacon_service.configure(password=password, port=port)
+    beacon_service.configure(password=password, port=port, host=host)
 
     # Immediately check health with new config
     result = beacon_service.health_check()

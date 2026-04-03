@@ -19750,6 +19750,8 @@ const TOPOLOGY = {
     // ── Node type config ──
     // awsIcon = path under /assets/aws-icons/, fallbackIcon = emoji if image fails
     NODE_TYPES: {
+        operator:    { color: '#F08A84', label: 'Operator',     w: 160, h: 52, awsIcon: null,            fallbackIcon: '👤' },
+        dashboard:   { color: '#C8A0E8', label: 'Dashboard',   w: 170, h: 56, awsIcon: 'ec2.svg',       fallbackIcon: '🖥' },
         domain:      { color: '#82BBE8', label: 'Domain',      w: 160, h: 52, awsIcon: 'route53.svg',   fallbackIcon: '🌐' },
         cloudfront:  { color: '#F0CA4A', label: 'CloudFront',  w: 160, h: 52, awsIcon: 'cloudfront.svg', fallbackIcon: '☁' },
         redirector:  { color: '#7ECF8C', label: 'Redirector',  w: 165, h: 58, awsIcon: 'ec2.svg',       fallbackIcon: '🔀' },
@@ -19993,6 +19995,8 @@ const TOPOLOGY = {
 
     // ── Subnet visual config (CIDRs derived dynamically from node IPs) ──
     SUBNETS: {
+        operator:   { label: 'Operator',              color: '#F08A8410', border: '#F08A8422' },
+        dashboard:  { label: 'Dashboard Server VPC', color: '#C8A0E815', border: '#C8A0E833' },
         external:   { label: 'External / Internet',  color: '#82BBE822', border: '#82BBE844' },
         management: { label: 'Management Subnet',    color: '#F0CA4A15', border: '#F0CA4A33' },
         dmz:        { label: 'Public / DMZ Subnets', color: '#7ECF8C15', border: '#7ECF8C33' },
@@ -20046,12 +20050,53 @@ const TOPOLOGY = {
         const nid = () => 'n' + (nodeId++);
 
         // Track node IDs per subnet for clustering
-        const subnetNodes = { external: [], management: [], dmz: [], private: [], goad: [] };
+        const subnetNodes = { operator: [], dashboard: [], external: [], management: [], dmz: [], private: [], goad: [] };
 
         // Determine if this deployment uses C2 infrastructure (domain, redirectors, CloudFront)
         const deployType = d.deployment_type || this._cfg('deployment_type', '');
         const isC2Deploy = deployType.startsWith('c2-') || deployType.startsWith('combined-');
         const isGoadDeploy = deployType.startsWith('goad-') || deployType.startsWith('combined-');
+
+        // Operator node — the red team operator connecting via SSH tunnel
+        const operatorId = nid();
+        const operatorName = document.getElementById('operator-badge')?.textContent || 'Operator';
+        this.nodes.push({
+            id: operatorId, type: 'operator',
+            label: operatorName,
+            sublabel: 'SSH tunnel → localhost:5000',
+            x: 0, y: 0, subnet: 'operator',
+            data: { access: 'SSH key + IP allowlist', port: 'SSH/22' }
+        });
+        subnetNodes.operator.push(operatorId);
+
+        // Dashboard server — always show. This IS the server running the dashboard.
+        let dashboardId = nid();
+        const dashPubIp = window._dashboardServerIp || '';
+        this.nodes.push({
+            id: dashboardId, type: 'dashboard',
+            label: 'Dashboard Server',
+            sublabel: dashPubIp || 'Fetching IP...',
+            x: 0, y: 0, subnet: 'dashboard',
+            data: {
+                public_ip: dashPubIp,
+                vpc_cidr: '10.100.0.0/16',
+                subnet: '10.100.1.0/24',
+                instance_type: 't3.medium',
+                access: 'ssh -L 5000:localhost:5000 harris@' + (dashPubIp || '<server-ip>'),
+                state: 'running',
+            }
+        });
+        subnetNodes.dashboard.push(dashboardId);
+
+        // Operator → Dashboard edge
+        this.edges.push({ from: operatorId, to: dashboardId, label: 'SSH/22 (tunnel)', dashed: false });
+
+        // Fetch public IP in background for sublabel
+        if (!window._dashboardServerIp) {
+            fetch('/api/config/public-ip').then(r => r.json()).then(d => {
+                if (d.success && d.ip) window._dashboardServerIp = d.ip;
+            }).catch(() => {});
+        }
 
         // Domain (external) — only for C2/combined deployments
         const domainId = nid();
@@ -20196,6 +20241,24 @@ const TOPOLOGY = {
             goadVmIds.forEach(vid => this.edges.push({ from: attackboxId, to: vid, label: 'All (VPC internal)', dashed: true }));
         }
 
+        // VPC peering edges — dashboard has direct access to all deployment instances
+        if (dashboardId) {
+            const allDeploymentNodes = [
+                ...subnetNodes.management,
+                ...subnetNodes.dmz,
+                ...subnetNodes.private,
+                ...subnetNodes.goad,
+            ];
+            allDeploymentNodes.forEach((targetId, i) => {
+                const targetNode = this.nodes.find(n => n.id === targetId);
+                if (!targetNode) return;
+                // Label with the actual ports allowed by SG rules
+                let portLabel = 'SSH/22';
+                if (targetNode.type === 'teamserver') portLabel = 'SSH/22 · CS/50050 · REST/50443';
+                this.edges.push({ from: dashboardId, to: targetId, label: portLabel, dashed: true });
+            });
+        }
+
         // Store subnet groupings (only subnets that have nodes)
         this._subnetGroups = {};
         for (const [key, ids] of Object.entries(subnetNodes)) {
@@ -20296,7 +20359,7 @@ const TOPOLOGY = {
         const centerX = this.W / 2;
 
         // Subnet layout order (top to bottom)
-        const subnetOrder = ['external', 'dmz', 'management', 'private', 'goad'];
+        const subnetOrder = ['operator', 'dashboard', 'external', 'dmz', 'management', 'private', 'goad'];
 
         // Within each subnet, layer by node type
         const layerOrder = { domain: 0, cloudfront: 0, redirector: 0, jumpbox: 0, bastion: 0, teamserver: 0, attackbox: 0, listener: 1, beacon: 2, goad_vm: 0 };
@@ -20806,7 +20869,39 @@ const TOPOLOGY = {
         html += '<div class="topology-section-title">Details</div>';
         const d = node.data || {};
 
-        if (node.type === 'domain') {
+        if (node.type === 'operator') {
+            html += this._row('Access', d.access);
+            html += this._row('Port', d.port);
+            html += '<div class="topology-section-title">IP Allowlist</div>';
+            // Get the management CIDRs from config
+            const mgmtCidrs = this.configData?.management_cidr_blocks || this.configData?.operator_ips || [];
+            if (Array.isArray(mgmtCidrs) && mgmtCidrs.length > 0) {
+                mgmtCidrs.forEach(cidr => { html += this._row('Allowed', cidr); });
+            } else {
+                // Try to get from dashboard allowed IPs
+                const dashIps = this.configData?.dashboard_allowed_ips || [];
+                if (Array.isArray(dashIps) && dashIps.length > 0) {
+                    dashIps.forEach(ip => { html += this._row('Allowed', ip); });
+                } else {
+                    html += this._row('Allowed', 'Check terraform.tfvars');
+                }
+            }
+            html += '<div class="topology-section-title">Requirements</div>';
+            html += this._row('SSH client', 'Required');
+            html += this._row('Browser', 'http://localhost:5000');
+            html += this._row('AWS CLI', 'Not needed');
+        } else if (node.type === 'dashboard') {
+            html += this._row('Public IP', d.public_ip);
+            html += this._row('VPC CIDR', d.vpc_cidr);
+            html += this._row('Subnet', d.subnet);
+            html += this._row('Instance', d.instance_type);
+            html += this._row('State', d.state);
+            html += '<div class="topology-section-title">Access</div>';
+            html += this._row('SSH Tunnel', d.access);
+            html += this._row('Dashboard', 'http://localhost:5000');
+            html += '<div class="topology-section-title">Peering</div>';
+            html += this._row('Peering', 'VPC peering to deployment VPCs for direct SSH access');
+        } else if (node.type === 'domain') {
             html += this._row('Domain', d.domain);
             if (d.nameservers && d.nameservers.length) {
                 html += '<div class="topology-section-title">Nameservers</div>';
@@ -20931,6 +21026,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Save beacon history on page unload
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', (e) => {
     if (BEACON.selectedBid) BEACON._saveHistory(BEACON.selectedBid);
+
+    // Warn if active terminal sessions exist (they'll be lost on refresh)
+    if (Object.keys(TERMINAL.sessions).length > 0) {
+        const count = Object.keys(TERMINAL.sessions).length;
+        const msg = `You have ${count} active terminal session${count > 1 ? 's' : ''} (SSH connections, tunnels). Refreshing will kill all sessions and disconnect any active tunnels including the REST API tunnel.`;
+        e.preventDefault();
+        e.returnValue = msg;
+    }
 });
