@@ -9,6 +9,7 @@ import pty
 import json
 import signal
 import select
+import socket
 import struct
 import fcntl
 import termios
@@ -21,6 +22,16 @@ from flask_sock import Sock
 
 bp = Blueprint('terminal', __name__)
 sock = Sock()
+
+
+def _is_host_reachable(host, port=22, timeout=2):
+    """Check if a host is directly reachable (e.g., via VPC peering on the server)."""
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.close()
+        return True
+    except (ConnectionRefusedError, socket.timeout, OSError):
+        return False
 
 # Track active sessions for cleanup
 _active_sessions = {}
@@ -214,8 +225,10 @@ def terminal_ssh(ws):
            '-o', 'ServerAliveInterval=30',
            '-o', 'LogLevel=ERROR']
 
-    if bastion:
+    if bastion and not _is_host_reachable(host):
         cmd += ['-J', f'ubuntu@{bastion}']
+    elif bastion and _is_host_reachable(host):
+        ws.send('\x1b[90mDirect route available — skipping bastion jump\x1b[0m\r\n')
 
     if key_path:
         cmd += ['-i', os.path.expanduser(key_path)]
