@@ -111,6 +111,15 @@ const APP = {
             window.activeDeploymentProjects.add(savedProject);
         }
 
+        // Fetch operator identity for badge
+        fetch('/api/whoami').then(r => r.json()).then(data => {
+            const badge = document.getElementById('operator-badge');
+            if (badge && data.operator) {
+                badge.textContent = data.operator;
+                badge.style.display = '';
+            }
+        }).catch(() => {});
+
         console.log('✅ Application initialized successfully');
     },
 
