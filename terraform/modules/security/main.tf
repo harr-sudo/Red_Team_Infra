@@ -373,3 +373,65 @@ resource "aws_security_group_rule" "attack_box_to_goad" {
   description       = "Allow attack box to reach GOAD VMs via VPC peering"
 }
 
+# =============================================================================
+# DASHBOARD SERVER PEERING (optional — allows dashboard to reach C2 infra)
+# =============================================================================
+
+# Dashboard → C2 Team Server: SSH + CS port + REST API
+resource "aws_security_group_rule" "c2_from_dashboard_ssh" {
+  count                    = var.dashboard_sg_id != "" ? 1 : 0
+  type                     = "ingress"
+  from_port                = var.ssh_port
+  to_port                  = var.ssh_port
+  protocol                 = "tcp"
+  source_security_group_id = var.dashboard_sg_id
+  security_group_id        = aws_security_group.c2_team_server_sg.id
+  description              = "SSH from dashboard server"
+}
+
+resource "aws_security_group_rule" "c2_from_dashboard_cs" {
+  count                    = var.dashboard_sg_id != "" ? 1 : 0
+  type                     = "ingress"
+  from_port                = var.c2_server_port
+  to_port                  = var.c2_server_port
+  protocol                 = "tcp"
+  source_security_group_id = var.dashboard_sg_id
+  security_group_id        = aws_security_group.c2_team_server_sg.id
+  description              = "CS client port from dashboard server"
+}
+
+resource "aws_security_group_rule" "c2_from_dashboard_rest" {
+  count                    = var.dashboard_sg_id != "" && var.enable_cs_rest_api ? 1 : 0
+  type                     = "ingress"
+  from_port                = 50443
+  to_port                  = 50443
+  protocol                 = "tcp"
+  source_security_group_id = var.dashboard_sg_id
+  security_group_id        = aws_security_group.c2_team_server_sg.id
+  description              = "CS REST API from dashboard server"
+}
+
+# Dashboard → Redirectors: SSH
+resource "aws_security_group_rule" "redirector_from_dashboard" {
+  count                    = var.dashboard_sg_id != "" ? 1 : 0
+  type                     = "ingress"
+  from_port                = var.ssh_port
+  to_port                  = var.ssh_port
+  protocol                 = "tcp"
+  source_security_group_id = var.dashboard_sg_id
+  security_group_id        = aws_security_group.proxy_redirector_sg.id
+  description              = "SSH from dashboard server"
+}
+
+# Dashboard → Attack Box: SSH only (operators RDP via their own SSH tunnels)
+resource "aws_security_group_rule" "attackbox_from_dashboard_ssh" {
+  count                    = var.dashboard_sg_id != "" ? 1 : 0
+  type                     = "ingress"
+  from_port                = var.ssh_port
+  to_port                  = var.ssh_port
+  protocol                 = "tcp"
+  source_security_group_id = var.dashboard_sg_id
+  security_group_id        = aws_security_group.attack_box_sg.id
+  description              = "SSH from dashboard server"
+}
+
