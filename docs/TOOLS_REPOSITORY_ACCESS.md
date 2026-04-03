@@ -98,25 +98,11 @@ Quick setup:
    tools_repo_branch = "main"
    tools_repo_ssh_key = "/red-team/tools-repo-ssh-key"  # AWS SSM Parameter Store path
    # OR
-   tools_repo_https_token = "/red-team/tools-repo-token"  # AWS SSM Parameter Store path
+   tools_repo_https_token = "ghp_YOUR_TOKEN_HERE"  # Stored in Secrets Manager automatically
    ```
 
-3. **Store Credentials in AWS SSM:**
-   ```bash
-   # Store SSH private key
-   aws ssm put-parameter \
-       --name "/red-team/tools-repo-ssh-key" \
-       --type "SecureString" \
-       --value "$(cat ~/.ssh/id_rsa_tools)" \
-       --region us-east-1
-   
-   # OR store HTTPS token
-   aws ssm put-parameter \
-       --name "/red-team/tools-repo-token" \
-       --type "SecureString" \
-       --value "your-personal-access-token" \
-       --region us-east-1
-   ```
+   When using HTTPS tokens, Terraform stores the token in AWS Secrets Manager.
+   Instances fetch it at runtime via IAM role -- the token never appears in S3-stored scripts.
 
 ## Repository Structure
 

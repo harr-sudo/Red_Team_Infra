@@ -1,0 +1,234 @@
+"""
+Terminal WebSocket Routes
+Provides local shell and remote SSH terminal sessions over WebSocket.
+"""
+
+import os
+import sys
+import pty
+import json
+import signal
+import select
+import struct
+import fcntl
+import termios
+import subprocess
+import threading
+from pathlib import Path
+
+from flask import Blueprint, request
+from flask_sock import Sock
+
+bp = Blueprint('terminal', __name__)
+sock = Sock()
+
+# Track active sessions for cleanup
+_active_sessions = {}
+_MAX_SESSIONS = 10
+
+
+def _set_pty_size(fd, rows, cols):
+    """Set PTY window size."""
+    try:
+        winsize = struct.pack('HHHH', rows, cols, 0, 0)
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+    except Exception:
+        pass
+
+
+def _pty_session(ws, cmd, env=None):
+    """
+    Run a command in a PTY and pipe it bidirectionally over WebSocket.
+    Used for both local shell and SSH sessions.
+    """
+    master_fd, slave_fd = pty.openpty()
+
+    # Merge environment
+    proc_env = os.environ.copy()
+    proc_env['TERM'] = 'xterm-256color'
+    proc_env['COLORTERM'] = 'truecolor'
+    if env:
+        proc_env.update(env)
+
+    proc = subprocess.Popen(
+        cmd,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        preexec_fn=os.setsid,
+        env=proc_env,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+
+    session_id = id(ws)
+    _active_sessions[session_id] = {'proc': proc, 'master_fd': master_fd}
+
+    # Set default PTY size
+    _set_pty_size(master_fd, 24, 80)
+
+    # Thread: read from PTY → send to WebSocket
+    ws_open = True
+
+    def pty_reader():
+        nonlocal ws_open
+        try:
+            while proc.poll() is None and ws_open:
+                r, _, _ = select.select([master_fd], [], [], 0.1)
+                if master_fd in r:
+                    try:
+                        data = os.read(master_fd, 16384)
+                        if data:
+                            ws.send(data)
+                        else:
+                            break
+                    except OSError:
+                        break
+        except Exception:
+            pass
+
+    reader_thread = threading.Thread(target=pty_reader, daemon=True)
+    reader_thread.start()
+
+    # Main thread: read from WebSocket → write to PTY
+    try:
+        while proc.poll() is None:
+            try:
+                msg = ws.receive(timeout=0.5)
+                if msg is None:
+                    continue
+                if isinstance(msg, str):
+                    # Check for control messages (JSON)
+                    if msg.startswith('{'):
+                        try:
+                            ctrl = json.loads(msg)
+                            if ctrl.get('type') == 'close':
+                                break  # Frontend requested close — exit loop, hit finally cleanup
+                            if ctrl.get('type') == 'resize':
+                                _set_pty_size(master_fd, ctrl.get('rows', 24), ctrl.get('cols', 80))
+                                # Send SIGWINCH to the process group
+                                os.killpg(os.getpgid(proc.pid), signal.SIGWINCH)
+                                continue
+                        except (json.JSONDecodeError, ProcessLookupError):
+                            pass
+                    os.write(master_fd, msg.encode('utf-8'))
+                elif isinstance(msg, bytes):
+                    os.write(master_fd, msg)
+            except Exception:
+                break
+    except Exception:
+        pass
+    finally:
+        ws_open = False
+        # Clean up
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+        _active_sessions.pop(session_id, None)
+        reader_thread.join(timeout=2)
+
+
+@sock.route('/api/terminal/local')
+def terminal_local(ws):
+    """Local shell session — spawns operator's default shell."""
+    if len(_active_sessions) >= _MAX_SESSIONS:
+        ws.send('\r\n\x1b[31mSession limit reached (max 5). Close a tab first.\x1b[0m\r\n')
+        ws.close()
+        return
+
+    shell = os.environ.get('SHELL', '/bin/bash')
+    home = os.environ.get('HOME', '/tmp')
+
+    # Wait for initial resize message from client
+    try:
+        init_msg = ws.receive(timeout=5)
+        if init_msg:
+            try:
+                ctrl = json.loads(init_msg)
+                if ctrl.get('type') == 'init':
+                    pass  # Initial handshake
+            except (json.JSONDecodeError, TypeError):
+                pass
+    except Exception:
+        pass
+
+    # Use interactive (not login) shell to avoid macOS "Restored session" message
+    _pty_session(ws, [shell, '-i'], env={
+        'HOME': home,
+        'SHELL_SESSIONS_DISABLE': '1',  # Suppress macOS session save/restore
+    })
+
+
+@sock.route('/api/terminal/ssh')
+def terminal_ssh(ws):
+    """SSH session to a remote instance, optionally via bastion ProxyJump."""
+    if len(_active_sessions) >= _MAX_SESSIONS:
+        ws.send('\r\n\x1b[31mSession limit reached (max 5). Close a tab first.\x1b[0m\r\n')
+        ws.close()
+        return
+
+    # First message contains connection params
+    try:
+        init_msg = ws.receive(timeout=10)
+        if not init_msg:
+            ws.send('\r\n\x1b[31mNo connection parameters received.\x1b[0m\r\n')
+            return
+        params = json.loads(init_msg)
+    except Exception as e:
+        ws.send(f'\r\n\x1b[31mInvalid connection params: {e}\x1b[0m\r\n')
+        return
+
+    host = params.get('host')
+    user = params.get('user', 'ubuntu')
+    bastion = params.get('bastion')
+    key_path = params.get('key_path', '')
+
+    if not host:
+        ws.send('\r\n\x1b[31mNo target host specified.\x1b[0m\r\n')
+        return
+
+    # Resolve SSH key path
+    if not key_path:
+        for candidate in ['~/.ssh/id_ed25519', '~/.ssh/id_rsa']:
+            expanded = os.path.expanduser(candidate)
+            if os.path.exists(expanded):
+                key_path = expanded
+                break
+
+    # Build SSH command
+    cmd = ['ssh',
+           '-o', 'StrictHostKeyChecking=no',
+           '-o', 'UserKnownHostsFile=/dev/null',
+           '-o', 'ServerAliveInterval=30',
+           '-o', 'LogLevel=ERROR']
+
+    if bastion:
+        cmd += ['-J', f'ubuntu@{bastion}']
+
+    if key_path:
+        cmd += ['-i', os.path.expanduser(key_path)]
+
+    cmd.append(f'{user}@{host}')
+
+    ws.send(f'\x1b[90mConnecting to {user}@{host}' +
+            (f' via {bastion}' if bastion else '') +
+            '...\x1b[0m\r\n')
+
+    _pty_session(ws, cmd)
+
+
+def init_sock(app):
+    """Initialize flask-sock with the Flask app."""
+    sock.init_app(app)

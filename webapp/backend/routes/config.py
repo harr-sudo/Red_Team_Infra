@@ -3,8 +3,10 @@ Configuration API Routes
 Handle configuration file management
 """
 
+import subprocess
 from flask import Blueprint, request, jsonify
 from pathlib import Path
+import os
 import sys
 
 # Add project root to path
@@ -115,9 +117,16 @@ def update_config():
         # Ensure configs directory exists
         config_dir.mkdir(parents=True, exist_ok=True)
         
-        # Write to file
-        with open(tfvars_file, 'w') as f:
-            f.write(content)
+        # Write atomically (temp file + rename prevents partial writes on crash)
+        import tempfile
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=str(config_dir), suffix='.tfvars.tmp')
+        try:
+            with os.fdopen(tmp_fd, 'w') as f:
+                f.write(content)
+            os.replace(tmp_path, str(tfvars_file))
+        except Exception:
+            os.unlink(tmp_path)
+            raise
         
         return jsonify({
             "success": True,
@@ -203,4 +212,80 @@ def get_example():
             "success": False,
             "error": str(e)
         }), 500
+
+
+@bp.route('/public-ip', methods=['GET'])
+def get_public_ip():
+    """Get the operator's real public IP via server-side curl.
+
+    This bypasses iCloud Private Relay / VPN split-tunnelling that would
+    cause browser-based IP lookups to return a relay address instead of
+    the real IP that AWS will see for SSH/RDP connections.
+    """
+    services = [
+        ['curl', '-4', '-s', '--max-time', '5', 'https://api.ipify.org'],
+        ['curl', '-4', '-s', '--max-time', '5', 'https://ifconfig.me'],
+        ['curl', '-4', '-s', '--max-time', '5', 'https://checkip.amazonaws.com'],
+    ]
+
+    for cmd in services:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
+            ip = result.stdout.strip()
+            if ip and len(ip) <= 45 and all(c in '0123456789.' for c in ip):
+                return jsonify({"success": True, "ip": ip})
+        except Exception:
+            continue
+
+    return jsonify({
+        "success": False,
+        "error": "Could not determine public IP from any service"
+    }), 500
+
+
+@bp.route('/update-elastic-rules', methods=['POST'])
+def update_elastic_rules():
+    """Pull latest Elastic detection rules and regenerate elastic-rules.js."""
+    repo_dir = project_root / "Research" / "elastic-detection-rules"
+    script = project_root / "scripts" / "utilities" / "update-elastic-rules.py"
+
+    if not repo_dir.is_dir():
+        return jsonify({
+            "success": False,
+            "error": "Elastic detection-rules repo not found. Run: git clone --depth 1 https://github.com/elastic/detection-rules.git Research/elastic-detection-rules"
+        }), 404
+
+    if not script.is_file():
+        return jsonify({"success": False, "error": "update-elastic-rules.py not found"}), 404
+
+    results = {"git_pull": None, "generate": None}
+
+    # Step 1: git pull
+    try:
+        pull = subprocess.run(
+            ["git", "-C", str(repo_dir), "pull", "--depth", "1"],
+            capture_output=True, text=True, timeout=60
+        )
+        results["git_pull"] = pull.stdout.strip() or pull.stderr.strip()
+    except Exception as e:
+        results["git_pull"] = f"git pull failed: {e}"
+
+    # Step 2: regenerate JS
+    try:
+        gen = subprocess.run(
+            [sys.executable, str(script)],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(project_root)
+        )
+        if gen.returncode != 0:
+            return jsonify({
+                "success": False,
+                "error": gen.stderr.strip() or "Script failed",
+                "results": results
+            }), 500
+        results["generate"] = gen.stdout.strip()
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "results": results}), 500
+
+    return jsonify({"success": True, "results": results})
 

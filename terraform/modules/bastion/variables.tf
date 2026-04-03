@@ -11,7 +11,7 @@ variable "environment" {
 }
 
 variable "public_subnet_id" {
-  description = "ID of the public subnet for bastion host"
+  description = "ID of the subnet for bastion host (management or public)"
   type        = string
 }
 
@@ -21,18 +21,18 @@ variable "security_group_id" {
 }
 
 variable "key_pair_name" {
-  description = "Name of the EC2 key pair for SSH access (for retrieving Windows password)"
+  description = "Name of the EC2 key pair for SSH access"
   type        = string
 }
 
 variable "instance_type" {
   description = "EC2 instance type for bastion host"
   type        = string
-  default     = "t3.medium" # Windows needs more resources than Linux
+  default     = "t3.micro" # Sufficient for SSH relay
 }
 
 variable "ami_id" {
-  description = "AMI ID for Windows Server (leave empty to use latest Windows Server 2022)"
+  description = "AMI ID for bastion host (leave empty to use latest Ubuntu 22.04 LTS)"
   type        = string
   default     = ""
 }
@@ -40,7 +40,7 @@ variable "ami_id" {
 variable "root_volume_size" {
   description = "Root volume size in GB"
   type        = number
-  default     = 30 # Windows needs more space
+  default     = 20 # Linux needs less space than Windows
 }
 
 variable "enable_detailed_monitoring" {
@@ -55,13 +55,6 @@ variable "iam_instance_profile_name" {
   default     = ""
 }
 
-variable "windows_admin_password" {
-  description = "Windows administrator password (leave empty to retrieve from AWS Systems Manager)"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
 variable "private_ip" {
   description = "Static private IP address (leave empty for DHCP)"
   type        = string
@@ -73,4 +66,3 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
-

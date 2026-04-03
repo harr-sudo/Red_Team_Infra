@@ -18,6 +18,7 @@
             <button class="tab-btn" data-target="tools">Tools</button>
             <button class="tab-btn" data-target="architecture">Architecture</button>
             <button class="tab-btn" data-target="beacon">Beacon</button>
+            <button class="tab-btn" data-target="terminal">Terminal</button>
             <button class="tab-btn" data-target="settings">Settings</button>
             <button class="theme-toggle" id="theme-toggle" title="Toggle dark/light mode" aria-label="Toggle theme">
                 <span id="theme-icon">&#9790;</span>
@@ -36,6 +37,20 @@
                 </div>
                 <div id="dashboard-status">
                     <p>Loading...</p>
+                </div>
+
+                <!-- Elastic Detection Rules Card -->
+                <div class="section-card" style="margin-top: 16px;">
+                    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                        <h3 style="margin: 0;">Elastic Detection Rules</h3>
+                        <span id="elastic-rules-count" class="badge badge-info" style="font-size: 0.85em;">—</span>
+                        <span id="elastic-rules-date" class="t-muted" style="font-size: 0.85em;">Last updated: —</span>
+                        <button class="btn btn-sm btn-info" id="btn-update-elastic-rules" onclick="updateElasticRules()">Update Rules</button>
+                        <span id="elastic-rules-status" class="t-muted" style="font-size: 0.85em;"></span>
+                    </div>
+                    <p class="t-muted" style="margin-top: 8px; font-size: 0.88em;">
+                        Pulls latest Elastic SIEM detection rules from GitHub and regenerates the OPSEC command mappings.
+                    </p>
                 </div>
             </div>
 
@@ -454,7 +469,8 @@ ns-143.awsdns-17.org
                     <!-- File Portal Configuration Section -->
                     <div id="file-portal-section" class="section-card" style="display: none;">
                         <h3>File Portal</h3>
-                        <p>Deploy a secure file sharing portal on redirectors. Accessible at <code>/login</code> on your redirector domain. Themed to match your decoy website.</p>
+                        <p>Deploy a secure file sharing portal on redirectors. Accessible at <code>https://www.&lt;domain&gt;/login</code>. Themed to match your decoy website.</p>
+                        <p style="color: var(--text-secondary); font-size: 0.85em;">The <code>www.</code> subdomain will be pinned to a single redirector for consistent file access. Other subdomains retain all redirector IPs for C2 redundancy.</p>
 
                         <div class="form-group">
                             <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
@@ -1448,6 +1464,13 @@ ns-143.awsdns-17.org
                         <!-- Error Detail (shown when connection fails) -->
                         <div id="beacon-error-detail" style="display: none;"></div>
 
+                        <!-- Server Info (shown after connection) -->
+                        <div id="beacon-server-info" style="display: none; margin-top: 12px; font-size: 0.85em;">
+                            <span class="t-secondary">Server:</span> <code id="beacon-server-ip">—</code>
+                            <span style="margin: 0 12px; color: var(--border);">|</span>
+                            <span class="t-secondary">Profile:</span> <code id="beacon-server-profile">—</code>
+                        </div>
+
                         <!-- SSH Tunnel Instructions -->
                         <div id="beacon-tunnel-instructions" style="margin-top: 16px;">
                             <p style="color: var(--text-muted); margin-bottom: 8px; font-size: 0.9em;">
@@ -1520,6 +1543,7 @@ ns-143.awsdns-17.org
                             <button class="beacon-ftab" data-panel="creds" onclick="BEACON.switchTab('creds')">Creds <span class="badge-beta">BETA</span></button>
                             <button class="beacon-ftab" data-panel="recon" onclick="BEACON.switchTab('recon')">Recon</button>
                             <button class="beacon-ftab" data-panel="pivoting" onclick="BEACON.switchTab('pivoting')">Pivoting</button>
+                            <button class="beacon-ftab" data-panel="graph" onclick="BEACON.switchTab('graph')">Graph</button>
                             <button class="beacon-ftab" data-panel="config" onclick="BEACON.switchTab('config')">Config <span class="badge-beta">BETA</span></button>
                             <button class="beacon-ftab" data-panel="listeners" onclick="BEACON.switchTab('listeners')">Listeners</button>
                         </div>
@@ -1776,6 +1800,25 @@ ns-143.awsdns-17.org
                             </div>
                         </div>
 
+                        <!-- Network Graph Panel -->
+                        <div class="beacon-fpanel" id="beacon-panel-graph" style="display: none;">
+                            <div class="beacon-panel-toolbar">
+                                <span class="t-secondary" style="font-weight: 600;">Beacon Network Graph</span>
+                                <button class="btn btn-sm btn-info" onclick="BEACON.renderGraph()">Refresh</button>
+                            </div>
+                            <div id="graph-container" style="position: relative; width: 100%; height: 500px; background: var(--bg-terminal); border-radius: var(--radius-sm); overflow: hidden;">
+                                <canvas id="beacon-graph-canvas" style="width: 100%; height: 100%;"></canvas>
+                            </div>
+                            <div id="graph-legend" style="padding: 8px 12px; font-size: 0.85em; color: var(--text-terminal); background: var(--bg-terminal); border-radius: 0 0 var(--radius-sm) var(--radius-sm);">
+                                <span style="color: var(--terminal-success);">●</span> Alive
+                                <span style="margin-left: 12px; color: var(--terminal-warning);">●</span> Stale
+                                <span style="margin-left: 12px; color: var(--terminal-danger);">●</span> Dead
+                                <span style="margin-left: 20px;">──</span> HTTPS
+                                <span style="margin-left: 12px;">╌╌</span> SMB/TCP
+                                <span style="margin-left: 12px; color: var(--terminal-info);">★</span> Admin
+                            </div>
+                        </div>
+
                         <!-- Beacon Config Panel -->
                         <div class="beacon-fpanel" id="beacon-panel-config" style="display: none;">
                             <div class="beacon-panel-body" style="padding: 16px;">
@@ -1939,10 +1982,71 @@ ns-143.awsdns-17.org
                             <div class="beacon-panel-body" id="listeners-body">
                                 <div class="t-muted" style="padding: 20px; text-align: center;">Click Refresh to load active listeners</div>
                             </div>
+                            <!-- Quick Payload Generator -->
+                            <div class="beacon-panel-toolbar" id="quick-payload-section" style="border-top: 1px solid var(--border); margin-top: 12px;">
+                                <span class="t-secondary" style="font-weight: 600;">Quick Payload</span>
+                                <div class="flex-row" style="align-items: center;">
+                                    <select class="form-input" id="payload-listener-select" style="width: 200px;">
+                                        <option value="">Select listener...</option>
+                                    </select>
+                                    <div class="btn-group" style="display: flex; gap: 0;">
+                                        <button class="btn btn-sm btn-info" id="payload-exit-thread" onclick="BEACON.setPayloadExit('thread')" style="border-radius: 4px 0 0 4px;">Thread</button>
+                                        <button class="btn btn-sm btn-secondary" id="payload-exit-process" onclick="BEACON.setPayloadExit('process')" style="border-radius: 0 4px 4px 0;">Process</button>
+                                    </div>
+                                    <button class="btn btn-sm btn-info" id="payload-generate-btn" onclick="BEACON.generateQuickPayload()">Generate &amp; Download .bin</button>
+                                </div>
+                                <div id="payload-status" class="t-muted" style="font-size: 0.85em; margin-top: 6px;"></div>
+                            </div>
                         </div>
 
                     </div>
 
+                </div>
+            </div>
+
+            <!-- Terminal Page -->
+            <div class="tab-page" data-page="terminal">
+                <h2 class="page-title">Terminal</h2>
+
+                <!-- Local Shell — primary action, always available -->
+                <div class="section-card" id="terminal-controls" style="display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap;">
+                    <div>
+                        <button class="btn btn-success" onclick="TERMINAL.openLocal()" style="padding: 8px 20px; font-size: 0.9em; font-weight: 600;">
+                            &gt;_ Local Shell
+                        </button>
+                        <div style="font-size: 0.78em; color: var(--text-muted); margin-top: 4px;">Opens a terminal on your machine</div>
+                    </div>
+
+                    <div style="border-left: 1px solid var(--border); padding-left: 20px;">
+                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; max-width: 500px;">
+                            <label style="font-weight: 600; color: var(--text-secondary); white-space: nowrap;">SSH to deployment:</label>
+                            <select id="terminal-deployment-select" class="form-input" style="max-width: 320px;" onchange="TERMINAL.onDeploymentSelected()">
+                                <option value="">-- Select a deployment --</option>
+                            </select>
+                        </div>
+                        <!-- Instance buttons (populated dynamically) -->
+                        <div id="terminal-instance-buttons" style="display: none; margin-top: 10px;">
+                            <div id="terminal-instance-btn-row" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab bar + terminal container -->
+                <div id="terminal-workspace" class="terminal-workspace-hidden" style="margin-top: 12px;">
+                    <div id="terminal-tab-bar" style="display: flex; gap: 2px; align-items: center; background: var(--bg-elevated); border-radius: var(--radius-sm) var(--radius-sm) 0 0; padding: 4px 8px 0 8px; overflow-x: auto;"></div>
+                    <div id="terminal-container" style="background: var(--bg-terminal); border-radius: 0 0 var(--radius-sm) var(--radius-sm); position: relative;"></div>
+                </div>
+
+                <!-- Empty state -->
+                <div id="terminal-empty-state" class="section-card" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                    <p style="font-size: 1.1em; margin-bottom: 8px;">No active terminal sessions</p>
+                    <p style="font-size: 0.9em;">Click <strong>Local Shell</strong> to open a terminal, or select a deployment to SSH into instances.</p>
+                </div>
+
+                <!-- Dependency warning (shown if flask-sock not installed) -->
+                <div id="terminal-dep-warning" style="display: none;" class="status-display warning">
+                    <strong>Terminal dependencies not installed.</strong><br>
+                    Run: <code>pip install flask-sock</code> then restart the webapp.
                 </div>
             </div>
 
@@ -2301,6 +2405,10 @@ ns-143.awsdns-17.org
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+    <!-- xterm.js for Terminal tab (CDN — can be vendored to assets/xterm/ for offline use) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
     <script src="js/elastic-rules.js"></script>
     <script src="js/architecture.js"></script>
     <script src="js/app.js"></script>

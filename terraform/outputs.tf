@@ -167,7 +167,7 @@ output "c2_servers" {
 }
 
 # =============================================================================
-# 5. BASTION/JUMP BOX OUTPUTS
+# 5. BASTION HOST OUTPUTS (Linux SSH Relay)
 # =============================================================================
 
 output "bastion_public_ip" {
@@ -180,15 +180,9 @@ output "bastion_private_ip" {
   value       = local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_private_ip : null
 }
 
-output "bastion_rdp_connection" {
-  description = "RDP connection command"
-  value       = local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_rdp_connection : null
-}
-
-output "bastion_windows_password_info" {
-  description = "Information about retrieving Windows password"
-  value       = local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_windows_password : null
-  sensitive   = true
+output "bastion_ssh_command" {
+  description = "SSH connection command for bastion host"
+  value       = local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_ssh_command : null
 }
 
 # =============================================================================
@@ -212,7 +206,7 @@ output "attack_box_admin_password" {
 }
 
 output "attack_box_rdp_tunnel" {
-  description = "SSH tunnel command for RDP to attack box (uses port 3390 to avoid bastion conflict)"
+  description = "SSH tunnel command for RDP to attack box through bastion/jumpbox"
   value       = local.deploy_attack_box && length(module.attack_box) > 0 ? module.attack_box[0].rdp_tunnel_command : null
 }
 
@@ -236,7 +230,27 @@ output "proxy_redirector_private_ips" {
 }
 
 # =============================================================================
-# 6b. DOMAIN FRONTING OUTPUTS (CloudFront)
+# 6b. FILE PORTAL
+# =============================================================================
+
+output "file_portal_info" {
+  description = "File portal connection details (when enabled)"
+  value = var.enable_file_portal && local.deploy_redirectors && length(module.proxy_redirector) > 0 ? {
+    enabled  = true
+    url      = var.primary_domain_name != "" ? "https://www.${var.primary_domain_name}/login" : "https://${module.proxy_redirector[0].proxy_redirector_public_ips[0]}/login"
+    username = var.portal_username
+    password = var.portal_password
+  } : {
+    enabled  = false
+    url      = null
+    username = null
+    password = null
+  }
+  sensitive = true
+}
+
+# =============================================================================
+# 6c. DOMAIN FRONTING OUTPUTS (CloudFront)
 # =============================================================================
 
 output "domain_fronting_enabled" {
@@ -262,6 +276,25 @@ output "cloudfront_aliases" {
 output "cloudfront_status" {
   description = "CloudFront distribution deployment status"
   value       = local.deploy_domain_fronting && length(module.domain_fronting) > 0 ? module.domain_fronting[0].cloudfront_status : null
+}
+
+# =============================================================================
+# 6c. DNS OUTPUTS
+# =============================================================================
+
+output "dns_nameservers" {
+  description = "Route 53 nameservers for domain registrar configuration"
+  value       = local.deploy_c2_infra && var.primary_domain_name != "" && length(module.dns) > 0 ? module.dns[0].zone_name_servers : []
+}
+
+output "dns_domain" {
+  description = "Primary domain name configured for DNS"
+  value       = local.deploy_c2_infra && var.primary_domain_name != "" && length(module.dns) > 0 ? module.dns[0].primary_domain : null
+}
+
+output "dns_records" {
+  description = "DNS records created (FQDNs pointing to redirectors)"
+  value       = local.deploy_c2_infra && var.primary_domain_name != "" && length(module.dns) > 0 ? module.dns[0].all_fqdns : []
 }
 
 # =============================================================================
@@ -360,7 +393,9 @@ output "cs_connection_info" {
         )
       ) : null
     )
-    port   = var.cs_teamserver_port
+    port             = var.c2_server_port  # CS client management port (50050)
+    rest_api_enabled = var.enable_cs_rest_api
+    rest_api_port    = var.enable_cs_rest_api ? 50443 : null
     method = local.is_goad_only ? "direct" : "ssh_tunnel"
   }
   sensitive = true
@@ -385,7 +420,7 @@ output "access_instructions" {
     } : local.is_combined ? {
     type = "combined"
     steps = [
-      "1. RDP to bastion: ${local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_public_ip : "N/A"}",
+      "1. SSH to bastion: ssh -i key.pem ubuntu@${local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_public_ip : "N/A"}",
       "2. Create SSH tunnel through bastion to C2 server",
       "3. Connect CS client through tunnel",
       "4. GOAD VMs accessible via VPC peering from C2 servers",
@@ -394,7 +429,7 @@ output "access_instructions" {
     } : local.deploy_c2_infra ? {
     type = "c2-only"
     steps = [
-      "1. RDP to bastion: ${local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_public_ip : "N/A"}",
+      "1. SSH to bastion: ssh -i key.pem ubuntu@${local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_public_ip : "N/A"}",
       "2. SSH tunnel: ssh -L 50050:<c2_private_ip>:50050 -i <key> ubuntu@<bastion_ip>",
       "3. Connect CS client to localhost:50050",
       "4. Redirectors: ${local.deploy_redirectors && length(module.proxy_redirector) > 0 ? join(", ", module.proxy_redirector[0].proxy_redirector_public_ips) : "N/A"}"

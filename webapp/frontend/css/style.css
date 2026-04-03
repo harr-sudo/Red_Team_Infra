@@ -208,6 +208,25 @@ header h1 {
     font-size: 0.9em;
 }
 
+/* Standalone form input (for use outside .form-group containers) */
+.form-input {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 0.95em;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    transition: border-color var(--transition);
+}
+.form-input:focus {
+    outline: none;
+    border-color: var(--gold-dim);
+    box-shadow: 0 0 0 2px rgba(163, 184, 122, 0.2);
+}
+.form-input::placeholder {
+    color: var(--text-muted);
+}
+
 .form-actions {
     margin-top: 30px;
     display: flex;
@@ -377,6 +396,14 @@ header h1 {
     color: inherit;
 }
 
+.callout.collapsed .ssl-opsec-body {
+    display: none !important;
+}
+
+.callout:not(.collapsed) .ssl-opsec-body {
+    display: block !important;
+}
+
 /* ============================================================================
    DEPLOYMENT OVERVIEW — Shown on config page after selecting deployment type
    ============================================================================ */
@@ -509,13 +536,41 @@ header h1 {
     border-radius: var(--radius);
     padding: 15px;
     margin: 15px 0;
-    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-family: 'Cascadia Mono', 'Fira Mono', 'Consolas', 'Menlo', 'SF Mono', 'Liberation Mono', 'DejaVu Sans Mono', monospace;
     font-size: 0.9em;
-    min-height: 500px;
-    max-height: none;
-    overflow-y: visible;
+    line-height: 1.5;
+    max-height: 650px;
+    overflow-y: auto;
     white-space: pre-wrap;
     word-wrap: break-word;
+}
+
+/* Tab output panels — hidden when empty, slide in when content appears */
+.tab-output-panel {
+    max-height: 0;
+    min-height: 0;
+    padding: 0;
+    margin: 0 12px;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+}
+.tab-output-panel.active {
+    max-height: 500px;
+    min-height: 80px;
+    padding: 15px;
+    opacity: 1;
+    overflow-y: auto;
+}
+
+/* Ensure readable text on dark terminal backgrounds in light mode.
+   Catches inline-styled elements using bg-terminal that lack an explicit color. */
+[style*="bg-terminal"] {
+    color: var(--text-terminal);
+}
+[style*="bg-terminal"] code,
+[style*="bg-terminal"] pre {
+    color: var(--text-terminal);
 }
 
 /* ============================================================================
@@ -598,8 +653,85 @@ header h1 {
 .progress-fill {
     height: 100%;
     background: var(--burgundy-light);
-    transition: width 0.3s;
+    transition: width 0.5s ease;
 }
+
+/* ============================================================================
+   PHASE CHECKLIST (deployment progress timeline)
+   ============================================================================ */
+.phase-checklist {
+    margin: 12px 0;
+    padding: 0;
+}
+
+.phase-item {
+    display: flex;
+    align-items: center;
+    padding: 5px 8px;
+    font-size: 0.88em;
+    border-left: 2px solid var(--border);
+    margin-left: 10px;
+}
+
+.phase-item:last-child {
+    border-left-color: transparent;
+}
+
+.phase-icon {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 10px;
+    font-size: 0.85em;
+    flex-shrink: 0;
+}
+
+.phase-label {
+    flex: 1;
+}
+
+.phase-est {
+    color: var(--text-secondary);
+    font-size: 0.95em;
+    font-weight: 600;
+    margin-left: 8px;
+    min-width: 32px;
+    text-align: right;
+}
+
+/* Completed */
+.phase-done .phase-icon { color: var(--success-text); }
+.phase-done .phase-label { color: var(--text-secondary); }
+.phase-done { border-left-color: var(--success); }
+
+/* Active */
+.phase-active .phase-icon {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--text-muted);
+    border-top-color: var(--success);
+    border-radius: 50%;
+    animation: phase-spin 0.8s linear infinite;
+    margin-right: 13px;
+    margin-left: 3px;
+}
+.phase-active .phase-label { color: var(--text-primary); font-weight: 600; }
+.phase-active { border-left-color: var(--success); }
+
+@keyframes phase-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Pending */
+.phase-pending .phase-icon { color: var(--text-muted); }
+.phase-pending .phase-label { color: var(--text-muted); }
+
+/* Failed */
+.phase-failed .phase-icon { color: var(--danger-text); }
+.phase-failed .phase-label { color: var(--danger-text); font-weight: 600; }
+.phase-failed { border-left-color: var(--danger); }
 
 /* ============================================================================
    TABLES
@@ -626,7 +758,7 @@ table th {
 
 table td {
     padding: 10px 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid var(--border);
     color: var(--text-secondary);
 }
 
@@ -686,6 +818,51 @@ details > div,
 details > ol,
 details > ul {
     padding: 8px 0 12px;
+}
+
+/* Card-style details — used in deployment manager for Connection Info, Credentials, Resources etc. */
+details.details-card {
+    margin: 0 0 15px 0;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+
+details.details-card summary {
+    padding: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 1em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+details.details-card summary::before {
+    content: '▶';
+    font-size: 0.6em;
+    transition: transform 0.2s ease;
+}
+
+details.details-card[open] summary::before {
+    content: '▼';
+    font-size: 0.6em;
+}
+
+details.details-card[open] {
+    background: var(--bg-card);
+    padding: 0;
+}
+
+details.details-card[open] summary {
+    padding: 16px;
+    margin-bottom: 0;
+    border-bottom: 1px solid var(--border);
+}
+
+details.details-card > div {
+    padding: 15px;
 }
 
 /* ============================================================================
@@ -756,6 +933,164 @@ input[type="checkbox"] {
     border-radius: var(--radius);
     margin-bottom: 15px;
     font-size: 0.85em;
+}
+
+/* ============================================================================
+   COST TRACKER
+   ============================================================================ */
+
+/* Budget progress bar */
+.cost-budget-bar {
+    height: 28px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius);
+    overflow: hidden;
+    position: relative;
+    border: 1px solid var(--border);
+}
+
+.cost-budget-bar__fill {
+    height: 100%;
+    border-radius: var(--radius);
+    transition: width 0.5s ease, background-color 0.3s ease;
+}
+
+.cost-budget-bar__fill--ok { background: var(--success); }
+.cost-budget-bar__fill--warning { background: var(--warning); }
+.cost-budget-bar__fill--danger { background: var(--danger); }
+
+.cost-budget-bar__label {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.85em;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    text-shadow: none;
+}
+
+/* Daily trend bar chart */
+.cost-trend-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.cost-trend-date {
+    width: 70px;
+    font-size: 0.82em;
+    color: var(--text-muted);
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.cost-trend-bar-container {
+    flex: 1;
+    height: 20px;
+    background: var(--bg-elevated);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.cost-trend-bar {
+    height: 100%;
+    background: var(--brand);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+    min-width: 2px;
+}
+
+.cost-trend-value {
+    width: 60px;
+    font-size: 0.82em;
+    color: var(--text-secondary);
+    text-align: left;
+    flex-shrink: 0;
+}
+
+/* Cost summary cards — value emphasis */
+.cost-value {
+    font-size: 1.6em;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 8px 0 4px 0;
+}
+
+.cost-value--success { color: var(--success-text); }
+.cost-value--warning { color: var(--warning-text); }
+.cost-value--danger { color: var(--danger-text); }
+
+.cost-label {
+    font-size: 0.82em;
+    color: var(--text-muted);
+}
+
+/* Project status dots */
+.cost-status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+
+.cost-status-dot--active { background: var(--success); }
+.cost-status-dot--destroyed { background: var(--text-muted); }
+
+/* Cost breakdown table */
+.cost-breakdown-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.88em;
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.cost-breakdown-table thead tr {
+    background: var(--bg-elevated);
+}
+
+.cost-breakdown-table th {
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--gold-muted);
+    border-bottom: 1px solid var(--border);
+}
+
+.cost-breakdown-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+}
+
+.cost-breakdown-table tbody tr:hover {
+    background: var(--bg-card-hover);
+}
+
+.cost-breakdown-table .cost-pct-bar {
+    display: inline-block;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--brand);
+    vertical-align: middle;
+    margin-right: 6px;
+}
+
+/* Empty state */
+.cost-empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-muted);
+}
+
+.cost-empty-state p {
+    margin: 8px 0;
 }
 
 /* ============================================================================
@@ -848,15 +1183,20 @@ input[type="checkbox"] {
     border: none;
     border-radius: var(--radius) var(--radius) 0 0;
     background: var(--bg-elevated);
-    color: var(--text-muted);
+    color: var(--text-secondary);
     cursor: pointer;
     font-size: 0.85em;
     font-weight: 500;
+    transition: background var(--transition), color var(--transition);
+}
+
+.preview-tab:hover {
+    background: var(--bg-card-hover);
 }
 
 .preview-tab.active {
     background: var(--bg-terminal);
-    color: var(--gold-muted);
+    color: #C8D9A8;
 }
 
 /* ============================================================================
@@ -922,6 +1262,1167 @@ input[type="checkbox"] {
 @keyframes slideOut {
     from { transform: translateX(0); opacity: 1; }
     to { transform: translateX(100%); opacity: 0; }
+}
+
+/* ============================================================================
+   UTILITY CLASSES
+   ============================================================================ */
+
+/* --- Text Color Utilities --- */
+.t-primary   { color: var(--text-primary); }
+.t-secondary { color: var(--text-secondary); }
+.t-muted     { color: var(--text-muted); }
+.t-success   { color: var(--success-text); }
+.t-danger    { color: var(--danger-text); }
+.t-warning   { color: var(--warning-text); }
+.t-info      { color: var(--info-text); }
+.t-terminal  { color: var(--text-terminal); }
+.t-accent    { color: var(--accent-muted); }
+
+/* --- Page Title --- */
+.page-title {
+    color: var(--gold);
+    margin-bottom: 20px;
+    font-size: 1.7em;
+}
+
+/* --- Code Inline (terminal-styled inline code snippets) --- */
+.code-inline {
+    background: var(--bg-terminal);
+    color: var(--text-terminal);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.95em;
+}
+
+/* --- Terminal Block (multi-line terminal output) --- */
+.terminal-block {
+    background: var(--bg-terminal);
+    color: var(--text-terminal);
+    padding: 12px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    line-height: 1.5;
+    overflow-x: auto;
+}
+
+/* --- Alert Boxes (semantic status messages) --- */
+.alert-box {
+    padding: 12px;
+    border-radius: 6px;
+    margin-top: 12px;
+    font-size: 0.9em;
+}
+.alert-box--info    { color: var(--info-text);    background: var(--info-bg); }
+.alert-box--warning { color: var(--warning-text); background: var(--warning-bg); }
+.alert-box--danger  { color: var(--danger-text);  background: var(--danger-bg); }
+.alert-box--success { color: var(--success-text); background: var(--success-bg); }
+
+/* --- Form Select (styled native select dropdown) --- */
+.form-select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 1em;
+    cursor: pointer;
+}
+
+/* --- Flex Layout Helpers --- */
+.flex-row     { display: flex; align-items: center; gap: 8px; }
+.flex-between { display: flex; justify-content: space-between; align-items: center; }
+.flex-wrap    { flex-wrap: wrap; }
+
+/* --- Spacing Utilities --- */
+.mb-0 { margin-bottom: 0; }
+.mb-1 { margin-bottom: 4px; }
+.mb-2 { margin-bottom: 8px; }
+.mb-3 { margin-bottom: 12px; }
+.mb-4 { margin-bottom: 16px; }
+.mb-5 { margin-bottom: 20px; }
+.mt-0 { margin-top: 0; }
+.mt-1 { margin-top: 4px; }
+.mt-2 { margin-top: 8px; }
+.mt-3 { margin-top: 12px; }
+.mt-4 { margin-top: 16px; }
+.mt-5 { margin-top: 20px; }
+
+/* --- Component Variants --- */
+.form-group--compact { margin-bottom: 0; }
+.code-preview--tabbed { border-radius: 0 var(--radius) var(--radius) var(--radius); }
+
+/* --- Beacon Metadata Badges --- */
+.beacon-meta-badges {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+.beacon-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-family: var(--font-mono);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-light);
+}
+.beacon-badge__label {
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+.beacon-badge--admin {
+    background: rgba(240, 138, 132, 0.15);
+    color: var(--danger-text);
+    border-color: var(--danger-border);
+}
+
+/* --- Task Cards (no border, clean spacing) --- */
+.task-card {
+    padding: 2px 0;
+}
+.task-card--queued  {}
+.task-card--success {}
+.task-card--error   {}
+
+/* --- Command Autocomplete Dropdown --- */
+.cmd-autocomplete {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 60px;
+    max-height: 280px;
+    overflow-y: auto;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    z-index: 100;
+    display: none;
+    margin-bottom: 4px;
+}
+.cmd-autocomplete-item {
+    padding: 5px 10px;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    cursor: pointer;
+    color: var(--text-primary);
+}
+.cmd-autocomplete-item:hover,
+.cmd-autocomplete-item.active {
+    background: var(--bg-card-hover);
+}
+.cmd-autocomplete-item .cmd-hint {
+    color: var(--text-muted);
+    font-size: 0.9em;
+    margin-left: 8px;
+}
+
+/* --- OPSEC Warning Badge --- */
+/* Base badge — used in terminal output (always dark bg) and autocomplete dropdown.
+   Variants use terminal-safe colors so they work in both themes. */
+.opsec-warning {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: inherit;
+    font-weight: 600;
+    background: var(--warning-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--warning-border);
+}
+/* Modifier: moderate — amber */
+.opsec-warning--moderate {
+    background: var(--warning);
+    color: var(--text-primary);
+    border-color: var(--warning-border);
+}
+/* Modifier: loud — red */
+.opsec-warning--loud {
+    background: var(--danger);
+    color: var(--text-primary);
+    border-color: var(--danger-border);
+}
+/* Modifier: not available via API — muted */
+.opsec-warning--noapi {
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    border-color: var(--border);
+}
+
+/* --- Live OPSEC Indicator (shows while typing) --- */
+.opsec-live-bar {
+    margin-top: 8px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    transition: opacity 0.15s ease, background 0.15s ease;
+    opacity: 0;
+    max-height: 0;
+    overflow: hidden;
+}
+.opsec-live-bar.visible {
+    opacity: 1;
+    max-height: none;
+    overflow: visible;
+}
+.opsec-live-compact {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+}
+.opsec-live-bar.opsec-safe {
+    background: rgba(126, 207, 140, 0.1);
+    border: 1px solid rgba(126, 207, 140, 0.25);
+    color: var(--success-text);
+}
+.opsec-live-bar.opsec-moderate {
+    background: rgba(240, 202, 74, 0.1);
+    border: 1px solid rgba(240, 202, 74, 0.25);
+    color: var(--warning-text);
+}
+.opsec-live-bar.opsec-loud {
+    background: rgba(240, 138, 132, 0.1);
+    border: 1px solid rgba(240, 138, 132, 0.25);
+    color: var(--danger-text);
+}
+.opsec-live-bar .opsec-live-label {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.opsec-live-bar .opsec-live-note {
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+.opsec-live-bar .opsec-live-api {
+    margin-left: auto;
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
+/* --- OPSEC Detail Toggle Button --- */
+.opsec-detail-toggle {
+    margin-left: auto;
+    background: none;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    color: inherit;
+    font-family: var(--font-mono);
+    font-size: inherit;
+    padding: 1px 8px;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+}
+.opsec-detail-toggle:hover {
+    opacity: 1;
+}
+.opsec-chevron {
+    display: inline-block;
+    font-size: 0.85em;
+    transition: transform 0.2s;
+    margin-left: 2px;
+}
+.opsec-chevron.rotated {
+    transform: rotate(180deg);
+}
+
+/* --- OPSEC Expanded Detail Panel ---
+   Sits inside .opsec-live-bar which has semi-transparent bg over --bg-card.
+   MUST use theme-switching variables (--text-secondary, --warning-text, --info-text,
+   --success-text, --text-muted) — NOT terminal variables (bar is NOT on --bg-terminal). */
+.opsec-live-detail {
+    padding: 8px 12px 10px;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: inherit;
+    line-height: 1.5;
+    max-height: 260px;
+    overflow-y: auto;
+}
+.opsec-detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 16px;
+}
+.opsec-detail-section {
+    margin-bottom: 6px;
+}
+.opsec-detail-heading {
+    display: block;
+    font-size: inherit;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    opacity: 0.5;
+    margin-bottom: 2px;
+    color: inherit;
+}
+.opsec-detail-item {
+    padding: 1px 0 1px 12px;
+    position: relative;
+    color: var(--text-secondary);
+}
+.opsec-detail-item::before {
+    position: absolute;
+    left: 0;
+    opacity: 0.6;
+}
+.opsec-detail-detect { color: var(--text-primary); }
+.opsec-detail-detect::before { content: '\2022'; color: var(--danger-text); }
+.opsec-detail-prereq { color: var(--info-text); }
+.opsec-detail-prereq::before { content: '!'; color: var(--warning-text); font-weight: 700; }
+.opsec-detail-mitigation { color: var(--text-secondary); }
+.opsec-detail-mitigation::before { content: '~'; color: var(--text-muted); }
+
+/* Clickable alternative commands */
+.opsec-detail-alt {
+    cursor: pointer;
+    padding: 2px 4px 2px 12px;
+    border-radius: 3px;
+    margin: 1px 0;
+    position: relative;
+    color: var(--text-secondary);
+}
+.opsec-detail-alt::before {
+    content: '\25B6';
+    position: absolute;
+    left: 0;
+    font-size: 0.85em;
+    color: var(--success-text);
+    top: 3px;
+}
+.opsec-detail-alt:hover {
+    background: var(--bg-card-hover);
+}
+.opsec-alt-cmd {
+    color: var(--success-text);
+    font-weight: 600;
+    margin-right: 6px;
+}
+.opsec-alt-why {
+    color: var(--text-muted);
+}
+
+/* Event ID badges — single line: heading + badges inline */
+.opsec-detail-events {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+.opsec-detail-events .opsec-detail-heading {
+    display: inline;
+    margin-bottom: 0;
+}
+.opsec-event-badge {
+    display: inline-block;
+    padding: 0 5px;
+    margin: 1px 3px;
+    border-radius: 3px;
+    background: var(--info-bg);
+    color: var(--info-text);
+    font-size: 0.85em;
+    font-weight: 600;
+}
+
+/* --- Autocomplete Detail Line (detection/alternative preview) ---
+   Dropdown uses --bg-elevated background (flips light↔dark).
+   Use theme-switching variables, NOT terminal variables. */
+.ac-main-line {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.ac-detail-line {
+    font-size: 0.88em;
+    padding-left: 4px;
+    padding-top: 1px;
+    opacity: 0.75;
+}
+.ac-detect {
+    color: var(--warning-text);
+}
+.ac-alt {
+    color: var(--success-text);
+}
+.ac-sep {
+    opacity: 0.3;
+    margin: 0 4px;
+    color: var(--text-muted);
+}
+.cmd-autocomplete-item.has-detail {
+    padding: 5px 10px 6px;
+}
+
+/* --- Elastic Detection Rule Cards ---
+   Rendered inside .opsec-live-detail panel (on --bg-card, NOT --bg-terminal).
+   Use theme-switching variables only. */
+.opsec-elastic-section {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
+.opsec-elastic-section .opsec-detail-heading {
+    margin-bottom: 6px;
+}
+.opsec-elastic-card {
+    padding: 6px 8px 6px 12px;
+    margin-bottom: 4px;
+    border-radius: 3px;
+    border-left: 3px solid var(--text-muted);
+    background: rgba(0, 0, 0, 0.04);
+}
+.opsec-elastic-card--critical { border-left-color: var(--danger-text); }
+.opsec-elastic-card--high { border-left-color: var(--warning-text); }
+.opsec-elastic-card--medium { border-left-color: var(--info-text); }
+.opsec-elastic-card--low { border-left-color: var(--text-muted); }
+.opsec-elastic-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+.opsec-elastic-severity {
+    font-weight: 700;
+    font-size: inherit;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+.opsec-elastic-card--critical .opsec-elastic-severity { color: var(--danger-text); }
+.opsec-elastic-card--high .opsec-elastic-severity { color: var(--warning-text); }
+.opsec-elastic-card--medium .opsec-elastic-severity { color: var(--info-text); }
+.opsec-elastic-card--low .opsec-elastic-severity { color: var(--text-muted); }
+.opsec-elastic-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.opsec-elastic-link {
+    color: var(--info-text);
+    text-decoration: none;
+    font-size: 1.1em;
+    flex-shrink: 0;
+    padding: 2px 6px;
+    border-radius: 3px;
+    line-height: 1;
+}
+.opsec-elastic-link:hover {
+    text-decoration: none;
+    background: var(--bg-card-hover);
+}
+.opsec-elastic-mitre {
+    color: var(--text-muted);
+    font-size: inherit;
+    margin-top: 1px;
+    opacity: 0.8;
+}
+.opsec-elastic-query {
+    color: var(--text-secondary);
+    font-size: inherit;
+    margin-top: 1px;
+}
+.opsec-elastic-expand {
+    background: none;
+    border: none;
+    color: var(--info-text);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: inherit;
+    padding: 4px 0;
+}
+.opsec-elastic-expand:hover { text-decoration: underline; }
+.opsec-elastic-nocover {
+    padding: 6px 8px;
+    border-left: 3px solid var(--warning-text);
+    background: rgba(0, 0, 0, 0.04);
+    color: var(--text-secondary);
+    border-radius: 3px;
+}
+/* Staleness indicator for Elastic rules age */
+.opsec-stale {
+    font-size: inherit;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-left: 8px;
+}
+.opsec-stale--amber {
+    color: var(--warning-text);
+    border: 1px solid var(--warning-border);
+}
+.opsec-stale--red {
+    color: var(--danger-text);
+    border: 1px solid var(--danger-border);
+}
+
+/* --- Beacon Console (unified terminal block) --- */
+.beacon-console {
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+.beacon-console .output-display {
+    border: none;
+    border-radius: 0;
+    margin: 0;
+}
+.beacon-console .opsec-live-bar {
+    margin: 0;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    max-height: 40vh;
+    overflow-y: auto;
+}
+.beacon-console-input {
+    flex: 1;
+    background: var(--bg-terminal);
+    color: var(--text-terminal);
+    border: none;
+    border-radius: 0;
+    padding: 10px 12px;
+    font-family: 'Cascadia Mono', 'Fira Mono', 'Consolas', 'Menlo', 'SF Mono', 'Liberation Mono', monospace;
+    font-size: 0.9em;
+    outline: none;
+}
+.beacon-console-input:focus {
+    box-shadow: inset 0 1px 0 0 rgba(163, 184, 122, 0.3);
+}
+.beacon-console-input::placeholder {
+    color: var(--terminal-muted);
+}
+.console-resize-bar {
+    display: flex;
+    align-items: center;
+    background: var(--bg-terminal);
+    border-top: 1px solid var(--border);
+    padding: 2px 12px;
+}
+.console-slider {
+    width: 100%;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+    cursor: row-resize;
+}
+.console-slider:hover {
+    opacity: 1;
+}
+.console-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 40px;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--text-muted);
+    cursor: row-resize;
+}
+.console-slider::-moz-range-thumb {
+    width: 40px;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--text-muted);
+    cursor: row-resize;
+    border: none;
+}
+.beacon-console-wrap {
+    position: relative;
+    display: flex;
+    gap: 0;
+    background: var(--bg-terminal);
+    border-top: 1px solid var(--border);
+}
+.beacon-console-wrap .btn {
+    background: transparent;
+    border: none;
+    border-left: 1px solid var(--border);
+    border-radius: 0;
+    color: var(--text-terminal);
+    padding: 10px 16px;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+}
+.beacon-console-wrap .btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--terminal-prompt);
+}
+
+/* --- Beacon Table Filter --- */
+.beacon-filter-input {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 0.85em;
+    width: 200px;
+}
+.beacon-filter-input::placeholder {
+    color: var(--text-muted);
+}
+
+/* ============================================================================
+   Beacon Feature Panels
+   ============================================================================ */
+
+/* Sub-tab navigation within beacon interact */
+.beacon-feature-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 8px 0;
+    margin-top: 8px;
+    overflow-x: auto;
+}
+.beacon-ftab {
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.9em;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    white-space: nowrap;
+    transition: color var(--transition), background var(--transition);
+}
+.beacon-ftab:hover {
+    color: var(--text-primary);
+    background: var(--bg-elevated);
+}
+.beacon-ftab.active {
+    color: var(--text-primary);
+    background: var(--bg-terminal);
+    font-weight: 600;
+}
+
+/* Panel containers */
+.beacon-fpanel {
+    margin-top: 0;
+}
+.beacon-fpanel.active {
+    min-height: 550px;
+}
+.beacon-fpanel:not(.active) {
+    display: none;
+}
+
+/* --- Interact Full-View Mode ---
+   When a beacon is selected, the interact panel overlays the beacon page
+   from below the main nav tabs to the viewport bottom. The active sub-panel
+   fills remaining space. Close returns to normal layout. */
+.interact-fullview {
+    position: fixed !important;
+    top: 120px;  /* default: shows beacon table header above */
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    display: flex !important;
+    flex-direction: column;
+    overflow: hidden;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    padding: 0 16px 0 !important;
+}
+/* Draggable resize handle at the top of the interact panel */
+.interact-drag-bar {
+    flex-shrink: 0;
+    height: 6px;
+    cursor: ns-resize;
+    background: var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    transition: background 0.15s;
+}
+.interact-drag-bar:hover,
+.interact-drag-bar.dragging {
+    background: var(--info-text);
+}
+.interact-drag-bar::after {
+    content: '';
+    width: 40px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--text-muted);
+    opacity: 0.5;
+}
+.interact-drag-bar:hover::after,
+.interact-drag-bar.dragging::after {
+    opacity: 1;
+    background: var(--text-primary);
+}
+.interact-fullview .beacon-meta-badges {
+    flex-shrink: 0;
+}
+.interact-fullview .beacon-feature-tabs {
+    flex-shrink: 0;
+}
+.interact-fullview .beacon-fpanel.active {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+/* Console panel in fullview: output fills space, everything else pinned to bottom */
+.interact-fullview #beacon-panel-console .beacon-console {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    max-height: none;
+}
+.interact-fullview #beacon-panel-console .output-display {
+    flex: 1 1 0 !important;
+    min-height: 100px !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+}
+.interact-fullview #beacon-panel-console .opsec-live-bar {
+    flex-shrink: 0;
+    max-height: 35vh;
+    overflow-y: auto;
+}
+.interact-fullview #beacon-panel-console .console-resize-bar {
+    display: none;  /* resize slider not needed in fullview — flex handles it */
+}
+.interact-fullview #beacon-panel-console .process-context-bar {
+    flex-shrink: 0;
+}
+.interact-fullview #beacon-panel-console .beacon-console-wrap {
+    flex-shrink: 0;
+}
+/* Other sub-panels (Files, Processes, etc.) in fullview: panel body fills space */
+.interact-fullview .beacon-fpanel.active .beacon-panel-body {
+    flex: 1 1 0;
+    min-height: 100px;
+    max-height: none;
+    overflow-y: auto;
+}
+.interact-fullview .beacon-fpanel.active .beacon-panel-toolbar {
+    flex-shrink: 0;
+}
+/* Ensure non-console panels properly fill available space */
+.interact-fullview .beacon-fpanel.active:not(#beacon-panel-console) {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: visible;
+}
+
+/* Panel toolbar (action bar at top of each panel) — left-aligned, constrained */
+.beacon-panel-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    max-width: 800px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+/* Constrain form rows inside beacon panels so inputs don't stretch full width */
+.beacon-fpanel:not(#beacon-panel-console):not(#beacon-panel-files):not(#beacon-panel-processes) .flex-row {
+    max-width: 700px;
+}
+
+/* Panel body (scrollable content area) */
+.beacon-panel-body {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    min-height: 300px;
+    max-height: 500px;
+    overflow-y: auto;
+    color: var(--text-primary);
+    font-size: 0.95em;
+}
+
+/* ── File Browser ── */
+.file-path-bar {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    color: var(--text-primary);
+    outline: none;
+}
+.file-path-bar:focus {
+    border-color: var(--border-light);
+}
+
+.file-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.file-table th {
+    text-align: left;
+    padding: 6px 12px;
+    color: var(--terminal-muted);
+    font-size: 0.8em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg-terminal);
+}
+.file-table td {
+    padding: 5px 12px;
+    border-bottom: 1px solid rgba(46, 53, 80, 0.3);
+    color: var(--text-secondary);
+}
+.file-table tr:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.file-entry--dir {
+    cursor: pointer;
+}
+.file-entry--dir td:first-child {
+    color: var(--info-text);
+}
+.file-entry--file td:first-child {
+    color: var(--text-primary);
+}
+.file-size {
+    color: var(--text-muted);
+    text-align: right;
+}
+.file-date {
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+.file-actions {
+    text-align: right;
+}
+.file-actions button {
+    padding: 2px 8px;
+    font-size: 0.8em;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    border-radius: 3px;
+    cursor: pointer;
+}
+.file-actions button:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border-light);
+}
+
+/* ── Process Browser ── */
+.process-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.process-table th {
+    text-align: left;
+    padding: 6px 12px;
+    color: var(--terminal-muted);
+    font-size: 0.8em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg-terminal);
+    cursor: pointer;
+}
+.process-table th:hover {
+    color: var(--text-terminal);
+}
+.process-table td {
+    padding: 4px 12px;
+    border-bottom: 1px solid rgba(46, 53, 80, 0.3);
+    color: var(--text-secondary);
+}
+.process-table tr:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.process-table .proc-system {
+    color: var(--text-muted);
+}
+.process-table .proc-target {
+    background: rgba(130, 187, 232, 0.08);
+}
+.process-table .proc-beacon {
+    background: rgba(200, 168, 96, 0.15);
+    border-left: 3px solid var(--gold);
+}
+.process-table .proc-beacon td {
+    color: var(--gold);
+    font-weight: 600;
+}
+.process-table .proc-parent {
+    background: rgba(200, 168, 96, 0.06);
+    border-left: 3px solid rgba(200, 168, 96, 0.3);
+}
+.process-table .proc-parent td {
+    color: var(--text-secondary);
+}
+[data-theme="light"] .process-table .proc-beacon {
+    background: rgba(140, 100, 30, 0.1);
+    border-left-color: var(--text-primary);
+}
+[data-theme="light"] .process-table .proc-beacon td {
+    color: var(--text-primary);
+}
+[data-theme="light"] .process-table .proc-parent {
+    background: rgba(140, 100, 30, 0.05);
+    border-left-color: rgba(140, 100, 30, 0.2);
+}
+
+/* ── Process Context Bar ── */
+.process-context-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 12px;
+    background: var(--bg-terminal);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    min-height: 26px;
+    flex-wrap: wrap;
+}
+.process-context-bar .ctx-label {
+    color: var(--text-terminal);
+    font-size: 0.9em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.process-context-bar .ctx-process {
+    color: var(--terminal-success);
+    font-weight: 600;
+}
+.process-context-bar .ctx-detail {
+    color: var(--terminal-info);
+}
+.process-context-bar .ctx-sep {
+    color: var(--terminal-muted);
+    opacity: 0.4;
+}
+
+/* ── Screenshot Gallery ── */
+.screenshot-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 8px;
+    padding: 12px;
+}
+.screenshot-thumb {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color var(--transition);
+}
+.screenshot-thumb:hover {
+    border-color: var(--border-light);
+}
+.screenshot-thumb img {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+.screenshot-thumb-meta {
+    padding: 4px 8px;
+    font-size: 0.85em;
+    color: var(--text-muted);
+    background: var(--bg-card);
+}
+/* Screenshot modal/overlay */
+.screenshot-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+.screenshot-overlay img {
+    max-width: 90vw;
+    max-height: 90vh;
+    border-radius: var(--radius);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Config Grid — left-aligned, constrained width so buttons stay near inputs ── */
+.config-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-width: 600px;
+}
+.config-field label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.85em;
+    font-weight: 600;
+}
+
+/* ── Listener Cards ── */
+.listener-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(46, 53, 80, 0.3);
+}
+.listener-card:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.listener-card__name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.listener-card__type {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.85em;
+    font-weight: 600;
+    text-transform: uppercase;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    margin-left: 8px;
+}
+.listener-card__detail {
+    color: var(--text-secondary);
+    font-size: 0.95em;
+}
+.listener-card__actions button {
+    padding: 3px 10px;
+    font-size: 0.8em;
+    background: transparent;
+    border: 1px solid var(--danger-border);
+    color: var(--danger-text);
+    border-radius: 3px;
+    cursor: pointer;
+}
+.listener-card__actions button:hover {
+    background: var(--danger-bg);
+}
+
+/* ── Pivot Active Items ── */
+.pivot-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(46, 53, 80, 0.3);
+}
+.pivot-item__type {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.75em;
+    font-weight: 600;
+    text-transform: uppercase;
+    background: var(--info-bg);
+    color: var(--info-text);
+}
+.pivot-item__detail {
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+}
+
+/* ── Credential Results ── */
+.cred-entry {
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(46, 53, 80, 0.3);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+}
+.cred-entry:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.cred-entry__user {
+    color: var(--warning-text);
+    font-weight: 600;
+}
+.cred-entry__hash {
+    color: var(--text-muted);
+    word-break: break-all;
+}
+.cred-entry__domain {
+    color: var(--info-text);
+}
+
+/* ── Recon Results ── */
+.recon-section {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+}
+.recon-section__title {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    font-size: 0.8em;
+    letter-spacing: 0.5px;
+}
+.recon-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.recon-table th {
+    text-align: left;
+    padding: 4px 8px;
+    color: var(--text-muted);
+    font-size: 0.8em;
+    border-bottom: 1px solid rgba(46, 53, 80, 0.3);
+}
+.recon-table td {
+    padding: 3px 8px;
+    color: var(--text-secondary);
+    font-size: 0.85em;
+}
+
+/* Light mode: beacon feature panel overrides */
+[data-theme="light"] .beacon-ftab.active {
+    background: var(--bg-terminal);
+    color: var(--text-terminal);
+}
+[data-theme="light"] .file-path-bar {
+    background: var(--bg-input);
+    color: var(--text-primary);
 }
 
 /* ============================================================================
@@ -1034,6 +2535,15 @@ input[type="checkbox"] {
     color: #EFFBDB;
 }
 
+/* Section card headings: --gold/--gold-muted have poor contrast on light surfaces */
+[data-theme="light"] .section-card h3 {
+    color: var(--text-primary);
+}
+
+[data-theme="light"] .section-card h4 {
+    color: var(--text-secondary);
+}
+
 [data-theme="light"] .deployment-overview {
     color: #EFFBDB;
 }
@@ -1052,6 +2562,27 @@ input[type="checkbox"] {
 
 [data-theme="light"] .tab-btn.active {
     color: #EFFBDB;
+}
+
+/* Page title: --gold is olive on light surfaces, use primary text instead */
+[data-theme="light"] .page-title {
+    color: var(--text-primary);
+}
+
+/* Additional card heading overrides for light mode */
+[data-theme="light"] .lifecycle-card h4 {
+    color: var(--text-secondary);
+}
+[data-theme="light"] .card h2 {
+    color: var(--text-primary);
+}
+[data-theme="light"] .beacon-table .beacon-id {
+    color: var(--text-secondary);
+}
+
+/* Code preview text needs to stay light on dark terminal bg in light mode */
+[data-theme="light"] .code-preview {
+    color: #B0B8CC;
 }
 
 /* ============================================================================
@@ -1168,7 +2699,7 @@ input[type="checkbox"] {
 
 .markdown-content table td {
     padding: 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid var(--border);
     color: var(--text-secondary);
 }
 
@@ -1215,6 +2746,33 @@ input[type="checkbox"] {
 }
 
 /* ============================================================================
+   DEPLOYMENT MANAGER — smooth section reveal
+   ============================================================================ */
+#goad-lab-section {
+    animation: sectionReveal 0.25s ease-out;
+}
+
+@keyframes sectionReveal {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================================================
+   RESOURCE LIST (expandable rows)
+   ============================================================================ */
+.resource-row-summary:hover {
+    background: var(--bg-card-hover) !important;
+}
+
+.resource-row.expanded .resource-row-details {
+    display: block !important;
+}
+
+.resource-row.expanded .resource-chevron {
+    transform: rotate(180deg);
+}
+
+/* ============================================================================
    SCROLLBAR
    ============================================================================ */
 ::-webkit-scrollbar {
@@ -1233,4 +2791,751 @@ input[type="checkbox"] {
 
 ::-webkit-scrollbar-thumb:hover {
     background: var(--border-light);
+}
+
+/* ============================================================================
+   BEACON MANAGEMENT PAGE
+   ============================================================================ */
+
+.beacon-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    display: inline-block;
+    transition: background 0.3s ease;
+}
+
+.beacon-status-dot.connected {
+    background: var(--success-text);
+    box-shadow: 0 0 6px var(--success-text);
+}
+
+.beacon-status-dot.reachable {
+    background: var(--warning-text);
+    box-shadow: 0 0 6px var(--warning-text);
+}
+
+.beacon-status-dot.disconnected {
+    background: var(--danger-text);
+    box-shadow: 0 0 6px var(--danger-text);
+}
+
+.beacon-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+/* Override the global brand-colored table header for beacon table */
+.beacon-table thead tr {
+    background: transparent;
+}
+
+.beacon-table thead th {
+    text-align: left;
+    padding: 10px 12px;
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+}
+
+.beacon-table tbody tr {
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.beacon-table tbody tr:hover {
+    background: var(--bg-card-hover);
+}
+
+.beacon-table tbody tr.selected {
+    background: var(--info-bg);
+    border-left: 3px solid var(--brand-light);
+}
+
+.beacon-table tbody td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.beacon-table .beacon-id {
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-size: 0.85em;
+    color: var(--gold-muted);
+}
+
+.beacon-table .beacon-admin {
+    color: var(--danger-text);
+    font-weight: 600;
+}
+
+.beacon-table .beacon-last-seen {
+    color: var(--text-muted);
+    font-size: 0.85em;
+}
+
+.beacon-table .beacon-last-seen.stale {
+    color: var(--warning-text);
+}
+
+.beacon-table .beacon-last-seen.dead {
+    color: var(--danger-text);
+}
+
+/* Beacon health dot indicator */
+.health-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+.beacon-last-seen.alive .health-dot {
+    background: var(--success-text);
+}
+.beacon-last-seen.alive {
+    color: var(--success-text);
+}
+.beacon-last-seen.stale .health-dot {
+    background: var(--warning-text);
+}
+.beacon-last-seen.dead .health-dot {
+    background: var(--danger-text);
+}
+
+/* Dead beacon row dimming */
+.beacon-table tr.beacon-dead {
+    opacity: 0.5;
+}
+
+/* Health count in badge */
+.health-count.alive { color: var(--success-text); }
+.health-count.stale { color: var(--warning-text); }
+.health-count.dead { color: var(--danger-text); }
+
+.badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-weight: 500;
+}
+
+.badge-info {
+    background: var(--info-bg);
+    color: var(--info-text);
+    border: 1px solid var(--info-border);
+}
+
+.table-responsive {
+    overflow-x: auto;
+}
+
+/* ============================================================================
+   BETA BADGE — Used on all new CS 4.12 REST API features
+   Visible in both themes. Place next to feature headings / tab buttons.
+   ============================================================================ */
+.badge-beta {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    vertical-align: middle;
+    margin-left: 6px;
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    border: 1px solid var(--warning-border);
+}
+
+/* ============================================================================
+   NEW FEATURE PANELS — Token Wallet, Credential Vault, C2 Hosts, Payloads,
+   Server Config, Downloads Manager, BOF Panel, Screenshots Gallery
+   All sit on --bg-card and use theme-switching text variables.
+   ============================================================================ */
+
+/* --- Feature Panel Table (reusable across Token Wallet, Cred Vault, etc.) --- */
+.feature-table {
+    width: 100%;
+    max-width: 700px;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+.feature-table thead tr {
+    background: var(--bg-elevated);
+}
+
+.feature-table th {
+    padding: 8px 12px;
+    text-align: left;
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.feature-table td {
+    padding: 8px 12px;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.feature-table tbody tr:hover {
+    background: var(--bg-elevated);
+}
+
+/* --- Feature Panel Section Header — left-aligned --- */
+.feature-section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-subtle);
+    max-width: 700px;
+}
+
+.feature-section-header h4 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 1em;
+    font-weight: 600;
+}
+
+/* --- Feature Panel Form Row --- */
+.feature-form-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.feature-form-row label {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 0.9em;
+    min-width: 100px;
+}
+
+.feature-form-row input,
+.feature-form-row select {
+    flex: 1;
+    min-width: 120px;
+    padding: 6px 10px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    font-size: 0.9em;
+}
+
+.feature-form-row input:focus,
+.feature-form-row select:focus {
+    outline: none;
+    border-color: var(--accent-dim);
+}
+
+/* --- Evasion Toggle Row (Beacon Gate / Syscall) — left-aligned --- */
+.evasion-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+    max-width: 700px;
+}
+
+.evasion-toggle-row .evasion-label {
+    color: var(--text-primary);
+    font-weight: 500;
+    font-size: 0.9em;
+}
+
+.evasion-toggle-row .evasion-desc {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    margin-left: 8px;
+}
+
+/* --- Token action buttons (small, inline) --- */
+.btn-action {
+    padding: 3px 10px;
+    font-size: 0.85em;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid var(--border-light);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    transition: var(--transition);
+}
+
+.btn-action:hover {
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
+
+.btn-action--danger {
+    color: var(--danger-text);
+    border-color: var(--danger-border);
+}
+
+.btn-action--danger:hover {
+    background: var(--danger-bg);
+}
+
+.btn-action--success {
+    color: var(--success-text);
+    border-color: var(--success-border);
+}
+
+.btn-action--success:hover {
+    background: var(--success-bg);
+}
+
+/* --- Payload Generator Form --- */
+.payload-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.payload-form .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.payload-form .form-group label {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 0.85em;
+}
+
+.payload-form .form-group--full {
+    grid-column: 1 / -1;
+}
+
+/* --- Server Info Cards --- */
+.server-info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.server-info-card {
+    padding: 12px 16px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-subtle);
+}
+
+.server-info-card .info-label {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+}
+
+.server-info-card .info-value {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 1em;
+}
+
+.server-info-card .info-value--warning {
+    color: var(--warning-text);
+}
+
+.server-info-card .info-value--danger {
+    color: var(--danger-text);
+}
+
+/* --- C2 Host Status Badges --- */
+.host-status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.85em;
+    font-weight: 500;
+}
+
+.host-status--active {
+    background: var(--success-bg);
+    color: var(--success-text);
+    border: 1px solid var(--success-border);
+}
+
+.host-status--held {
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    border: 1px solid var(--warning-border);
+}
+
+/* --- BOF Argument Builder --- */
+.bof-arg-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.bof-arg-row select {
+    width: 120px;
+    padding: 4px 8px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    font-size: 0.85em;
+}
+
+.bof-arg-row input {
+    flex: 1;
+    padding: 4px 8px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    font-size: 0.85em;
+}
+
+.bof-arg-row .btn-action {
+    padding: 4px 8px;
+}
+
+/* --- Empty State (reusable) --- */
+.feature-empty {
+    text-align: center;
+    padding: 30px 20px;
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+
+/* --- Credential password mask toggle --- */
+.cred-password {
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    cursor: pointer;
+    color: var(--text-muted);
+}
+
+.cred-password:hover {
+    color: var(--text-primary);
+}
+
+/* --- Spawn/Inject Mode Selector --- */
+.exec-mode-selector {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 12px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+    font-size: 0.9em;
+}
+
+.exec-mode-selector label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.exec-mode-selector label:hover {
+    color: var(--text-primary);
+}
+
+.exec-mode-selector input[type="radio"] {
+    accent-color: var(--accent-dim);
+}
+
+.exec-mode-selector .pid-input {
+    width: 80px;
+    padding: 3px 6px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+/* ── Topology Graph Overlay ── */
+.topology-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg-terminal);
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+}
+.topology-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.topology-header h2 {
+    margin: 0;
+    font-size: 1.05em;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.topology-header .btn-close-topology {
+    margin-left: auto;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+}
+.topology-header .btn-close-topology:hover {
+    background: var(--danger);
+    color: white;
+}
+.topology-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+}
+.topology-canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+}
+.topology-canvas-wrap canvas {
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+}
+.topology-canvas-wrap canvas:active {
+    cursor: grabbing;
+}
+.topology-legend {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    display: flex;
+    gap: 14px;
+    padding: 8px 14px;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: 6px;
+    font-size: 0.85em;
+    color: var(--text-terminal);
+    pointer-events: none;
+}
+.topology-side-panel {
+    width: 0;
+    overflow: hidden;
+    background: var(--bg-card);
+    border-left: 1px solid var(--border);
+    transition: width 0.2s ease;
+    flex-shrink: 0;
+}
+.topology-side-panel.open {
+    width: 340px;
+    overflow-y: auto;
+}
+.topology-side-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg-card);
+    z-index: 1;
+}
+.topology-side-panel-header h3 {
+    margin: 0;
+    font-size: 0.95em;
+    font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.topology-side-panel-header .btn-close-side {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 1.1em;
+    padding: 2px 6px;
+}
+.topology-side-panel-header .btn-close-side:hover {
+    color: var(--danger-text);
+}
+.topology-side-panel-body {
+    padding: 14px 16px;
+}
+.topology-detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 0.88em;
+}
+.topology-detail-row:last-child {
+    border-bottom: none;
+}
+.topology-detail-label {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    margin-right: 12px;
+}
+.topology-detail-value {
+    color: var(--text-primary);
+    text-align: right;
+    word-break: break-all;
+    cursor: pointer;
+}
+.topology-detail-value:hover {
+    color: var(--terminal-info);
+}
+.topology-section-title {
+    font-weight: 600;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 16px 0 8px 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+}
+.topology-section-title:first-child {
+    margin-top: 0;
+}
+.topology-side-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+}
+.topology-node-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 0.8em;
+    font-weight: 600;
+}
+/* ── Terminal Tab ── */
+.tab-page[data-page="terminal"] {
+    padding: 15px 20px 0;
+    overflow: hidden;
+}
+.tab-page[data-page="terminal"] .page-title {
+    margin-bottom: 10px;
+}
+#terminal-workspace.terminal-workspace-hidden {
+    display: none !important;
+}
+#terminal-container {
+    /* Nav ~50px + page-title ~40px + controls ~100px + tab-bar ~35px + margins ~40px = ~265px */
+    height: calc(100vh - 320px);
+    min-height: 200px;
+    max-height: calc(100vh - 320px);
+    overflow: hidden;
+}
+.terminal-tab {
+    padding: 6px 14px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.85em;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.15s, border-color 0.15s;
+}
+.terminal-tab:hover {
+    color: var(--text-primary);
+}
+.terminal-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--terminal-info);
+    font-weight: 600;
+}
+.terminal-tab .tab-close {
+    font-size: 1.1em;
+    color: var(--text-muted);
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1;
+}
+.terminal-tab .tab-close:hover {
+    color: var(--danger-text);
+    background: rgba(240, 138, 132, 0.2);
+}
+.terminal-tab .tab-plus {
+    font-size: 1.2em;
+    font-weight: 700;
+    color: var(--info-text);
+    padding: 4px 8px;
+    border-radius: 4px;
+    line-height: 1;
+}
+.terminal-tab .tab-plus:hover {
+    color: var(--success-text);
+    background: rgba(126, 207, 140, 0.2);
+}
+.terminal-session {
+    position: absolute;
+    inset: 0;
+    padding: 4px;
+    display: none;
+}
+.terminal-session.active {
+    display: flex;
+}
+/* Make xterm fill the session container */
+.terminal-session .xterm,
+.terminal-session .xterm-viewport,
+.terminal-session .xterm-screen {
+    height: 100% !important;
+}
+
+.topology-beacon-banner {
+    position: absolute;
+    bottom: 52px;
+    left: 12px;
+    padding: 12px 18px;
+    background: rgba(0, 0, 0, 0.75);
+    border-left: 3px solid #F0CA4A;
+    border-radius: 4px;
+    font-size: 0.95em;
+    color: var(--text-terminal);
+    pointer-events: none;
+    max-width: 560px;
 }

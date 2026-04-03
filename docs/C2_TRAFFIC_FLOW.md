@@ -1,74 +1,134 @@
 # C2 Traffic Flow Architecture
 
-**Date**: 2026-01-22  
-**Status**: ✅ Updated - All C2 diagrams now show bidirectional traffic flow
+**Date**: 2026-03-09
+**Status**: ✅ Updated - Corrected pull-based C2 model, DNS-01 SSL, complete traffic breakdown
 
 ## Overview
 
-All C2 infrastructure diagrams have been updated to accurately reflect **bidirectional traffic flow** between redirectors, team servers, and target networks. This is critical because C2 redirectors act as **proxies**, not just forwarders.
+All C2 traffic is **pull-based**. The target (compromised host) initiates every connection. The team server **never** opens a connection to the target — commands are delivered as HTTP responses on connections the beacon already opened. This is critical to understand because it means the team server doesn't need direct internet access for C2 operations.
 
 ---
 
-## Understanding C2 Traffic Flow
+## How C2 Traffic Actually Works
 
-### The Problem with Unidirectional Arrows
+### The Key Insight: It's Pull-Based
 
-Initial diagrams showed traffic flowing in only one direction (e.g., Target → Redirector → Team Server). This was **inaccurate** because:
+C2 frameworks like Cobalt Strike use a **polling model** — the beacon on the target periodically "calls home" to check for new commands. The team server simply responds with queued commands. This is identical to how a web browser requests a page from a web server.
 
-1. **Beacon Callbacks**: Targets (compromised hosts) send beacon callbacks **TO** the redirector
-2. **Command Delivery**: The team server sends commands **THROUGH** the redirector **TO** the target
-3. **Bidirectional Communication**: Modern C2 frameworks use bidirectional channels (HTTP GET/POST, HTTPS, DNS queries/responses)
+**The team server never initiates a connection to the target.**
 
-### The Correct Model: Bidirectional Proxy
+### Step-by-Step: A Single Beacon Cycle
 
-Redirectors are **reverse proxies** that:
-- Receive inbound beacon callbacks from targets
-- Forward callbacks to the team server
-- Receive commands from the team server
-- Forward commands back to targets
+```
+STEP 1: Target beacon opens an HTTPS connection to the redirector
+──────────────────────────────────────────────────────────────────
+Target ──HTTPS GET──▶ Internet ──▶ IGW ──▶ Redirector (public subnet, port 443)
+                                           Elastic IP: 35.x.x.x
+
+STEP 2: Nginx on the redirector opens a SECOND connection to the team server
+──────────────────────────────────────────────────────────────────
+Redirector ──proxy_pass──▶ Team Server (private subnet, 10.0.10.10:443)
+                           (internal VPC traffic — never touches the internet)
+
+STEP 3: Team server responds with any queued commands
+──────────────────────────────────────────────────────────────────
+Team Server ──HTTP 200 + encrypted commands──▶ Redirector
+             (response on the SAME TCP connection from step 2)
+
+STEP 4: Nginx forwards the response back to the target
+──────────────────────────────────────────────────────────────────
+Redirector ──HTTP response──▶ IGW ──▶ Internet ──▶ Target
+             (response on the SAME TCP connection from step 1)
+
+STEP 5: Target executes the command, sends output on NEXT beacon
+──────────────────────────────────────────────────────────────────
+(Repeats from step 1, this time the beacon POST includes command output)
+```
+
+### Why This Matters
+
+1. **Team server stays hidden** — it's in a private subnet with no public IP. It never needs to reach the internet for C2.
+2. **NAT Gateway is NOT used for C2 traffic** — it's only for bootstrap (package installs, S3 downloads, license activation).
+3. **Firewall/SG rules are simple** — allow inbound 443 to redirector, allow redirector→team server internally. Responses travel back on the same connection.
+4. **The operator doesn't send traffic to the target** — the operator uses the CS client (via SSH tunnel to team server) to queue commands. The beacon picks them up on its next check-in.
+
+### The Complete Flow (Simplified)
+
+```
+┌──────────────┐         ┌──────────────────┐         ┌──────────────────┐         ┌──────────────┐
+│   Operator   │──SSH────▶│     Bastion      │──tunnel─▶│   Team Server    │         │    Target    │
+│   Laptop     │  tunnel  │  (management)    │  50050   │   (private)      │         │   (beacon)   │
+│              │         │                  │         │                  │         │              │
+│  CS Client   │         │                  │         │  queues command  │         │              │
+│  localhost   │         │                  │         │       ↕          │         │              │
+│   :50050     │         │                  │         │  waits for poll  │         │              │
+└──────────────┘         └──────────────────┘         └────────▲─────────┘         └──────┬───────┘
+                                                               │                          │
+                                                    ┌──────────┴─────────┐                │
+                                                    │    Redirector      │◀──HTTPS poll────┘
+                                                    │    (public)        │──response + cmd─▶
+                                                    │    nginx proxy     │  (same TCP conn)
+                                                    └────────────────────┘
+```
+
+**Reading the diagram**: The target beacon polls the redirector (bottom right → bottom left). Nginx proxies to the team server (bottom left → middle). The team server responds with commands on the same connection. The operator interacts with the team server separately via SSH tunnel (top left → top right). These are two independent connections — the operator path and the C2 path never share a network link.
 
 ---
 
-## Traffic Flow Patterns
+## Traffic Flow Patterns (By Type)
 
-### 1. Inbound Traffic (Beacon Callbacks)
+### 1. C2 Traffic: Beacon Callbacks + Command Delivery (Single Connection)
 
-```
-Target Network → Internet → IGW → Redirector → Team Server
-```
-
-**Color in Diagrams**: Blue arrows  
-**Label**: "Beacon Callbacks"
-
-**What Happens**:
-1. Compromised host sends HTTP/HTTPS/DNS beacon to redirector's public IP
-2. Redirector receives the beacon on public subnet
-3. Redirector validates and forwards to team server in private subnet
-4. Team server processes the beacon and queues commands
-
-### 2. Outbound Traffic (Command Delivery)
+The beacon callback and command delivery happen on the **same TCP connection**. The target opens it, the team server responds on it.
 
 ```
-Team Server → Redirector → IGW → Internet → Target Network
+Target ──HTTPS request (beacon data)──▶ Redirector ──proxy──▶ Team Server
+Target ◀──HTTPS response (commands)──── Redirector ◀──────── Team Server
+         (same TCP socket)               (same TCP socket)
 ```
 
-**Color in Diagrams**: Red/Green dashed arrows  
-**Label**: "Commands Out" / "C2 Commands"
+- **Initiated by**: Target (always)
+- **Ports**: 443 inbound to redirector, 443 redirector→team server (internal)
+- **Security Groups**: Internet → Redirector SG (443), Redirector SG → C2 SG (443)
+- **Frequency**: Every beacon interval (e.g., 60 seconds)
+- **NAT Gateway**: NOT involved — traffic enters via IGW to redirector EIP
 
-**What Happens**:
-1. Team server sends commands to redirector
-2. Redirector formats commands into HTTP/HTTPS/DNS responses
-3. Redirector sends response through IGW to target
-4. Target receives and executes commands
-
-### 3. The Complete Bidirectional Flow
+### 2. Operator Access (SSH Tunnel)
 
 ```
-┌─────────────┐                 ┌──────────────┐                 ┌──────────────┐
-│   Target    │────Beacon──────▶│  Redirector  │────Forward─────▶│ Team Server  │
-│   Network   │                 │  (Public)    │                 │  (Private)   │
-│             │◀───Commands─────│              │◀───Commands─────│              │
-└─────────────┘                 └──────────────┘                 └──────────────┘
+Operator ──SSH──▶ Bastion (port 22) ──tunnel──▶ Team Server (port 50050)
+```
+
+- **Initiated by**: Operator
+- **Command**: `ssh -L 50050:10.0.10.10:50050 ubuntu@bastion_ip`
+- **Security Groups**: Management CIDR → Bastion SG (22), Bastion SG → C2 SG (50050)
+- **CS Client**: Connects to `localhost:50050` (tunneled to team server)
+
+### 3. SSL Certificate Validation (DNS-01 via Route53)
+
+Each redirector independently obtains a Let's Encrypt certificate using DNS-01 validation. This works with round-robin DNS (multiple redirectors) unlike HTTP-01.
+
+```
+Redirector ──AWS API──▶ Route53: creates _acme-challenge TXT record
+Let's Encrypt validates TXT record → issues certificate
+Redirector: installs cert, updates nginx, reloads
+```
+
+- **Initiated by**: Redirector (at boot, retried every 5 min if failed)
+- **IAM**: route53:ChangeResourceRecordSets, route53:ListHostedZones, route53:GetChange
+- **Why DNS-01**: HTTP-01 fails with round-robin DNS (LE challenge hits wrong server 50% of the time)
+
+### 4. Bootstrap & Key Exchange (S3)
+
+```
+All instances ──VPC endpoint / NAT──▶ S3: setup scripts, SSH public keys, CS archive
+```
+
+### 5. Domain Fronting (Optional)
+
+```
+Target ──HTTPS to front domain──▶ CloudFront Edge ──origin──▶ Redirector ──proxy──▶ Team Server
+Target ◀──response──────────────── CloudFront ◀────response── Redirector ◀──────── Team Server
 ```
 
 ---
@@ -242,100 +302,133 @@ When a domain is burned mid-engagement:
 
 ---
 
-## Network Security Considerations
+## Security Group Rules (Summary)
 
-### Why Bidirectional Flow Matters
+All C2 traffic is pull-based, so the SG rules are straightforward:
 
-1. **Firewall Rules**: Security groups must allow:
-   - Inbound: 80/443/53 to redirectors
-   - Outbound: 80/443/53 from redirectors to internet
-   - Inbound: Custom ports from redirectors to team servers
-   - Outbound: Custom ports from team servers to redirectors
+| Rule | Source | Dest | Port | Why |
+|------|--------|------|------|-----|
+| Beacon inbound | 0.0.0.0/0 (or CloudFront) | Redirector SG | 443 | Target beacons check in |
+| Proxy forward | Redirector SG | C2 Team Server SG | 443 | Nginx forwards to TS |
+| Operator SSH | Management CIDR | Bastion SG | 22 | SSH tunnel entry point |
+| CS client tunnel | Bastion SG | C2 Team Server SG | 50050 | Tunneled CS client |
+| Bootstrap/updates | All instances | 0.0.0.0/0 (egress) | all | S3, packages, DNS-01 |
 
-2. **Monitoring**: IDS/IPS must inspect:
-   - Inbound traffic patterns (beacon intervals)
-   - Outbound command delivery (data exfiltration)
-   - Proxy behavior (redirector traffic analysis)
-
-3. **Opsec**: Bidirectional flow means:
-   - Both inbound and outbound traffic can be detected
-   - Redirectors must appear legitimate (domain fronting, valid certs)
-   - Team servers remain isolated in private subnets
+**Note**: No inbound rules needed for command delivery — commands ride back as HTTP responses on the same TCP connection the beacon opened. AWS security groups are stateful, so return traffic is automatically allowed.
 
 ---
 
-## Updated Diagrams List
+## Example: A Complete Beacon Cycle (HTTP Level)
 
-All diagrams regenerated with bidirectional traffic flow:
-
-### C2 Infrastructure
-- ✅ `c2-adhoc-architecture.png` - Single team server, bidirectional redirectors
-- ✅ `c2-purple-architecture.png` - Redundant servers, 4 bidirectional redirectors
-- ✅ `c2-full-architecture.png` - Phase-based, 3 bidirectional redirectors
-
-### Combined Deployments
-- ✅ `combined-c2-goad-mini.png` - C2 + GOAD Mini with bidirectional flows
-- ✅ `combined-full-c2-goad-light.png` - C2 + GOAD Light with bidirectional flows
-- ✅ `combined-full-c2-goad-full.png` - Full C2 + Full GOAD with bidirectional flows
-
----
-
-## Example: HTTP Redirector Traffic Flow
-
-### Inbound Beacon Callback
+This shows exactly what happens at the HTTP level during one beacon check-in:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ 1. Target sends HTTP GET to redirector:                         │
-│    GET /updates/check.php HTTP/1.1                              │
-│    Host: legitimate-cdn.example.com                             │
-│    Cookie: session=<base64-encoded-beacon-data>                 │
-└─────────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 2. Redirector receives, validates, forwards to team server:     │
-│    POST /beacon HTTP/1.1                                        │
-│    Host: 10.0.1.10:50050                                        │
-│    Body: <decoded-beacon-data>                                  │
-└─────────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 3. Team server processes beacon, returns commands                │
-│    HTTP 200 OK                                                   │
-│    Body: <encrypted-commands>                                    │
-└─────────────────────────────────────────────────────────────────┘
+STEP 1 — Target beacon sends check-in (HTTPS GET)
+┌──────────────────────────────────────────────────────────────────┐
+│  Target → Redirector                                             │
+│  GET /jquery-3.3.1.min.js HTTP/1.1                               │
+│  Host: api.yourdomain.com                                        │
+│  Cookie: session=<base64-encoded-beacon-metadata>                │
+│  User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)          │
+│                                                                  │
+│  (Looks like a normal jQuery download to any network monitor)    │
+└──────────────────────────────────────────────────────────────────┘
+                               ↓ nginx proxy_pass
+┌──────────────────────────────────────────────────────────────────┐
+│  Redirector → Team Server (internal, 10.0.10.10:443)             │
+│  Same request forwarded with X-Forwarded-For header added        │
+└──────────────────────────────────────────────────────────────────┘
+                               ↓ team server processes
+┌──────────────────────────────────────────────────────────────────┐
+│  Team Server → Redirector (HTTP response on same connection)     │
+│  HTTP 200 OK                                                     │
+│  Content-Type: application/javascript                            │
+│  Body: <encrypted commands disguised as JavaScript>              │
+│                                                                  │
+│  (If no commands queued, returns empty/noop response)            │
+└──────────────────────────────────────────────────────────────────┘
+                               ↓ nginx forwards response
+┌──────────────────────────────────────────────────────────────────┐
+│  Redirector → Target (HTTP response on same connection)          │
+│  Target receives, decrypts, executes command                     │
+│  Output is sent on the NEXT beacon check-in (repeats from top)  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Outbound Command Delivery
+**All 4 steps happen on the SAME TCP connection** that the target opened. The team server never opens a connection outbound.
+
+```bash
+# The SSH tunnel command:
+ssh -L 50050:10.0.10.10:50050 ubuntu@bastion_public_ip
+# Then CS client connects to localhost:50050
+```
+
+- **Direction**: Inbound (operator initiates)
+- **Protocol**: SSH (port 22) + tunneled CS traffic (port 50050)
+- **Security Groups**: Management CIDR → Bastion SG (22), Bastion SG → C2 SG (50050)
+- **What it carries**: CS client GUI traffic (operator commands, beacon list, screenshots)
+
+### Traffic Type 4: SSL Certificate Validation (Redirector → Route53)
+
+Each redirector independently obtains a Let's Encrypt certificate using DNS-01 validation.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ 4. Team server sends commands back to redirector                │
-│    (Response to the POST /beacon request)                       │
-└─────────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 5. Redirector formats response for target:                      │
-│    HTTP 200 OK                                                   │
-│    Content-Type: text/html                                      │
-│    Body: <legitimate-looking-content-with-hidden-commands>       │
-└─────────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 6. Target receives HTTP response, extracts commands, executes   │
-│    Next beacon will include command output                      │
-└─────────────────────────────────────────────────────────────────┘
+Redirector ──AWS API──▶ Route53 (creates _acme-challenge TXT record)
+                        Let's Encrypt checks TXT record → issues certificate
 ```
+
+- **Direction**: Outbound API call (redirector → AWS API endpoints)
+- **Protocol**: HTTPS (AWS SDK/CLI)
+- **Security Groups**: Egress 0.0.0.0/0 (already allowed)
+- **IAM Permissions**: route53:ChangeResourceRecordSets, route53:ListHostedZones, route53:GetChange
+- **When**: At boot, then every 60-90 days for renewal
+- **Why DNS-01**: With multiple redirectors behind round-robin DNS, HTTP-01 validation fails because the LE challenge request might hit the wrong server. DNS-01 validates via a TXT record — works regardless of which server runs certbot.
+
+### Traffic Type 5: Bootstrap & Key Exchange (Instances → S3)
+
+All instances download setup scripts and exchange SSH keys via S3.
+
+```
+Instance ──VPC Endpoint──▶ S3 Bucket (setup scripts, SSH public keys)
+```
+
+- **Direction**: Outbound (instance → S3)
+- **Protocol**: HTTPS via VPC endpoint (never leaves AWS network)
+- **IAM Permissions**: s3:GetObject, s3:PutObject (VPC-restricted)
+
+### Traffic Type 6: Domain Fronting (Optional)
+
+When enabled, C2 traffic is routed through CloudFront to hide the redirector's IP.
+
+```
+Target ──HTTPS──▶ CloudFront Edge ──origin──▶ Redirector ──proxy──▶ Team Server
+ (front domain)    (CDN, looks legit)          (hidden IP)
+```
+
+- **Security Groups**: Redirector SG locked to CloudFront IPs only (AWS managed prefix list)
+- **Certificates**: ACM cert on CloudFront (auto), self-signed on redirector (CF doesn't verify origin)
+
+### Summary Table
+
+| # | Traffic Type | Source → Dest | Protocol | Ports | Initiated By |
+|---|-------------|--------------|----------|-------|-------------|
+| 1 | Beacon Callbacks | Target → Redirector → Team Server | HTTPS | 443 → 443 | Target (pull) |
+| 2 | Command Delivery | Team Server → Redirector → Target | HTTPS response | same conn | Response only |
+| 3 | Operator Access | Laptop → Bastion → Team Server | SSH tunnel | 22, 50050 | Operator |
+| 4 | SSL Validation | Redirector → Route53 → Let's Encrypt | AWS API + DNS | 443 (API) | Redirector |
+| 5 | Bootstrap/Keys | All Instances → S3 | HTTPS (VPC EP) | 443 | Instance |
+| 6 | Domain Fronting | Target → CloudFront → Redirector → TS | HTTPS | 443 | Target (pull) |
 
 ---
 
 ## Key Takeaways
 
-1. ✅ **Redirectors are proxies**: They forward traffic in **both directions**
-2. ✅ **Beacons come IN**: Targets initiate connections to redirectors
-3. ✅ **Commands go OUT**: Team servers send commands through redirectors
-4. ✅ **All diagrams updated**: Every C2 diagram now shows bidirectional arrows
-5. ✅ **Color-coded**: Blue = inbound beacons, Red = outbound commands, Green = internal proxy traffic
+1. **Redirectors are proxies**: They forward traffic in **both directions**
+2. **Beacons come IN**: Targets initiate connections to redirectors (pull-based)
+3. **Commands go OUT as responses**: Team servers NEVER initiate connections to targets
+4. **SSL uses DNS-01**: Each redirector gets its own Let's Encrypt cert via Route53 — works with round-robin DNS
+5. **Operator access via SSH tunnel**: CS client never directly reaches the team server — always through bastion
+6. **Color-coded diagrams**: Blue = inbound beacons, Red = outbound commands, Green = internal proxy traffic
 
 ---
 

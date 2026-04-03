@@ -94,3 +94,6 @@ tools/goad/ad/*/providers/*/*.tfvars
 tools/goad/packer/output/
 tools/goad/.vagrant/
 
+# Local-only files (not for remote)
+local-only/
+

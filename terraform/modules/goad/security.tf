@@ -64,6 +64,17 @@ resource "aws_vpc_security_group_ingress_rule" "rdp" {
   description       = "RDP from management"
 }
 
+# Allow all traffic from C2 VPC (for combined mode with VPC peering)
+# Only created when peer_vpc_cidr is provided (combined deployments)
+resource "aws_vpc_security_group_ingress_rule" "c2_vpc_peering" {
+  count = var.peer_vpc_cidr != "" ? 1 : 0
+
+  security_group_id = aws_security_group.goad.id
+  cidr_ipv4         = var.peer_vpc_cidr
+  ip_protocol       = "-1"
+  description       = "Allow all traffic from C2 VPC (VPC peering)"
+}
+
 # Allow WinRM from management CIDRs (for Ansible provisioning)
 resource "aws_vpc_security_group_ingress_rule" "winrm" {
   for_each = toset(var.management_cidr_blocks)

@@ -137,3 +137,29 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private.id
 }
 
+# =============================================================================
+# S3 VPC ENDPOINT (Gateway) — Required for IAM Confused Deputy Protection
+# =============================================================================
+# Without this, S3 requests go through NAT Gateway and lose VPC context,
+# causing IAM policy conditions on aws:SourceVpc to deny access.
+# The S3 Gateway endpoint routes S3 traffic through the AWS private network,
+# preserving the VPC ID in the request context. This is FREE (no hourly charges).
+#
+# Required for: deployment_storage module IAM roles (confused deputy protection)
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id       = aws_vpc.goad.id
+  service_name = "com.amazonaws.${var.aws_region}.s3"
+
+  # Associate with ALL route tables so every subnet can reach S3 via the endpoint
+  route_table_ids = [
+    aws_route_table.public.id,
+    aws_route_table.private.id
+  ]
+
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-${local.lab_identifier}-s3-endpoint"
+    Lab  = local.lab_identifier
+  })
+}
+

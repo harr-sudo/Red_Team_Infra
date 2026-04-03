@@ -1,21 +1,28 @@
-# CS Storage Module - S3 Bucket and IAM for Cobalt Strike Files
+# Deployment Storage Module — S3 Bucket, IAM, and Secrets for Red Team Deployments
 # =============================================================================
 # This module creates:
-#   - S3 bucket for storing Cobalt Strike archives
+#   - S3 bucket for deployment artifacts (CS archives, init scripts, SSH keys, status)
 #   - SEPARATE IAM roles per VPC (Option C - Maximum Security)
 #     - cs_download_c2: For C2 VPC instances (Team Servers, Redirectors, Bastion)
 #     - cs_download_goad: For GOAD VPC instances (Jumpbox, Attack Box, Team Server)
 #   - Bucket encryption and lifecycle policies
-#   - SSH key exchange support (Phase 5 - Secure Key Management)
+#   - Secrets Manager for sensitive credentials (GitHub PAT)
+#   - SSH key exchange support (Secure Key Management)
+#
+# S3 PREFIX STRUCTURE:
+#   archives/   — CS server tar, CS client zip (persist until deployment destroyed)
+#   scripts/    — Init scripts uploaded by modules (persist until deployment destroyed)
+#   keys/       — SSH public keys for key exchange (auto-expire 7 days)
+#   status/     — Bootstrap status files (auto-expire 7 days)
 #
 # SECURITY ARCHITECTURE (Option C - Separate IAM Roles Per VPC):
 # ┌─────────────────────────────────────────────────────────────────────────┐
 # │                           S3 BUCKET                                     │
-# │                    (cs-files-{random})                                  │
-# │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                     │
-# │  │    cs/      │  │   keys/     │  │  status/    │                     │
-# │  │ (archives)  │  │ (SSH keys)  │  │ (bootstrap) │                     │
-# │  └─────────────┘  └─────────────┘  └─────────────┘                     │
+# │                    (deploy-files-{random})                              │
+# │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐  │
+# │  │ archives/   │  │  scripts/   │  │   keys/     │  │   status/    │  │
+# │  │ (CS files)  │  │ (init sh)   │  │ (SSH keys)  │  │ (bootstrap)  │  │
+# │  └─────────────┘  └─────────────┘  └─────────────┘  └──────────────┘  │
 # └─────────────────────────────────────────────────────────────────────────┘
 #                    ▲                              ▲
 #                    │                              │
@@ -77,20 +84,19 @@ locals {
 }
 
 # =============================================================================
-# S3 Bucket for Cobalt Strike Files and SSH Key Exchange
+# S3 Bucket for Deployment Artifacts
 # =============================================================================
 
 resource "aws_s3_bucket" "cs_files" {
-  bucket = "${local.sanitized_name}-cs-files-${random_id.bucket_suffix.hex}"
+  bucket = "${local.sanitized_name}-deploy-files-${random_id.bucket_suffix.hex}"
 
   # Allow Terraform to delete bucket even if it contains objects
-  # This is needed because versioning is enabled and objects may exist
+  # All objects are cleaned up automatically when terraform destroy runs
   force_destroy = true
 
   tags = merge(var.tags, {
-    Name      = "${var.project_name}-cs-files"
-    Purpose   = "CobaltStrikeStorage"
-    Component = "C2Infrastructure"
+    Name      = "${var.project_name}-deploy-files"
+    Component = "Storage"
   })
 }
 
@@ -127,53 +133,17 @@ resource "aws_s3_bucket_public_access_block" "cs_files" {
   restrict_public_buckets = true
 }
 
-# Lifecycle policy - delete old files after 30 days
+# Lifecycle policy — ephemeral items auto-expire, persistent items stay until destroy
 resource "aws_s3_bucket_lifecycle_configuration" "cs_files" {
   bucket = aws_s3_bucket.cs_files.id
 
-  # Rule for CS archives - keep for 30 days
+  # SSH keys — only needed during bootstrap, auto-expire after 7 days
   rule {
-    id     = "delete-old-cs-files"
+    id     = "expire-ssh-keys"
     status = "Enabled"
 
     filter {
-      prefix = "cs/" # Only apply to CS archives
-    }
-
-    expiration {
-      days = 30
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 7
-    }
-  }
-
-  # Rule for SSH key exchange - delete after 7 days (keys are only needed during bootstrap)
-  rule {
-    id     = "delete-old-keys"
-    status = "Enabled"
-
-    filter {
-      prefix = "keys/" # SSH public keys for key exchange
-    }
-
-    expiration {
-      days = 7 # Keys only needed during initial bootstrap
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 1
-    }
-  }
-
-  # Rule for status files - delete after 7 days
-  rule {
-    id     = "delete-old-status"
-    status = "Enabled"
-
-    filter {
-      prefix = "status/" # Bootstrap status files
+      prefix = "keys/"
     }
 
     expiration {
@@ -185,23 +155,68 @@ resource "aws_s3_bucket_lifecycle_configuration" "cs_files" {
     }
   }
 
-  # Default rule for other files
+  # Bootstrap status — only needed during bootstrap, auto-expire after 7 days
   rule {
-    id     = "delete-other-old-files"
+    id     = "expire-status-files"
     status = "Enabled"
 
     filter {
-      prefix = "" # Apply to all other objects
+      prefix = "status/"
     }
 
     expiration {
-      days = 30
+      days = 7
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
+  # Noncurrent versions — clean up old versions across all prefixes
+  # Archives and scripts persist indefinitely; only old versions are cleaned
+  rule {
+    id     = "cleanup-noncurrent-versions"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
     }
 
     noncurrent_version_expiration {
       noncurrent_days = 7
     }
   }
+
+  # NOTE: archives/ and scripts/ have NO expiration rule.
+  # They persist for the lifetime of the deployment.
+  # All objects are cleaned up by force_destroy = true when terraform destroy runs.
+}
+
+# =============================================================================
+# SECRETS MANAGER - GitHub Token for Attack Box
+# =============================================================================
+# Stores the GitHub PAT securely. Attack box fetches it at runtime via IAM role.
+# Token never appears in S3-stored scripts.
+
+resource "aws_secretsmanager_secret" "github_token" {
+  count = var.github_token != "" ? 1 : 0
+
+  name                    = "${local.sanitized_name}-${var.environment}-github-token"
+  description             = "GitHub PAT for cloning private tools repository (attack box)"
+  recovery_window_in_days = 0 # Ephemeral infra, no recovery needed
+
+  tags = merge(var.tags, {
+    Name      = "${var.project_name}-github-token"
+    Component = "Secrets"
+  })
+}
+
+resource "aws_secretsmanager_secret_version" "github_token" {
+  count = var.github_token != "" ? 1 : 0
+
+  secret_id     = aws_secretsmanager_secret.github_token[0].id
+  secret_string = var.github_token
 }
 
 # =============================================================================
@@ -344,18 +359,15 @@ data "aws_iam_policy_document" "ec2_assume_role_c2" {
       identifiers = ["ec2.amazonaws.com"]
     }
 
-    # SECURITY: Restrict to YOUR AWS account only
+    # SECURITY: Restrict to YOUR AWS account only (confused deputy protection)
+    # NOTE: aws:SourceVpc is NOT available in EC2 instance profile trust policies
+    # (it only works for requests through VPC endpoints). VPC-level restriction
+    # is enforced in the permission policies instead using aws:SourceVpc on S3
+    # calls that go through the S3 VPC endpoint.
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
       values   = [data.aws_caller_identity.current.account_id]
-    }
-
-    # SECURITY: Restrict to C2 VPC only
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceVpc"
-      values   = [var.c2_vpc_id]
     }
   }
 }
@@ -369,9 +381,8 @@ resource "aws_iam_role" "cs_download_c2" {
   assume_role_policy = data.aws_iam_policy_document.ec2_assume_role_c2[0].json
 
   tags = merge(var.tags, {
-    Name    = "${var.project_name}-cs-download-c2-role"
-    Purpose = "AllowC2EC2ToAccessS3"
-    VPC     = "C2"
+    Name      = "${var.project_name}-download-c2-role"
+    Component = "IAM"
   })
 }
 
@@ -424,6 +435,56 @@ data "aws_iam_policy_document" "cs_download_c2" {
     resources = [
       "arn:aws:logs:${var.aws_region != "" ? var.aws_region : "*"}:${data.aws_caller_identity.current.account_id}:log-group:/aws/ec2/${var.project_name}*:*"
     ]
+  }
+
+  # Secrets Manager -- GitHub token (attack box)
+  dynamic "statement" {
+    for_each = var.github_token != "" ? [1] : []
+    content {
+      sid       = "AllowGetGitHubToken"
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = [aws_secretsmanager_secret.github_token[0].arn]
+    }
+  }
+
+  # Secrets Manager -- CS license key (team servers, pre-existing secret)
+  dynamic "statement" {
+    for_each = var.cs_license_secret_name != "" ? [1] : []
+    content {
+      sid       = "AllowGetCSLicenseKey"
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = ["arn:aws:secretsmanager:${var.aws_region != "" ? var.aws_region : "*"}:${data.aws_caller_identity.current.account_id}:secret:${var.cs_license_secret_name}-*"]
+    }
+  }
+
+  # Route53 -- DNS-01 certbot validation (redirectors request Let's Encrypt certs)
+  # Uses DNS-01 instead of HTTP-01 so round-robin DNS doesn't break validation
+  # Scoped to ChangeResourceRecordSets on hosted zones only; role is already VPC-restricted
+  dynamic "statement" {
+    for_each = var.enable_route53_dns_validation ? [1] : []
+    content {
+      sid    = "AllowRoute53DNSValidation"
+      effect = "Allow"
+      actions = [
+        "route53:ChangeResourceRecordSets"
+      ]
+      resources = ["arn:aws:route53:::hostedzone/*"]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_route53_dns_validation ? [1] : []
+    content {
+      sid    = "AllowRoute53ListAndGetChange"
+      effect = "Allow"
+      actions = [
+        "route53:ListHostedZones",
+        "route53:GetChange"
+      ]
+      resources = ["*"]
+    }
   }
 }
 
@@ -524,6 +585,22 @@ resource "aws_iam_role_policy" "ssh_key_exchange_c2" {
   policy = data.aws_iam_policy_document.ssh_key_exchange_c2[0].json
 }
 
+# ⚠️  TESTING ONLY — SSM permissions for remote debugging
+# REMOVE THIS BEFORE PRODUCTION DEPLOYMENTS
+resource "aws_iam_role_policy_attachment" "ssm_c2_testing" {
+  count      = local.create_c2_role ? 1 : 0
+  role       = aws_iam_role.cs_download_c2[0].name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+# ⚠️  TESTING ONLY — SSM permissions for remote debugging (GOAD VPC)
+# REMOVE THIS BEFORE PRODUCTION DEPLOYMENTS
+resource "aws_iam_role_policy_attachment" "ssm_goad_testing" {
+  count      = local.create_goad_role ? 1 : 0
+  role       = aws_iam_role.cs_download_goad[0].name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 # C2 Instance Profile
 resource "aws_iam_instance_profile" "cs_download_c2" {
   count = local.create_c2_role ? 1 : 0
@@ -554,18 +631,13 @@ data "aws_iam_policy_document" "ec2_assume_role_goad" {
       identifiers = ["ec2.amazonaws.com"]
     }
 
-    # SECURITY: Restrict to YOUR AWS account only
+    # SECURITY: Restrict to YOUR AWS account only (confused deputy protection)
+    # NOTE: aws:SourceVpc is NOT available in EC2 instance profile trust policies.
+    # VPC-level restriction is enforced in the permission policies instead.
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
       values   = [data.aws_caller_identity.current.account_id]
-    }
-
-    # SECURITY: Restrict to GOAD VPC only
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceVpc"
-      values   = [var.goad_vpc_id]
     }
   }
 }
@@ -579,9 +651,8 @@ resource "aws_iam_role" "cs_download_goad" {
   assume_role_policy = data.aws_iam_policy_document.ec2_assume_role_goad[0].json
 
   tags = merge(var.tags, {
-    Name    = "${var.project_name}-cs-download-goad-role"
-    Purpose = "AllowGOADEC2ToAccessS3"
-    VPC     = "GOAD"
+    Name      = "${var.project_name}-download-goad-role"
+    Component = "IAM"
   })
 }
 
@@ -634,6 +705,28 @@ data "aws_iam_policy_document" "cs_download_goad" {
     resources = [
       "arn:aws:logs:${var.aws_region != "" ? var.aws_region : "*"}:${data.aws_caller_identity.current.account_id}:log-group:/aws/ec2/${var.project_name}*:*"
     ]
+  }
+
+  # Secrets Manager -- GitHub token (attack box)
+  dynamic "statement" {
+    for_each = var.github_token != "" ? [1] : []
+    content {
+      sid       = "AllowGetGitHubToken"
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = [aws_secretsmanager_secret.github_token[0].arn]
+    }
+  }
+
+  # Secrets Manager -- CS license key (team servers, pre-existing secret)
+  dynamic "statement" {
+    for_each = var.cs_license_secret_name != "" ? [1] : []
+    content {
+      sid       = "AllowGetCSLicenseKey"
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = ["arn:aws:secretsmanager:${var.aws_region != "" ? var.aws_region : "*"}:${data.aws_caller_identity.current.account_id}:secret:${var.cs_license_secret_name}-*"]
+    }
   }
 }
 
@@ -764,18 +857,13 @@ data "aws_iam_policy_document" "ec2_assume_role_legacy" {
       identifiers = ["ec2.amazonaws.com"]
     }
 
-    # SECURITY: Restrict to YOUR AWS account only
+    # SECURITY: Restrict to YOUR AWS account only (confused deputy protection)
+    # NOTE: aws:SourceVpc is NOT available in EC2 instance profile trust policies.
+    # VPC-level restriction is enforced in the permission policies instead.
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
       values   = [data.aws_caller_identity.current.account_id]
-    }
-
-    # SECURITY: Restrict to specific VPC
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceVpc"
-      values   = [local.legacy_vpc_id]
     }
   }
 }
@@ -789,9 +877,8 @@ resource "aws_iam_role" "cs_download_legacy" {
   assume_role_policy = data.aws_iam_policy_document.ec2_assume_role_legacy[0].json
 
   tags = merge(var.tags, {
-    Name    = "${var.project_name}-cs-download-role"
-    Purpose = "AllowEC2ToAccessS3"
-    Note    = "Legacy single-VPC mode"
+    Name      = "${var.project_name}-download-role"
+    Component = "IAM"
   })
 }
 
@@ -841,6 +928,28 @@ data "aws_iam_policy_document" "cs_download_legacy" {
     resources = [
       "arn:aws:logs:${var.aws_region != "" ? var.aws_region : "*"}:${data.aws_caller_identity.current.account_id}:log-group:/aws/ec2/${var.project_name}*:*"
     ]
+  }
+
+  # Secrets Manager -- GitHub token (attack box)
+  dynamic "statement" {
+    for_each = var.github_token != "" ? [1] : []
+    content {
+      sid       = "AllowGetGitHubToken"
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = [aws_secretsmanager_secret.github_token[0].arn]
+    }
+  }
+
+  # Secrets Manager -- CS license key (team servers, pre-existing secret)
+  dynamic "statement" {
+    for_each = var.cs_license_secret_name != "" ? [1] : []
+    content {
+      sid       = "AllowGetCSLicenseKey"
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = ["arn:aws:secretsmanager:${var.aws_region != "" ? var.aws_region : "*"}:${data.aws_caller_identity.current.account_id}:secret:${var.cs_license_secret_name}-*"]
+    }
   }
 }
 

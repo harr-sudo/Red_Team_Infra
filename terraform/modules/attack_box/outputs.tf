@@ -18,6 +18,6 @@ output "admin_password" {
 }
 
 output "rdp_tunnel_command" {
-  description = "SSH tunnel command for RDP access (use port 3390 to avoid bastion conflict)"
-  value       = "ssh -L 3390:${aws_instance.attack_box.private_ip}:3389 -i <key> ubuntu@<bastion_or_jumpbox_ip>"
+  description = "SSH tunnel command for RDP access through bastion/jumpbox"
+  value       = "ssh -L 3389:${aws_instance.attack_box.private_ip}:3389 -i <key> ubuntu@<bastion_or_jumpbox_ip>"
 }

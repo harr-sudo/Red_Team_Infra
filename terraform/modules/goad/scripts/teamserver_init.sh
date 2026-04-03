@@ -4,6 +4,7 @@ set -e
 
 CS_ARCHIVE_S3_PATH="${cs_archive_s3_path}"
 CS_PASSWORD="${cs_password}"
+CS_LICENSE_SECRET_NAME="${cs_license_secret_name}"
 DEPLOYMENT_BUCKET="${deployment_bucket}"
 DEPLOYMENT_ID="${deployment_id}"
 AWS_REGION="${aws_region}"
@@ -144,13 +145,71 @@ if [ "$CS_EXTRACTED" = true ]; then
     chown -R ubuntu:ubuntu /opt/cobaltstrike
     
     # Check if license activation is needed
+    # The ./update command creates cobaltstrike.auth.server — without it, CS cannot start
     LICENSE_STATUS="unknown"
-    if [ -f /opt/cobaltstrike/server/TeamServerImage ]; then
-        # Try a quick test to see if licensed
-        cd /opt/cobaltstrike/server
-        timeout 5 ./TeamServerImage --help 2>&1 | grep -q "Please run the 'update' program" && LICENSE_STATUS="needs_activation" || LICENSE_STATUS="ready"
+    if [ -f /opt/cobaltstrike/server/cobaltstrike.auth.server ]; then
+        LICENSE_STATUS="ready"
+        echo "LICENSE: Ready (auth file present)"
+    elif [ -f /opt/cobaltstrike/server/TeamServerImage ] || [ -f /opt/cobaltstrike/update ]; then
+        LICENSE_STATUS="needs_activation"
+        echo "LICENSE: Needs activation (no cobaltstrike.auth.server found)"
     fi
     echo "LICENSE_STATUS=$LICENSE_STATUS" >> /opt/cobaltstrike/bootstrap-status
+fi
+
+# =============================================================================
+# Automated License Activation (Optional)
+# =============================================================================
+# If a license key secret was provided, fetch from Secrets Manager and activate.
+
+if [ "$LICENSE_STATUS" = "needs_activation" ] && \
+   [ -n "$CS_LICENSE_SECRET_NAME" ] && [ "$CS_LICENSE_SECRET_NAME" != "" ]; then
+    echo "Fetching CS license key from AWS Secrets Manager..."
+    # Retry loop: IAM instance profile credentials can take 10-30s to propagate after launch.
+    # The bootstrap script runs at first boot, often before IMDS credentials are available.
+    CS_LICENSE_KEY=""
+    for _attempt in $(seq 1 7); do
+        CS_LICENSE_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id "$CS_LICENSE_SECRET_NAME" \
+            --query 'SecretString' --output text --region "$AWS_REGION" 2>/dev/null) && break
+        echo "Waiting for IAM credentials to propagate... (attempt $_attempt/7)"
+        CS_LICENSE_KEY=""
+        sleep 45
+    done
+
+    if [ -n "$CS_LICENSE_KEY" ]; then
+        echo "License key retrieved, running automated activation..."
+        cd /opt/cobaltstrike
+
+        # OPSEC: redirect output to temp file to avoid logging the license key
+        echo "$CS_LICENSE_KEY" | sudo ./update > /tmp/cs-update-output.log 2>&1
+        UPDATE_EXIT=$?
+
+        grep -iE "error|fail|success|complete|download|install|update|version" /tmp/cs-update-output.log >> "$LOG_FILE" 2>/dev/null || true
+        rm -f /tmp/cs-update-output.log
+
+        if [ $UPDATE_EXIT -eq 0 ]; then
+            echo "License activation command completed (exit code 0)"
+        else
+            echo "WARNING: License activation exited with code $UPDATE_EXIT"
+        fi
+
+        # Re-check license status
+        if [ -f /opt/cobaltstrike/server/cobaltstrike.auth.server ]; then
+            LICENSE_STATUS="ready"
+            echo "LICENSE: Activated successfully via Secrets Manager"
+        else
+            LICENSE_STATUS="needs_activation"
+            echo "WARNING: License activation may have failed — cobaltstrike.auth.server not found"
+            echo "Run manually: cd /opt/cobaltstrike && sudo ./update"
+        fi
+
+        unset CS_LICENSE_KEY
+        echo "CS license key cleared from memory (OPSEC)"
+    else
+        echo "WARNING: Failed to fetch CS license key from Secrets Manager"
+        echo "HINT: Check IAM role has secretsmanager:GetSecretValue for: $CS_LICENSE_SECRET_NAME"
+    fi
 fi
 
 # Create systemd service (will only work after license activation)
@@ -164,7 +223,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/cobaltstrike/server
-ExecStart=/opt/cobaltstrike/server/teamserver 0.0.0.0 $CS_PASSWORD
+ExecStart=/bin/bash -c '/opt/cobaltstrike/server/teamserver $(hostname -I | awk "{print \\$1}") $CS_PASSWORD'
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:/opt/logs/teamserver.log
@@ -181,8 +240,37 @@ EOF
         echo "Starting team server..."
         systemctl start teamserver
     else
-        echo "Team server service created but NOT started - license activation required"
+        echo "Team server service created but NOT started"
+        if [ -z "$CS_PASSWORD" ]; then
+            echo "REASON: No password configured (recommended for OPSEC)"
+        else
+            echo "REASON: License activation required"
+        fi
     fi
+
+    # Create set-password helper (always useful for password rotation)
+    cat > /opt/cobaltstrike/set-password.sh << 'SETPWEOF'
+#!/bin/bash
+set -euo pipefail
+read -sp "Enter team server password: " PASSWORD
+echo
+if [ -z "$PASSWORD" ]; then echo "Error: Password cannot be empty"; exit 1; fi
+read -sp "Confirm password: " PASSWORD2
+echo
+if [ "$PASSWORD" != "$PASSWORD2" ]; then echo "Error: Passwords do not match"; exit 1; fi
+# Get the server's private IP (CS rejects 0.0.0.0)
+SERVER_IP=$(hostname -I | awk '{print $1}')
+sed -i "s|ExecStart=.*|ExecStart=/opt/cobaltstrike/server/teamserver $SERVER_IP $PASSWORD|" /etc/systemd/system/teamserver.service
+systemctl daemon-reload
+systemctl restart teamserver
+sleep 3
+if systemctl is-active --quiet teamserver; then
+    echo "Team server started on port 50050"
+else
+    echo "Failed to start. Check: journalctl -u teamserver -n 20"
+fi
+SETPWEOF
+    chmod +x /opt/cobaltstrike/set-password.sh
 fi
 
 # README with clear instructions
@@ -202,14 +290,14 @@ Enter your license key when prompted. This downloads the licensed binaries.
 
 AFTER LICENSE ACTIVATION
 ------------------------
-Start the team server:
+Set your password and start the team server:
 
-    sudo systemctl start teamserver
+    sudo /opt/cobaltstrike/set-password.sh
 
 Or manually:
 
     cd /opt/cobaltstrike/server
-    sudo ./teamserver 0.0.0.0 <YOUR_PASSWORD>
+    sudo ./teamserver $(hostname -I | awk '{print $1}') <YOUR_PASSWORD>
 
 USEFUL COMMANDS
 ---------------
@@ -238,17 +326,14 @@ cat > /opt/cobaltstrike/check-status.sh << 'EOF'
 echo "=== Cobalt Strike Team Server Status ==="
 echo ""
 
-# Check license status
-if [ -f /opt/cobaltstrike/server/TeamServerImage ]; then
-    cd /opt/cobaltstrike/server
-    if timeout 3 ./TeamServerImage --help 2>&1 | grep -q "Please run the 'update' program"; then
-        echo "LICENSE: ❌ NOT ACTIVATED"
-        echo "         Run: cd /opt/cobaltstrike && sudo ./update"
-        echo ""
-    else
-        echo "LICENSE: ✅ Activated"
-        echo ""
-    fi
+# Check license status (auth file is created by ./update when license is activated)
+if [ -f /opt/cobaltstrike/server/cobaltstrike.auth.server ]; then
+    echo "LICENSE: ✅ Activated"
+    echo ""
+elif [ -f /opt/cobaltstrike/server/TeamServerImage ]; then
+    echo "LICENSE: ❌ NOT ACTIVATED (no auth file)"
+    echo "         Run: cd /opt/cobaltstrike && sudo ./update"
+    echo ""
 else
     echo "LICENSE: ⚠️  TeamServerImage not found"
     echo ""

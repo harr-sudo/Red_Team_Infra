@@ -28,9 +28,15 @@ variable "ssh_port" {
 }
 
 variable "c2_server_port" {
-  description = "Port used by C2 team servers"
+  description = "CS client management port (50050). Used for operator connections via bastion/attack box."
   type        = number
   default     = 50050
+}
+
+variable "c2_listener_port" {
+  description = "Port the CS HTTPS beacon listener binds on the team server. Redirectors forward beacon traffic here."
+  type        = number
+  default     = 443
 }
 
 # =============================================================================
@@ -63,5 +69,11 @@ variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
   default     = {}
+}
+
+variable "enable_cs_rest_api" {
+  description = "Enable REST API port (50443) access from bastion to C2 servers"
+  type        = bool
+  default     = false
 }
 

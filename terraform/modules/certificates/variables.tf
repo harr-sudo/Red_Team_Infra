@@ -6,24 +6,6 @@ variable "primary_domain_name" {
   type        = string
 }
 
-variable "c2_subdomain" {
-  description = "C2 subdomain to include in certificate"
-  type        = string
-  default     = "api"
-}
-
-variable "www_subdomain" {
-  description = "WWW subdomain to include in certificate"
-  type        = string
-  default     = "www"
-}
-
-variable "cdn_subdomain" {
-  description = "CDN subdomain to include in certificate"
-  type        = string
-  default     = "cdn"
-}
-
 variable "route53_zone_id" {
   description = "Route 53 hosted zone ID for DNS validation"
   type        = string

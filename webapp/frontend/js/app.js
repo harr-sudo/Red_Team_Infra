@@ -43,12 +43,39 @@ function awsIcon(type, size = 20) {
 }
 
 // ============================================================================
+// SHARED OUTPUTS CACHE — used by Terminal tab, Connection Info, Topology
+// ============================================================================
+const _globalOutputsCache = {}; // projectName → { outputs, timestamp }
+
+async function _fetchAndCacheOutputs(projectName) {
+    try {
+        const resp = await fetch(`/api/deploy/outputs?project=${encodeURIComponent(projectName)}`);
+        const json = await resp.json();
+        if (json.success && json.outputs) {
+            _globalOutputsCache[projectName] = { outputs: json.outputs, timestamp: Date.now() };
+            return json.outputs;
+        }
+    } catch { /* ignore */ }
+    return null;
+}
+
+function _getCachedOutputs(projectName) {
+    const entry = _globalOutputsCache[projectName];
+    return entry ? entry.outputs : null;
+}
+
+function _invalidateOutputsCache(projectName) {
+    if (projectName) delete _globalOutputsCache[projectName];
+    else Object.keys(_globalOutputsCache).forEach(k => delete _globalOutputsCache[k]);
+}
+
+// ============================================================================
 // APPLICATION CORE - Tab Management System
 // ============================================================================
 
 const APP = {
     currentPage: 'dashboard',
-    pages: ['dashboard', 'configuration', 'deployment', 'deployments', 'tools', 'aws-check', 'architecture', 'beacon', 'settings'],
+    pages: ['dashboard', 'configuration', 'deployment', 'deployments', 'tools', 'aws-check', 'architecture', 'beacon', 'terminal', 'settings'],
     
     /**
      * Initialize the application
@@ -163,6 +190,10 @@ const APP = {
         if (this.currentPage === 'beacon') {
             BEACON.stopHealthPoll();
         }
+        // Stop terminal background refresh when leaving terminal page
+        if (this.currentPage === 'terminal') {
+            TERMINAL.stopBackgroundRefresh();
+        }
 
         // Clear deployment polling when leaving the deployment page
         if (this.currentPage === 'deployment' && pageName !== 'deployment') {
@@ -264,6 +295,9 @@ const APP = {
                     break;
                 case 'beacon':
                     BEACON.init();
+                    break;
+                case 'terminal':
+                    TERMINAL.init();
                     break;
                 case 'settings':
                     initSettingsPage();
@@ -1951,6 +1985,51 @@ async function loadDashboard() {
     } catch (error) {
         statusDiv.innerHTML = '<p>Error loading dashboard: ' + error.message + '</p>';
     }
+
+    // Populate Elastic Rules card from the loaded JS data
+    refreshElasticRulesCard();
+}
+
+function refreshElasticRulesCard() {
+    const countEl = document.getElementById('elastic-rules-count');
+    const dateEl = document.getElementById('elastic-rules-date');
+    if (!countEl || !dateEl) return;
+    if (typeof ELASTIC_RULES !== 'undefined' && ELASTIC_RULES.meta) {
+        countEl.textContent = ELASTIC_RULES.meta.total_rules_mapped + ' rules mapped';
+        dateEl.textContent = 'Last updated: ' + ELASTIC_RULES.meta.last_updated;
+    }
+}
+
+async function updateElasticRules() {
+    const btn = document.getElementById('btn-update-elastic-rules');
+    const statusEl = document.getElementById('elastic-rules-status');
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = 'Pulling latest rules...';
+
+    try {
+        const resp = await fetch('/api/config/update-elastic-rules', { method: 'POST' });
+        const data = await resp.json();
+
+        if (!data.success) {
+            if (statusEl) statusEl.innerHTML = `<span style="color: var(--danger-text);">${data.error || 'Update failed'}</span>`;
+            return;
+        }
+
+        // Reload elastic-rules.js by appending a cache-busted script tag
+        const oldScript = document.querySelector('script[src*="elastic-rules"]');
+        if (oldScript) oldScript.remove();
+        const s = document.createElement('script');
+        s.src = '/js/elastic-rules.js?t=' + Date.now();
+        s.onload = function() {
+            refreshElasticRulesCard();
+            if (statusEl) statusEl.innerHTML = `<span style="color: var(--success-text);">Updated successfully</span>`;
+        };
+        document.head.appendChild(s);
+    } catch (e) {
+        if (statusEl) statusEl.innerHTML = `<span style="color: var(--danger-text);">Error: ${e.message}</span>`;
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 /**
@@ -2064,6 +2143,9 @@ const BEACON = {
     tunnelCmd: '',
     deployments: [],      // All loaded deployments
     selectedDeployment: null, // Currently selected deployment
+
+    // Quick payload
+    payloadExitFunction: 'thread',
 
     // Listener cache
     _listenerCache: null,
@@ -2396,8 +2478,11 @@ const BEACON = {
             if (this.deployments.length === 1) {
                 select.value = '0';
                 this.onDeploymentSelected();
-                // Auto-connect when only one deployment exists
                 this.connect();
+            } else {
+                // Multiple deployments — check if REST API is already reachable (tunnel running)
+                // If so, auto-connect to the matching deployment
+                this._tryAutoConnect(select);
             }
         } catch (e) {
             select.innerHTML = '<option value="">Failed to load deployments</option>';
@@ -2466,6 +2551,72 @@ const BEACON = {
         document.getElementById('beacon-main-content').style.display = state === 'main' ? 'block' : 'none';
     },
 
+    async _tryAutoConnect(select) {
+        const statusText = document.getElementById('beacon-status-text');
+        const statusDot = document.getElementById('beacon-status-dot');
+        const connectBtn = document.getElementById('beacon-connect-btn');
+
+        // Phase 1: subtle pulse while probing
+        if (statusDot) { statusDot.className = 'beacon-status-dot'; statusDot.style.opacity = '0.5'; }
+        if (statusText) { statusText.textContent = ''; statusText.style.color = 'var(--text-muted)'; statusText.style.transition = 'opacity 0.3s'; }
+        if (connectBtn) { connectBtn.style.transition = 'opacity 0.3s'; connectBtn.style.opacity = '0.5'; }
+
+        // Brief pause so the page settles visually before we start probing
+        await new Promise(r => setTimeout(r, 400));
+
+        try {
+            const resp = await fetch('/api/beacon/health');
+            const data = await resp.json();
+
+            if (data.status !== 'connected' || !data.authenticated) {
+                // Not reachable — fade in the normal state
+                if (statusDot) statusDot.style.opacity = '1';
+                if (statusText) { statusText.textContent = 'Not connected'; statusText.style.opacity = '1'; }
+                if (connectBtn) { connectBtn.style.opacity = '1'; }
+                return;
+            }
+
+            // Phase 2: API is live — find matching deployment
+            for (let i = 0; i < this.deployments.length; i++) {
+                const d = this.deployments[i];
+                const csInfo = d.output?.cs_connection_info?.value;
+                if (!csInfo || csInfo.rest_api_enabled === false) continue;
+
+                // Fade in "connecting" state
+                if (statusDot) { statusDot.className = 'beacon-status-dot reachable'; statusDot.style.opacity = '1'; }
+                if (statusText) { statusText.textContent = 'Connecting...'; statusText.style.color = 'var(--info-text)'; statusText.style.opacity = '1'; }
+                if (connectBtn) { connectBtn.textContent = 'Connecting...'; connectBtn.style.opacity = '1'; connectBtn.className = 'btn btn-secondary'; }
+
+                // Select deployment quietly (no disconnect flash)
+                select.value = String(i);
+                this.selectedDeployment = d;
+                const outputs = d.output || {};
+                const bastionIp = outputs.bastion_public_ip?.value;
+                const tsIp = csInfo.host;
+                if (tsIp && bastionIp) {
+                    this.tunnelCmd = `ssh -L 50443:${tsIp}:50443 ubuntu@${bastionIp}`;
+                }
+
+                // Small beat before switching to main view
+                await new Promise(r => setTimeout(r, 300));
+                this.showState('main');
+
+                // Phase 3: connect — this updates status to green "Connected"
+                await this.connect();
+                return;
+            }
+
+            // No matching deployment found
+            if (statusDot) statusDot.style.opacity = '1';
+            if (statusText) { statusText.textContent = 'Not connected'; statusText.style.opacity = '1'; }
+            if (connectBtn) { connectBtn.style.opacity = '1'; }
+        } catch {
+            if (statusDot) statusDot.style.opacity = '1';
+            if (statusText) { statusText.textContent = 'Not connected'; statusText.style.color = 'var(--text-muted)'; statusText.style.opacity = '1'; }
+            if (connectBtn) { connectBtn.style.opacity = '1'; }
+        }
+    },
+
     async connect() {
         // User explicitly clicked Connect — run health check and start polling
         const connectBtn = document.getElementById('beacon-connect-btn');
@@ -2518,6 +2669,7 @@ const BEACON = {
             refreshBtn.style.display = 'inline-block';
             tableSection.style.display = 'block';
             this.refreshBeacons();
+            this.fetchServerInfo();
         } else if (status === 'reachable') {
             dot.classList.add('reachable');
             text.textContent = error || 'Reachable but auth failed';
@@ -2549,6 +2701,8 @@ const BEACON = {
         this.stopHealthPoll();
         this.connectionStatus = 'disconnected';
         this.updateConnectionStatus('disconnected', null);
+        const serverInfo = document.getElementById('beacon-server-info');
+        if (serverInfo) serverInfo.style.display = 'none';
     },
 
     startHealthPoll() {
@@ -2584,14 +2738,11 @@ const BEACON = {
             const bid = tr.dataset.bid;
             const b = this.cachedBeacons.find(x => String(x.bid) === bid);
             if (!b) return;
-            // Prefer absolute timestamp for accuracy, fall back to relative
-            const elapsedMs = b.lastCheckinAbsolute
-                ? (Date.now() - b.lastCheckinAbsolute)
-                : (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
+            const elapsedMs = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
             const td = tr.querySelector('.beacon-last-seen');
             if (td) {
-                td.textContent = this.formatElapsed(Math.max(0, elapsedMs));
-                td.className = `beacon-last-seen ${this.getElapsedClass(elapsedMs, b.sleep)}`;
+                td.innerHTML = `<span class="health-dot"></span>${this.formatElapsed(Math.max(0, elapsedMs))}`;
+                td.className = `beacon-last-seen ${this.getElapsedClass(elapsedMs, b.sleep, b.alive)}`;
             }
         });
     },
@@ -2605,18 +2756,13 @@ const BEACON = {
                 return;
             }
             // Normalize CS REST API fields to frontend format
-            // Use lastCheckinMs (server-side elapsed ms) + fetch timestamp for accurate "last seen"
+            // Use alive (boolean) + lastCheckinMs (server-side elapsed ms) for health categorization
             const fetchTime = Date.now();
             const beacons = (data.beacons || []).map(b => {
                 const sleepIsObj = typeof b.sleep === 'object' && b.sleep !== null;
-                // Use lastCheckinTime (absolute timestamp) for accurate "last seen"
-                // Falls back to lastCheckinMs (relative) + fetchTime if timestamp missing
-                let lastCheckinAbsolute = null;
-                if (b.lastCheckinTime) {
-                    lastCheckinAbsolute = new Date(b.lastCheckinTime).getTime();
-                }
                 return {
                     bid: b.bid || b.id,
+                    pbid: b.pbid || null,
                     user: b.user,
                     computer: b.computer,
                     internal: b.internal,
@@ -2626,8 +2772,11 @@ const BEACON = {
                     process: b.process,
                     arch: b.arch || (b.is64 ? 'x64' : 'x86'),
                     isAdmin: b.isAdmin,
-                    lastCheckinAbsolute: lastCheckinAbsolute,
-                    // Fallback: server-side elapsed ms at time of fetch
+                    alive: b.alive !== false,
+                    listener: b.listener || '',
+                    linkState: b.linkState || 'NONE',
+                    pivotHint: b.pivotHint || '',
+                    session: b.session || 'beacon',
                     lastCheckinMs: b.lastCheckinMs,
                     fetchedAt: fetchTime,
                     sleep: sleepIsObj ? (b.sleep.sleep * 1000) : (b.sleep != null ? b.sleep : 0),
@@ -2653,7 +2802,11 @@ const BEACON = {
         const table = document.getElementById('beacon-table');
         if (!tbody) return;
 
-        countEl.textContent = `${beacons.length} beacon${beacons.length !== 1 ? 's' : ''}`;
+        const getHealth = b => this.getElapsedClass((b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now())), b.sleep, b.alive);
+        const aliveCount = beacons.filter(b => getHealth(b) === 'alive').length;
+        const staleCount = beacons.filter(b => getHealth(b) === 'stale').length;
+        const deadCount = beacons.filter(b => getHealth(b) === 'dead').length;
+        countEl.innerHTML = `<span class="health-count alive">${aliveCount} alive</span> · <span class="health-count stale">${staleCount} stale</span> · <span class="health-count dead">${deadCount} dead</span>`;
 
         if (beacons.length === 0) {
             tbody.innerHTML = '';
@@ -2670,12 +2823,11 @@ const BEACON = {
             const isAdmin = b.isAdmin ? ' *' : '';
             const userClass = b.isAdmin ? 'beacon-admin' : '';
             // Compute elapsed: server-side ms at fetch time + time since fetch
-            const elapsedMs = b.lastCheckinAbsolute
-                ? (Date.now() - b.lastCheckinAbsolute)
-                : (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
+            const elapsedMs = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
             const lastSeen = this.formatElapsed(Math.max(0, elapsedMs));
-            const lastSeenClass = this.getElapsedClass(elapsedMs, b.sleep);
+            const lastSeenClass = this.getElapsedClass(elapsedMs, b.sleep, b.alive);
             const selected = b.bid === this.selectedBid ? 'selected' : '';
+            const rowClass = [selected, lastSeenClass === 'dead' ? 'beacon-dead' : ''].filter(Boolean).join(' ');
             const sleepStr = b.sleep != null && b.sleep !== '' ? (b.sleep === 0 ? 'interactive' : `${Math.round(b.sleep / 1000)}s`) : '\u2014';
             const jitterStr = b.jitter ? ` (${b.jitter}%)` : '';
             const eBid = this.escapeHtml(b.bid || '\u2014');
@@ -2686,7 +2838,7 @@ const BEACON = {
             const ePid = this.escapeHtml(String(b.pid || '\u2014'));
             const label = `${eUser}@${eComputer}`;
 
-            return `<tr class="${selected}" data-bid="${this.escapeAttr(b.bid)}" data-label="${this.escapeAttr(label)}">
+            return `<tr class="${rowClass}" data-bid="${this.escapeAttr(b.bid)}" data-label="${this.escapeAttr(label)}">
                 <td class="beacon-id">${eBid}</td>
                 <td class="${userClass}">${eUser}${isAdmin}</td>
                 <td>${eComputer}</td>
@@ -2694,7 +2846,7 @@ const BEACON = {
                 <td>${eOs}</td>
                 <td>${ePid}</td>
                 <td>${sleepStr}${jitterStr}</td>
-                <td class="beacon-last-seen ${lastSeenClass}">${lastSeen}</td>
+                <td class="beacon-last-seen ${lastSeenClass}"><span class="health-dot"></span>${lastSeen}</td>
                 <td><button class="btn btn-sm btn-success beacon-interact-btn">Interact</button></td>
             </tr>`;
         }).join('');
@@ -2718,12 +2870,16 @@ const BEACON = {
         return `${Math.floor(sec / 86400)}d ago`;
     },
 
-    getElapsedClass(elapsedMs, sleepMs) {
-        if (elapsedMs == null) return 'dead';
-        const threshold = (sleepMs || 60000) * 3;
-        if (elapsedMs > threshold * 5) return 'dead';
-        if (elapsedMs > threshold) return 'stale';
-        return '';
+    getElapsedClass(elapsedMs, sleepMs, alive) {
+        // Dead: server explicitly marked inactive
+        if (alive === false) return 'dead';
+        // Dead: hasn't checked in for 30x sleep cycles, minimum 5 minutes
+        const deadThreshold = Math.max(sleepMs ? sleepMs * 30 : 300000, 300000);
+        if (elapsedMs > deadThreshold) return 'dead';
+        // Stale: overdue but not yet presumed dead
+        const staleThreshold = sleepMs ? sleepMs * 2 : 30000;
+        if (elapsedMs > staleThreshold) return 'stale';
+        return 'alive';
     },
 
     // --- Beacon Table Filter ---
@@ -2834,12 +2990,14 @@ const BEACON = {
     },
 
     // --- Timestamp helper ---
-    _timestamp() {
-        const now = new Date();
-        const h = String(now.getHours()).padStart(2, '0');
-        const m = String(now.getMinutes()).padStart(2, '0');
-        const s = String(now.getSeconds()).padStart(2, '0');
-        return `${h}:${m}:${s}`;
+    _timestamp(date) {
+        const d = date ? new Date(date) : new Date();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const h = String(d.getHours()).padStart(2, '0');
+        const m = String(d.getMinutes()).padStart(2, '0');
+        const s = String(d.getSeconds()).padStart(2, '0');
+        return `${mm}/${dd} ${h}:${m}:${s}`;
     },
 
     // --- OPSEC Warning + API Compatibility (shown in console output after command) ---
@@ -3709,7 +3867,7 @@ const BEACON = {
                 const tid = t.taskId;
                 if (tid) this._taskFeedKnown.add(tid);
 
-                const ts = t.created ? new Date(t.created).toLocaleTimeString() : '';
+                const ts = t.created ? this._timestamp(t.created) : '';
                 const cmd = t.taskCommand || '?';
                 const user = (t.user || '').split('@')[0] || 'operator';
                 const status = t.taskStatus || '';
@@ -3720,7 +3878,7 @@ const BEACON = {
                 // Render acknowledgements
                 if (t.taskAcknowledgements && t.taskAcknowledgements.length > 0) {
                     for (const ack of t.taskAcknowledgements) {
-                        const ackTs = ack.timestamp ? new Date(ack.timestamp).toLocaleTimeString() : '';
+                        const ackTs = ack.timestamp ? this._timestamp(ack.timestamp) : '';
                         output.innerHTML += `<span style="color: var(--terminal-info);">[${ackTs}] [*] ${this.escapeHtml(ack.text || '')}</span>\n`;
                     }
                 }
@@ -3981,6 +4139,10 @@ const BEACON = {
                 case 'listeners':
                     if (this._listenerCache) this._renderListenerCache();
                     else this.loadListeners();
+                    this.populatePayloadListeners();
+                    break;
+                case 'graph':
+                    this.renderGraph();
                     break;
                 case 'processes':
                     this.loadProcesses();
@@ -5367,6 +5529,18 @@ const BEACON = {
 
     },
 
+    // Map frontend recon subcmd names to the CS REST API spawn/net endpoint names
+    _RECON_SPAWN_MAP: {
+        computers: 'computers',
+        dclist: 'dclist',
+        users: 'user',
+        groups: 'group',
+        shares: 'share',
+        sessions: 'sessions',
+        logons: 'logons',
+        trusts: 'domainTrusts',
+    },
+
     runRecon() {
         if (!this.selectedBid || !this._selectedRecon) return;
         const subcmd = this._selectedRecon;
@@ -5377,9 +5551,8 @@ const BEACON = {
         const domainFlag = document.getElementById('recon-domain-flag')?.checked || false;
         const domainName = document.getElementById('recon-domain')?.value?.trim() || '';
 
-        // Build the command naturally — same as typing in CS console
-        // e.g. "net user", "net user \\DC01", "net user /domain", "net user /domain corp.local"
-        let cmdParts = [info.cmd]; // e.g. "net user"
+        // Build display command naturally — same as typing in CS console
+        let cmdParts = [info.cmd];
         if (target) cmdParts.push(target);
         if (domainFlag) {
             cmdParts.push('/domain');
@@ -5387,21 +5560,50 @@ const BEACON = {
         }
         const fullCmd = cmdParts.join(' ');
 
-        // Run via consoleCommand — CS handles the /domain flag natively
         this._logToConsole(fullCmd, 'Recon');
         const output = document.getElementById('recon-output');
         if (output) output.innerHTML += `\n<span style="color: var(--terminal-prompt);">beacon&gt;</span> <span style="color: var(--text-terminal);">${this.escapeHtml(fullCmd)}</span>\n`;
 
-        // Send through the console command endpoint (handles /domain natively)
-        this._runReconCommand(fullCmd, output);
+        // "domain" uses its own execute endpoint (runs in-beacon, no spawn)
+        if (subcmd === 'domain') {
+            this._runReconNetDomain(output);
+            return;
+        }
+
+        // All other subcmds use the dedicated spawn/net endpoint with structured DTOs
+        const spawnName = this._RECON_SPAWN_MAP[subcmd] || subcmd;
+        const domain = (domainFlag && domainName) ? domainName : (domainFlag ? '' : '');
+        this._runReconSpawnNet(spawnName, domain, output);
     },
 
-    async _runReconCommand(command, output) {
+    async _runReconNetDomain(output) {
         try {
-            const resp = await fetch(`/api/beacon/${this.selectedBid}/command`, {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/net/domain`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command }),
+            });
+            const data = await resp.json();
+            if (data.success && (data.result?.taskId || data.data?.taskId)) {
+                const _t = (data.result?.taskId || data.data?.taskId);
+                this._taskFeedKnown.add(_t); this._taskFeedPolling.add(_t);
+                this.pollTaskOutput(_t, output);
+                this._trackTaskInConsole(_t);
+            } else if (!data.success) {
+                if (output) output.innerHTML += `<span style="color: var(--terminal-danger);">[-] ${this.escapeHtml(data.error || 'Failed')}</span>\n`;
+            }
+        } catch (e) {
+            if (output) output.innerHTML += `<span style="color: var(--terminal-danger);">[-] Error: ${this.escapeHtml(e.message)}</span>\n`;
+        }
+    },
+
+    async _runReconSpawnNet(spawnSubcmd, domain, output) {
+        try {
+            const body = {};
+            if (domain) body.domain = domain;
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/spawn/net/${spawnSubcmd}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
             });
             const data = await resp.json();
             if (data.success && (data.result?.taskId || data.data?.taskId)) {
@@ -5429,11 +5631,13 @@ const BEACON = {
         this._logToConsole(logMsg, 'Recon');
         const output = document.getElementById('recon-output');
         if (output) output.innerHTML += `\n<span style="color: var(--terminal-prompt);">beacon&gt;</span> <span style="color: var(--text-terminal);">net ${this.escapeHtml(subcmd)}</span>\n`;
+        // Route through the dedicated spawn/net endpoint instead of consoleCommand
+        const spawnName = this._RECON_SPAWN_MAP[subcmd] || subcmd;
         try {
-            const resp = await fetch(`/api/beacon/${this.selectedBid}/net/${subcmd}`, {
+            const resp = await fetch(`/api/beacon/${this.selectedBid}/spawn/net/${spawnName}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ target: target || undefined }),
+                body: JSON.stringify({}),
             });
             const data = await resp.json();
             if (data.success && (data.result?.taskId || data.data?.taskId)) {
@@ -5770,6 +5974,335 @@ const BEACON = {
             this._logResultToConsole(data.success ? `Listener "${lid}" deleted` : `Error: ${data.error}`, data.success ? 'success' : 'error');
             this.loadListeners();
         } catch (e) { /* ignore */ }
+    },
+
+    // ── Quick Payload Generator ─────────────────────────────────────
+
+    setPayloadExit(mode) {
+        this.payloadExitFunction = mode;
+        const threadBtn = document.getElementById('payload-exit-thread');
+        const processBtn = document.getElementById('payload-exit-process');
+        if (threadBtn && processBtn) {
+            threadBtn.className = mode === 'thread' ? 'btn btn-sm btn-info' : 'btn btn-sm btn-secondary';
+            processBtn.className = mode === 'process' ? 'btn btn-sm btn-info' : 'btn btn-sm btn-secondary';
+        }
+    },
+
+    populatePayloadListeners() {
+        const select = document.getElementById('payload-listener-select');
+        if (!select) return;
+        fetch('/api/beacon/listeners')
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success || !data.listeners) return;
+                const listeners = data.listeners;
+                select.innerHTML = '<option value="">Select listener...</option>';
+                listeners.forEach(l => {
+                    const name = l.name || l.listenerName || 'unknown';
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    select.appendChild(opt);
+                });
+                if (listeners.length > 0) {
+                    select.selectedIndex = 1;
+                }
+            })
+            .catch(() => {});
+    },
+
+    async generateQuickPayload() {
+        const select = document.getElementById('payload-listener-select');
+        const statusEl = document.getElementById('payload-status');
+        const btn = document.getElementById('payload-generate-btn');
+        const listenerName = select ? select.value : '';
+
+        if (!listenerName) {
+            if (statusEl) statusEl.innerHTML = '<span style="color: var(--danger-text);">Select a listener first</span>';
+            return;
+        }
+
+        if (btn) btn.disabled = true;
+        if (statusEl) statusEl.innerHTML = '<span class="t-muted">Generating payload...</span>';
+
+        try {
+            const resp = await fetch('/api/beacon/payloads/generate/stageless', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    listenerName: listenerName,
+                    architecture: 'x64',
+                    exitFunction: this.payloadExitFunction,
+                    systemCallMethod: 'None',
+                    output: 'raw',
+                    useListenerGuardRails: true
+                })
+            });
+            const data = await resp.json();
+
+            if (!data.success) {
+                if (statusEl) statusEl.innerHTML = `<span style="color: var(--danger-text);">Error: ${data.error || 'Generation failed'}</span>`;
+                return;
+            }
+
+            const filename = data.data?.filename || data.data?.fileName || 'beacon_x64.bin';
+
+            const dlResp = await fetch(`/api/beacon/payloads/${encodeURIComponent(filename)}`);
+            if (!dlResp.ok) {
+                if (statusEl) statusEl.innerHTML = `<span style="color: var(--danger-text);">Download failed: ${dlResp.statusText}</span>`;
+                return;
+            }
+
+            const blob = await dlResp.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            const sizeKB = Math.round(blob.size / 1024);
+            if (statusEl) statusEl.innerHTML = `<span style="color: var(--success-text);">${this.escapeHtml(filename)} downloaded (${sizeKB} KB)</span>`;
+        } catch (e) {
+            if (statusEl) statusEl.innerHTML = `<span style="color: var(--danger-text);">Error: ${this.escapeHtml(e.message)}</span>`;
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    },
+
+    // ── Server Info Display ─────────────────────────────────────────
+
+    async fetchServerInfo() {
+        const infoDiv = document.getElementById('beacon-server-info');
+        if (!infoDiv) return;
+
+        try {
+            const [ipResp, profileResp] = await Promise.all([
+                fetch('/api/beacon/server/ip').then(r => r.json()),
+                fetch('/api/beacon/server/profile').then(r => r.json())
+            ]);
+
+            const ipEl = document.getElementById('beacon-server-ip');
+            const profileEl = document.getElementById('beacon-server-profile');
+
+            if (ipEl && ipResp.success) {
+                ipEl.textContent = ipResp.data || '\u2014';
+            }
+
+            if (profileEl && profileResp.success) {
+                const profileText = String(profileResp.data || '');
+                const nameMatch = profileText.match(/set\s+sample_name\s+"([^"]+)"/);
+                if (nameMatch) {
+                    profileEl.textContent = nameMatch[1];
+                } else {
+                    const firstLine = profileText.split('\n').find(l => l.trim() && !l.trim().startsWith('#'));
+                    profileEl.textContent = firstLine ? firstLine.trim().substring(0, 60) : '\u2014';
+                }
+            }
+
+            infoDiv.style.display = '';
+        } catch (e) {
+            // Silently fail — server info is nice-to-have
+        }
+    },
+
+    // ── Network Graph Visualization ─────────────────────────────────
+
+    renderGraph() {
+        const canvas = document.getElementById('beacon-graph-canvas');
+        const container = document.getElementById('graph-container');
+        if (!canvas || !container) return;
+
+        const ctx = canvas.getContext('2d');
+        const dpr = window.devicePixelRatio || 1;
+        const rect = container.getBoundingClientRect();
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.scale(dpr, dpr);
+        const W = rect.width;
+        const H = rect.height;
+
+        const beacons = this.cachedBeacons;
+        if (!beacons.length) {
+            ctx.clearRect(0, 0, W, H);
+            ctx.fillStyle = '#7A849E';
+            ctx.font = '14px -apple-system, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('No beacons to display', W / 2, H / 2);
+            return;
+        }
+
+        // Build adjacency: parent → children
+        const byBid = {};
+        beacons.forEach(b => { byBid[b.bid] = b; });
+        const roots = [];
+        const children = {};
+        beacons.forEach(b => {
+            if (b.pbid && byBid[b.pbid]) {
+                if (!children[b.pbid]) children[b.pbid] = [];
+                children[b.pbid].push(b.bid);
+            } else {
+                roots.push(b.bid);
+            }
+        });
+
+        // Layout: tree from roots, assign x/y to each node
+        const nodes = {};
+        const nodeW = 140, nodeH = 52, padX = 30, padY = 70;
+        let leafIndex = 0;
+
+        function countLeaves(bid) {
+            const kids = children[bid] || [];
+            if (kids.length === 0) return 1;
+            return kids.reduce((sum, c) => sum + countLeaves(c), 0);
+        }
+        const totalLeaves = roots.reduce((sum, r) => sum + countLeaves(r), 0) || 1;
+
+        function layoutTree(bid, depth, leftLeaf) {
+            const kids = children[bid] || [];
+            if (kids.length === 0) {
+                const x = padX + (leftLeaf + 0.5) * ((W - padX * 2) / totalLeaves);
+                const y = padY + depth * (nodeH + padY);
+                nodes[bid] = { x, y };
+                return leftLeaf + 1;
+            }
+            let cursor = leftLeaf;
+            kids.forEach(c => { cursor = layoutTree(c, depth + 1, cursor); });
+            // Center parent above children
+            const firstChild = nodes[kids[0]];
+            const lastChild = nodes[kids[kids.length - 1]];
+            nodes[bid] = {
+                x: (firstChild.x + lastChild.x) / 2,
+                y: padY + depth * (nodeH + padY),
+            };
+            return cursor;
+        }
+
+        let cursor = 0;
+        roots.forEach(r => { cursor = layoutTree(r, 0, cursor); });
+
+        // If graph is taller than canvas, scale to fit
+        let maxY = 0;
+        Object.values(nodes).forEach(n => { if (n.y > maxY) maxY = n.y; });
+        const scaleY = maxY + nodeH + padY > H ? (H - 20) / (maxY + nodeH + padY) : 1;
+        const scaleX = totalLeaves * (nodeW + padX) > W ? W / (totalLeaves * (nodeW + padX)) : 1;
+        const scale = Math.min(scaleX, scaleY, 1);
+
+        // Apply scale offset to center
+        const offsetX = (W - (W * scale)) / 2;
+        const offsetY = 20;
+
+        ctx.clearRect(0, 0, W, H);
+        ctx.save();
+        ctx.translate(offsetX, offsetY);
+        ctx.scale(scale, scale);
+
+        // Health colors
+        const healthColors = {
+            alive: '#7ECF8C',
+            stale: '#F0CA4A',
+            dead: '#F08A84',
+        };
+
+        // Draw edges
+        beacons.forEach(b => {
+            if (b.pbid && nodes[b.pbid] && nodes[b.bid]) {
+                const parent = nodes[b.pbid];
+                const child = nodes[b.bid];
+                ctx.beginPath();
+                ctx.moveTo(parent.x, parent.y + nodeH / 2);
+                // Curved line
+                const midY = (parent.y + nodeH / 2 + child.y - nodeH / 2) / 2;
+                ctx.bezierCurveTo(parent.x, midY, child.x, midY, child.x, child.y - nodeH / 2);
+
+                // Determine link type from listener/pivotHint
+                const isPivot = b.listener && /smb|tcp/i.test(b.listener);
+                if (isPivot) {
+                    ctx.setLineDash([6, 4]);
+                    ctx.strokeStyle = '#82BBE8';
+                } else {
+                    ctx.setLineDash([]);
+                    ctx.strokeStyle = '#7A849E';
+                }
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Edge label
+                const labelText = b.pivotHint
+                    ? b.pivotHint.replace(/^\d+,\s*/, '')
+                    : (b.listener || '');
+                if (labelText) {
+                    ctx.font = '10px -apple-system, sans-serif';
+                    ctx.fillStyle = '#7A849E';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(labelText, (parent.x + child.x) / 2, midY - 4);
+                }
+            }
+        });
+
+        // Draw nodes
+        const self = this;
+        this._graphNodes = [];
+        beacons.forEach(b => {
+            const n = nodes[b.bid];
+            if (!n) return;
+            const elapsedMs = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
+            const health = this.getElapsedClass(elapsedMs, b.sleep, b.alive);
+            const color = healthColors[health] || healthColors.alive;
+            const isSelected = b.bid === this.selectedBid;
+
+            // Node box
+            const x = n.x - nodeW / 2;
+            const y = n.y - nodeH / 2;
+            ctx.fillStyle = isSelected ? '#232840' : '#1C2031';
+            ctx.strokeStyle = color;
+            ctx.lineWidth = isSelected ? 2.5 : 1.5;
+            ctx.beginPath();
+            ctx.roundRect(x, y, nodeW, nodeH, 6);
+            ctx.fill();
+            ctx.stroke();
+
+            // Computer name
+            ctx.font = 'bold 11px -apple-system, sans-serif';
+            ctx.fillStyle = '#EEF0F6';
+            ctx.textAlign = 'center';
+            const adminStar = b.isAdmin ? ' \u2605' : '';
+            const compText = (b.computer || '\u2014').substring(0, 16);
+            ctx.fillText(compText + adminStar, n.x, n.y - 4);
+
+            // User + IP
+            ctx.font = '10px -apple-system, sans-serif';
+            ctx.fillStyle = '#B0B8CC';
+            const userText = (b.user || '\u2014').substring(0, 18);
+            ctx.fillText(userText, n.x, n.y + 10);
+            ctx.fillStyle = '#7A849E';
+            ctx.fillText(b.internal || '', n.x, n.y + 22);
+
+            // Store for click detection
+            this._graphNodes.push({ bid: b.bid, label: `${b.user}@${b.computer}`, x: x * scale + offsetX, y: y * scale + offsetY, w: nodeW * scale, h: nodeH * scale });
+        });
+
+        ctx.restore();
+
+        // Click handler
+        if (!this._graphClickBound) {
+            this._graphClickBound = true;
+            canvas.addEventListener('click', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+                const hit = (self._graphNodes || []).find(n =>
+                    mx >= n.x && mx <= n.x + n.w && my >= n.y && my <= n.y + n.h
+                );
+                if (hit) {
+                    self.selectBeacon(hit.bid, hit.label);
+                    self.renderGraph();
+                }
+            });
+        }
     },
 
     // ════════════════════════════════════════════════════════════════
@@ -10160,6 +10693,8 @@ function pollDestructionStatus(projectName = null) {
                     // Keep _destroyInProgress true so timeline doesn't rebuild and wipe results
                     // It gets cleared when user dismisses the result panel
                     loadResourceList();
+                    // Bust terminal outputs cache for the destroyed project
+                    if (typeof TERMINAL !== 'undefined') TERMINAL.invalidateCache(trackedProject);
 
                 } else if (status.status === 'error') {
                     clearInterval(pollInterval);
@@ -10978,19 +11513,21 @@ async function loadConnectionInfo(projectName, sessionId) {
     const text = contentDiv.textContent.trim();
     if (text !== 'Loading connection details...' && text !== '') return;
 
-    contentDiv.innerHTML = '<div class="spinner" style="margin: 10px auto;"></div> Loading connection details...';
-    
     try {
-        // Fetch Terraform outputs for this project
-        const response = await fetch(`${API_BASE}/deploy/outputs?project=${encodeURIComponent(projectName)}`);
-        const data = await response.json();
-        
-        if (!data.success || !data.outputs) {
-            contentDiv.innerHTML = `<div class="t-secondary">No connection details available. ${data.error || ''}</div>`;
+    // Try shared cache first — render instantly if available
+    let outputs = _getCachedOutputs(projectName);
+    if (outputs) {
+        // Cache hit — render immediately, refresh in background
+        _fetchAndCacheOutputs(projectName);
+    } else {
+        // Cache miss — show spinner, fetch
+        contentDiv.innerHTML = '<div class="spinner" style="margin: 10px auto;"></div> Loading connection details...';
+        outputs = await _fetchAndCacheOutputs(projectName);
+        if (!outputs) {
+            contentDiv.innerHTML = '<div class="t-secondary">No connection details available.</div>';
             return;
         }
-        
-        const outputs = data.outputs;
+    }
 
         // Cache normalized project data for other consumers (checklist, etc.)
         if (!getProjectData(projectName)) {
@@ -12814,6 +13351,7 @@ async function destroyGoadLab() {
         if (data.success) {
             alert('GOAD lab destroyed successfully.');
             loadGoadStatus();
+            if (typeof TERMINAL !== 'undefined') TERMINAL.invalidateCache();
         } else {
             alert(`Error: ${data.error}`);
         }
@@ -13226,6 +13764,16 @@ async function loadDeploymentsPage() {
     ]);
     // Re-render timeline so deployment cards can lazy-load per-project data
     renderDeploymentTimeline();
+
+    // Prefetch outputs for all active deployments (warms shared cache for Connection Info)
+    try {
+        const resp = await fetch('/api/deploy/active');
+        const data = await resp.json();
+        (data.deployments || []).forEach(d => {
+            const name = d._filename || '';
+            if (name && !_getCachedOutputs(name)) _fetchAndCacheOutputs(name);
+        });
+    } catch { /* ignore */ }
 }
 
 // Flag to suppress per-section toasts during bulk refresh
@@ -14495,6 +15043,9 @@ function buildSessionDetails(session, sessionId) {
                 </button>
                 <button id="destroy-btn-${projectName}" onclick="showDestroyConfirmation('${projectName}', 'destroy')" class="btn" style="background: var(--danger); color: white; font-size: 0.88em; padding: 8px 16px;">
                     🗑️ Destroy Infrastructure
+                </button>
+                <button onclick="TOPOLOGY.show('${projectName}')" class="btn" style="background: var(--info); color: white; font-size: 0.88em; padding: 8px 16px;">
+                    🔗 Topology
                 </button>
             </div>
             <div style="margin-top: 10px; font-size: 0.8em; color: var(--text-secondary); background: var(--warning-bg); padding: 8px 12px; border-radius: 4px; border-left: 3px solid var(--warning);">
@@ -16206,6 +16757,27 @@ function renderC2ConnectionInfo(projectData) {
                 <strong class="t-warning">Change this password on first login.</strong>
                 <span class="t-secondary"> Auto-generated by EC2Launch v2 during boot. Change via SSH or RDP:</span>
                 ${renderCopyableCommand('', 'net user Administrator NewPasswordHere')}
+            </div>
+        </div>`;
+    }
+
+    // File Portal
+    const portalEnabled = projectData.outputs?.enable_file_portal;
+    if (portalEnabled) {
+        const portalUrl = projectData.outputs?.portal_url || '';
+        const portalUser = projectData.outputs?.portal_username || 'operator';
+        const portalPass = projectData.outputs?.portal_password || '';
+        html += `
+        <div style="margin-bottom: 14px; padding: 14px; background: var(--bg-section); border-radius: 6px; border-left: 3px solid var(--success);">
+            <strong style="color: var(--success-text); font-size: 1em;">File Portal</strong>
+            <div style="margin-top: 4px; font-size: 0.9em; color: var(--text-muted);">Secure file upload/download portal on the <code>www.</code> redirector</div>
+            <div style="display: grid; grid-template-columns: auto auto; gap: 6px 12px; margin-top: 10px; align-items: center; justify-content: start;">
+                <span class="t-secondary">URL:</span>
+                <span style="display: flex; align-items: center; gap: 6px;">${portalUrl ? `<a href="${portalUrl}" target="_blank" style="color: var(--link);">${portalUrl}</a>` : '<span class="t-muted">Not available</span>'}</span>
+                <span class="t-secondary">Username:</span>
+                <code class="code-inline" style="width: fit-content;">${portalUser}</code>
+                <span class="t-secondary">Password:</span>
+                <span style="display: flex; align-items: center; gap: 6px;"><code class="code-inline">${portalPass}</code>${portalPass ? `<button onclick="copyToClipboard('${portalPass.replace(/'/g, "\\'")}', this)" style="background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-light); padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75em; white-space: nowrap;">Copy</button>` : ''}</span>
             </div>
         </div>`;
     }
@@ -18549,6 +19121,1736 @@ function _getSetupCheckProject() {
     }
     return null;
 }
+
+// ============================================================================
+// TERMINAL — Local shell + SSH sessions via WebSocket + xterm.js
+// ============================================================================
+
+const TERMINAL = {
+    sessions: {},       // id → { term, ws, type, label }
+    activeId: null,
+    nextId: 1,
+    maxSessions: 10,
+    deployments: [],
+    selectedDeployment: null,
+    _initialized: false,
+    // Uses shared global cache: _globalOutputsCache
+    get _outputsCache() { return _globalOutputsCache; },
+
+    _refreshInterval: null,
+
+    async init() {
+        // Reset instance buttons and selection on every init
+        const btnContainer = document.getElementById('terminal-instance-buttons');
+        const btnRow = document.getElementById('terminal-instance-btn-row');
+        if (btnContainer) btnContainer.style.display = 'none';
+        if (btnRow) btnRow.innerHTML = '';
+        this.selectedDeployment = null;
+
+        // Load deployments and pre-fetch all outputs in parallel
+        await this._loadDeployments();
+        this._prefetchAllOutputs();
+
+        // Start background refresh (every 60s while on Terminal page)
+        this._startBackgroundRefresh();
+
+        // Check if xterm.js loaded
+        if (typeof Terminal === 'undefined') {
+            const warn = document.getElementById('terminal-dep-warning');
+            if (warn) { warn.style.display = 'block'; warn.innerHTML = '<strong>xterm.js not loaded.</strong> Check your internet connection (loaded from CDN).'; }
+        }
+
+        // Re-focus active session if returning to tab, or auto-open local shell on first visit
+        if (this.activeId && this.sessions[this.activeId]) {
+            this.sessions[this.activeId].term.focus();
+        } else if (Object.keys(this.sessions).length === 0 && typeof Terminal !== 'undefined') {
+            this.openLocal();
+        }
+        this._initialized = true;
+    },
+
+    _prefetchAllOutputs() {
+        // Fetch outputs for every deployment in parallel — populates cache silently
+        this.deployments.forEach(d => {
+            const name = d._filename || '';
+            if (name && !this._outputsCache[name]) {
+                this._fetchOutputs(name); // fire-and-forget, populates cache
+            }
+        });
+    },
+
+    _startBackgroundRefresh() {
+        if (this._refreshInterval) clearInterval(this._refreshInterval);
+        this._refreshInterval = setInterval(() => {
+            // Only refresh if we're on the terminal page
+            if (APP.currentPage !== 'terminal') return;
+            this.deployments.forEach(d => {
+                const name = d._filename || '';
+                if (name) this._fetchOutputs(name); // silent background update
+            });
+        }, 60000);
+    },
+
+    stopBackgroundRefresh() {
+        if (this._refreshInterval) {
+            clearInterval(this._refreshInterval);
+            this._refreshInterval = null;
+        }
+    },
+
+    async _loadDeployments() {
+        const select = document.getElementById('terminal-deployment-select');
+        if (!select) return;
+        try {
+            const resp = await fetch('/api/deploy/active');
+            const data = await resp.json();
+            this.deployments = data.deployments || [];
+
+            select.innerHTML = '<option value="">-- Select a deployment --</option>';
+            this.deployments.forEach((d, i) => {
+                const name = d._filename || `Deployment ${i + 1}`;
+                const type = d.deployment_type || 'unknown';
+                const opt = document.createElement('option');
+                opt.value = i;
+                opt.textContent = `${name} (${type})`;
+                select.appendChild(opt);
+            });
+        } catch {
+            select.innerHTML = '<option value="">Failed to load deployments</option>';
+        }
+    },
+
+    // ── Cache management (delegates to shared global cache) ──
+    _getCachedOutputs(projectName) {
+        return _getCachedOutputs(projectName);
+    },
+
+    async _fetchOutputs(projectName) {
+        return (await _fetchAndCacheOutputs(projectName)) || {};
+    },
+
+    invalidateCache(projectName) {
+        _invalidateOutputsCache(projectName);
+    },
+
+    async onDeploymentSelected() {
+        const select = document.getElementById('terminal-deployment-select');
+        const btnContainer = document.getElementById('terminal-instance-buttons');
+        const btnRow = document.getElementById('terminal-instance-btn-row');
+        const idx = select?.value;
+
+        if (!idx || idx === '') {
+            this.selectedDeployment = null;
+            if (btnContainer) btnContainer.style.display = 'none';
+            return;
+        }
+
+        const deployment = this.deployments[parseInt(idx)];
+        if (!deployment) return;
+        this.selectedDeployment = deployment;
+
+        const projectName = deployment._filename || '';
+
+        // Always try cache first (pre-fetched on page load)
+        const cached = this._getCachedOutputs(projectName);
+        if (btnContainer) btnContainer.style.display = '';
+
+        if (cached) {
+            this._renderInstanceButtons(cached, btnRow);
+            // Silent background refresh to catch state changes
+            this._fetchOutputs(projectName).then(fresh => {
+                if (this.selectedDeployment?._filename === projectName) {
+                    this._renderInstanceButtons(fresh, btnRow);
+                }
+            });
+            return;
+        }
+
+        // Cache miss (rare — prefetch hasn't completed yet). Fetch now.
+        if (btnRow) btnRow.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85em;">Fetching instances...</span>';
+        const outputs = await this._fetchOutputs(projectName);
+
+        this._renderInstanceButtons(outputs, btnRow);
+    },
+
+    // ── Open a local shell and execute a command ──
+    openTunnel(label, command) {
+        if (typeof Terminal === 'undefined') return;
+
+        if (Object.keys(this.sessions).length >= this.maxSessions) {
+            alert(`Session limit reached (max ${this.maxSessions}). Close a tab first.`);
+            return;
+        }
+
+        const id = 'term_' + (this.nextId++);
+        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${wsProto}//${location.host}/api/terminal/local`);
+        const term = this._createTerm(id, ws);
+
+        ws.onopen = () => {
+            ws.send(JSON.stringify({ type: 'init' }));
+            this._sendResize(ws, term);
+            // Wait for shell to be ready, then send the command
+            setTimeout(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(command + '\n');
+                }
+            }, 500);
+        };
+
+        this.sessions[id] = { term, ws, type: 'tunnel', label };
+        this._addTab(id, label);
+        this._switchTo(id);
+    },
+
+    _renderInstanceButtons(outputs, btnRow) {
+        if (!btnRow) return;
+        const instances = [];
+        const bastionIp = outputs.bastion_public_ip;
+
+        if (bastionIp) {
+            instances.push({ label: 'Bastion', host: bastionIp, user: 'ubuntu', bastion: null, icon: '🛡', state: outputs.bastion_state });
+        }
+
+        if (outputs.redirectors) {
+            outputs.redirectors.forEach((r, i) => {
+                if (r.private_ip) {
+                    instances.push({ label: `Redir-${i + 1}`, host: r.private_ip, user: 'ubuntu', bastion: bastionIp, icon: '🔀', state: r.state });
+                }
+            });
+        }
+
+        if (outputs.c2_servers) {
+            outputs.c2_servers.forEach((ts, i) => {
+                if (ts.private_ip) {
+                    instances.push({ label: `TeamSrv-${i + 1}`, host: ts.private_ip, user: 'ubuntu', bastion: bastionIp, icon: '🖥', state: ts.state });
+                }
+            });
+        } else if (outputs.teamserver_private_ip) {
+            instances.push({ label: 'Team Server', host: outputs.teamserver_private_ip, user: 'ubuntu', bastion: bastionIp || outputs.jumpbox_public_ip, icon: '🖥', state: outputs.teamserver_state });
+        }
+
+        if (outputs.attackbox_private_ip) {
+            instances.push({ label: 'Attack Box', host: outputs.attackbox_private_ip, user: 'Administrator', bastion: bastionIp || outputs.jumpbox_public_ip, icon: '⚔', state: outputs.attackbox_state });
+        }
+
+        if (outputs.jumpbox_public_ip) {
+            instances.push({ label: 'Jumpbox', host: outputs.jumpbox_public_ip, user: 'ubuntu', bastion: null, icon: '🔑', state: outputs.jumpbox_state });
+        }
+
+        ['dc01', 'dc02', 'srv01', 'srv02', 'srv03', 'ws01'].forEach(vm => {
+            if (outputs[vm + '_private_ip']) {
+                instances.push({ label: vm.toUpperCase(), host: outputs[vm + '_private_ip'], user: 'ansible', bastion: outputs.jumpbox_public_ip, icon: '🏢', state: outputs[vm + '_state'] });
+            }
+        });
+
+        function _esc(s) { return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+        if (instances.length > 0) {
+            let html = instances.map(inst => {
+                const stateColor = inst.state === 'running' ? 'var(--terminal-success)' : inst.state === 'stopped' ? 'var(--terminal-danger)' : 'var(--terminal-warning)';
+                const stateDot = inst.state ? `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${stateColor};margin-right:4px;" title="${inst.state}"></span>` : '';
+                const disabled = inst.state === 'stopped' ? 'disabled style="opacity:0.5;pointer-events:none;"' : '';
+                return `<button class="btn btn-sm btn-info" ${disabled} onclick="TERMINAL.openSSH('${_esc(inst.host)}', '${_esc(inst.user)}', ${inst.bastion ? "'" + _esc(inst.bastion) + "'" : 'null'}, '${_esc(inst.label)}')">${stateDot}${inst.icon} ${_esc(inst.label)}</button>`;
+            }).join('');
+
+            // Tunnel shortcut buttons — adapts to deployment type
+            const tunnels = [];
+            const keyPath = '~/.ssh/id_ed25519';
+            const sshOpts = `-i ${keyPath} -o StrictHostKeyChecking=no`;
+            const jumpboxIp = outputs.jumpbox_public_ip;
+
+            // C2 team server IP (from c2_servers array or flat field)
+            const c2TsIp = outputs.c2_servers?.[0]?.private_ip;
+            // GOAD team server IP (flat field, only if different from C2)
+            const goadTsIp = outputs.teamserver_private_ip;
+            // Pick the right team server and jump host based on what's available
+            const tsIp = c2TsIp || goadTsIp;
+            const abIp = outputs.attackbox_private_ip;
+
+            // RDP to Attack Box — via bastion (C2 VPC) or jumpbox (GOAD VPC)
+            if (abIp) {
+                const jumpHost = bastionIp || jumpboxIp;
+                if (jumpHost) {
+                    const cmd = `ssh -L 3389:${abIp}:3389 ${sshOpts} ubuntu@${jumpHost}`;
+                    const via = bastionIp ? 'via Bastion' : 'via Jumpbox';
+                    tunnels.push({ label: `RDP Tunnel → Attack Box (${via})`, cmd, color: 'btn-warning' });
+                }
+            }
+
+            // CS Client + REST API tunnels — via bastion (C2 deployments) or jumpbox (GOAD)
+            if (tsIp) {
+                const jumpHost = bastionIp || jumpboxIp;
+                if (jumpHost) {
+                    const via = bastionIp ? 'via Bastion' : 'via Jumpbox';
+                    const cmd50050 = `ssh -L 50050:${tsIp}:50050 ${sshOpts} ubuntu@${jumpHost}`;
+                    tunnels.push({ label: `CS Client Tunnel (${via})`, cmd: cmd50050, color: 'btn-warning' });
+                    const cmd50443 = `ssh -L 50443:${tsIp}:50443 ${sshOpts} ubuntu@${jumpHost}`;
+                    tunnels.push({ label: `REST API Tunnel (${via})`, cmd: cmd50443, color: 'btn-warning' });
+                }
+            }
+
+            // Combined deployments: also show GOAD tunnels via jumpbox if separate from C2
+            if (bastionIp && jumpboxIp && goadTsIp && c2TsIp && goadTsIp !== c2TsIp) {
+                const cmd = `ssh -L 50050:${goadTsIp}:50050 ${sshOpts} ubuntu@${jumpboxIp}`;
+                tunnels.push({ label: 'CS Client Tunnel (GOAD via Jumpbox)', cmd, color: 'btn-warning' });
+            }
+
+            if (tunnels.length > 0) {
+                html += '<span style="display:inline-block; width:1px; height:24px; background:var(--border); margin:0 6px; vertical-align:middle;"></span>';
+                html += tunnels.map(t =>
+                    `<button class="btn btn-sm ${t.color}" onclick="TERMINAL.openTunnel('${_esc(t.label)}', '${_esc(t.cmd)}')" title="${_esc(t.cmd)}">🔗 ${_esc(t.label)}</button>`
+                ).join('');
+            }
+
+            btnRow.innerHTML = html;
+        } else {
+            btnRow.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85em;">No SSH-accessible instances found for this deployment.</span>';
+        }
+    },
+
+    // ── Open a local shell ──
+    openLocal() {
+        if (typeof Terminal === 'undefined') return;
+
+        if (Object.keys(this.sessions).length >= this.maxSessions) {
+            alert(`Session limit reached (max ${this.maxSessions}). Close a tab first.`);
+            return;
+        }
+
+        const id = 'term_' + (this.nextId++);
+        const localCount = Object.values(this.sessions).filter(s => s.type === 'local').length;
+        const label = localCount === 0 ? 'Local Shell' : `Local Shell ${localCount + 1}`;
+
+        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${wsProto}//${location.host}/api/terminal/local`);
+
+        const term = this._createTerm(id, ws);
+
+        ws.onopen = () => {
+            ws.send(JSON.stringify({ type: 'init' }));
+            this._sendResize(ws, term);
+        };
+
+        this.sessions[id] = { term, ws, type: 'local', label };
+        this._addTab(id, label);
+        this._switchTo(id);
+    },
+
+    // ── Open SSH session ──
+    openSSH(host, user, bastion, label) {
+        if (typeof Terminal === 'undefined') return;
+
+        // Check if session to this host already exists
+        for (const [id, s] of Object.entries(this.sessions)) {
+            if (s.type === 'ssh' && s.host === host) { this._switchTo(id); return; }
+        }
+
+        if (Object.keys(this.sessions).length >= this.maxSessions) {
+            alert(`Session limit reached (max ${this.maxSessions}). Close a tab first.`);
+            return;
+        }
+
+        const id = 'term_' + (this.nextId++);
+        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${wsProto}//${location.host}/api/terminal/ssh`);
+
+        const term = this._createTerm(id, ws);
+
+        ws.onopen = () => {
+            ws.send(JSON.stringify({ host, user, bastion: bastion || null }));
+        };
+
+        this.sessions[id] = { term, ws, type: 'ssh', label: label || host, host };
+        this._addTab(id, label || host);
+        this._switchTo(id);
+    },
+
+    // ── Create xterm.js instance ──
+    _createTerm(id, ws) {
+        const container = document.getElementById('terminal-container');
+        const workspace = document.getElementById('terminal-workspace');
+        const emptyState = document.getElementById('terminal-empty-state');
+        if (workspace) workspace.classList.remove('terminal-workspace-hidden');
+        if (emptyState) emptyState.style.display = 'none';
+
+        // Create session div
+        const div = document.createElement('div');
+        div.id = id;
+        div.className = 'terminal-session';
+        container.appendChild(div);
+
+        // Create xterm
+        const term = new Terminal({
+            cursorBlink: true,
+            fontSize: 14,
+            fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, monospace",
+            theme: {
+                background: '#0B0D14',
+                foreground: '#B0B8CC',
+                cursor: '#B0B8CC',
+                cursorAccent: '#0B0D14',
+                selectionBackground: '#3A4060',
+                black: '#1C2031',
+                red: '#F08A84',
+                green: '#7ECF8C',
+                yellow: '#F0CA4A',
+                blue: '#82BBE8',
+                magenta: '#C8A0E8',
+                cyan: '#7AD4D4',
+                white: '#EEF0F6',
+                brightBlack: '#4A5168',
+                brightRed: '#F08A84',
+                brightGreen: '#7ECF8C',
+                brightYellow: '#F0CA4A',
+                brightBlue: '#82BBE8',
+                brightMagenta: '#C8A0E8',
+                brightCyan: '#7AD4D4',
+                brightWhite: '#EEF0F6',
+            },
+            allowProposedApi: true,
+        });
+
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(div);
+
+        // Fit after a tick (DOM needs to settle)
+        requestAnimationFrame(() => {
+            fitAddon.fit();
+            this._sendResize(ws, term);
+        });
+
+        // Handle resize
+        const resizeObserver = new ResizeObserver(() => {
+            fitAddon.fit();
+            this._sendResize(ws, term);
+        });
+        resizeObserver.observe(div);
+
+        // Terminal → WebSocket (user input)
+        term.onData(data => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(data);
+            }
+        });
+
+        // WebSocket → Terminal (output)
+        ws.onmessage = (evt) => {
+            if (evt.data instanceof Blob) {
+                evt.data.arrayBuffer().then(buf => term.write(new Uint8Array(buf)));
+            } else {
+                term.write(evt.data);
+            }
+        };
+
+        ws.onclose = () => {
+            term.write('\r\n\x1b[90m[Session ended]\x1b[0m\r\n');
+        };
+
+        ws.onerror = () => {
+            term.write('\r\n\x1b[31m[Connection error]\x1b[0m\r\n');
+        };
+
+        // Store fitAddon and observer for cleanup
+        term._fitAddon = fitAddon;
+        term._resizeObserver = resizeObserver;
+
+        return term;
+    },
+
+    _sendResize(ws, term) {
+        if (ws.readyState === WebSocket.OPEN) {
+            try {
+                ws.send(JSON.stringify({ type: 'resize', rows: term.rows, cols: term.cols }));
+            } catch { /* ignore */ }
+        }
+    },
+
+    // ── Tab management ──
+    _addTab(id, label) {
+        const bar = document.getElementById('terminal-tab-bar');
+        if (!bar) return;
+
+        // Remove existing "+" button (we'll re-add it at the end)
+        const existingPlus = bar.querySelector('.terminal-tab-new');
+        if (existingPlus) existingPlus.remove();
+
+        const tab = document.createElement('button');
+        tab.className = 'terminal-tab';
+        tab.dataset.termId = id;
+        tab.innerHTML = `<span class="tab-label">${this._esc(label)}</span><span class="tab-close" onclick="event.stopPropagation(); TERMINAL.closeSession('${id}')">✕</span>`;
+        tab.onclick = () => this._switchTo(id);
+        bar.appendChild(tab);
+
+        // Add "+" button at the end
+        const plus = document.createElement('button');
+        plus.className = 'terminal-tab terminal-tab-new';
+        plus.title = 'New local shell';
+        plus.innerHTML = '<span class="tab-plus">+</span>';
+        plus.onclick = () => this.openLocal();
+        bar.appendChild(plus);
+    },
+
+    _switchTo(id) {
+        // Hide all sessions, show the target
+        Object.entries(this.sessions).forEach(([sid, s]) => {
+            const div = document.getElementById(sid);
+            if (div) div.classList.toggle('active', sid === id);
+        });
+
+        // Update tab active state
+        document.querySelectorAll('#terminal-tab-bar .terminal-tab').forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.termId === id);
+        });
+
+        this.activeId = id;
+        const session = this.sessions[id];
+        if (session) {
+            requestAnimationFrame(() => {
+                session.term._fitAddon?.fit();
+                session.term.focus();
+            });
+        }
+    },
+
+    closeSession(id) {
+        const session = this.sessions[id];
+        if (!session) return;
+
+        // Send explicit close signal so backend kills the process immediately
+        try {
+            if (session.ws.readyState === WebSocket.OPEN) {
+                session.ws.send(JSON.stringify({ type: 'close' }));
+            }
+            session.ws.close();
+        } catch { /* ignore */ }
+
+        // Dispose terminal
+        try {
+            session.term._resizeObserver?.disconnect();
+            session.term.dispose();
+        } catch { /* ignore */ }
+
+        // Remove DOM
+        const div = document.getElementById(id);
+        if (div) div.remove();
+
+        // Remove tab
+        document.querySelectorAll(`#terminal-tab-bar .terminal-tab[data-term-id="${id}"]`).forEach(t => t.remove());
+
+        delete this.sessions[id];
+
+        // Switch to another tab or show empty state
+        const remaining = Object.keys(this.sessions);
+        if (remaining.length > 0) {
+            this._switchTo(remaining[remaining.length - 1]);
+        } else {
+            this.activeId = null;
+            const workspace = document.getElementById('terminal-workspace');
+            const emptyState = document.getElementById('terminal-empty-state');
+            if (workspace) workspace.classList.add('terminal-workspace-hidden');
+            if (emptyState) emptyState.style.display = '';
+        }
+    },
+
+    _esc(s) {
+        if (!s) return '';
+        const d = document.createElement('div');
+        d.textContent = String(s);
+        return d.innerHTML;
+    },
+};
+
+
+// ============================================================================
+// TOPOLOGY GRAPH — Full-screen infrastructure + beacon topology overlay
+// ============================================================================
+
+const TOPOLOGY = {
+    overlay: null,
+    canvas: null,
+    ctx: null,
+    sidePanel: null,
+    sidePanelBody: null,
+    nodes: [],
+    edges: [],
+    selectedNode: null,
+    panX: 0, panY: 0,
+    scale: 1,
+    dragStart: null,
+    isDragging: false,
+    dragNode: null,        // Node being dragged (null = pan canvas)
+    dragNodeStart: null,   // {x, y} of node at drag start
+    projectName: '',
+    beaconData: null,
+    listenerData: null,
+    beaconStatus: 'unknown', // 'connected' | 'no_beacons' | 'not_connected'
+    infraData: null,
+    configData: null, // parsed terraform.tfvars — drives dynamic port labels
+
+    // ── Node type config ──
+    // awsIcon = path under /assets/aws-icons/, fallbackIcon = emoji if image fails
+    NODE_TYPES: {
+        domain:      { color: '#82BBE8', label: 'Domain',      w: 160, h: 52, awsIcon: 'route53.svg',   fallbackIcon: '🌐' },
+        cloudfront:  { color: '#F0CA4A', label: 'CloudFront',  w: 160, h: 52, awsIcon: 'cloudfront.svg', fallbackIcon: '☁' },
+        redirector:  { color: '#7ECF8C', label: 'Redirector',  w: 165, h: 58, awsIcon: 'ec2.svg',       fallbackIcon: '🔀' },
+        teamserver:  { color: '#F08A84', label: 'Team Server', w: 175, h: 62, awsIcon: 'ec2.svg',       fallbackIcon: '🖥' },
+        bastion:     { color: '#F0CA4A', label: 'Bastion',     w: 155, h: 52, awsIcon: 'ec2.svg',       fallbackIcon: '🛡' },
+        attackbox:   { color: '#F0CA4A', label: 'Attack Box',  w: 155, h: 52, awsIcon: 'ec2.svg',       fallbackIcon: '⚔' },
+        listener:    { color: '#B0B8CC', label: 'Listener',    w: 130, h: 34, awsIcon: null,            fallbackIcon: '📡' },
+        beacon:      { color: '#7ECF8C', label: 'Beacon',      w: 140, h: 54, awsIcon: null,            fallbackIcon: '💻' },
+        jumpbox:     { color: '#B0B8CC', label: 'Jumpbox',     w: 150, h: 52, awsIcon: 'ec2.svg',       fallbackIcon: '🔑' },
+        goad_vm:     { color: '#7A849E', label: 'GOAD VM',     w: 140, h: 48, awsIcon: 'ec2.svg',       fallbackIcon: '🏢' },
+    },
+
+    // Preloaded Image objects keyed by filename
+    _iconCache: {},
+    _iconsLoaded: false,
+
+    // ── Preload AWS icon SVGs into Image objects ──
+    _preloadIcons() {
+        const files = new Set();
+        Object.values(this.NODE_TYPES).forEach(cfg => { if (cfg.awsIcon) files.add(cfg.awsIcon); });
+        let loaded = 0;
+        const total = files.size;
+        if (total === 0) { this._iconsLoaded = true; return Promise.resolve(); }
+
+        return new Promise(resolve => {
+            files.forEach(file => {
+                if (this._iconCache[file]) { loaded++; if (loaded >= total) { this._iconsLoaded = true; resolve(); } return; }
+                const img = new Image();
+                img.onload = () => { this._iconCache[file] = img; loaded++; if (loaded >= total) { this._iconsLoaded = true; resolve(); } };
+                img.onerror = () => { loaded++; if (loaded >= total) { this._iconsLoaded = true; resolve(); } };
+                img.src = `/assets/aws-icons/${file}`;
+            });
+        });
+    },
+
+    // ── Show topology overlay ──
+    show(projectName) {
+        this.projectName = projectName;
+        this.selectedNode = null;
+        this.panX = 0;
+        this.panY = 0;
+        this.scale = 1;
+        this.nodes = [];
+        this.edges = [];
+        this.infraData = null;
+        this.configData = null;
+        this.beaconData = null;
+        this.listenerData = null;
+        this.beaconStatus = 'unknown';
+        this._createOverlay();
+        this._fetchData(projectName);
+    },
+
+    // ── Close overlay ──
+    close() {
+        if (this.overlay) {
+            this.overlay.remove();
+            this.overlay = null;
+        }
+    },
+
+    // ── Create full-screen overlay DOM ──
+    _createOverlay() {
+        if (this.overlay) this.overlay.remove();
+        const div = document.createElement('div');
+        div.className = 'topology-overlay';
+        div.innerHTML = `
+            <div class="topology-header">
+                <h2>Infrastructure Topology — ${this._esc(this.projectName)}</h2>
+                <button class="btn btn-sm btn-info" onclick="TOPOLOGY._refresh()">Refresh</button>
+                <button class="btn btn-sm btn-secondary" onclick="TOPOLOGY._resetLayout()">Reset Layout</button>
+                <button class="btn-close-topology" onclick="TOPOLOGY.close()">✕ Close</button>
+            </div>
+            <div class="topology-body">
+                <div class="topology-canvas-wrap">
+                    <canvas id="topology-canvas"></canvas>
+                    <div class="topology-legend">
+                        <span><span style="color:#82BBE8;">■</span> Domain</span>
+                        <span><span style="color:#F0CA4A;">■</span> CDN / Bastion</span>
+                        <span><span style="color:#7ECF8C;">■</span> Redirector</span>
+                        <span><span style="color:#F08A84;">■</span> Team Server</span>
+                        <span><span style="color:#B0B8CC;">■</span> Listener</span>
+                        <span>── Link</span>
+                        <span>╌╌ Pivot</span>
+                        <span style="border: 1px dashed #F08A84; padding: 0 4px; border-radius: 3px; font-size: 0.9em; color: #F08A84;">★</span> Admin/SYSTEM
+                    </div>
+                    <div id="topology-beacon-banner" class="topology-beacon-banner" style="display: none;"></div>
+                </div>
+                <div class="topology-side-panel" id="topology-side-panel">
+                    <div class="topology-side-panel-header">
+                        <h3 id="topology-side-title">Details</h3>
+                        <button class="btn-close-side" onclick="TOPOLOGY._closeSide()">✕</button>
+                    </div>
+                    <div class="topology-side-panel-body" id="topology-side-body"></div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(div);
+        this.overlay = div;
+        this.sidePanel = div.querySelector('#topology-side-panel');
+        this.sidePanelBody = div.querySelector('#topology-side-body');
+
+        // Canvas setup
+        this.canvas = div.querySelector('#topology-canvas');
+        const wrap = div.querySelector('.topology-canvas-wrap');
+        this.canvas.width = wrap.clientWidth * devicePixelRatio;
+        this.canvas.height = wrap.clientHeight * devicePixelRatio;
+        this.canvas.style.width = wrap.clientWidth + 'px';
+        this.canvas.style.height = wrap.clientHeight + 'px';
+        this.ctx = this.canvas.getContext('2d');
+        this.ctx.scale(devicePixelRatio, devicePixelRatio);
+        this.W = wrap.clientWidth;
+        this.H = wrap.clientHeight;
+
+        // Events
+        this.canvas.addEventListener('wheel', e => this._handleWheel(e), { passive: false });
+        this.canvas.addEventListener('mousedown', e => this._handleMouseDown(e));
+        this.canvas.addEventListener('mousemove', e => this._handleMouseMove(e));
+        this.canvas.addEventListener('mouseup', e => this._handleMouseUp(e));
+        this.canvas.addEventListener('mouseleave', e => this._handleMouseUp(e));
+        document.addEventListener('keydown', this._escHandler = e => { if (e.key === 'Escape') this.close(); });
+
+        // Loading state
+        this._drawLoading();
+    },
+
+    _drawLoading() {
+        const ctx = this.ctx;
+        ctx.clearRect(0, 0, this.W, this.H);
+        ctx.fillStyle = '#7A849E';
+        ctx.font = '14px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Loading infrastructure data...', this.W / 2, this.H / 2);
+    },
+
+    // ── Fetch infra outputs + config + beacons ──
+    async _fetchData(projectName) {
+        // Use shared cache for outputs, fetch config in parallel
+        const cached = _getCachedOutputs(projectName);
+        const configPromise = fetch('/api/config/').then(r => r.json()).catch(() => null);
+
+        if (cached) {
+            this.infraData = cached;
+            // Background refresh
+            _fetchAndCacheOutputs(projectName).then(fresh => { if (fresh) this.infraData = fresh; });
+        } else {
+            const fresh = await _fetchAndCacheOutputs(projectName);
+            this.infraData = fresh || null;
+            if (!fresh) console.warn('Topology: could not load infra outputs');
+        }
+
+        const configResult = await configPromise;
+
+        if (configResult && configResult.success) {
+            this.configData = configResult.config;
+        } else {
+            this.configData = null;
+        }
+
+        // Check if CS REST API is actually connected via the health endpoint
+        this.beaconStatus = 'not_connected';
+        this.beaconData = null;
+        try {
+            const healthResp = await fetch('/api/beacon/health');
+            const healthJson = await healthResp.json();
+            const apiConnected = healthJson.status === 'connected' && healthJson.authenticated;
+
+            if (apiConnected) {
+                // API is authenticated — now get beacons (use cached if available)
+                if (BEACON && BEACON.cachedBeacons && BEACON.cachedBeacons.length > 0) {
+                    this.beaconData = BEACON.cachedBeacons;
+                    this.beaconStatus = 'connected';
+                } else {
+                    try {
+                        await BEACON.refreshBeacons();
+                    } catch { /* ignore */ }
+                    if (BEACON.cachedBeacons && BEACON.cachedBeacons.length > 0) {
+                        this.beaconData = BEACON.cachedBeacons;
+                        this.beaconStatus = 'connected';
+                    } else {
+                        this.beaconStatus = 'no_beacons';
+                    }
+                }
+            } else {
+                // API reachable but not authenticated, or not configured
+                this.beaconStatus = 'not_connected';
+            }
+        } catch {
+            this.beaconStatus = 'not_connected';
+        }
+
+        // Fetch listener details if API is connected
+        this.listenerData = null;
+        this._connectedServerIp = null;
+        if (this.beaconStatus !== 'not_connected') {
+            try {
+                const lResp = await fetch('/api/beacon/listeners');
+                const lJson = await lResp.json();
+                if (lJson.success && lJson.listeners) this.listenerData = lJson.listeners;
+            } catch { /* ignore */ }
+
+            // Get connected server IP to verify it belongs to this deployment
+            try {
+                const ipResp = await fetch('/api/beacon/server/ip');
+                const ipJson = await ipResp.json();
+                if (ipJson.success && ipJson.data) this._connectedServerIp = ipJson.data;
+            } catch { /* ignore */ }
+        }
+
+        // Verify beacon data belongs to THIS deployment's team server
+        if (this.beaconData && this.infraData && this._connectedServerIp) {
+            const deployTsIps = [];
+            if (this.infraData.c2_servers) {
+                this.infraData.c2_servers.forEach(ts => {
+                    if (ts.private_ip) deployTsIps.push(ts.private_ip);
+                });
+            }
+            if (this.infraData.teamserver_private_ip) {
+                deployTsIps.push(this.infraData.teamserver_private_ip);
+            }
+
+            if (deployTsIps.length > 0 && !deployTsIps.includes(this._connectedServerIp)) {
+                // Connected to a DIFFERENT team server — don't show beacons on this topology
+                this.beaconData = null;
+                this.listenerData = null;
+                this.beaconStatus = 'wrong_server';
+            }
+        }
+
+        this._buildGraph();
+        this._layoutNodes();
+        await this._preloadIcons();
+        this._render();
+        this._updateBeaconBanner();
+    },
+
+    _refresh() {
+        this._drawLoading();
+        this._fetchData(this.projectName);
+    },
+
+    // ── Subnet visual config (CIDRs derived dynamically from node IPs) ──
+    SUBNETS: {
+        external:   { label: 'External / Internet',  color: '#82BBE822', border: '#82BBE844' },
+        management: { label: 'Management Subnet',    color: '#F0CA4A15', border: '#F0CA4A33' },
+        dmz:        { label: 'Public / DMZ Subnets', color: '#7ECF8C15', border: '#7ECF8C33' },
+        private:    { label: 'Private Subnets',      color: '#F08A8415', border: '#F08A8433' },
+        goad:       { label: 'GOAD Lab VPC',          color: '#7A849E15', border: '#7A849E33' },
+    },
+
+    // Derive CIDR-style label from actual node IPs in a subnet group
+    _deriveSubnetCidr(subnetKey) {
+        const nodeIds = this._subnetGroups?.[subnetKey] || [];
+        const ips = [];
+        for (const id of nodeIds) {
+            const n = this.nodes.find(nd => nd.id === id);
+            if (!n) continue;
+            // Collect all private/public IPs from node data
+            const d = n.data || {};
+            if (d.private_ip) ips.push(d.private_ip);
+            else if (d.public_ip) ips.push(d.public_ip);
+        }
+        if (ips.length === 0) return '';
+
+        // Group IPs by their /24 prefix (first 3 octets)
+        const prefixes = new Set();
+        for (const ip of ips) {
+            const parts = ip.split('.');
+            if (parts.length === 4) prefixes.add(`${parts[0]}.${parts[1]}.${parts[2]}.0/24`);
+        }
+        return [...prefixes].join(' · ');
+    },
+
+    // ── Read a config value from tfvars, with default fallback ──
+    _cfg(key, fallback) {
+        if (this.configData && this.configData[key] !== undefined && this.configData[key] !== '') {
+            return this.configData[key];
+        }
+        return fallback;
+    },
+
+    // ── Build nodes and edges from data ──
+    _buildGraph() {
+        this.nodes = [];
+        this.edges = [];
+        this._subnets = []; // [{key, nodes: [nodeIds]}]
+        const d = this.infraData;
+        if (!d) {
+            this.nodes.push({ id: 'empty', type: 'domain', label: 'No data', sublabel: 'Check deployment outputs', x: 0, y: 0, subnet: 'external', data: {} });
+            return;
+        }
+
+        let nodeId = 0;
+        const nid = () => 'n' + (nodeId++);
+
+        // Track node IDs per subnet for clustering
+        const subnetNodes = { external: [], management: [], dmz: [], private: [], goad: [] };
+
+        // Determine if this deployment uses C2 infrastructure (domain, redirectors, CloudFront)
+        const deployType = d.deployment_type || this._cfg('deployment_type', '');
+        const isC2Deploy = deployType.startsWith('c2-') || deployType.startsWith('combined-');
+        const isGoadDeploy = deployType.startsWith('goad-') || deployType.startsWith('combined-');
+
+        // Domain (external) — only for C2/combined deployments
+        const domainId = nid();
+        if (d.primary_domain_name && isC2Deploy) {
+            this.nodes.push({ id: domainId, type: 'domain', label: d.primary_domain_name, sublabel: d.c2_subdomain ? `${d.c2_subdomain}.${d.primary_domain_name}` : '', x: 0, y: 0, subnet: 'external', data: { domain: d.primary_domain_name, nameservers: d.dns_nameservers, dns_domain: d.dns_domain } });
+            subnetNodes.external.push(domainId);
+        }
+
+        // CloudFront (external) — only for C2/combined with domain fronting
+        let cfId = null;
+        if (d.enable_domain_fronting && isC2Deploy) {
+            cfId = nid();
+            this.nodes.push({ id: cfId, type: 'cloudfront', label: 'CloudFront CDN', sublabel: d.cloudfront_domain_name || '', x: 0, y: 0, subnet: 'external', data: { distribution_id: d.cloudfront_distribution_id, domain: d.cloudfront_domain_name } });
+            subnetNodes.external.push(cfId);
+            if (d.primary_domain_name) this.edges.push({ from: domainId, to: cfId, label: 'DNS CNAME' });
+        }
+
+        // Redirectors (DMZ) — only for C2/combined deployments
+        const redirIds = [];
+        if (isC2Deploy && d.redirectors && d.redirectors.length > 0) {
+            d.redirectors.forEach((r, i) => {
+                const rid = nid();
+                redirIds.push(rid);
+                const redirSub = r.private_ip ? `${r.private_ip} (${r.public_ip})` : (r.public_ip || '');
+                this.nodes.push({ id: rid, type: 'redirector', label: `Redirector ${i + 1}`, sublabel: redirSub, x: 0, y: 0, subnet: 'dmz', data: { ...r, index: i + 1 } });
+                subnetNodes.dmz.push(rid);
+                if (cfId) {
+                    // domain_fronting/main.tf: origin_protocol_policy = "http-only"
+                    this.edges.push({ from: cfId, to: rid, label: 'HTTP/80 (CF origin)' });
+                } else if (d.primary_domain_name) {
+                    this.edges.push({ from: domainId, to: rid, label: `HTTPS/${this._cfg('c2_listener_port', 443)}` });
+                }
+            });
+        } else if (isC2Deploy && d.redirector_public_ip) {
+            const rid = nid();
+            redirIds.push(rid);
+            const singleRedirSub = d.redirector_private_ip ? `${d.redirector_private_ip} (${d.redirector_public_ip})` : d.redirector_public_ip;
+            this.nodes.push({ id: rid, type: 'redirector', label: 'Redirector', sublabel: singleRedirSub, x: 0, y: 0, subnet: 'dmz', data: { public_ip: d.redirector_public_ip, private_ip: d.redirector_private_ip, instance_id: d.redirector_instance_id, state: d.redirector_state } });
+            subnetNodes.dmz.push(rid);
+            if (cfId) this.edges.push({ from: cfId, to: rid, label: 'HTTP/80 (CF origin)' });
+            else if (d.primary_domain_name) this.edges.push({ from: domainId, to: rid, label: `HTTPS/${this._cfg('c2_listener_port', 443)}` });
+        }
+
+        // C2 Team Servers — C2 VPC private subnet (c2-* and combined-* deployments)
+        const tsIds = [];
+        if (isC2Deploy && d.c2_servers && d.c2_servers.length > 0) {
+            d.c2_servers.forEach((ts, i) => {
+                const tid = nid();
+                tsIds.push(tid);
+                this.nodes.push({ id: tid, type: 'teamserver', label: `Team Server ${i + 1}`, sublabel: ts.private_ip || '', x: 0, y: 0, subnet: 'private', data: { ...ts, index: i + 1, cs_password: d.cs_teamserver_password, profile: d.malleable_profile } });
+                subnetNodes.private.push(tid);
+                redirIds.forEach(rid => this.edges.push({ from: rid, to: tid, label: `TCP/${this._cfg('c2_listener_port', 443)} (listener)` }));
+            });
+        } else if (isC2Deploy && d.teamserver_private_ip) {
+            // Fallback: outputs return teamserver_private_ip but not c2_servers array
+            const tid = nid();
+            tsIds.push(tid);
+            this.nodes.push({ id: tid, type: 'teamserver', label: 'Team Server', sublabel: d.teamserver_private_ip, x: 0, y: 0, subnet: 'private', data: { private_ip: d.teamserver_private_ip, instance_id: d.teamserver_instance_id, state: d.teamserver_state, cs_password: d.cs_teamserver_password, profile: d.malleable_profile } });
+            subnetNodes.private.push(tid);
+            redirIds.forEach(rid => this.edges.push({ from: rid, to: tid, label: `TCP/${this._cfg('c2_listener_port', 443)} (listener)` }));
+        }
+        // GOAD Team Server — lives in GOAD VPC private subnet (goad-* and combined-* deployments)
+        if (isGoadDeploy && d.teamserver_private_ip) {
+            // Avoid duplicating if already added above for combined deployments
+            const alreadyAdded = tsIds.length > 0 && this.nodes.some(n => n.type === 'teamserver' && n.data?.private_ip === d.teamserver_private_ip);
+            if (!alreadyAdded) {
+                const tid = nid();
+                tsIds.push(tid);
+                this.nodes.push({ id: tid, type: 'teamserver', label: 'Team Server (GOAD)', sublabel: d.teamserver_private_ip, x: 0, y: 0, subnet: 'goad', data: { private_ip: d.teamserver_private_ip, instance_id: d.teamserver_instance_id, state: d.teamserver_state } });
+                subnetNodes.goad.push(tid);
+            }
+        }
+
+        // Bastion (Management subnet — C2/combined only, GOAD-only has no bastion)
+        let bastionId = null;
+        if (d.bastion_public_ip && isC2Deploy) {
+            bastionId = nid();
+            const bastionSub = d.bastion_private_ip ? `${d.bastion_private_ip} (${d.bastion_public_ip})` : d.bastion_public_ip;
+            this.nodes.push({ id: bastionId, type: 'bastion', label: 'Bastion', sublabel: bastionSub, x: 0, y: 0, subnet: 'management', data: { public_ip: d.bastion_public_ip, private_ip: d.bastion_private_ip, instance_id: d.bastion_instance_id, state: d.bastion_state } });
+            subnetNodes.management.push(bastionId);
+        }
+
+        // Attack Box — C2 VPC private subnet for C2/combined, GOAD VPC for GOAD-only
+        let attackboxId = null;
+        if (d.attackbox_private_ip) {
+            attackboxId = nid();
+            const abSubnet = isGoadDeploy && !isC2Deploy ? 'goad' : 'private';
+            this.nodes.push({ id: attackboxId, type: 'attackbox', label: 'Attack Box', sublabel: d.attackbox_private_ip, x: 0, y: 0, subnet: abSubnet, data: { private_ip: d.attackbox_private_ip, instance_id: d.attackbox_instance_id, state: d.attackbox_state, password: d.attackbox_password } });
+            subnetNodes[abSubnet].push(attackboxId);
+        }
+
+        // Cross-subnet connections (from security/main.tf SG rules, ports from tfvars)
+        const sshPort = this._cfg('ssh_port', 22);
+        const csPort = this._cfg('c2_server_port', 50050);
+        // REST API: show port if tfvars says enabled OR if we actually connected to it
+        const restEnabled = this._cfg('enable_cs_rest_api', false) === true
+            || this._cfg('enable_cs_rest_api', '') === 'true'
+            || this.beaconStatus === 'connected'
+            || this.beaconStatus === 'no_beacons';
+
+        if (bastionId) {
+            // security/main.tf: attack_box_sg allows RDP/3389 + SSH from bastion_sg
+            if (attackboxId) this.edges.push({ from: bastionId, to: attackboxId, label: `RDP/3389 · SSH/${sshPort}`, dashed: true });
+            // security/main.tf: c2_sg allows SSH + CS port (+ REST/50443 if enabled) from bastion_sg
+            const bastionToTs = `SSH/${sshPort} · CS/${csPort}` + (restEnabled ? ' · REST/50443' : '');
+            tsIds.forEach(tid => this.edges.push({ from: bastionId, to: tid, label: bastionToTs, dashed: true }));
+            // security/main.tf: proxy_redirector_sg allows SSH from bastion_sg
+            redirIds.forEach(rid => this.edges.push({ from: bastionId, to: rid, label: `SSH/${sshPort}`, dashed: true }));
+        }
+        // security/main.tf: c2_sg allows SSH + CS port from attack_box_sg
+        if (attackboxId) {
+            tsIds.forEach(tid => this.edges.push({ from: attackboxId, to: tid, label: `SSH/${sshPort} · CS/${csPort}`, dashed: true }));
+        }
+
+        // Jumpbox (GOAD public subnet — GOAD/combined only)
+        let jumpboxId = null;
+        if (d.jumpbox_public_ip && isGoadDeploy) {
+            jumpboxId = nid();
+            const jbSub = d.jumpbox_private_ip ? `${d.jumpbox_private_ip} (${d.jumpbox_public_ip})` : d.jumpbox_public_ip;
+            this.nodes.push({ id: jumpboxId, type: 'jumpbox', label: 'Jumpbox', sublabel: jbSub, x: 0, y: 0, subnet: 'goad', data: { public_ip: d.jumpbox_public_ip, private_ip: d.jumpbox_private_ip, instance_id: d.jumpbox_instance_id, state: d.jumpbox_state } });
+            subnetNodes.goad.push(jumpboxId);
+        }
+
+        // GOAD VMs (GOAD subnet)
+        const goadVmIds = [];
+        ['dc01', 'dc02', 'srv01', 'srv02', 'srv03', 'ws01'].forEach(vm => {
+            if (d[vm + '_private_ip']) {
+                const vid = nid();
+                goadVmIds.push(vid);
+                this.nodes.push({ id: vid, type: 'goad_vm', label: vm.toUpperCase(), sublabel: d[vm + '_private_ip'], x: 0, y: 0, subnet: 'goad', data: { private_ip: d[vm + '_private_ip'], instance_id: d[vm + '_instance_id'], state: d[vm + '_state'] } });
+                subnetNodes.goad.push(vid);
+            }
+        });
+
+        // GOAD connections (goad/security.tf: all traffic allowed within VPC CIDR)
+        if (jumpboxId && goadVmIds.length > 0) {
+            // Jumpbox runs Ansible provisioning — SSH/22 + WinRM/5985-5986 to AD VMs
+            goadVmIds.forEach(vid => this.edges.push({ from: jumpboxId, to: vid, label: 'All (VPC internal)', dashed: true }));
+        }
+        if (attackboxId && goadVmIds.length > 0) {
+            // Attack box → AD VMs: All traffic within GOAD VPC (SG allows all from VPC CIDR)
+            goadVmIds.forEach(vid => this.edges.push({ from: attackboxId, to: vid, label: 'All (VPC internal)', dashed: true }));
+        }
+
+        // Store subnet groupings (only subnets that have nodes)
+        this._subnetGroups = {};
+        for (const [key, ids] of Object.entries(subnetNodes)) {
+            if (ids.length > 0) this._subnetGroups[key] = ids;
+        }
+
+        // Listeners + Beacons (if available, attach below team servers)
+        if (this.beaconData && this.beaconData.length > 0 && tsIds.length > 0) {
+            const parentTsId = tsIds[0];
+            const profile = d.malleable_profile || '';
+
+            // Build listener nodes — one per unique listener name
+            const listenerIdMap = {}; // listener name → graph node id
+            const uniqueListeners = [...new Set(this.beaconData.map(b => b.listener || 'Unknown'))];
+
+            uniqueListeners.forEach(lName => {
+                const lid = nid();
+                listenerIdMap[lName] = lid;
+
+                // Find matching listener detail from API data
+                const detail = (this.listenerData || []).find(l => (l.name || l.Name) === lName) || {};
+                const lType = detail.type || detail.payload || '';
+                const lHost = detail.host || detail.Host || '';
+                const lPort = detail.port || detail.Port || '';
+
+                // Count beacons on this listener
+                const beaconsOnListener = this.beaconData.filter(b => (b.listener || 'Unknown') === lName && !b.pbid);
+                const aliveCount = beaconsOnListener.filter(b => {
+                    const el = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
+                    return BEACON.getElapsedClass(el, b.sleep, b.alive) === 'alive';
+                }).length;
+                const totalOnListener = beaconsOnListener.length;
+
+                this.nodes.push({
+                    id: lid, type: 'listener',
+                    label: lName,
+                    sublabel: lPort ? `${lType || 'HTTPS'}/${lPort}` : lType || '',
+                    x: 0, y: 0,
+                    data: {
+                        name: lName,
+                        type: lType,
+                        host: lHost,
+                        port: lPort,
+                        profile: profile,
+                        beacon_count: totalOnListener,
+                        beacon_alive: aliveCount,
+                        beacon_total: this.beaconData.filter(b => (b.listener || 'Unknown') === lName).length,
+                        ...detail
+                    }
+                });
+                this.edges.push({ from: parentTsId, to: lid, label: '' });
+            });
+
+            // Add beacon nodes
+            const beaconIdMap = {};
+            this.beaconData.forEach(b => {
+                const bid = nid();
+                beaconIdMap[b.bid] = bid;
+                const elapsed = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
+                const health = BEACON.getElapsedClass(elapsed, b.sleep, b.alive);
+                this.nodes.push({ id: bid, type: 'beacon', label: b.computer || 'Unknown', sublabel: b.user || '', x: 0, y: 0, health, data: { ...b, health, elapsed } });
+            });
+            // Edges: pivot beacons connect to parent, root beacons connect to their listener
+            this.beaconData.forEach(b => {
+                const bid = beaconIdMap[b.bid];
+                if (b.pbid && beaconIdMap[b.pbid]) {
+                    this.edges.push({ from: beaconIdMap[b.pbid], to: bid, label: b.pivotHint ? 'Pivot' : '', dashed: true });
+                } else {
+                    const lNodeId = listenerIdMap[b.listener || 'Unknown'];
+                    if (lNodeId) this.edges.push({ from: lNodeId, to: bid, label: '' });
+                }
+            });
+        } else if (this.listenerData && this.listenerData.length > 0 && tsIds.length > 0) {
+            // API connected, listeners exist, but no beacons — still show listeners
+            const parentTsId = tsIds[0];
+            const profile = d.malleable_profile || '';
+            this.listenerData.forEach(l => {
+                const lid = nid();
+                const lName = l.name || l.Name || 'Unknown';
+                const lType = l.type || l.payload || '';
+                const lPort = l.port || l.Port || '';
+                const lHost = l.host || l.Host || '';
+                this.nodes.push({
+                    id: lid, type: 'listener',
+                    label: lName,
+                    sublabel: lPort ? `${lType || 'HTTPS'}/${lPort}` : lType || '',
+                    x: 0, y: 0,
+                    data: { name: lName, type: lType, host: lHost, port: lPort, profile: profile, beacon_count: 0, beacon_alive: 0, beacon_total: 0, ...l }
+                });
+                this.edges.push({ from: parentTsId, to: lid, label: '' });
+            });
+        }
+    },
+
+    // ── Position nodes in layered top-down layout with subnet clustering ──
+    _layoutNodes() {
+        const padX = 60, padY = 80, subPadX = 30, subPadY = 40;
+        const centerX = this.W / 2;
+
+        // Subnet layout order (top to bottom)
+        const subnetOrder = ['external', 'dmz', 'management', 'private', 'goad'];
+
+        // Within each subnet, layer by node type
+        const layerOrder = { domain: 0, cloudfront: 0, redirector: 0, jumpbox: 0, bastion: 0, teamserver: 0, attackbox: 0, listener: 1, beacon: 2, goad_vm: 0 };
+
+        // Position nodes per subnet group, tracking bounding boxes
+        // Subnet bounds computed dynamically in _drawSubnets from live node positions
+        let currentY = subPadY;
+
+        subnetOrder.forEach(subKey => {
+            const nodeIds = this._subnetGroups?.[subKey];
+            if (!nodeIds || nodeIds.length === 0) return;
+
+            const subNodes = this.nodes.filter(n => nodeIds.includes(n.id));
+            if (subNodes.length === 0) return;
+
+            // Group nodes within the subnet by layer
+            const layers = {};
+            subNodes.forEach(n => {
+                const layer = layerOrder[n.type] ?? 0;
+                if (!layers[layer]) layers[layer] = [];
+                layers[layer].push(n);
+            });
+
+            const layerKeys = Object.keys(layers).sort((a, b) => a - b);
+            const subStartY = currentY;
+            let subMaxX = 0;
+
+            layerKeys.forEach(lk => {
+                const nodes = layers[lk];
+                const totalW = nodes.reduce((sum, n) => sum + (this.NODE_TYPES[n.type]?.w || 140), 0) + (nodes.length - 1) * padX;
+                let startX = centerX - totalW / 2;
+                nodes.forEach(n => {
+                    const nc = this.NODE_TYPES[n.type] || { w: 140, h: 48 };
+                    n.x = startX + nc.w / 2;
+                    n.y = currentY + nc.h / 2;
+                    startX += nc.w + padX;
+                    subMaxX = Math.max(subMaxX, n.x + nc.w / 2);
+                });
+                const tallest = Math.max(...nodes.map(n => this.NODE_TYPES[n.type]?.h || 48));
+                currentY += tallest + subPadY;
+            });
+
+            currentY += padY; // Gap between subnet groups
+        });
+
+        // Position beacon/listener nodes that aren't in a subnet group (below the last subnet)
+        const ungroupedTypes = ['listener', 'beacon'];
+        const ungrouped = this.nodes.filter(n => ungroupedTypes.includes(n.type) && !Object.values(this._subnetGroups || {}).flat().includes(n.id));
+        if (ungrouped.length > 0) {
+            const layers = {};
+            ungrouped.forEach(n => {
+                let layer = n.type === 'listener' ? 0 : 1;
+                if (n.type === 'beacon') {
+                    const parentEdge = this.edges.find(e => e.to === n.id);
+                    if (parentEdge) {
+                        const pn = this.nodes.find(p => p.id === parentEdge.from);
+                        if (pn && pn.type === 'beacon') layer = 2;
+                    }
+                }
+                if (!layers[layer]) layers[layer] = [];
+                layers[layer].push(n);
+            });
+
+            Object.keys(layers).sort((a, b) => a - b).forEach(lk => {
+                const nodes = layers[lk];
+                const totalW = nodes.reduce((sum, n) => sum + (this.NODE_TYPES[n.type]?.w || 140), 0) + (nodes.length - 1) * padX;
+                let startX = centerX - totalW / 2;
+                nodes.forEach(n => {
+                    const nc = this.NODE_TYPES[n.type] || { w: 140, h: 48 };
+                    n.x = startX + nc.w / 2;
+                    n.y = currentY + nc.h / 2;
+                    startX += nc.w + padX;
+                });
+                const tallest = Math.max(...nodes.map(n => this.NODE_TYPES[n.type]?.h || 48));
+                currentY += tallest + subPadY;
+            });
+        }
+
+        // Auto-fit: compute bounding box and adjust scale/pan
+        const allX = this.nodes.map(n => n.x);
+        const allY = this.nodes.map(n => n.y);
+        if (allX.length > 0) {
+            const minX = Math.min(...allX) - 120;
+            const maxX = Math.max(...allX) + 120;
+            const minY = Math.min(...allY) - 60;
+            const maxY = Math.max(...allY) + 60;
+            const graphW = maxX - minX;
+            const graphH = maxY - minY;
+            this.scale = Math.min(this.W / graphW, this.H / graphH, 1.2);
+            this.panX = (this.W - graphW * this.scale) / 2 - minX * this.scale;
+            this.panY = (this.H - graphH * this.scale) / 2 - minY * this.scale;
+        }
+    },
+
+    // ── Render everything ──
+    _render() {
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.clearRect(0, 0, this.W, this.H);
+
+        // Dot grid background
+        this._drawDotGrid();
+
+        ctx.translate(this.panX, this.panY);
+        ctx.scale(this.scale, this.scale);
+
+        // Draw subnet cluster backgrounds
+        this._drawSubnets();
+
+        // Draw edges
+        this.edges.forEach(e => this._drawEdge(e));
+
+        // Draw nodes
+        this.nodes.forEach(n => this._drawNode(n));
+
+        ctx.restore();
+    },
+
+    // ── Dot grid background ──
+    _drawDotGrid() {
+        const ctx = this.ctx;
+        const spacing = 25;
+        const dotR = 0.8;
+        ctx.fillStyle = '#2A2F40';
+
+        // Offset grid by pan so dots move with the canvas
+        const offX = this.panX % (spacing * this.scale);
+        const offY = this.panY % (spacing * this.scale);
+        const step = spacing * this.scale;
+
+        for (let x = offX; x < this.W; x += step) {
+            for (let y = offY; y < this.H; y += step) {
+                ctx.beginPath();
+                ctx.arc(x, y, dotR * this.scale, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+    },
+
+    // ── Draw subnet cluster backgrounds ──
+    _drawSubnets() {
+        const ctx = this.ctx;
+        if (!this._subnetGroups) return;
+
+        for (const [key] of Object.entries(this._subnetGroups)) {
+            const subCfg = this.SUBNETS[key];
+            if (!subCfg) continue;
+            const b = { color: subCfg.color, border: subCfg.border, label: subCfg.label, cidr: this._deriveSubnetCidr(key) };
+            // Recalculate bounds from actual node positions (in case nodes were dragged)
+            const nodeIds = this._subnetGroups?.[key] || [];
+            const subNodes = this.nodes.filter(n => nodeIds.includes(n.id));
+            if (subNodes.length === 0) continue;
+
+            const marginX = 35, marginTop = 35, marginBottom = 15;
+            const xs = subNodes.map(n => n.x - (n._w || this.NODE_TYPES[n.type]?.w || 140) / 2);
+            const xe = subNodes.map(n => n.x + (n._w || this.NODE_TYPES[n.type]?.w || 140) / 2);
+            const ys = subNodes.map(n => n.y - (this.NODE_TYPES[n.type]?.h || 48) / 2);
+            const ye = subNodes.map(n => n.y + (this.NODE_TYPES[n.type]?.h || 48) / 2);
+
+            const x = Math.min(...xs) - marginX;
+            const y = Math.min(...ys) - marginTop - 16; // Extra top for label
+            const w = Math.max(...xe) - Math.min(...xs) + marginX * 2;
+            const h = Math.max(...ye) - Math.min(...ys) + marginTop + marginBottom + 16;
+
+            // Background fill
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, 10);
+            ctx.fillStyle = b.color;
+            ctx.fill();
+
+            // Dashed border
+            ctx.setLineDash([6, 4]);
+            ctx.strokeStyle = b.border;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Label (top-left corner) — boost opacity for readability
+            ctx.fillStyle = b.border.replace(/[0-9a-f]{2}$/i, 'DD');
+            ctx.font = 'bold 10px system-ui, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillText(`${b.label}${b.cidr ? '  (' + b.cidr + ')' : ''}`, x + 10, y + 5);
+        }
+    },
+
+    _drawNode(n) {
+        const ctx = this.ctx;
+        const cfg = this.NODE_TYPES[n.type] || { w: 140, h: 48, color: '#7A849E' };
+
+        // Auto-size width to fit longest text (label or sublabel) + icon padding
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        const labelW = ctx.measureText(n.label).width;
+        ctx.font = '10px system-ui, sans-serif';
+        const subW = n.sublabel ? ctx.measureText(n.sublabel).width : 0;
+        const textW = Math.max(labelW, subW);
+        const iconPad = (cfg.awsIcon || cfg.fallbackIcon) ? 30 : 0;
+        const w = Math.max(cfg.w, textW + iconPad + 30);
+        const h = cfg.h;
+        const x = n.x - w / 2, y = n.y - h / 2;
+        // Store computed width for hit-testing
+        n._w = w;
+        const r = 8;
+        const selected = this.selectedNode && this.selectedNode.id === n.id;
+
+        // Background
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, r);
+        ctx.fillStyle = selected ? '#2A3050' : '#1C2031';
+        ctx.fill();
+
+        // Border
+        let borderColor = cfg.color;
+        if (n.type === 'beacon') {
+            borderColor = n.health === 'alive' ? '#7ECF8C' : n.health === 'stale' ? '#F0CA4A' : '#F08A84';
+            if (n.health === 'dead') ctx.globalAlpha = 0.5;
+        }
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = selected ? 3 : 1.5;
+        ctx.stroke();
+
+        // Double border for SYSTEM / admin beacons (elevated privilege indicator)
+        if (n.type === 'beacon' && n.data && n.data.isAdmin) {
+            ctx.beginPath();
+            ctx.roundRect(x - 3, y - 3, w + 6, h + 6, r + 2);
+            ctx.strokeStyle = '#F08A84';
+            ctx.lineWidth = 1.2;
+            ctx.setLineDash([4, 3]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // Type badge (small colored bar at top)
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, 4, [r, r, 0, 0]);
+        ctx.fillStyle = borderColor;
+        ctx.fill();
+
+        // Icon (left side of card) — AWS SVG or emoji fallback
+        const iconSize = 18;
+        const iconDrawn = cfg.awsIcon && this._iconCache[cfg.awsIcon];
+        if (iconDrawn) {
+            try {
+                ctx.drawImage(this._iconCache[cfg.awsIcon], x + 7, n.y - iconSize / 2, iconSize, iconSize);
+            } catch { /* ignore draw errors */ }
+        } else if (cfg.fallbackIcon) {
+            ctx.font = '14px system-ui, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = borderColor;
+            ctx.fillText(cfg.fallbackIcon, x + 8, n.y);
+        }
+
+        // Label (line 1) — offset right to make room for icon
+        const hasIcon = iconDrawn || cfg.fallbackIcon;
+        const textX = hasIcon ? n.x + 10 : n.x;
+        ctx.fillStyle = '#EEF0F6';
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const labelY = h > 50 ? y + h * 0.35 : y + h * 0.4;
+        ctx.fillText(n.label, textX, labelY);
+
+        // Sublabel (line 2)
+        if (n.sublabel) {
+            ctx.fillStyle = '#B0B8CC';
+            ctx.font = '10px system-ui, sans-serif';
+            const subY = h > 50 ? y + h * 0.58 : y + h * 0.65;
+            ctx.fillText(n.sublabel, textX, subY);
+        }
+
+        // Health dot for beacons
+        if (n.type === 'beacon' && n.health) {
+            const dotColor = n.health === 'alive' ? '#7ECF8C' : n.health === 'stale' ? '#F0CA4A' : '#F08A84';
+            ctx.beginPath();
+            ctx.arc(x + 10, y + h - 10, 4, 0, Math.PI * 2);
+            ctx.fillStyle = dotColor;
+            ctx.fill();
+        }
+
+        // State dot for infra nodes
+        if (n.data && n.data.state) {
+            const stateColor = n.data.state === 'running' ? '#7ECF8C' : n.data.state === 'stopped' ? '#F08A84' : '#F0CA4A';
+            ctx.beginPath();
+            ctx.arc(x + w - 10, y + 12, 4, 0, Math.PI * 2);
+            ctx.fillStyle = stateColor;
+            ctx.fill();
+        }
+
+        // Floating label
+        if (n.floating) {
+            ctx.fillStyle = '#7A849E';
+            ctx.font = '9px system-ui, sans-serif';
+            ctx.fillText(cfg.label, n.x, y - 6);
+        }
+
+        ctx.globalAlpha = 1;
+    },
+
+    _drawEdge(e) {
+        const ctx = this.ctx;
+        const from = this.nodes.find(n => n.id === e.from);
+        const to = this.nodes.find(n => n.id === e.to);
+        if (!from || !to) return;
+
+        const fromCfg = this.NODE_TYPES[from.type] || { h: 48 };
+        const toCfg = this.NODE_TYPES[to.type] || { h: 48 };
+        const x1 = from.x, y1 = from.y + fromCfg.h / 2;
+        const x2 = to.x, y2 = to.y - toCfg.h / 2;
+
+        ctx.beginPath();
+        ctx.strokeStyle = '#4A5168';
+        ctx.lineWidth = 1.2;
+        if (e.dashed) ctx.setLineDash([6, 4]);
+        else ctx.setLineDash([]);
+
+        // Bezier curve
+        const midY = (y1 + y2) / 2;
+        ctx.moveTo(x1, y1);
+        ctx.bezierCurveTo(x1, midY, x2, midY, x2, y2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Arrow
+        const angle = Math.atan2(y2 - midY, x2 - x2);
+        const arrowSize = 6;
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - arrowSize, y2 - arrowSize * 1.5);
+        ctx.lineTo(x2 + arrowSize, y2 - arrowSize * 1.5);
+        ctx.closePath();
+        ctx.fillStyle = '#4A5168';
+        ctx.fill();
+
+        // Edge label
+        if (e.label) {
+            ctx.fillStyle = '#7A849E';
+            ctx.font = '9px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(e.label, (x1 + x2) / 2 + 20, midY);
+        }
+    },
+
+    // ── Hit test: find node under cursor (graph coordinates) ──
+    _hitTest(mx, my) {
+        // Iterate in reverse so top-drawn nodes are hit first
+        for (let i = this.nodes.length - 1; i >= 0; i--) {
+            const n = this.nodes[i];
+            const cfg = this.NODE_TYPES[n.type] || { w: 140, h: 48 };
+            const w = n._w || cfg.w;
+            if (mx >= n.x - w / 2 && mx <= n.x + w / 2 &&
+                my >= n.y - cfg.h / 2 && my <= n.y + cfg.h / 2) {
+                return n;
+            }
+        }
+        return null;
+    },
+
+    // ── Convert mouse event to graph coordinates ──
+    _toGraph(e) {
+        const rect = this.canvas.getBoundingClientRect();
+        return {
+            x: (e.clientX - rect.left - this.panX) / this.scale,
+            y: (e.clientY - rect.top - this.panY) / this.scale,
+        };
+    },
+
+    // ── Zoom ──
+    _handleWheel(e) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? 0.9 : 1.1;
+        const rect = this.canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+
+        this.panX = mx - (mx - this.panX) * delta;
+        this.panY = my - (my - this.panY) * delta;
+        this.scale *= delta;
+        this.scale = Math.max(0.2, Math.min(3, this.scale));
+        this._render();
+    },
+
+    // ── Mouse down: decide if dragging a node or panning ──
+    _handleMouseDown(e) {
+        const gp = this._toGraph(e);
+        const hit = this._hitTest(gp.x, gp.y);
+
+        this.isDragging = false;
+        this.dragNode = null;
+        this.dragNodeStart = null;
+
+        if (hit) {
+            // Start dragging this node
+            this.dragNode = hit;
+            this.dragNodeStart = { x: hit.x, y: hit.y };
+            this.dragStart = { x: e.clientX, y: e.clientY, px: this.panX, py: this.panY };
+            this.canvas.style.cursor = 'grabbing';
+        } else {
+            // Start panning canvas
+            this.dragStart = { x: e.clientX, y: e.clientY, px: this.panX, py: this.panY };
+            this.canvas.style.cursor = 'grabbing';
+        }
+    },
+
+    _handleMouseMove(e) {
+        if (!this.dragStart) {
+            // Hover cursor: show pointer over nodes
+            const gp = this._toGraph(e);
+            const hover = this._hitTest(gp.x, gp.y);
+            this.canvas.style.cursor = hover ? 'pointer' : 'grab';
+            return;
+        }
+
+        const dx = e.clientX - this.dragStart.x;
+        const dy = e.clientY - this.dragStart.y;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) this.isDragging = true;
+
+        if (this.dragNode) {
+            // Move the node in graph space
+            this.dragNode.x = this.dragNodeStart.x + dx / this.scale;
+            this.dragNode.y = this.dragNodeStart.y + dy / this.scale;
+            this._render();
+        } else {
+            // Pan the canvas
+            this.panX = this.dragStart.px + dx;
+            this.panY = this.dragStart.py + dy;
+            this._render();
+        }
+    },
+
+    _handleMouseUp(e) {
+        const wasDragging = this.isDragging;
+        const wasDragNode = this.dragNode;
+
+        // If it was a click (no movement), select the node + show side panel
+        if (!wasDragging && this.dragStart && e) {
+            const gp = this._toGraph(e);
+            const hit = this._hitTest(gp.x, gp.y);
+            if (hit) {
+                this.selectedNode = hit;
+                this._showSidePanel(hit);
+                this._render();
+            }
+        }
+
+        this.dragStart = null;
+        this.dragNode = null;
+        this.dragNodeStart = null;
+        this.canvas.style.cursor = 'grab';
+        setTimeout(() => { this.isDragging = false; }, 50);
+    },
+
+    // ── Reset layout to computed positions ──
+    _resetLayout() {
+        this._layoutNodes();
+        this._render();
+    },
+
+    // ── Beacon status banner ──
+    _updateBeaconBanner() {
+        const banner = this.overlay?.querySelector('#topology-beacon-banner');
+        if (!banner) return;
+
+        if (this.beaconStatus === 'connected') {
+            banner.style.display = 'none';
+        } else if (this.beaconStatus === 'no_beacons') {
+            banner.style.display = '';
+            banner.innerHTML = 'CS REST API connected — no active beacons to display';
+            banner.style.borderColor = '#82BBE8';
+        } else if (this.beaconStatus === 'wrong_server') {
+            banner.style.display = '';
+            banner.innerHTML = `REST API is connected to a different team server (${this._esc(this._connectedServerIp)}) — beacons not shown for this deployment`;
+            banner.style.borderColor = '#F0CA4A';
+        } else {
+            banner.style.display = '';
+            banner.innerHTML = 'Beacons not shown — connect to the CS REST API via the Beacon tab to overlay live beacons on this graph';
+            banner.style.borderColor = '#F0CA4A';
+        }
+    },
+
+    // ── Side panel ──
+    _showSidePanel(node) {
+        const panel = this.sidePanel;
+        const body = this.sidePanelBody;
+        const title = this.overlay.querySelector('#topology-side-title');
+        const cfg = this.NODE_TYPES[node.type] || { label: 'Node' };
+
+        title.textContent = node.label;
+        let html = '';
+
+        // Type badge
+        html += `<div class="topology-node-badge" style="background: ${cfg.color}22; color: ${cfg.color}; border: 1px solid ${cfg.color}44; margin-bottom: 12px;">${cfg.label}</div>`;
+
+        // Common details
+        html += '<div class="topology-section-title">Details</div>';
+        const d = node.data || {};
+
+        if (node.type === 'domain') {
+            html += this._row('Domain', d.domain);
+            if (d.nameservers && d.nameservers.length) {
+                html += '<div class="topology-section-title">Nameservers</div>';
+                d.nameservers.forEach(ns => { html += this._row('NS', ns); });
+            }
+        } else if (node.type === 'cloudfront') {
+            html += this._row('Distribution', d.distribution_id);
+            html += this._row('Domain', d.domain);
+        } else if (node.type === 'redirector') {
+            html += this._row('Public IP', d.public_ip);
+            html += this._row('Private IP', d.private_ip);
+            html += this._row('Instance', d.instance_id);
+            html += this._row('State', d.state);
+        } else if (node.type === 'teamserver') {
+            html += this._row('Private IP', d.private_ip);
+            html += this._row('Instance', d.instance_id);
+            html += this._row('State', d.state);
+            html += this._row('Phase', d.phase);
+            if (d.cs_password) html += this._row('CS Password', d.cs_password);
+            if (d.profile) html += this._row('Profile', d.profile);
+        } else if (node.type === 'bastion') {
+            html += this._row('Public IP', d.public_ip);
+            html += this._row('Private IP', d.private_ip);
+            html += this._row('Instance', d.instance_id);
+            html += this._row('State', d.state);
+        } else if (node.type === 'attackbox') {
+            html += this._row('Private IP', d.private_ip);
+            html += this._row('Instance', d.instance_id);
+            html += this._row('State', d.state);
+            if (d.password) html += this._row('Password', d.password);
+        } else if (node.type === 'listener') {
+            html += this._row('Name', d.name);
+            html += this._row('Type', d.type || d.payload);
+            html += this._row('Host', d.host || d.Host);
+            html += this._row('Port', d.port || d.Port);
+            if (d.profile) {
+                html += '<div class="topology-section-title">C2 Profile</div>';
+                html += this._row('Profile', d.profile);
+            }
+            if (d.beacon_total !== undefined) {
+                html += '<div class="topology-section-title">Beacons</div>';
+                html += this._row('Total', d.beacon_total);
+                html += this._row('Root (direct)', d.beacon_count);
+                html += this._row('Alive', d.beacon_alive);
+            }
+            // Show any extra listener fields from the API
+            const shown = new Set(['name','type','payload','host','Host','port','Port','profile','beacon_count','beacon_alive','beacon_total']);
+            Object.entries(d).forEach(([k, v]) => {
+                if (!shown.has(k) && v && typeof v !== 'object') html += this._row(k, v);
+            });
+        } else if (node.type === 'beacon') {
+            html += this._row('Beacon ID', d.bid);
+            html += this._row('Host', d.computer);
+            html += this._row('User', d.user);
+            html += this._row('PID', d.pid);
+            html += this._row('Process', d.process);
+            html += this._row('Internal IP', d.internal);
+            html += this._row('OS', d.os);
+            html += this._row('Admin', d.isAdmin ? '★ Yes' : 'No');
+            html += '<div class="topology-section-title">Timing</div>';
+            const sleepSec = d.sleep ? (d.sleep >= 1000 ? (d.sleep / 1000) : d.sleep) : null;
+            html += this._row('Sleep', sleepSec !== null ? sleepSec + 's' : 'Unknown');
+            html += this._row('Health', d.health);
+            html += this._row('Listener', d.listener);
+        } else if (node.type === 'jumpbox') {
+            html += this._row('Public IP', d.public_ip);
+            html += this._row('Private IP', d.private_ip);
+            html += this._row('Instance', d.instance_id);
+            html += this._row('State', d.state);
+        } else if (node.type === 'goad_vm') {
+            html += this._row('Private IP', d.private_ip);
+            html += this._row('Instance', d.instance_id);
+            html += this._row('State', d.state);
+        } else {
+            Object.entries(d).forEach(([k, v]) => {
+                if (v) html += this._row(k, v);
+            });
+        }
+
+        // Copy actions
+        const copyIp = d.public_ip || d.private_ip;
+        if (copyIp) {
+            html += `<div class="topology-side-actions">
+                <button class="btn btn-sm btn-info" onclick="navigator.clipboard.writeText('${this._esc(copyIp)}')">Copy IP</button>
+            </div>`;
+        }
+
+        body.innerHTML = html;
+        panel.classList.add('open');
+    },
+
+    _closeSide() {
+        this.sidePanel.classList.remove('open');
+        this.selectedNode = null;
+        this._render();
+    },
+
+    _row(label, value) {
+        if (value === null || value === undefined || value === '') return '';
+        const v = String(value);
+        return `<div class="topology-detail-row">
+            <span class="topology-detail-label">${this._esc(label)}</span>
+            <span class="topology-detail-value" onclick="navigator.clipboard.writeText('${this._esc(v)}')" title="Click to copy">${this._esc(v)}</span>
+        </div>`;
+    },
+
+    _esc(s) {
+        if (!s) return '';
+        const d = document.createElement('div');
+        d.textContent = String(s);
+        return d.innerHTML;
+    },
+};
+
 
 // ============================================================================
 // APPLICATION INITIALIZATION

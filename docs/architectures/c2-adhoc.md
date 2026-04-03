@@ -10,7 +10,7 @@ The **C2 Ad-Hoc** deployment provides a **lightweight, single-server Cobalt Stri
 
 | Component | Type | Subnet | Private IP | Public IP | Purpose |
 |-----------|------|--------|-----------|-----------|---------|
-| **Bastion Host** | t3.medium (Windows + WSL2) | Management (10.0.0.0/24) | 10.0.0.10 | EIP (Elastic IP) | Operator entry point (RDP/SSH) |
+| **Bastion Host** | t3.micro (Ubuntu 22.04) | Management (10.0.0.0/24) | 10.0.0.10 | EIP (Elastic IP) | SSH relay to private subnets |
 | **Redirector 1** | t3.small (nginx HTTPS) | DMZ (10.0.1.0/24) | 10.0.1.10 | EIP (Elastic IP) | Traffic forwarding (primary) |
 | **Redirector 2** | t3.small (nginx HTTPS) | DMZ (10.0.2.0/24) | 10.0.2.10 | EIP (Elastic IP) | Traffic forwarding (backup) |
 | **C2 Team Server** | t3.medium (Cobalt Strike) | Private (10.0.10.0/24) | 10.0.10.10 | None | Cobalt Strike team server |
@@ -46,7 +46,7 @@ AWS translates at the IGW (the instance never sees the public IP):
   Outbound: 10.0.0.10 sends traffic out → IGW translates → appears as 54.x.x.x
 ```
 
-If you RDP into the bastion and run `ipconfig`, you'll see **one NIC with 10.0.0.10** — the EIP never appears on the instance itself. AWS handles public↔private translation at the IGW before traffic reaches the instance.
+If you SSH into the bastion and run `ip addr`, you'll see **one NIC with 10.0.0.10** — the EIP never appears on the instance itself. AWS handles public↔private translation at the IGW before traffic reaches the instance.
 
 The bastion reaches private subnet instances (C2 at 10.0.10.10, Attack Box at 10.0.10.50) via **VPC internal routing** — all subnets in the same VPC can communicate through the local route table entry (`10.0.0.0/16 → local`). Security groups control which traffic is allowed between subnets, not routing.
 
@@ -57,7 +57,7 @@ Internet
 Internet Gateway (bidirectional — public subnet instances have EIPs)
    ↓
 Management Subnet (10.0.0.0/24)
-   └── Bastion Host (10.0.0.10, EIP) ← Operator RDP/SSH entry point
+   └── Bastion Host (10.0.0.10, EIP) ← Operator SSH entry point
    ↓
 DMZ Subnets (10.0.1.0/24, 10.0.2.0/24)
    ├── Redirector 1 (10.0.1.10, EIP) ← Beacon traffic (port 443)
@@ -79,7 +79,7 @@ CloudFront (CDN edge)          ← Beacon traffic to front domain
 Internet Gateway
    ↓
 Management Subnet (10.0.0.0/24)
-   └── Bastion Host (10.0.0.10, EIP) ← Operator RDP/SSH entry point
+   └── Bastion Host (10.0.0.10, EIP) ← Operator SSH entry point
    ↓
 DMZ Subnets (10.0.1.0/24, 10.0.2.0/24)
    ├── Redirector 1 (10.0.1.10, EIP) ← Origin for CloudFront (HTTPS only)
@@ -117,7 +117,7 @@ SSL: ACM cert (Client→CloudFront), Self-signed (CloudFront→Redirector)
 
 #### Standard (Redirectors Only)
 ```
-Target → HTTPS (443) → Redirector 1/2 → Forward → C2 Server (50050)
+Target → HTTPS (443) → Redirector 1/2 → Forward → C2 Server (443 listener)
                           ↓
                     nginx/socat proxy
                   (SSL termination)
@@ -128,7 +128,7 @@ Target → HTTPS (443) → Redirector 1/2 → Forward → C2 Server (50050)
 Target → HTTPS to front domain (e.g. grid.crowdstrike.com)
        → Host header: your-domain.cloudfront.net
        → CloudFront edge → Redirector origin (Elastic IP)
-       → Forward → C2 Server (50050)
+       → Forward → C2 Server (443 listener)
 ```
 
 | | Redirectors Only | + Domain Fronting |
@@ -145,7 +145,7 @@ Target → HTTPS to front domain (e.g. grid.crowdstrike.com)
 - **Red team tools** — cloned from GitHub repo to `C:\Tools` (PowerSploit, SharpTools, etc.)
 - **Payload staging** — empty `C:\Payloads` directory for operator use during engagement
 - **WSL2 with Ubuntu** — Linux tooling available alongside Windows
-- **Private subnet only** (10.0.10.50) — no public IP, accessed via bastion RDP tunnel
+- **Private subnet only** (10.0.10.50) — no public IP, accessed via SSH tunnel through bastion
 - **Toggleable** — `enable_attack_box = true` (default), can be disabled to save costs
 
 ### 5. Operator Access Patterns
@@ -161,27 +161,23 @@ Host: 127.0.0.1:50050
 
 #### Option B: RDP to Attack Box (Recommended for full workstation)
 ```bash
-# RDP to bastion first (port 3389)
-mstsc /v:<bastion-eip>
+# SSH tunnel from your laptop through bastion to attack box RDP
+ssh -i key.pem -L 3389:10.0.10.50:3389 ubuntu@<bastion-eip>
 
-# From bastion, RDP tunnel to attack box at 10.0.10.50:3389
-# Or set up a local RDP tunnel from your laptop:
-ssh -i key.pem -L 3390:10.0.10.50:3389 ubuntu@<bastion-eip>
-mstsc /v:localhost:3390
+# Then RDP to localhost
+mstsc /v:localhost:3389
 
 # Attack box has CS Client pre-installed — double-click desktop shortcut
 # Connects to C2 server at 10.0.10.10:50050 (same private subnet, direct access)
 ```
 
-#### Option C: RDP to Bastion Only
+#### Option C: Multiple Tunnels at Once
 ```bash
-# RDP to bastion (Windows + WSL2)
-mstsc /v:<bastion-eip>
-
-# From bastion WSL2, SSH tunnel to C2 server
-ssh -L 50050:10.0.10.10:50050 ubuntu@10.0.10.10
-
-# Run CS client from bastion connecting to localhost:50050
+# Tunnel both RDP to attack box and CS client to team server
+ssh -i key.pem \
+    -L 3389:10.0.10.50:3389 \
+    -L 50050:10.0.10.10:50050 \
+    ubuntu@<bastion-eip>
 ```
 
 ## Deployment
@@ -260,18 +256,19 @@ When domain fronting is enabled, Let's Encrypt is not needed. ACM handles the pu
 
 ## Security Groups
 
-### Redirector Security Group
+### Redirector Security Group (`proxy_redirector_sg`)
 
 **Standard mode:**
 ```yaml
 Inbound:
   - Port 80 (HTTP): 0.0.0.0/0
   - Port 443 (HTTPS): 0.0.0.0/0
-  - Port 22 (SSH): <bastion-private-ip>/32
+  - Port 22 (SSH): management_cidr_blocks
+  - Port 22 (SSH): bastion_sg  # For nginx config management
 
 Outbound:
-  - Port 50050: <c2-server-private-ip>/32  # To team server
-  - Port 443: 0.0.0.0/0  # For updates
+  - Port 443: c2_team_server_sg  # Beacon traffic to CS listener
+  - All traffic: 0.0.0.0/0  # For updates
 ```
 
 **With domain fronting** (redirector locked to CloudFront IPs only):
@@ -279,29 +276,45 @@ Outbound:
 Inbound:
   - Port 80 (HTTP): com.amazonaws.global.cloudfront.origin-facing  # AWS managed prefix list
   - Port 443 (HTTPS): com.amazonaws.global.cloudfront.origin-facing
-  - Port 22 (SSH): <bastion-private-ip>/32
+  - Port 22 (SSH): management_cidr_blocks
+  - Port 22 (SSH): bastion_sg
 
 Outbound:
-  - Port 50050: <c2-server-private-ip>/32  # To team server
-  - Port 443: 0.0.0.0/0  # For updates
+  - Port 443: c2_team_server_sg  # Beacon traffic to CS listener
+  - All traffic: 0.0.0.0/0
 ```
 
-### C2 Server Security Group
+### C2 Server Security Group (`c2_team_server_sg`)
 ```yaml
 Inbound:
-  - Port 50050: <redirector-sg>  # From redirectors
-  - Port 50050: <bastion-private-ip>/32  # From bastion (management)
-  - Port 22: <bastion-private-ip>/32  # SSH from bastion
+  - Port 443: proxy_redirector_sg   # Beacon traffic from redirectors (listener port)
+  - Port 50050: bastion_sg          # CS client from bastion (operator SSH tunnel)
+  - Port 50050: attack_box_sg       # CS client from attack box (direct)
+  - Port 22: bastion_sg             # SSH management from bastion
+  - Port 22: attack_box_sg          # SSH from attack box
+  - Port 22: management_cidr_blocks # SSH fallback
 
 Outbound:
   - All traffic: 0.0.0.0/0
 ```
 
-### Bastion Security Group
+Note: Port 443 is the CS HTTPS beacon listener port (configurable via `c2_listener_port`). Port 50050 is the CS client management port (configurable via `c2_server_port`). These are separate — redirectors only reach the listener port, not the management port.
+
+### Bastion Security Group (`bastion_sg`)
 ```yaml
 Inbound:
-  - Port 3389 (RDP): <management_cidr_blocks>
-  - Port 22 (SSH): <management_cidr_blocks>
+  - Port 22 (SSH): management_cidr_blocks
+
+Outbound:
+  - All traffic: 0.0.0.0/0
+```
+
+### Attack Box Security Group (`attack_box_sg`)
+```yaml
+Inbound:
+  - Port 3389 (RDP): bastion_sg
+  - Port 22 (SSH): bastion_sg
+  - Port 5985 (WinRM): bastion_sg  # TESTING ONLY
 
 Outbound:
   - All traffic: 0.0.0.0/0
@@ -362,99 +375,87 @@ Week 4: OpSec and cleanup
 
 ## Redirector Configuration
 
-### nginx Configuration Example
+### nginx Configuration
+
+The nginx redirector config is **auto-generated** by `setup_redirector.sh` during deployment. It matches the selected Malleable C2 profile's URIs.
+
+For the default jQuery profile, nginx proxies all matching jQuery URIs to the C2 backend:
 
 ```nginx
-# /etc/nginx/sites-available/c2-redirector
+# /etc/nginx/sites-available/c2-redirector (auto-generated)
 upstream c2_backend {
-    server 10.0.10.10:50050;  # C2 team server
+    server 10.0.10.10:443;  # C2 team server HTTPS listener
+    keepalive 32;
 }
 
 server {
     listen 443 ssl http2;
-    server_name operations.company.com;
+    server_name api.example.com example.com www.example.com cdn.example.com;
 
-    ssl_certificate /etc/letsencrypt/live/operations.company.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/operations.company.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
 
-    location / {
+    # jQuery profile URIs — matches GET, POST, and stager requests
+    #   GET:    /jquery-3.3.1.min.js
+    #   POST:   /jquery-3.3.2.min.js
+    #   Stager: /jquery-3.3.1.slim.min.js (x86)
+    #           /jquery-3.3.2.slim.min.js (x64)
+    location ~ ^/jquery-3\.[0-9]+\.[0-9]+(\.slim)?\.min\.js$ {
         proxy_pass https://c2_backend;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_ssl_verify off;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 100M;
+    }
+
+    # Default: serve decoy website (non-matching URIs)
+    location / {
+        root /var/www/html;
+        try_files $uri $uri/ =404;
     }
 }
 ```
 
-### socat Configuration Example
+### Malleable C2 Profile
 
-```bash
-# Simple TCP forwarding
-socat TCP4-LISTEN:443,fork,reuseaddr TCP4:10.0.10.10:50050
-
-# With SSL termination
-socat OPENSSL-LISTEN:443,cert=/etc/ssl/cert.pem,key=/etc/ssl/key.pem,verify=0,fork \
-  TCP4:10.0.10.10:50050
-```
-
-## Beacon Configuration
-
-### HTTPS Beacon Profile
+The default profile is the **jQuery CS 4.9 profile** from [threatexpress/malleable-c2](https://github.com/threatexpress/malleable-c2). It's downloaded from GitHub at deployment time and auto-loaded when the team server starts.
 
 ```
-set sample_name "Ad-Hoc Beacon";
-set sleeptime "5000";
-set jitter "20";
+# Profile: /opt/cobaltstrike/profiles/jquery.profile
+# Team server starts with: teamserver <IP> <password> /opt/cobaltstrike/profiles/jquery.profile
 
-https-certificate {
-    set CN "operations.company.com";
-    set O "Legitimate Company";
-    set validity "365";
+# Key URIs (must match nginx location blocks on redirectors):
+http-get  { set uri "/jquery-3.3.1.min.js"; }
+http-post { set uri "/jquery-3.3.2.min.js"; }
+http-stager {
+    set uri_x86 "/jquery-3.3.1.slim.min.js";
+    set uri_x64 "/jquery-3.3.2.slim.min.js";
 }
 
-http-get {
-    set uri "/api/v1/status /api/v2/updates";
-    
-    client {
-        header "Host" "operations.company.com";
-        header "User-Agent" "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
-        
-        metadata {
-            netbios;
-            prepend "SESSION=";
-            header "Cookie";
-        }
-    }
-    
-    server {
-        header "Content-Type" "application/json";
-        header "Server" "nginx/1.18.0";
-        
-        output {
-            print;
-        }
-    }
-}
+# Validate with: cd /opt/cobaltstrike/server && ./c2lint /opt/cobaltstrike/profiles/jquery.profile
 ```
+
+> **Non-default profiles:** If you selected amazon, google, microsoft, or custom in the web app, the nginx URIs are pre-configured but you must provide your own `.profile` file on the team server. See the Post-Deployment Checklist in the web app for step-by-step instructions.
 
 ## Cost Breakdown
 
-### Monthly Cost: ~$155-190
+### Monthly Cost: ~$130-165
 
 | Resource | Type | Cost/Month |
 |----------|------|------------|
 | C2 Server | t3.medium (24/7) | ~$30 |
 | Redirector 1 | t3.small (24/7) | ~$15 |
 | Redirector 2 | t3.small (24/7) | ~$15 |
-| Bastion | t3.medium (24/7) | ~$30 |
+| Bastion | t3.micro (24/7) | ~$8 |
 | Attack Box | t2.large (24/7) | ~$50 |
 | NAT Gateway | (Optional) | ~$32 |
 | EBS Storage | 200GB total | ~$15 |
 | Data Transfer | Minimal | ~$5-10 |
 | S3 | CS files + scripts | <$1 |
-| **Total (no NAT)** | | **~$160** |
-| **Total (with NAT)** | | **~$192** |
+| **Total (no NAT)** | | **~$138** |
+| **Total (with NAT)** | | **~$170** |
 
 ### Cost Optimization
 
@@ -502,7 +503,7 @@ aws logs filter-pattern "POST /api/v1/status" --log-group-name /aws/ec2/redirect
 ```bash
 # 1. Check redirector can reach C2 server
 ssh redirector1
-nc -zv 10.0.10.10 50050
+nc -zv 10.0.10.10 443  # CS HTTPS listener port
 
 # 2. Check nginx/socat is running
 systemctl status nginx
@@ -515,14 +516,14 @@ curl -k https://operations.company.com
 **Solution**:
 - Verify security groups allow traffic
 - Check redirector configuration
-- Ensure C2 server is running on port 50050
+- Ensure C2 server has an HTTPS listener running on port 443
 
 ### Issue: Cannot connect to team server
 
 **Diagnosis**:
 ```bash
 # From bastion
-telnet 10.0.10.10 50050
+telnet 10.0.10.10 50050  # CS management port (for client connections)
 
 # Check Cobalt Strike is running
 ssh c2-server

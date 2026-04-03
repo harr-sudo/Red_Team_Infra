@@ -224,6 +224,34 @@ resource "aws_route" "private_nat_route" {
 }
 
 # =============================================================================
+# S3 GATEWAY VPC ENDPOINT (CRITICAL for IAM SourceVpc conditions)
+# =============================================================================
+# Without this endpoint, IAM policies using aws:SourceVpc conditions will FAIL
+# because S3 requests via NAT Gateway don't carry VPC context. The S3 Gateway
+# endpoint routes S3 traffic through the AWS private network, preserving the
+# VPC ID in the request context. This is FREE (no hourly charges).
+#
+# Required for: cs_storage module IAM roles (confused deputy protection)
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id       = aws_vpc.red_team_vpc.id
+  service_name = "com.amazonaws.${var.aws_region}.s3"
+
+  # Associate with ALL route tables so every subnet can reach S3 via the endpoint
+  route_table_ids = concat(
+    [aws_route_table.public_rt.id, aws_route_table.private_rt.id],
+    length(aws_route_table.management_rt) > 0 ? [aws_route_table.management_rt[0].id] : []
+  )
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-s3-endpoint"
+    }
+  )
+}
+
+# =============================================================================
 # NETWORK ACLs (Optional - Defense in Depth)
 # =============================================================================
 # NACLs are stateless — both inbound AND outbound rules are required.
@@ -312,6 +340,19 @@ resource "aws_network_acl_rule" "mgmt_outbound_https" {
   cidr_block     = "0.0.0.0/0"
   from_port      = 443
   to_port        = 443
+}
+
+# Management NACL: Allow HTTP outbound (package updates via apt-get)
+resource "aws_network_acl_rule" "mgmt_outbound_http" {
+  count          = var.enable_nacls && length(var.management_subnet_cidrs) > 0 ? 1 : 0
+  network_acl_id = aws_network_acl.management_nacl[0].id
+  rule_number    = 210
+  egress         = true
+  protocol       = "tcp"
+  rule_action    = "allow"
+  cidr_block     = "0.0.0.0/0"
+  from_port      = 80
+  to_port        = 80
 }
 
 # Management NACL: Allow ephemeral ports outbound (return traffic to operator)
@@ -420,8 +461,8 @@ resource "aws_network_acl_rule" "dmz_outbound_c2" {
   protocol       = "tcp"
   rule_action    = "allow"
   cidr_block     = var.private_subnet_cidrs[count.index]
-  from_port      = var.c2_server_port
-  to_port        = var.c2_server_port
+  from_port      = var.c2_listener_port
+  to_port        = var.c2_listener_port
 }
 
 # DMZ NACL: Allow HTTPS outbound (Let's Encrypt, package updates)
@@ -491,8 +532,8 @@ resource "aws_network_acl_rule" "private_inbound_c2" {
   protocol       = "tcp"
   rule_action    = "allow"
   cidr_block     = var.public_subnet_cidrs[count.index]
-  from_port      = var.c2_server_port
-  to_port        = var.c2_server_port
+  from_port      = var.c2_listener_port
+  to_port        = var.c2_listener_port
 }
 
 # Private NACL: Allow SSH inbound from management subnet
@@ -519,6 +560,19 @@ resource "aws_network_acl_rule" "private_inbound_ssh_from_dmz" {
   cidr_block     = var.public_subnet_cidrs[count.index]
   from_port      = var.ssh_port
   to_port        = var.ssh_port
+}
+
+# Private NACL: Allow C2 management port inbound from management subnet (bastion SSH tunnel → CS client)
+resource "aws_network_acl_rule" "private_inbound_mgmt_port" {
+  count          = var.enable_nacls && length(var.management_subnet_cidrs) > 0 ? length(var.management_subnet_cidrs) : 0
+  network_acl_id = aws_network_acl.private_nacl[0].id
+  rule_number    = 300 + count.index
+  egress         = false
+  protocol       = "tcp"
+  rule_action    = "allow"
+  cidr_block     = var.management_subnet_cidrs[count.index]
+  from_port      = var.c2_server_port
+  to_port        = var.c2_server_port
 }
 
 # Private NACL: Allow ephemeral ports inbound (return traffic from NAT gateway)

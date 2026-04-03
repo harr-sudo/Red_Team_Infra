@@ -81,6 +81,7 @@ resource "aws_instance" "jumpbox" {
     attackbox_ip     = var.install_cobalt_strike ? "${var.ip_range}.50" : ""
     teamserver_ip    = var.install_cobalt_strike ? "${var.ip_range}.40" : ""
     install_cs       = var.install_cobalt_strike
+    ip_range         = var.ip_range
     # SECURITY: internal_key is NO LONGER passed from Terraform
     # The jumpbox generates its own key during bootstrap
     deployment_bucket = var.deployment_bucket

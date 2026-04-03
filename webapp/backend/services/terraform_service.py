@@ -6,15 +6,17 @@ Wrapper for Terraform CLI operations with workspace support for multiple concurr
 import subprocess
 import json
 import os
+import re
 import shutil
+import time as _time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 # Timeout constants (in seconds)
 TIMEOUT_INIT = 300          # 5 minutes for init
 TIMEOUT_VALIDATE = 60       # 1 minute for validate
 TIMEOUT_PLAN = 600          # 10 minutes for plan
-TIMEOUT_APPLY = 1800        # 30 minutes for apply
+TIMEOUT_APPLY = 3600        # 60 minutes for apply (combined deployments can be slow)
 TIMEOUT_DESTROY = 3600      # 60 minutes for destroy (increased for combined deployments)
 TIMEOUT_OUTPUT = 60         # 1 minute for output
 TIMEOUT_SHOW = 120          # 2 minutes for show
@@ -37,6 +39,7 @@ class TerraformService:
         self.terraform_dir = project_root / "terraform"
         self.config_dir = project_root / "configs"
         self.workspace_name = workspace_name or "default"
+        self._active_process = None  # Track active subprocess for cancellation
         
         # Each workspace has its own tfvars file
         if workspace_name and workspace_name != "default":
@@ -65,7 +68,134 @@ class TerraformService:
             return -1, "", f"Command timed out after {timeout} seconds"
         except Exception as e:
             return -1, "", str(e)
-    
+
+    # Terraform output patterns for streaming parser
+    _TF_CREATING = re.compile(r'^(\S+): Creating\.\.\.$')
+    _TF_CREATED = re.compile(r'^(\S+): Creation complete after (\S+)')
+    _TF_DESTROYING = re.compile(r'^(\S+): Destroying\.\.\.')
+    _TF_DESTROYED = re.compile(r'^(\S+): Destruction complete after (\S+)')
+    _TF_STILL = re.compile(r'^(\S+): Still (creating|destroying)\.\.\.')
+    _TF_MODIFYING = re.compile(r'^(\S+): Modifying\.\.\.')
+    _TF_MODIFIED = re.compile(r'^(\S+): Modifications complete after (\S+)')
+    _TF_COMPLETE = re.compile(r'^Apply complete! Resources: (.+)$')
+    _TF_DESTROY_COMPLETE = re.compile(r'^Destroy complete! Resources: (\d+) destroyed\.$')
+    _TF_ERROR = re.compile(r'^\s*Error: (.+)$')
+
+    def _run_command_streaming(
+        self,
+        command: List[str],
+        on_event: Callable = None,
+        cwd: Optional[Path] = None,
+        timeout: int = 1800
+    ) -> Tuple[int, str, str]:
+        """
+        Run a command with real-time stdout line parsing.
+
+        Args:
+            command: Command and arguments
+            on_event: Callback(message, event_type) for each parsed terraform line.
+                      event_type: "info", "success", "warning", "error"
+            cwd: Working directory
+            timeout: Timeout in seconds
+
+        Returns:
+            (exit_code, full_stdout, full_stderr)
+        """
+        if cwd is None:
+            cwd = self.terraform_dir
+
+        stdout_lines = []
+
+        try:
+            proc = subprocess.Popen(
+                command,
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,  # Line-buffered
+                start_new_session=True  # Own process group for clean cancellation
+            )
+            self._active_process = proc
+
+            start = _time.time()
+
+            # Read stdout line-by-line in real time
+            for line in proc.stdout:
+                line = line.rstrip('\n')
+                stdout_lines.append(line)
+
+                if on_event and line.strip():
+                    self._parse_terraform_line(line.strip(), on_event)
+
+                if _time.time() - start > timeout:
+                    proc.kill()
+                    return -1, '\n'.join(stdout_lines), "Command timed out"
+
+            # Wait for process to finish and collect stderr
+            proc.wait()
+            self._active_process = None
+            stderr_text = proc.stderr.read() if proc.stderr else ""
+
+            # Parse errors from stderr
+            if on_event and stderr_text:
+                for err_line in stderr_text.splitlines():
+                    m = self._TF_ERROR.match(err_line.strip())
+                    if m:
+                        on_event(f"Error: {m.group(1)}", "error")
+
+            return proc.returncode, '\n'.join(stdout_lines), stderr_text
+
+        except Exception as e:
+            return -1, '\n'.join(stdout_lines), str(e)
+
+    def _parse_terraform_line(self, line: str, on_event: Callable):
+        """Parse a single Terraform output line and fire callback if relevant."""
+        # Skip noisy "Still creating/destroying..." lines
+        if self._TF_STILL.match(line):
+            return
+
+        m = self._TF_CREATING.match(line)
+        if m:
+            on_event(f"Creating: {m.group(1)}", "info")
+            return
+
+        m = self._TF_CREATED.match(line)
+        if m:
+            on_event(f"Created: {m.group(1)} ({m.group(2)})", "success")
+            return
+
+        m = self._TF_DESTROYING.match(line)
+        if m:
+            on_event(f"Destroying: {m.group(1)}", "warning")
+            return
+
+        m = self._TF_DESTROYED.match(line)
+        if m:
+            on_event(f"Destroyed: {m.group(1)} ({m.group(2)})", "success")
+            return
+
+        m = self._TF_MODIFYING.match(line)
+        if m:
+            on_event(f"Modifying: {m.group(1)}", "info")
+            return
+
+        m = self._TF_MODIFIED.match(line)
+        if m:
+            on_event(f"Modified: {m.group(1)} ({m.group(2)})", "success")
+            return
+
+        m = self._TF_COMPLETE.match(line)
+        if m:
+            on_event(f"Apply complete! {m.group(1)}", "success")
+            return
+
+        m = self._TF_DESTROY_COMPLETE.match(line)
+        if m:
+            on_event(f"Destroy complete! {m.group(1)} destroyed", "success")
+            return
+
+
     # =========================================================================
     # WORKSPACE MANAGEMENT
     # =========================================================================
@@ -446,6 +576,99 @@ class TerraformService:
             "workspace": self.workspace_name
         }
     
+    # =========================================================================
+    # STREAMING VARIANTS (real-time resource-level events)
+    # =========================================================================
+
+    def apply_fresh_streaming(self, on_event: Callable = None) -> Dict:
+        """Apply Terraform changes with real-time event streaming."""
+        if not self.tfvars_file.exists():
+            return {"success": False, "error": f"terraform.tfvars file not found: {self.tfvars_file}"}
+
+        if self.workspace_name != "default":
+            ws_result = self.ensure_workspace()
+            if not ws_result["success"]:
+                return ws_result
+
+        exit_code, stdout, stderr = self._run_command_streaming(
+            [
+                "terraform", "apply",
+                "-var-file", str(self.tfvars_file.absolute()),
+                "-auto-approve",
+                "-no-color"
+            ],
+            on_event=on_event,
+            timeout=TIMEOUT_APPLY
+        )
+
+        return {
+            "success": exit_code == 0,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "workspace": self.workspace_name
+        }
+
+    def apply_target_streaming(self, target: str, on_event: Callable = None) -> Dict:
+        """Targeted apply with real-time event streaming."""
+        if not self.tfvars_file.exists():
+            return {"success": False, "error": f"terraform.tfvars file not found: {self.tfvars_file}"}
+
+        if self.workspace_name != "default":
+            ws_result = self.ensure_workspace()
+            if not ws_result["success"]:
+                return ws_result
+
+        exit_code, stdout, stderr = self._run_command_streaming(
+            [
+                "terraform", "apply",
+                "-var-file", str(self.tfvars_file.absolute()),
+                "-target", target,
+                "-auto-approve",
+                "-no-color"
+            ],
+            on_event=on_event,
+            timeout=TIMEOUT_APPLY
+        )
+
+        return {
+            "success": exit_code == 0,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "target": target,
+            "workspace": self.workspace_name
+        }
+
+    def destroy_streaming(self, on_event: Callable = None) -> Dict:
+        """Destroy Terraform infrastructure with real-time event streaming."""
+        if not self.tfvars_file.exists():
+            return {"success": False, "error": f"terraform.tfvars file not found: {self.tfvars_file}"}
+
+        if self.workspace_name != "default":
+            ws_result = self.ensure_workspace()
+            if not ws_result["success"]:
+                return ws_result
+
+        exit_code, stdout, stderr = self._run_command_streaming(
+            [
+                "terraform", "destroy",
+                "-var-file", str(self.tfvars_file.absolute()),
+                "-auto-approve",
+                "-no-color"
+            ],
+            on_event=on_event,
+            timeout=TIMEOUT_DESTROY
+        )
+
+        return {
+            "success": exit_code == 0,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "workspace": self.workspace_name
+        }
+
     def output(self) -> Dict:
         """Get Terraform outputs"""
         # Ensure correct workspace is selected
@@ -466,7 +689,7 @@ class TerraformService:
         if exit_code == 0:
             try:
                 outputs = json.loads(stdout)
-            except:
+            except (json.JSONDecodeError, ValueError):
                 pass
         
         return {
@@ -477,6 +700,36 @@ class TerraformService:
             "workspace": self.workspace_name
         }
     
+    def cancel(self) -> bool:
+        """Kill the active Terraform subprocess and all its children (provider plugins)"""
+        import signal
+        proc = self._active_process
+        if proc and proc.poll() is None:
+            try:
+                # Kill entire process group (Terraform + provider plugins)
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+            # Fallback: kill the process directly
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            self._active_process = None
+            return True
+        return False
+
+    def output_raw(self, name: str) -> str:
+        """Get a single Terraform output value (including sensitive ones)"""
+        if self.workspace_name != "default":
+            self.ensure_workspace()
+        exit_code, stdout, stderr = self._run_command(
+            ["terraform", "output", "-raw", name],
+            timeout=TIMEOUT_OUTPUT
+        )
+        return stdout.strip() if exit_code == 0 else ""
+
     def show(self) -> Dict:
         """Show current Terraform state"""
         # Ensure correct workspace is selected
@@ -497,7 +750,7 @@ class TerraformService:
         if exit_code == 0:
             try:
                 state = json.loads(stdout)
-            except:
+            except (json.JSONDecodeError, ValueError):
                 pass
         
         return {

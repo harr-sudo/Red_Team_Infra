@@ -32,7 +32,7 @@ terraform/                  # Infrastructure as Code
     ├── proxy_redirector/   # Nginx HTTP/HTTPS redirectors
     ├── bastion/            # Windows jump box (RDP + WSL2)
     ├── goad/               # Vulnerable AD lab environments
-    ├── cs_storage/         # S3 bucket + IAM (3-layer security)
+    ├── deployment_storage/ # S3 bucket + IAM + Secrets (3-layer security)
     ├── dns/                # Route 53 DNS management
     ├── certificates/       # ACM SSL/TLS certificates
     ├── domain_fronting/    # CloudFront CDN proxy for domain fronting
@@ -99,9 +99,38 @@ terraform destroy -var-file=../configs/terraform.tfvars
 # Python
 pip install -r requirements.txt
 python3 webapp/backend/app.py
+
+# SSM (preferred for remote instance access — no SSH key hopping needed)
+aws ssm send-command --instance-ids <id> --region <region> \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["<command>"]'
+aws ssm get-command-invocation --command-id <id> --instance-id <id> --region <region>
+# Install session-manager-plugin for interactive sessions:
+# brew install --cask session-manager-plugin
+# aws ssm start-session --target <instance-id> --region <region>
 ```
 
+### SSM Access Pattern
+- **Prefer SSM over SSH hopping** for running commands on internal instances (C2 servers, redirectors, attack box)
+- All EC2 instances have SSM agent installed and IAM roles attached
+- Use `aws ssm send-command` for non-interactive commands, `aws ssm start-session` for interactive shells
+- SSM eliminates the need for SSH key distribution to bastion for multi-hop access
+- SSH is still used for: operator CS client tunnel (`ssh -L 50050:...`), bastion direct access
+- **Use SSM for remote management and diagnostics:** checking service status, reading bootstrap logs, verifying setup steps, restarting services, and troubleshooting deployment issues on any instance
+- **Use `AWS-RunPowerShellScript`** for Windows instances (attack box, bastion), **`AWS-RunShellScript`** for Linux (C2 servers, redirectors, jumpbox)
+- **Always retrieve command output** via `aws ssm get-command-invocation` — SSM commands are async and may take time to complete
+- **Bootstrap log locations:** Linux team servers: `/var/log/cs-install.log`, Windows attack box: `C:\Users\Administrator\Desktop\Deployment-Logs-Scripts\attackbox-init.log`, setup status JSON: `/opt/cobaltstrike/bootstrap-status` (Linux) or `C:\ProgramData\setup-status.json` (Windows)
+
 ## Coding Conventions
+
+### Cobalt Strike REST API (MANDATORY)
+- **ALWAYS read the OpenAPI spec before writing or modifying any CS REST API code.** The spec is at `docs/cobalt-strike-api/spec.js` (14K lines) with a summary at `docs/cobalt-strike-api/REST_API_REFERENCE.md`.
+- **Check DTO schemas for exact field names.** Do NOT guess — e.g., the spec says `sleep` not `sleepTime`, `fakeArguments` not `args`, `pid` as int32 not string. Wrong field names cause silent 400 errors.
+- **Every beacon POST endpoint returns `AsyncCommandResponse` with a `taskId`.** You MUST poll `GET /api/v1/tasks/{taskId}` for results. The response includes `taskAcknowledgements` (what CS client shows immediately) and `result` (actual output). Never fire-and-forget.
+- **Task statuses:** `NOT_FOUND | IN_PROGRESS | COMPLETED | FAILED | OUTPUT_RECEIVED`. Some commands (sleep, checkin) stay `IN_PROGRESS` forever — check acknowledgements and stop polling after ~3 attempts.
+- **Use dedicated endpoints, not consoleCommand**, when they exist. The REST API has structured endpoints for spawnto, ppid, blockdlls, argue, sleep, beaconGate, syscallMethod, tokenStore, BOF execution, etc. ConsoleCommand is the fallback only when no dedicated endpoint exists.
+- **Non-beacon endpoints are synchronous.** Credential CRUD, listener CRUD, download listing, artifact listing return data immediately — no task polling needed.
+- Backend code: `webapp/backend/services/beacon_service.py`, routes: `webapp/backend/routes/beacon.py`
 
 ### Terraform (HCL)
 - One module per infrastructure component in `terraform/modules/`
@@ -132,6 +161,15 @@ python3 webapp/backend/app.py
 - SSH key-based auth only, no passwords
 - Tasks must be idempotent (safe to re-run)
 - Inventory-driven host discovery
+
+### Frontend CSS / Light Mode
+- **This app has dark AND light themes.** Every CSS change MUST be tested in both modes.
+- Colors are defined in `webapp/frontend/css/palette.css` — never use raw hex values in `style.css` or inline styles. Use CSS variables.
+- **Light mode gotcha:** `--gold` (`--accent`) and `--gold-muted` (`--accent-muted`) are olive/cream in dark mode but resolve to low-contrast values on light surfaces. In light mode, use `--text-primary` or `--text-secondary` for text that sits on card/section backgrounds.
+- **Global `table thead tr`** has `background: var(--burgundy-dark)` with cream text. Any new table that does NOT use a brand-colored header must override this (e.g., `.my-table thead tr { background: transparent; }`).
+- **Terminal-safe variables** (`--terminal-*`, `--bg-terminal`, `--text-terminal`) keep bright colors in both themes because terminal backgrounds are always dark. Use these for terminal/code areas only.
+- **Rule of thumb:** if adding a `color:` or `background:` anywhere, check the resolved value in BOTH `[data-theme="light"]` and default (dark) in `palette.css`. Contrast ratio must be >= 4.5:1 for text.
+- Inline `style="color: ..."` with CSS variables is fine, but verify the variable resolves correctly in both themes.
 
 ### General
 - No hardcoded secrets — use AWS Secrets Manager or `terraform.tfvars` (marked sensitive)
@@ -181,7 +219,7 @@ Separate IAM roles per VPC (C2 vs GOAD). See `docs/S3_CONFUSED_DEPUTY_FIX.md`.
 |---|---|
 | `terraform/main.tf` | Core orchestration, deployment mode detection |
 | `terraform/variables.tf` | All input variable definitions |
-| `terraform/modules/cs_storage/main.tf` | S3 security (confused deputy protection) |
+| `terraform/modules/deployment_storage/main.tf` | S3 storage, IAM, secrets (confused deputy protection) |
 | `terraform/modules/c2_team_server/main.tf` | Cobalt Strike server provisioning |
 | `webapp/backend/app.py` | Flask API entry point |
 | `webapp/backend/routes/deploy.py` | Deployment API endpoints |

@@ -4525,15 +4525,41 @@ def get_terraform_outputs():
                         outputs['redirector_state'] = instance['State']['Name']
         
         # Include config data useful for connection info
-        outputs['redirector_domain'] = config.get('primary_domain_name', '')
-        outputs['c2_subdomain'] = config.get('c2_subdomain', 'api')
-        outputs['key_pair_name'] = config.get('key_pair_name', '')
-        outputs['cs_teamserver_password'] = config.get('cs_teamserver_password', '')
-        outputs['cobalt_strike_license_secret_name'] = config.get('cobalt_strike_license_secret_name', '')
-        outputs['deployment_type'] = config.get('deployment_type', '')
+        # Try per-project state first (correct when multiple deployments exist),
+        # fall back to global terraform.tfvars config
+        project_config = dict(config)  # Start with global config as base
+        try:
+            state_file = project_root / "logs" / "deployment_state" / f"{project_name}.state.json"
+            if state_file.exists():
+                import json as json_mod
+                state_data = json_mod.loads(state_file.read_text())
+                # Override deployment_type from per-project state
+                if state_data.get('deployment_type'):
+                    project_config['deployment_type'] = state_data['deployment_type']
+                # Override config fields from stored terraform outputs if available
+                stored_outputs = state_data.get('output', {})
+                for key in ('cs_teamserver_password', 'primary_domain_name'):
+                    val = stored_outputs.get(key, {}).get('value')
+                    if val:
+                        project_config[key] = val
+        except Exception:
+            pass
+
+        outputs['redirector_domain'] = project_config.get('primary_domain_name', '')
+        outputs['c2_subdomain'] = project_config.get('c2_subdomain', 'api')
+        outputs['key_pair_name'] = project_config.get('key_pair_name', '')
+        outputs['cs_teamserver_password'] = project_config.get('cs_teamserver_password', '')
+        outputs['cobalt_strike_license_secret_name'] = project_config.get('cobalt_strike_license_secret_name', '')
+        outputs['deployment_type'] = project_config.get('deployment_type', '')
         outputs['primary_domain_name'] = config.get('primary_domain_name', '')
         outputs['malleable_profile'] = config.get('malleable_profile', '')
         outputs['enable_domain_fronting'] = config.get('enable_domain_fronting', False)
+        outputs['enable_file_portal'] = config.get('enable_file_portal', False)
+        if config.get('enable_file_portal'):
+            outputs['portal_username'] = config.get('portal_username', 'operator')
+            outputs['portal_password'] = config.get('portal_password', '')
+            domain = config.get('primary_domain_name', '')
+            outputs['portal_url'] = f"https://www.{domain}/login" if domain else None
         outputs['ssl_provider'] = config.get('ssl_provider', 'letsencrypt')
 
         # Get DNS nameservers from Route 53 if a domain is configured

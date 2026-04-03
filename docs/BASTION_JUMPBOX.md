@@ -1,27 +1,21 @@
-# Bastion/Jump Box - Windows Server with WSL2
+# Bastion Host - Linux SSH Relay
 
 ## Overview
 
-The infrastructure includes a **dedicated Windows Server jump box (bastion host)** with **WSL2 (Ubuntu)** for easy management access to C2 servers.
-
-## Why Windows Server with WSL2?
-
-### Benefits
-
-1. **RDP Access** - Familiar Windows Remote Desktop for management
-2. **WSL2 Ubuntu** - Linux environment for SSH access to C2 servers
-3. **Best of Both Worlds** - Windows GUI + Linux command line
-4. **Dedicated Access** - Separated from operational infrastructure
-5. **Easy Setup** - Automated WSL2 installation via user data script
+The bastion is a **lightweight Ubuntu 22.04 LTS instance** in the management subnet. It serves as an SSH relay/tunnel host for accessing private-subnet resources (C2 team servers, attack box). No red team tools are installed on the bastion — all operations happen on the Windows attack box.
 
 ## Architecture
 
 ```
-Home (RDP) → Bastion (Windows Server, Public Subnet)
-                ↓
-            WSL2 (Ubuntu)
-                ↓
-            SSH → C2 Servers (Private Subnets)
+Operator Laptop
+    |
+    ├── SSH ──────────────> Bastion (Ubuntu, Management Subnet, 10.0.0.10)
+    |                          |
+    |                          ├── SSH tunnel ──> C2 Team Servers (Private Subnet)
+    |                          └── SSH tunnel ──> Attack Box RDP (Private Subnet)
+    |
+    └── SSH -L 3389:attack_box_ip:3389 ──> Bastion ──> Attack Box
+            then RDP to localhost:3389
 ```
 
 ## Configuration
@@ -37,281 +31,123 @@ enable_bastion = true  # Set to false to disable
 
 | Property | Default | Configurable |
 |----------|---------|--------------|
-| **OS** | Windows Server 2022 | Yes (`bastion_ami_id`) |
-| **Instance Type** | `t3.medium` | Yes (`bastion_instance_type`) |
-| **vCPU** | 2 | Based on instance type |
-| **RAM** | 4 GB | Based on instance type |
-| **Storage** | 30 GB | Yes (`bastion_root_volume_size`) |
+| **OS** | Ubuntu 22.04 LTS | Yes (`bastion_ami_id`) |
+| **Instance Type** | `t3.micro` | Yes (`bastion_instance_type`) |
+| **vCPU** | 1 | Based on instance type |
+| **RAM** | 1 GB | Based on instance type |
+| **Storage** | 20 GB gp3, encrypted | Yes (`bastion_root_volume_size`) |
 | **Elastic IP** | Always enabled | Automatic |
-| **WSL2** | Enabled | Automatic via user data |
+| **Auth** | SSH key-based only | Via EC2 key pair |
 
-### Windows Password
+## Access Patterns
 
-**Option 1: Retrieve from AWS (Recommended)**
-```hcl
-windows_admin_password = ""  # Leave empty
-```
+### 1. SSH to Bastion
 
-After deployment, retrieve password:
 ```bash
-aws ec2 get-password-data \
-    --instance-id i-1234567890abcdef0 \
-    --priv-launch-key ~/.ssh/key.pem
+ssh -i ~/.ssh/key.pem ubuntu@<bastion-eip>
 ```
 
-**Option 2: Set Custom Password**
-```hcl
-windows_admin_password = "YourSecurePassword123!"
-```
+### 2. Tunnel RDP to Attack Box
 
-⚠️ **Security Note**: If setting password, use AWS Secrets Manager or environment variables, not plain text in files.
+From your operator laptop, create an SSH tunnel through the bastion to the attack box:
 
-## Access Methods
-
-### 1. RDP Access (Windows Management)
-
-**From Windows:**
 ```bash
-mstsc /v:bastion-public-ip
+# Create tunnel (attack box is in private subnet at 10.0.10.50)
+ssh -i ~/.ssh/key.pem -L 3389:10.0.10.50:3389 ubuntu@<bastion-eip>
+
+# Then connect your RDP client to localhost
+mstsc /v:localhost:3389        # Windows
+open rdp://localhost:3389      # macOS
+xfreerdp /v:localhost:3389     # Linux
 ```
 
-**From Mac/Linux:**
-- Use Microsoft Remote Desktop app
-- Or use `rdesktop` or `xfreerdp`
+### 3. Tunnel CS Client to Team Server
 
-**Connection Details:**
-- **Server**: `bastion-public-ip` (from Terraform outputs)
-- **Username**: `Administrator`
-- **Password**: Retrieved from AWS or set in variables
-
-### 2. SSH Access via WSL2 (Linux Environment)
-
-**After RDP into bastion:**
-
-1. **Open PowerShell** (as Administrator)
-2. **Launch WSL2:**
-   ```powershell
-   wsl
-   ```
-3. **First time setup** (if needed):
-   ```bash
-   # Create user account (first time only)
-   # Follow prompts to set username and password
-   ```
-
-4. **SSH to C2 servers:**
-   ```bash
-   # From WSL2 Ubuntu
-   ssh ec2-user@private-c2-ip -i /mnt/c/path/to/key.pem
-   ```
-
-### 3. SSH Tunnel for C2 Client Access
-
-**From WSL2 on bastion:**
 ```bash
-# Create SSH tunnel
-ssh -L 50050:private-c2-ip:50050 ec2-user@private-c2-ip -i key.pem
+# Create tunnel to team server's CS listener (port 50050)
+ssh -i ~/.ssh/key.pem -L 50050:10.0.10.10:50050 ubuntu@<bastion-eip>
 
-# Then connect C2 client to localhost:50050
+# Then connect Cobalt Strike client to localhost:50050
 ```
 
-**Or from home through bastion:**
+### 4. Multiple Tunnels at Once
+
 ```bash
-# SSH tunnel through bastion
-ssh -L 50050:private-c2-ip:50050 Administrator@bastion-public-ip
-
-# Then in RDP session, use WSL2 to connect
+# Tunnel both RDP to attack box and CS client to team server
+ssh -i ~/.ssh/key.pem \
+    -L 3389:10.0.10.50:3389 \
+    -L 50050:10.0.10.10:50050 \
+    ubuntu@<bastion-eip>
 ```
-
-## WSL2 Setup
-
-### Automatic Installation
-
-The user data script automatically:
-- ✅ Enables WSL feature
-- ✅ Enables Virtual Machine Platform
-- ✅ Installs WSL2 kernel update
-- ✅ Sets WSL2 as default version
-- ✅ Attempts to install Ubuntu (may need manual step)
-
-### Manual Steps (If Needed)
-
-**If Ubuntu doesn't auto-install:**
-
-1. **Open PowerShell as Administrator**
-2. **Install Ubuntu:**
-   ```powershell
-   wsl --install -d Ubuntu
-   ```
-3. **Or use winget:**
-   ```powershell
-   winget install Canonical.Ubuntu.2204.LTS
-   ```
-
-### First Time WSL2 Setup
-
-1. **Launch WSL2:**
-   ```powershell
-   wsl
-   ```
-
-2. **Create user account** (follow prompts)
-
-3. **Update system:**
-   ```bash
-   sudo apt update && sudo apt upgrade -y
-   ```
-
-4. **Install SSH client** (if not already installed):
-   ```bash
-   sudo apt install openssh-client -y
-   ```
-
-5. **Copy SSH keys** (from Windows to WSL2):
-   ```bash
-   # Keys in Windows: C:\Users\Administrator\.ssh\
-   # Access from WSL2: /mnt/c/Users/Administrator/.ssh/
-   cp /mnt/c/Users/Administrator/.ssh/key.pem ~/.ssh/
-   chmod 600 ~/.ssh/key.pem
-   ```
 
 ## Security Configuration
 
 ### Security Group Rules
 
 **Inbound:**
-- **RDP (3389)**: From management CIDR blocks only
-- **SSH (22)**: From management CIDR blocks only (for OpenSSH server)
+- **SSH (22)**: From management CIDR blocks only
 
 **Outbound:**
-- **All traffic**: Allowed (for SSH to C2 servers, internet access, etc.)
+- **All traffic**: Allowed (for SSH to C2 servers, attack box, internet)
+
+### SSH Hardening (Applied Automatically)
+
+- `PermitRootLogin no`
+- `PasswordAuthentication no`
+- `MaxAuthTries 3`
+- `AllowTcpForwarding yes` (required for tunneling)
+- `X11Forwarding no`
 
 ### C2 Server Access
 
 C2 servers allow SSH from:
-- ✅ Bastion security group (primary method)
-- ✅ Management CIDR blocks (fallback)
-
-This means you can SSH from WSL2 on bastion directly to C2 servers!
-
-## Usage Workflow
-
-### Daily Access Pattern
-
-1. **RDP to bastion** from home
-   ```
-   mstsc /v:bastion-public-ip
-   ```
-
-2. **Open WSL2** in RDP session
-   ```powershell
-   wsl
-   ```
-
-3. **SSH to C2 servers** from WSL2
-   ```bash
-   ssh ec2-user@c2-private-ip -i ~/.ssh/key.pem
-   ```
-
-4. **Or create SSH tunnel** for C2 client
-   ```bash
-   ssh -L 50050:c2-private-ip:50050 ec2-user@c2-private-ip -i ~/.ssh/key.pem
-   ```
-
-### C2 Client Access
-
-**Option 1: Through Bastion WSL2**
-- RDP to bastion
-- Open WSL2
-- Create SSH tunnel
-- Connect C2 client to `localhost:50050`
-
-**Option 2: Port Forward Through RDP**
-- RDP to bastion with port forwarding
-- Use WSL2 to create tunnel
-- Connect from home machine
+- Bastion security group (primary method)
+- Management CIDR blocks (fallback)
 
 ## Cost
 
 **Monthly Cost (24/7):**
-- **t3.medium Windows Server**: ~$30/month
-- **30 GB EBS storage**: ~$2.40/month
-- **Elastic IP**: Free (if attached)
-- **Total**: ~$32-35/month
+- **t3.micro Ubuntu**: ~$8/month
+- **20 GB EBS storage**: ~$1.60/month
+- **Elastic IP**: Free (when attached to running instance)
+- **Total**: ~$10/month
 
-## Advantages Over Proxy/Redirector Access
+## Bastion vs Attack Box
 
-| Feature | Bastion | Proxy/Redirector |
-|---------|---------|------------------|
-| **Purpose** | Management access | Operational traffic |
-| **OS** | Windows Server | Linux |
-| **RDP** | ✅ Yes | ❌ No |
-| **WSL2** | ✅ Yes | ❌ No |
-| **SSH** | ✅ Via WSL2 | ✅ Direct |
-| **Separation** | ✅ Dedicated | ⚠️ Shared with ops |
-| **Security** | ✅ Isolated | ⚠️ Mixed purpose |
+| Feature | Bastion | Attack Box |
+|---------|---------|------------|
+| **Purpose** | SSH relay/tunnel host | Red team operations workstation |
+| **OS** | Ubuntu 22.04 | Windows Server 2022 |
+| **Subnet** | Management (public) | Private |
+| **Public IP** | Elastic IP | None |
+| **Access** | SSH from internet | RDP via bastion tunnel only |
+| **Tools** | None (minimal) | CS Client, PowerSploit, tools repo |
+| **Cost** | ~$10/mo | ~$58/mo |
 
 ## Troubleshooting
 
-### WSL2 Not Working
+### Can't SSH to Bastion
 
-**Check WSL status:**
-```powershell
-wsl --status
-```
+- Verify your IP is in `management_cidr_blocks`
+- Check security group allows SSH (22) from your IP
+- Verify key pair matches: `ssh -i ~/.ssh/key.pem ubuntu@<bastion-eip>`
 
-**Reinstall WSL2:**
-```powershell
-wsl --unregister Ubuntu
-wsl --install -d Ubuntu
-```
+### Can't Tunnel to C2 Servers / Attack Box
 
-### Can't SSH to C2 Servers
+- Verify bastion security group allows outbound traffic
+- C2/attack box security groups must allow SSH/RDP from bastion security group
+- Test from bastion: `nc -zv 10.0.10.10 22` (C2 server) or `nc -zv 10.0.10.50 3389` (attack box)
 
-**Check security groups:**
-- C2 servers must allow SSH from bastion security group
-- Verify bastion security group ID is in C2 server ingress rules
+### RDP Tunnel Not Working
 
-**Test connectivity:**
-```bash
-# From WSL2
-ping c2-private-ip
-telnet c2-private-ip 22
-```
-
-### RDP Connection Issues
-
-**Check Windows Firewall:**
-- RDP port (3389) should be open
-- Security group must allow RDP from your IP
-
-**Verify password:**
-```bash
-aws ec2 get-password-data --instance-id i-xxx --priv-launch-key key.pem
-```
+- Ensure tunnel is active: `ssh -L 3389:10.0.10.50:3389 ubuntu@bastion`
+- Check attack box is running: verify in AWS console
+- Try alternate local port if 3389 is in use: `ssh -L 3390:10.0.10.50:3389 ...`
 
 ## Terraform Outputs
 
-After deployment, get connection info:
-
 ```bash
 terraform output bastion_public_ip
-terraform output bastion_rdp_connection
-terraform output bastion_wsl2_info
+terraform output bastion_private_ip
+terraform output bastion_ssh_command
 ```
-
-## Summary
-
-✅ **Windows Server jump box** with WSL2 provides:
-- RDP for Windows management
-- WSL2 Ubuntu for Linux/SSH access
-- Dedicated, secure access point
-- Easy SSH to C2 servers
-- Clean separation from operational infrastructure
-
-**Perfect for operators who want:**
-- Familiar Windows environment
-- Linux command-line tools
-- Easy access to C2 infrastructure
-- Professional management setup
-

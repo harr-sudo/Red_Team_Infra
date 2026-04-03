@@ -17,7 +17,7 @@ frontend_path = Path(__file__).parent.parent / 'frontend'
 
 from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_cors import CORS
-from webapp.backend.routes import config, deploy, aws_check, health, goad, architecture
+from webapp.backend.routes import config, deploy, aws_check, health, goad, architecture, tools, profiles, costs, setup_check, beacon, terminal
 
 # Initialize Flask app
 app = Flask(__name__, 
@@ -36,6 +36,15 @@ app.register_blueprint(aws_check.bp, url_prefix='/api/aws')
 app.register_blueprint(health.bp, url_prefix='/api/health')
 app.register_blueprint(goad.bp)  # GOAD routes at /api/goad
 app.register_blueprint(architecture.bp)  # Architecture docs at /api/architecture
+app.register_blueprint(tools.bp, url_prefix='/api/tools')
+app.register_blueprint(profiles.bp, url_prefix='/api/profiles')
+app.register_blueprint(costs.bp, url_prefix='/api/costs')
+app.register_blueprint(setup_check.bp, url_prefix='/api/setup-check')
+app.register_blueprint(beacon.bp, url_prefix='/api/beacon')
+app.register_blueprint(terminal.bp)
+
+# Initialize WebSocket support for terminal
+terminal.init_sock(app)
 
 # Serve frontend
 @app.route('/')
@@ -73,7 +82,8 @@ def api_info():
             'config': '/api/config',
             'deploy': '/api/deploy',
             'aws': '/api/aws',
-            'goad': '/api/goad'
+            'goad': '/api/goad',
+            'costs': '/api/costs'
         }
     })
 
@@ -89,6 +99,6 @@ if __name__ == '__main__':
     app.run(
         host='127.0.0.1',  # Localhost only
         port=5000,
-        debug=True  # Enable debug mode for development
+        debug=False
     )
 

@@ -3,7 +3,7 @@ AWS Check API Routes
 Handle AWS credentials and permissions checking
 """
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from pathlib import Path
 import sys
 import subprocess
@@ -86,6 +86,64 @@ def check_credentials():
             "error": str(e),
             "message": f"Error checking credentials: {str(e)}"
         }), 500
+
+@bp.route('/ssh-key', methods=['GET'])
+def check_ssh_key():
+    """Check if the user has an SSH key pair for EC2 access"""
+    import os
+    home = Path.home()
+
+    # Check common SSH key locations
+    key_checks = [
+        ('id_ed25519', home / '.ssh' / 'id_ed25519', home / '.ssh' / 'id_ed25519.pub'),
+        ('id_rsa', home / '.ssh' / 'id_rsa', home / '.ssh' / 'id_rsa.pub'),
+    ]
+
+    found_keys = []
+    for name, priv, pub in key_checks:
+        if priv.exists() and pub.exists():
+            # Read public key to show fingerprint
+            try:
+                result = subprocess.run(
+                    ['ssh-keygen', '-l', '-f', str(pub)],
+                    capture_output=True, text=True, timeout=5
+                )
+                fingerprint = result.stdout.strip() if result.returncode == 0 else ''
+            except Exception:
+                fingerprint = ''
+
+            found_keys.append({
+                'name': name,
+                'private_key': str(priv),
+                'public_key': str(pub),
+                'fingerprint': fingerprint,
+            })
+
+    if found_keys:
+        # Prefer ed25519 over RSA
+        best = found_keys[0]
+        return jsonify({
+            'success': True,
+            'has_key': True,
+            'key_type': best['name'],
+            'private_key_path': best['private_key'],
+            'public_key_path': best['public_key'],
+            'fingerprint': best['fingerprint'],
+            'all_keys': found_keys,
+            'message': f"SSH key found: {best['name']} ({best['fingerprint']})",
+            'note': 'This key will be uploaded to AWS during deployment for bastion/jumpbox SSH access. '
+                     'It is also used for the CS REST API SSH tunnel and GOAD AD provisioning.'
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'has_key': False,
+            'message': 'No SSH key pair found in ~/.ssh/',
+            'fix': 'Generate one with: ssh-keygen -t ed25519 -C "red-team-infra"',
+            'note': 'An SSH key pair is required for EC2 instance access. '
+                     'The public key is uploaded to AWS, the private key stays on your machine.'
+        })
+
 
 @bp.route('/github-cli', methods=['GET'])
 def check_github_cli():
@@ -223,6 +281,109 @@ def check_github_cli():
             "error": str(e),
             "message": f"Error checking GitHub CLI: {str(e)}"
         }), 500
+
+@bp.route('/check-domain', methods=['POST'])
+def check_domain_availability():
+    """Check if subdomains already have DNS records in Route53.
+
+    Prevents operators from accidentally overwriting records from another deployment.
+    """
+    data = request.get_json() or {}
+    domain = data.get('domain', '')
+    subdomains = data.get('subdomains', [])
+    region = data.get('region', 'us-east-1')
+
+    if not domain or not subdomains:
+        return jsonify({'success': False, 'error': 'domain and subdomains required'}), 400
+
+    try:
+        # Get the hosted zone ID for this domain
+        result = subprocess.run(
+            ['aws', 'route53', 'list-hosted-zones-by-name',
+             '--dns-name', domain, '--max-items', '1', '--output', 'json'],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode != 0:
+            return jsonify({'success': False, 'error': f'Route53 query failed: {result.stderr}'}), 500
+
+        zones = json.loads(result.stdout).get('HostedZones', [])
+        zone_id = None
+        for z in zones:
+            # Match exact domain (Route53 adds trailing dot)
+            if z['Name'].rstrip('.') == domain.rstrip('.'):
+                zone_id = z['Id'].split('/')[-1]
+                break
+
+        if not zone_id:
+            return jsonify({
+                'success': True,
+                'zone_found': False,
+                'message': f'No Route53 hosted zone found for {domain}. '
+                           'Zone will be created during deployment.',
+                'results': []
+            })
+
+        # Check each subdomain for existing records
+        results = []
+        for sub in subdomains:
+            fqdn = f"{sub}.{domain}"
+            rec_result = subprocess.run(
+                ['aws', 'route53', 'list-resource-record-sets',
+                 '--hosted-zone-id', zone_id,
+                 '--query', f"ResourceRecordSets[?Name=='{fqdn}.']",
+                 '--output', 'json'],
+                capture_output=True, text=True, timeout=15
+            )
+
+            records = []
+            if rec_result.returncode == 0:
+                try:
+                    records = json.loads(rec_result.stdout) or []
+                except json.JSONDecodeError:
+                    records = []
+
+            if records:
+                # Extract record details
+                rec_info = []
+                for r in records:
+                    rtype = r.get('Type', '?')
+                    values = [rv.get('Value', '') for rv in r.get('ResourceRecords', [])]
+                    alias = r.get('AliasTarget', {}).get('DNSName', '')
+                    rec_info.append({
+                        'type': rtype,
+                        'values': values if values else [alias] if alias else ['(alias)'],
+                    })
+                results.append({
+                    'subdomain': sub,
+                    'fqdn': fqdn,
+                    'available': False,
+                    'records': rec_info,
+                })
+            else:
+                results.append({
+                    'subdomain': sub,
+                    'fqdn': fqdn,
+                    'available': True,
+                    'records': [],
+                })
+
+        has_conflict = any(not r['available'] for r in results)
+
+        return jsonify({
+            'success': True,
+            'zone_found': True,
+            'zone_id': zone_id,
+            'domain': domain,
+            'has_conflict': has_conflict,
+            'results': results,
+            'message': 'One or more subdomains already have DNS records — deploying will overwrite them.' if has_conflict else 'All subdomains are available.',
+        })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': 'Route53 query timed out'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @bp.route('/permissions', methods=['GET'])
 def check_permissions():

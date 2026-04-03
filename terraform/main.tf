@@ -696,6 +696,7 @@ module "dns" {
   enable_apex_record           = var.enable_apex_record
   create_backup_domain_records = var.create_backup_domain_records
   enable_domain_fronting       = var.enable_domain_fronting
+  enable_file_portal           = var.enable_file_portal
   enable_spf_record            = var.enable_spf_record
   enable_dmarc_record          = var.enable_dmarc_record
 

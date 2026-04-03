@@ -67,3 +67,8 @@ output "nat_gateway_public_ip" {
   description = "Public IP of the NAT Gateway (if enabled)"
   value       = var.enable_nat_gateway ? aws_eip.nat_eip[0].public_ip : null
 }
+
+output "s3_endpoint_id" {
+  description = "ID of the S3 Gateway VPC Endpoint"
+  value       = aws_vpc_endpoint.s3.id
+}

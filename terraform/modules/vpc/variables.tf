@@ -39,9 +39,15 @@ variable "management_cidr_blocks" {
 }
 
 variable "c2_server_port" {
-  description = "C2 server port for NACL rules"
+  description = "CS client management port for NACL rules (bastion → team server, 50050)"
   type        = number
   default     = 50050
+}
+
+variable "c2_listener_port" {
+  description = "CS beacon listener port for NACL rules (redirector → team server)"
+  type        = number
+  default     = 443
 }
 
 variable "ssh_port" {
@@ -64,6 +70,11 @@ variable "enable_nat_gateway" {
   description = "Enable NAT Gateway for private subnets"
   type        = bool
   default     = false
+}
+
+variable "aws_region" {
+  description = "AWS region (used for S3 VPC endpoint service name)"
+  type        = string
 }
 
 variable "tags" {

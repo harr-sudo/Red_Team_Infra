@@ -65,6 +65,12 @@ variable "redirector_ips" {
   default     = []
 }
 
+variable "enable_file_portal" {
+  description = "When true, www subdomain points to first redirector only (portal needs consistent file store)"
+  type        = bool
+  default     = false
+}
+
 variable "enable_www_subdomain" {
   description = "Create www subdomain record"
   type        = bool

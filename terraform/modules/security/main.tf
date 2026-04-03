@@ -16,7 +16,7 @@ resource "aws_security_group" "c2_team_server_sg" {
   description = "Security group for C2 team servers in private subnets"
   vpc_id      = var.vpc_id
 
-  # SSH access from bastion host (for WSL2 SSH access)
+  # SSH access from bastion host
   ingress {
     description     = "SSH from bastion host"
     from_port       = var.ssh_port
@@ -101,6 +101,10 @@ resource "aws_security_group" "proxy_redirector_sg" {
 # When domain fronting is ENABLED: restrict to CloudFront IPs only via managed prefix list
 
 # CloudFront managed prefix list (only needed when domain fronting is enabled)
+# NOTE: The CloudFront prefix list contains ~120 CIDR ranges. AWS security groups
+# have a default limit of 60 rules. You may need to request a quota increase for
+# "Inbound or outbound rules per security group" via the AWS Service Quotas console
+# before enabling domain fronting. See: https://docs.aws.amazon.com/vpc/latest/userguide/amazon-vpc-limits.html
 data "aws_ec2_managed_prefix_list" "cloudfront" {
   count = var.enable_domain_fronting ? 1 : 0
   name  = "com.amazonaws.global.cloudfront.origin-facing"
@@ -158,44 +162,79 @@ resource "aws_security_group_rule" "redirector_https_cloudfront" {
 # CROSS-REFERENCE RULES (separate to avoid circular dependency)
 # =============================================================================
 
-# Allow C2 servers to receive traffic from proxy/redirectors
-resource "aws_security_group_rule" "c2_from_proxy" {
+# Allow C2 servers to receive traffic from bastion (operator SSH tunnel for CS client)
+resource "aws_security_group_rule" "c2_from_bastion" {
   type                     = "ingress"
   from_port                = var.c2_server_port
   to_port                  = var.c2_server_port
   protocol                 = "tcp"
-  source_security_group_id = aws_security_group.proxy_redirector_sg.id
+  source_security_group_id = aws_security_group.bastion_sg.id
   security_group_id        = aws_security_group.c2_team_server_sg.id
-  description              = "C2 traffic from proxy redirectors"
+  description              = "C2 port from bastion (operator SSH tunnel)"
 }
 
-# Allow proxy/redirectors to send traffic to C2 servers
+resource "aws_security_group_rule" "c2_rest_api_from_bastion" {
+  count                    = var.enable_cs_rest_api ? 1 : 0
+  type                     = "ingress"
+  from_port                = 50443
+  to_port                  = 50443
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.bastion_sg.id
+  security_group_id        = aws_security_group.c2_team_server_sg.id
+  description              = "CS REST API from bastion (SSH tunnel)"
+}
+
+# Allow C2 servers to receive beacon traffic from proxy/redirectors (listener port)
+resource "aws_security_group_rule" "c2_from_proxy" {
+  type                     = "ingress"
+  from_port                = var.c2_listener_port
+  to_port                  = var.c2_listener_port
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.proxy_redirector_sg.id
+  security_group_id        = aws_security_group.c2_team_server_sg.id
+  description              = "Beacon traffic from proxy redirectors (listener port)"
+}
+
+# Allow proxy/redirectors to send beacon traffic to C2 servers (listener port)
 resource "aws_security_group_rule" "proxy_to_c2" {
   type                     = "egress"
-  from_port                = var.c2_server_port
-  to_port                  = var.c2_server_port
+  from_port                = var.c2_listener_port
+  to_port                  = var.c2_listener_port
   protocol                 = "tcp"
   source_security_group_id = aws_security_group.c2_team_server_sg.id
   security_group_id        = aws_security_group.proxy_redirector_sg.id
-  description              = "Traffic to C2 team servers"
+  description              = "Beacon traffic to C2 team servers (listener port)"
 }
 
-# Security Group for Bastion/Jump Box
+# Allow C2 servers to receive SSH from attack box (CS operations)
+resource "aws_security_group_rule" "c2_ssh_from_attack_box" {
+  type                     = "ingress"
+  from_port                = var.ssh_port
+  to_port                  = var.ssh_port
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.attack_box_sg.id
+  security_group_id        = aws_security_group.c2_team_server_sg.id
+  description              = "SSH from attack box"
+}
+
+# Allow C2 servers to receive CS client connections from attack box (management port)
+resource "aws_security_group_rule" "c2_mgmt_from_attack_box" {
+  type                     = "ingress"
+  from_port                = var.c2_server_port
+  to_port                  = var.c2_server_port
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.attack_box_sg.id
+  security_group_id        = aws_security_group.c2_team_server_sg.id
+  description              = "C2 client from attack box (management port)"
+}
+
+# Security Group for Bastion Host (Linux SSH Relay)
 resource "aws_security_group" "bastion_sg" {
   name        = "${var.project_name}-${var.environment}-bastion-sg"
-  description = "Security group for bastion/jump box in public subnet"
+  description = "Security group for bastion host - SSH only"
   vpc_id      = var.vpc_id
 
-  # RDP access from management IPs only
-  ingress {
-    description = "RDP from management CIDR blocks"
-    from_port   = 3389
-    to_port     = 3389
-    protocol    = "tcp"
-    cidr_blocks = var.management_cidr_blocks
-  }
-
-  # SSH access from management IPs (for OpenSSH server on Windows)
+  # SSH access from management IPs only
   ingress {
     description = "SSH from management CIDR blocks"
     from_port   = var.ssh_port
@@ -221,6 +260,17 @@ resource "aws_security_group" "bastion_sg" {
       Component = "BastionHost"
     }
   )
+}
+
+# Allow bastion to SSH to redirectors (nginx config management)
+resource "aws_security_group_rule" "redirector_ssh_from_bastion" {
+  type                     = "ingress"
+  from_port                = var.ssh_port
+  to_port                  = var.ssh_port
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.bastion_sg.id
+  security_group_id        = aws_security_group.proxy_redirector_sg.id
+  description              = "SSH from bastion host for redirector management"
 }
 
 # Security Group for Attack Box (Windows Workstation)

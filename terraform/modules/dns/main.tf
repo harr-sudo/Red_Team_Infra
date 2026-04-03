@@ -68,17 +68,14 @@ locals {
 resource "aws_route53_record" "c2_primary" {
   count = length(var.redirector_ips) > 0 && !var.enable_domain_fronting ? 1 : 0
 
-  zone_id = local.zone_id
-  name    = local.c2_fqdn
-  type    = "A"
-  ttl     = var.dns_ttl
+  zone_id         = local.zone_id
+  name            = local.c2_fqdn
+  type            = "A"
+  ttl             = var.dns_ttl
+  allow_overwrite = true
 
-  # Round-robin across all redirectors
-  records = var.redirector_ips
-
-  lifecycle {
-    create_before_destroy = true
-  }
+  # When file portal is enabled, pin to first redirector for consistent file store
+  records = var.enable_file_portal ? [var.redirector_ips[0]] : var.redirector_ips
 }
 
 # WWW subdomain -> Redirector(s) (for web traffic blending)
@@ -86,12 +83,14 @@ resource "aws_route53_record" "c2_primary" {
 resource "aws_route53_record" "www" {
   count = length(var.redirector_ips) > 0 && var.enable_www_subdomain && !var.enable_domain_fronting ? 1 : 0
 
-  zone_id = local.zone_id
-  name    = local.www_fqdn
-  type    = "A"
-  ttl     = var.dns_ttl
+  zone_id         = local.zone_id
+  name            = local.www_fqdn
+  type            = "A"
+  ttl             = var.dns_ttl
+  allow_overwrite = true
 
-  records = var.redirector_ips
+  # When file portal is enabled, www points to first redirector only for consistent file store
+  records = var.enable_file_portal ? [var.redirector_ips[0]] : var.redirector_ips
 }
 
 # CDN subdomain -> Redirector(s) (for CDN-style traffic)
@@ -99,12 +98,13 @@ resource "aws_route53_record" "www" {
 resource "aws_route53_record" "cdn" {
   count = length(var.redirector_ips) > 0 && var.enable_cdn_subdomain && !var.enable_domain_fronting ? 1 : 0
 
-  zone_id = local.zone_id
-  name    = local.cdn_fqdn
-  type    = "A"
-  ttl     = var.dns_ttl
+  zone_id         = local.zone_id
+  name            = local.cdn_fqdn
+  type            = "A"
+  ttl             = var.dns_ttl
+  allow_overwrite = true
 
-  records = var.redirector_ips
+  records = var.enable_file_portal ? [var.redirector_ips[0]] : var.redirector_ips
 }
 
 # Root domain -> Redirector(s) (apex/naked domain)
@@ -112,12 +112,13 @@ resource "aws_route53_record" "cdn" {
 resource "aws_route53_record" "apex" {
   count = length(var.redirector_ips) > 0 && var.enable_apex_record && !var.enable_domain_fronting ? 1 : 0
 
-  zone_id = local.zone_id
-  name    = var.primary_domain_name
-  type    = "A"
-  ttl     = var.dns_ttl
+  zone_id         = local.zone_id
+  name            = var.primary_domain_name
+  type            = "A"
+  ttl             = var.dns_ttl
+  allow_overwrite = true
 
-  records = var.redirector_ips
+  records = var.enable_file_portal ? [var.redirector_ips[0]] : var.redirector_ips
 }
 
 # =============================================================================
@@ -129,10 +130,11 @@ resource "aws_route53_record" "apex" {
 resource "aws_route53_record" "backup_domains" {
   for_each = var.create_backup_domain_records && !var.enable_domain_fronting ? toset(var.backup_domains) : toset([])
 
-  zone_id = local.zone_id
-  name    = each.value
-  type    = "CNAME"
-  ttl     = var.dns_ttl
+  zone_id         = local.zone_id
+  name            = each.value
+  type            = "CNAME"
+  ttl             = var.dns_ttl
+  allow_overwrite = true
 
   records = [local.c2_fqdn] # Point to primary C2 FQDN
 }
@@ -145,10 +147,11 @@ resource "aws_route53_record" "backup_domains" {
 resource "aws_route53_record" "spf" {
   count = var.enable_spf_record ? 1 : 0
 
-  zone_id = local.zone_id
-  name    = var.primary_domain_name
-  type    = "TXT"
-  ttl     = 3600
+  zone_id         = local.zone_id
+  name            = var.primary_domain_name
+  type            = "TXT"
+  ttl             = 3600
+  allow_overwrite = true
 
   records = ["v=spf1 -all"] # Deny all email (we're not sending email)
 }
@@ -157,10 +160,11 @@ resource "aws_route53_record" "spf" {
 resource "aws_route53_record" "dmarc" {
   count = var.enable_dmarc_record ? 1 : 0
 
-  zone_id = local.zone_id
-  name    = "_dmarc.${var.primary_domain_name}"
-  type    = "TXT"
-  ttl     = 3600
+  zone_id         = local.zone_id
+  name            = "_dmarc.${var.primary_domain_name}"
+  type            = "TXT"
+  ttl             = 3600
+  allow_overwrite = true
 
   records = ["v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s;"]
 }

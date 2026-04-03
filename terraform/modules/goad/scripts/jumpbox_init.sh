@@ -6,6 +6,7 @@ USERNAME="${username}"
 ATTACKBOX_IP="${attackbox_ip}"
 TEAMSERVER_IP="${teamserver_ip}"
 INSTALL_CS="${install_cs}"
+IP_RANGE="${ip_range}"
 DEPLOYMENT_BUCKET="${deployment_bucket}"
 DEPLOYMENT_ID="${deployment_id}"
 AWS_REGION="${aws_region}"
@@ -100,7 +101,7 @@ Host attackbox ab
     IdentityFile ~/.ssh/jumpbox_internal_key
     StrictHostKeyChecking accept-new
 
-Host 192.168.56.*
+Host ${ip_range}.*
     User ubuntu
     IdentityFile ~/.ssh/jumpbox_internal_key
     StrictHostKeyChecking accept-new
@@ -110,12 +111,12 @@ SSHCONFIG
 fi
 
 # README
-cat > /home/ubuntu/README.txt << 'EOF'
+cat > /home/ubuntu/README.txt << EOF
 JUMPBOX - SSH Gateway
 =====================
-Commands: ssh teamserver | ssh attackbox | ssh 192.168.56.10
+Commands: ssh teamserver | ssh attackbox | ssh ${ip_range}.10
 Scripts:  /opt/jumpbox/check-key-status.sh | check-network.sh
-RDP:      ssh -L 3389:192.168.56.10:3389 ubuntu@<JUMPBOX_IP> (from local)
+RDP:      ssh -L 3389:${ip_range}.10:3389 ubuntu@<JUMPBOX_IP> (from local)
 Key:      Internal key generated on this host, public key shared via S3
 EOF
 chown ubuntu:ubuntu /home/ubuntu/README.txt
@@ -129,11 +130,11 @@ echo "=== Key Status ==="
 [ -f /opt/jumpbox/bootstrap-status ] && cat /opt/jumpbox/bootstrap-status
 EOF
 
-cat > /opt/jumpbox/check-network.sh << 'EOF'
+cat > /opt/jumpbox/check-network.sh << EOF
 #!/bin/bash
 echo "=== Network Check ==="
 for ip in 10 11 40 50; do
-    ping -c1 -W1 192.168.56.$ip >/dev/null 2>&1 && echo "192.168.56.$ip: UP" || echo "192.168.56.$ip: DOWN"
+    ping -c1 -W1 ${ip_range}.\$ip >/dev/null 2>&1 && echo "${ip_range}.\$ip: UP" || echo "${ip_range}.\$ip: DOWN"
 done
 EOF
 

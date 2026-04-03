@@ -1,4 +1,4 @@
-# CS Storage Module - Outputs
+# Deployment Storage Module - Outputs
 # =============================================================================
 # Option C: Separate IAM Roles Per VPC
 # - instance_profile_name_c2: For C2 VPC instances
@@ -121,6 +121,16 @@ output "instance_profile_name" {
 # =============================================================================
 # Upload Command
 # =============================================================================
+
+output "github_token_secret_name" {
+  description = "Secrets Manager secret name for GitHub token"
+  value       = length(aws_secretsmanager_secret.github_token) > 0 ? aws_secretsmanager_secret.github_token[0].name : ""
+}
+
+output "cs_license_secret_name" {
+  description = "Secrets Manager secret name for Cobalt Strike license key (pre-existing, passed through)"
+  value       = var.cs_license_secret_name
+}
 
 output "upload_command" {
   description = "Example command to upload CS archive to S3"

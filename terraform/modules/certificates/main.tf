@@ -21,13 +21,13 @@ resource "aws_acm_certificate" "c2_cert" {
   domain_name       = var.primary_domain_name
   validation_method = "DNS"
 
-  # Include all subdomains in the certificate (SAN - Subject Alternative Names)
-  subject_alternative_names = compact([
-    "*.${var.primary_domain_name}", # Wildcard for all subdomains
-    var.c2_subdomain != "" ? "${var.c2_subdomain}.${var.primary_domain_name}" : null,
-    var.www_subdomain != "" ? "${var.www_subdomain}.${var.primary_domain_name}" : null,
-    var.cdn_subdomain != "" ? "${var.cdn_subdomain}.${var.primary_domain_name}" : null,
-  ])
+  # OPSEC: Wildcard-only SANs to minimize CT log exposure.
+  # CT logs are public — explicit subdomain SANs (api.example.com, cdn.example.com)
+  # let blue teams enumerate infrastructure via crt.sh. The wildcard covers all
+  # subdomains without revealing which ones are active.
+  subject_alternative_names = [
+    "*.${var.primary_domain_name}",
+  ]
 
   tags = merge(var.tags, {
     Name      = "${var.project_name}-${var.environment}-c2-cert"

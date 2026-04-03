@@ -47,7 +47,7 @@ variable "ami_id" {
 variable "root_volume_size" {
   description = "Root volume size in GB"
   type        = number
-  default     = 100
+  default     = 40
 }
 
 variable "key_pair_name" {
@@ -79,6 +79,12 @@ variable "admin_password" {
   sensitive   = true
 }
 
+variable "user_public_key" {
+  description = "User's SSH public key for key-only SSH access (added to administrators_authorized_keys)"
+  type        = string
+  default     = ""
+}
+
 # -----------------------------------------------------------------------------
 # C2 Server Connection
 # -----------------------------------------------------------------------------
@@ -103,6 +109,12 @@ variable "deployment_bucket" {
   description = "S3 bucket name for deployment artifacts (scripts, CS files)"
   type        = string
   default     = ""
+}
+
+variable "enable_s3_bootstrap" {
+  description = "Whether to use S3 for bootstrap scripts (set from caller, avoids count depending on computed values)"
+  type        = bool
+  default     = false
 }
 
 variable "deployment_id" {
@@ -143,6 +155,40 @@ variable "tools_repo_branch" {
   description = "Git branch to clone for tools repository"
   type        = string
   default     = "main"
+}
+
+# -----------------------------------------------------------------------------
+# Domain / Listener Configuration (for CS Listener Guide generation)
+# -----------------------------------------------------------------------------
+
+variable "primary_domain" {
+  description = "Primary domain name for C2 operations (e.g., example.com)"
+  type        = string
+  default     = ""
+}
+
+variable "c2_subdomain" {
+  description = "C2 subdomain prefix (e.g., api → api.example.com)"
+  type        = string
+  default     = "api"
+}
+
+variable "malleable_profile" {
+  description = "Malleable C2 profile name configured on redirectors"
+  type        = string
+  default     = "default"
+}
+
+variable "github_token_secret_name" {
+  description = "Secrets Manager secret name containing GitHub PAT (empty = no token)"
+  type        = string
+  default     = ""
+}
+
+variable "cs_license_secret_name" {
+  description = "Secrets Manager secret name containing Cobalt Strike license key (empty = manual activation)"
+  type        = string
+  default     = ""
 }
 
 # -----------------------------------------------------------------------------

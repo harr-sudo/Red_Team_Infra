@@ -44,8 +44,9 @@ resource "aws_instance" "teamserver" {
   # User data - Team Server installation + key exchange
   # Downloads jumpbox's PUBLIC key from S3 for authorized_keys
   user_data = templatefile("${path.module}/scripts/teamserver_init.sh", {
-    cs_archive_s3_path = var.cobalt_strike_s3_path
-    cs_password        = var.cs_teamserver_password
+    cs_archive_s3_path     = var.cobalt_strike_s3_path
+    cs_password            = var.cs_teamserver_password
+    cs_license_secret_name = var.cs_license_secret_name
     # Key exchange via S3 - downloads jumpbox's public key
     deployment_bucket  = var.deployment_bucket
     deployment_id      = var.deployment_id
@@ -54,7 +55,7 @@ resource "aws_instance" "teamserver" {
   })
 
   root_block_device {
-    volume_size           = 30
+    volume_size           = 20
     volume_type           = "gp3"
     encrypted             = true
     delete_on_termination = true

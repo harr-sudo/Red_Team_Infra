@@ -210,22 +210,13 @@ Each user creates their own Personal Access Token (PAT):
    - Generate token
    - **Copy token immediately** (won't be shown again)
 
-2. **Store token in AWS SSM:**
-   ```bash
-   # Each user stores their own token
-   aws ssm put-parameter \
-       --name "/red-team/tools-repo-token-USERNAME" \
-       --type "SecureString" \
-       --value "ghp_YOUR_TOKEN_HERE" \
-       --region us-east-1 \
-       --overwrite
-   ```
-
-3. **Configure in terraform.tfvars:**
+2. **Configure in terraform.tfvars:**
    ```hcl
-   tools_repo_url = "https://github.com/YOUR-ORG/red-team-tools.git"
-   tools_repo_https_token = "/red-team/tools-repo-token-USERNAME"
+   tools_repo_url         = "https://github.com/YOUR-ORG/red-team-tools.git"
+   tools_repo_https_token = "ghp_YOUR_TOKEN_HERE"
    ```
+   Terraform automatically stores the token in AWS Secrets Manager. Instances
+   fetch it at runtime via IAM role -- the token never appears in S3-stored scripts.
 
 ### Option B: Deploy Key (Single Key for Deployment)
 
@@ -315,30 +306,19 @@ tools_repo_url = "https://github.com/YOUR-ORG/red-team-tools.git"  # Use HTTPS f
 tools_repo_url = "git@github.com:YOUR-ORG/red-team-tools.git"  # Use SSH for deploy key
 
 tools_repo_branch = "main"
-tools_repo_https_token = "/red-team/tools-repo-token-USERNAME"  # For PAT
+tools_repo_https_token = "ghp_YOUR_TOKEN_HERE"  # Stored in AWS Secrets Manager automatically
 # OR
 tools_repo_ssh_key = "/red-team/tools-repo-ssh-key"  # For deploy key
 ```
 
-### Store Credentials in AWS SSM
+### Token Security
 
-**For Personal Access Token:**
-```bash
-aws ssm put-parameter \
-    --name "/red-team/tools-repo-token-USERNAME" \
-    --type "SecureString" \
-    --value "ghp_YOUR_TOKEN_HERE" \
-    --region us-east-1
-```
+When `tools_repo_https_token` is set in `terraform.tfvars`, Terraform automatically:
+1. Creates an AWS Secrets Manager secret named `{project}-{env}-github-token`
+2. Adds IAM permissions for instances to read the secret
+3. Instances fetch the token at runtime via `Get-SECSecretValue` (Windows) or `aws secretsmanager get-secret-value` (Linux)
 
-**For SSH Deploy Key:**
-```bash
-aws ssm put-parameter \
-    --name "/red-team/tools-repo-ssh-key" \
-    --type "SecureString" \
-    --value "$(cat ~/.ssh/red-team-tools-deploy)" \
-    --region us-east-1
-```
+The token **never appears** in S3-stored init scripts -- only the secret name is embedded.
 
 ## Step 6: Test Deployment
 
@@ -386,19 +366,11 @@ When adding new team members:
 2. **User creates PAT:**
    - Follow Step 3, Option A above
 
-3. **User stores their token:**
-   ```bash
-   aws ssm put-parameter \
-       --name "/red-team/tools-repo-token-NEW-USERNAME" \
-       --type "SecureString" \
-       --value "ghp_THEIR_TOKEN" \
-       --region us-east-1
-   ```
-
-4. **Update terraform.tfvars if using their token:**
+3. **Update terraform.tfvars with their token:**
    ```hcl
-   tools_repo_https_token = "/red-team/tools-repo-token-NEW-USERNAME"
+   tools_repo_https_token = "ghp_THEIR_TOKEN"
    ```
+   Terraform stores the token in AWS Secrets Manager automatically.
 
 ## Security Best Practices
 
@@ -408,10 +380,10 @@ When adding new team members:
    - Review access regularly
 
 2. **Credentials:**
-   - Store all credentials in AWS SSM Parameter Store
-   - Use SecureString type for encryption
-   - Rotate tokens/keys regularly
-   - Use IAM policies to restrict SSM access
+   - GitHub tokens are stored in AWS Secrets Manager (managed by Terraform)
+   - Only instances with the correct IAM role can retrieve tokens at runtime
+   - Rotate tokens regularly
+   - Tokens never appear in S3-stored scripts
 
 3. **Token Management:**
    - Set appropriate expiration dates

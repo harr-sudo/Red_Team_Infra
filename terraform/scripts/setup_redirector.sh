@@ -2144,15 +2144,15 @@ if [ "$ENABLE_FILE_PORTAL" = "true" ]; then
 
     # Create directories
     mkdir -p /opt/portal
-    mkdir -p /var/www/uploads/unsorted
+    mkdir -p /var/www/uploads/upload
     chown -R www-data:www-data /var/www/uploads
     mkdir -p /etc/portal
 
     # Generate bcrypt hash and write credentials (password via stdin to avoid shell injection)
     PORTAL_HASH=$(echo -n "$PORTAL_PASSWORD" | python3 -c "import sys, bcrypt; pw=sys.stdin.buffer.read(); print(bcrypt.hashpw(pw, bcrypt.gensalt()).decode())")
     cat > /etc/portal/credentials << CREDEOF
-${PORTAL_USERNAME}
-${PORTAL_HASH}
+$${PORTAL_USERNAME}
+$${PORTAL_HASH}
 CREDEOF
     chmod 600 /etc/portal/credentials
     chown www-data:www-data /etc/portal/credentials
@@ -2162,6 +2162,7 @@ CREDEOF
 import os
 import re
 import time
+import json
 import secrets
 import shutil
 import logging
@@ -2405,7 +2406,7 @@ def create_folder():
 
 @portal_bp.route('/portal/api/files')
 def list_files():
-    folder = request.args.get('folder', 'unsorted')
+    folder = request.args.get('folder', 'upload')
     sort_by = request.args.get('sort', 'modified')
     path = safe_path(folder)
     if not path or not os.path.isdir(path):
@@ -2431,7 +2432,7 @@ def list_files():
 @portal_bp.route('/portal/api/upload', methods=['POST'])
 @check_csrf
 def upload_file():
-    folder = request.form.get('folder', 'unsorted')
+    folder = request.form.get('folder', 'upload')
     path = safe_path(folder)
     if not path or not os.path.isdir(path):
         return jsonify({"error": "Folder not found"}), 404
@@ -2479,6 +2480,31 @@ def delete_file(folder, filename):
         return jsonify({"error": "File not found"}), 404
     os.remove(path)
     return jsonify({"ok": True})
+
+
+# --- Shared clipboard ---
+
+CLIPBOARD_FILE = os.path.join(UPLOAD_DIR, '.clipboard.json')
+
+@portal_bp.route('/portal/api/clipboard')
+def clipboard_get():
+    if os.path.isfile(CLIPBOARD_FILE):
+        with open(CLIPBOARD_FILE) as f:
+            data = json.loads(f.read())
+        return jsonify(data)
+    return jsonify({"text": "", "updated_at": 0})
+
+
+@portal_bp.route('/portal/api/clipboard', methods=['PUT'])
+@check_csrf
+def clipboard_put():
+    text = (request.json or {}).get('text', '')
+    if len(text) > 50000:
+        return jsonify({"error": "Text too long (max 50KB)"}), 400
+    data = {"text": text, "updated_at": time.time()}
+    with open(CLIPBOARD_FILE, 'w') as f:
+        f.write(json.dumps(data))
+    return jsonify(data)
 
 
 # --- Error handlers ---
@@ -2967,6 +2993,45 @@ PORTAL_HTML = r"""<!DOCTYPE html>
         .toast.visible { opacity: 1; transform: translateY(0); }
         .toast.error { border-left: 3px solid #d9534f; }
         .toast.success { border-left: 3px solid #8b7535; }
+        .clipboard-section {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            background: #fff;
+        }
+        .clipboard-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            background: #0a1628;
+            cursor: pointer;
+            user-select: none;
+        }
+        .clipboard-header span:first-child {
+            color: #c9b06b;
+            font-size: 0.78em;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+        .clipboard-status {
+            color: #b0b8c4;
+            font-size: 0.75em;
+        }
+        .clipboard-body.open { display: block; }
+        .clipboard-textarea {
+            width: 100%;
+            min-height: 220px;
+            padding: 12px 14px;
+            border: none;
+            font-family: 'SF Mono', Monaco, Consolas, monospace;
+            font-size: 0.85em;
+            resize: vertical;
+            outline: none;
+            color: #333;
+            background: #fafaf8;
+        }
+        .clipboard-textarea:focus { background: #fff; }
         @media (max-width: 768px) {
             .sidebar { display: none; }
             .content { padding: 16px; }
@@ -3019,6 +3084,17 @@ PORTAL_HTML = r"""<!DOCTYPE html>
                     <tbody id="file-tbody"></tbody>
                 </table>
             </div>
+            <div class="clipboard-section">
+                <div class="clipboard-header" id="clipboard-toggle">
+                    <span>Shared Notes</span>
+                    <button onclick="event.stopPropagation(); (typeof pullClipboard !== 'undefined') && pullClipboard();" style="background: none; border: 1px solid currentColor; color: inherit; padding: 2px 10px; font-size: 0.72em; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7;">Pull</button>
+                    <button onclick="event.stopPropagation(); (typeof pushClipboard !== 'undefined') && pushClipboard();" style="background: none; border: 1px solid currentColor; color: inherit; padding: 2px 10px; font-size: 0.72em; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7;">Push</button>
+                    <span class="clipboard-status" id="clipboard-status" style="margin-left: auto;"></span>
+                </div>
+                <div class="clipboard-body open" id="clipboard-body">
+                    <textarea class="clipboard-textarea" id="clipboard-text" placeholder="Paste text here — shared across all sessions in real time..."></textarea>
+                </div>
+            </div>
         </main>
     </div>
     <div class="modal-backdrop" id="delete-modal">
@@ -3035,7 +3111,7 @@ PORTAL_HTML = r"""<!DOCTYPE html>
     <script>
     (function() {
         var csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-        var currentFolder = 'unsorted';
+        var currentFolder = 'upload';
         var currentSort = 'modified';
         var sortAsc = false;
         var pendingDelete = null;
@@ -3236,6 +3312,36 @@ PORTAL_HTML = r"""<!DOCTYPE html>
             }).catch(function() { showToast('Failed to delete file', 'error'); });
             pendingDelete = null;
         });
+
+        // Shared clipboard — manual Push/Pull only
+        var clipboardEl = document.getElementById('clipboard-text');
+        var clipboardStatus = document.getElementById('clipboard-status');
+
+        document.getElementById('clipboard-toggle').addEventListener('click', function() {
+            document.getElementById('clipboard-body').classList.toggle('open');
+        });
+
+        function pullClipboard() {
+            clipboardStatus.textContent = 'pulling...';
+            fetch('/portal/api/clipboard').then(function(r) { return r.json(); }).then(function(data) {
+                clipboardEl.value = data.text || '';
+                clipboardStatus.textContent = data.updated_at > 0 ? 'pulled' : 'empty';
+            }).catch(function() { clipboardStatus.textContent = 'pull failed'; });
+        }
+
+        function pushClipboard() {
+            clipboardStatus.textContent = 'pushing...';
+            apiFetch('/portal/api/clipboard', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: clipboardEl.value })
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                clipboardStatus.textContent = 'pushed';
+            }).catch(function() { clipboardStatus.textContent = 'push failed'; });
+        }
+
+        window.pullClipboard = pullClipboard;
+        window.pushClipboard = pushClipboard;
 
         // Init
         loadFolders();
@@ -3805,6 +3911,45 @@ PORTAL_HTML = r"""<!DOCTYPE html>
         .toast.visible { opacity: 1; transform: translateY(0); }
         .toast.error { border-left: 3px solid #e74c3c; }
         .toast.success { border-left: 3px solid #4a9eff; }
+        .clipboard-section {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            background: #fff;
+        }
+        .clipboard-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: #1a1a2e;
+            cursor: pointer;
+            user-select: none;
+        }
+        .clipboard-header span:first-child {
+            color: #4a9eff;
+            font-size: 0.78em;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+        .clipboard-status {
+            color: #b0b8c4;
+            font-size: 0.75em;
+        }
+        .clipboard-body.open { display: block; }
+        .clipboard-textarea {
+            width: 100%;
+            min-height: 220px;
+            padding: 12px 14px;
+            border: none;
+            font-family: 'SF Mono', Monaco, Consolas, monospace;
+            font-size: 0.85em;
+            resize: vertical;
+            outline: none;
+            color: #333;
+            background: #fafaf8;
+        }
+        .clipboard-textarea:focus { background: #fff; }
         @media (max-width: 768px) {
             .sidebar { display: none; }
             .content { padding: 16px; }
@@ -3857,6 +4002,17 @@ PORTAL_HTML = r"""<!DOCTYPE html>
                     <tbody id="file-tbody"></tbody>
                 </table>
             </div>
+            <div class="clipboard-section">
+                <div class="clipboard-header" id="clipboard-toggle">
+                    <span>Shared Notes</span>
+                    <button onclick="event.stopPropagation(); (typeof pullClipboard !== 'undefined') && pullClipboard();" style="background: none; border: 1px solid currentColor; color: inherit; padding: 2px 10px; font-size: 0.72em; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7;">Pull</button>
+                    <button onclick="event.stopPropagation(); (typeof pushClipboard !== 'undefined') && pushClipboard();" style="background: none; border: 1px solid currentColor; color: inherit; padding: 2px 10px; font-size: 0.72em; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7;">Push</button>
+                    <span class="clipboard-status" id="clipboard-status" style="margin-left: auto;"></span>
+                </div>
+                <div class="clipboard-body open" id="clipboard-body">
+                    <textarea class="clipboard-textarea" id="clipboard-text" placeholder="Paste text here — shared across all sessions in real time..."></textarea>
+                </div>
+            </div>
         </main>
     </div>
     <div class="modal-backdrop" id="delete-modal">
@@ -3873,7 +4029,7 @@ PORTAL_HTML = r"""<!DOCTYPE html>
     <script>
     (function() {
         var csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-        var currentFolder = 'unsorted';
+        var currentFolder = 'upload';
         var currentSort = 'modified';
         var sortAsc = false;
         var pendingDelete = null;
@@ -4075,6 +4231,36 @@ PORTAL_HTML = r"""<!DOCTYPE html>
             pendingDelete = null;
         });
 
+        // Shared clipboard — manual Push/Pull only
+        var clipboardEl = document.getElementById('clipboard-text');
+        var clipboardStatus = document.getElementById('clipboard-status');
+
+        document.getElementById('clipboard-toggle').addEventListener('click', function() {
+            document.getElementById('clipboard-body').classList.toggle('open');
+        });
+
+        function pullClipboard() {
+            clipboardStatus.textContent = 'pulling...';
+            fetch('/portal/api/clipboard').then(function(r) { return r.json(); }).then(function(data) {
+                clipboardEl.value = data.text || '';
+                clipboardStatus.textContent = data.updated_at > 0 ? 'pulled' : 'empty';
+            }).catch(function() { clipboardStatus.textContent = 'pull failed'; });
+        }
+
+        function pushClipboard() {
+            clipboardStatus.textContent = 'pushing...';
+            apiFetch('/portal/api/clipboard', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: clipboardEl.value })
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                clipboardStatus.textContent = 'pushed';
+            }).catch(function() { clipboardStatus.textContent = 'push failed'; });
+        }
+
+        window.pullClipboard = pullClipboard;
+        window.pushClipboard = pushClipboard;
+
         // Init
         loadFolders();
         loadFiles();
@@ -4195,7 +4381,7 @@ After=network.target
 [Service]
 User=www-data
 WorkingDirectory=/opt/portal
-ExecStart=/usr/bin/gunicorn --bind 127.0.0.1:8443 --workers 2 --timeout 120 app:app
+ExecStart=/usr/bin/gunicorn --bind 127.0.0.1:8443 --workers 1 --threads 2 --timeout 120 app:app
 Restart=always
 Environment=PORTAL_CONFIG=/etc/portal/credentials
 Environment=PORTAL_SESSION_TIMEOUT=PLACEHOLDER_TIMEOUT
@@ -4204,7 +4390,7 @@ Environment=PORTAL_SESSION_TIMEOUT=PLACEHOLDER_TIMEOUT
 WantedBy=multi-user.target
 SVCEOF
     # Replace timeout placeholder
-    sed -i "s/PLACEHOLDER_TIMEOUT/${PORTAL_SESSION_TIMEOUT}/" /etc/systemd/system/portal.service
+    sed -i "s/PLACEHOLDER_TIMEOUT/$${PORTAL_SESSION_TIMEOUT}/" /etc/systemd/system/portal.service
 
     # Configure fail2ban jail
     cat > /etc/fail2ban/jail.d/portal.conf << 'F2BEOF'
@@ -4285,8 +4471,22 @@ portal_locations = """
     }
 
     # File Portal - Login
+    # Security headers: hide Flask upstream copies, set single authoritative source via nginx
     location /login {
         limit_req zone=login burst=3 nodelay;
+        proxy_hide_header X-Frame-Options;
+        proxy_hide_header X-Content-Type-Options;
+        proxy_hide_header X-XSS-Protection;
+        proxy_hide_header Strict-Transport-Security;
+        proxy_hide_header Referrer-Policy;
+        proxy_hide_header Permissions-Policy;
+        proxy_hide_header Content-Security-Policy;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; form-action 'self'" always;
         proxy_pass http://127.0.0.1:8443/login;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -4300,6 +4500,19 @@ portal_locations = """
     # File Portal - Portal routes
     location /portal/ {
         limit_req zone=portal burst=10 nodelay;
+        proxy_hide_header X-Frame-Options;
+        proxy_hide_header X-Content-Type-Options;
+        proxy_hide_header X-XSS-Protection;
+        proxy_hide_header Strict-Transport-Security;
+        proxy_hide_header Referrer-Policy;
+        proxy_hide_header Permissions-Policy;
+        proxy_hide_header Content-Security-Policy;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; form-action 'self'" always;
         client_max_body_size 100M;
         proxy_request_buffering off;
         proxy_pass http://127.0.0.1:8443/portal/;

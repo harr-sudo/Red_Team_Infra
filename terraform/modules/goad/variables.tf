@@ -56,6 +56,12 @@ variable "availability_zone" {
   type        = string
 }
 
+variable "peer_vpc_cidr" {
+  description = "CIDR block of the peered C2 VPC (empty string = no peering, no ingress rule)"
+  type        = string
+  default     = ""
+}
+
 # =============================================================================
 # Cobalt Strike / Attack Box Configuration
 # =============================================================================
@@ -78,6 +84,12 @@ variable "cs_teamserver_password" {
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "cs_license_secret_name" {
+  description = "Secrets Manager secret name for CS license key (empty = manual activation)"
+  type        = string
+  default     = ""
 }
 
 # =============================================================================

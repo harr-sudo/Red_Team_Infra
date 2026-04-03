@@ -112,18 +112,6 @@ variable "cs_teamserver_password" {
   sensitive   = true
 }
 
-variable "tools_repo_url" {
-  description = "Git repository URL for red team tools"
-  type        = string
-  default     = ""
-}
-
-variable "tools_repo_branch" {
-  description = "Git branch to clone for tools repository"
-  type        = string
-  default     = "main"
-}
-
 # =============================================================================
 # Custom User Data (overrides centralized CS script)
 # =============================================================================
@@ -135,6 +123,69 @@ variable "user_data" {
 }
 
 # =============================================================================
+# Domain / Listener Configuration (for CS Listener Guide generation)
+# =============================================================================
+
+variable "primary_domain" {
+  description = "Primary domain name for C2 operations (e.g., example.com)"
+  type        = string
+  default     = ""
+}
+
+variable "c2_subdomain" {
+  description = "C2 subdomain prefix (e.g., api → api.example.com)"
+  type        = string
+  default     = "api"
+}
+
+variable "malleable_profile" {
+  description = "Malleable C2 profile name configured on redirectors"
+  type        = string
+  default     = "default"
+}
+
+variable "custom_profile_content" {
+  description = "Base64-encoded custom Malleable C2 profile content (only used when malleable_profile = 'custom')"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "cs_license_secret_name" {
+  description = "Secrets Manager secret name containing CS license key (empty = manual activation)"
+  type        = string
+  default     = ""
+}
+
+# =============================================================================
+# S3 Bootstrap Configuration (bypasses 16KB EC2 user_data limit)
+# =============================================================================
+
+variable "enable_s3_bootstrap" {
+  description = "Upload user_data script to S3 and bootstrap from there (bypasses 16KB limit)"
+  type        = bool
+  default     = false
+}
+
+variable "deployment_bucket" {
+  description = "S3 bucket name for uploading bootstrap scripts"
+  type        = string
+  default     = ""
+}
+
+variable "deployment_id" {
+  description = "Unique deployment identifier (used as S3 key prefix)"
+  type        = string
+  default     = ""
+}
+
+variable "aws_region" {
+  description = "AWS region for S3 operations"
+  type        = string
+  default     = "eu-central-1"
+}
+
+# =============================================================================
 # Tags
 # =============================================================================
 
@@ -142,4 +193,10 @@ variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
   default     = {}
+}
+
+variable "enable_rest_api" {
+  description = "Enable Cobalt Strike REST API (--experimental-db + csrestapi service)"
+  type        = bool
+  default     = false
 }

@@ -80,14 +80,19 @@ const architectures = {
         markdownFile: 'attackbox.md',
         title: 'Windows Attack Box - Standalone Module'
     },
+    's3-storage': {
+        diagram: '/api/architecture/diagram/s3-storage-security-architecture.png',
+        markdownFile: 's3-storage.md',
+        title: 'S3 Deployment Storage - Security Architecture'
+    },
     'iam-security': {
         diagram: '/api/architecture/diagram/iam-security-architecture.png',
-        markdownFile: 'README.md',
+        markdownFile: 'iam-security.md',
         title: 'IAM Security - Roles & Permissions'
     },
     'ssh-key-management': {
         diagram: '/api/architecture/diagram/ssh-key-architecture.png',
-        markdownFile: 'README.md',
+        markdownFile: 'ssh-key-management.md',
         title: 'SSH Key Management - Automation'
     }
 };

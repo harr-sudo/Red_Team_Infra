@@ -20,17 +20,12 @@ Each team member creates their own PAT:
 #    - Scopes: repo (full control)
 #    - Copy the token (ghp_...)
 
-# 2. Store in AWS SSM (replace USERNAME with actual username):
-aws ssm put-parameter \
-    --name "/red-team/tools-repo-token-USERNAME" \
-    --type "SecureString" \
-    --value "ghp_YOUR_TOKEN_HERE" \
-    --region us-east-1 \
-    --overwrite
-
-# 3. Update terraform.tfvars:
-#    tools_repo_url = "https://github.com/harr-sudo/red-team-tools.git"
-#    tools_repo_https_token = "/red-team/tools-repo-token-USERNAME"
+# 2. Set in terraform.tfvars:
+#    tools_repo_url         = "https://github.com/harr-sudo/red-team-tools.git"
+#    tools_repo_https_token = "ghp_YOUR_TOKEN_HERE"
+#
+#    Terraform stores the token in AWS Secrets Manager automatically.
+#    Instances fetch it at runtime via IAM role -- never stored in S3 scripts.
 ```
 
 #### Option B: Deploy Key (Single Key for Deployment)
@@ -69,7 +64,7 @@ gh repo add-collaborator harr-sudo/red-team-tools USERNAME --permission write
 # Tools Repository Configuration
 tools_repo_url = "https://github.com/harr-sudo/red-team-tools.git"
 tools_repo_branch = "main"
-tools_repo_https_token = "/red-team/tools-repo-token-USERNAME"  # For PAT
+tools_repo_https_token = "ghp_YOUR_TOKEN_HERE"  # Stored in Secrets Manager automatically
 # OR
 tools_repo_ssh_key = "/red-team/tools-repo-ssh-key"  # For deploy key
 ```
