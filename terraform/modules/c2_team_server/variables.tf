@@ -200,22 +200,3 @@ variable "enable_rest_api" {
   type        = bool
   default     = false
 }
-
-# Dashboard server peering (optional — empty = no peering)
-variable "dashboard_vpc_id" {
-  description = "Dashboard server VPC ID for peering (empty = disabled)"
-  type        = string
-  default     = ""
-}
-
-variable "dashboard_vpc_cidr" {
-  description = "Dashboard server VPC CIDR for security group rules"
-  type        = string
-  default     = ""
-}
-
-variable "dashboard_sg_id" {
-  description = "Dashboard server security group ID for ingress rules"
-  type        = string
-  default     = ""
-}

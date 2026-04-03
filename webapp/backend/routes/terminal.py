@@ -27,8 +27,8 @@ sock = Sock()
 def _is_host_reachable(host, port=22, timeout=2):
     """Check if a host is directly reachable (e.g., via VPC peering on the server)."""
     try:
-        sock = socket.create_connection((host, port), timeout=timeout)
-        sock.close()
+        conn = socket.create_connection((host, port), timeout=timeout)
+        conn.close()
         return True
     except (ConnectionRefusedError, socket.timeout, OSError):
         return False

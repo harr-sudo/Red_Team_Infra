@@ -405,11 +405,6 @@ module "c2_team_server" {
   # Custom user_data overrides centralized script if provided
   user_data = var.c2_server_user_data
 
-  # Dashboard server peering
-  dashboard_vpc_id   = local.dashboard_vpc_id
-  dashboard_vpc_cidr = local.dashboard_vpc_cidr
-  dashboard_sg_id    = local.dashboard_sg_id
-
   # Ensure NAT Gateway + route are ready before instance boots (user_data needs internet)
   depends_on = [module.vpc, module.cs_storage]
 }
@@ -464,11 +459,6 @@ module "c2_phase_servers" {
 
   # Custom user_data per phase
   user_data = each.value.user_data != "" ? each.value.user_data : ""
-
-  # Dashboard server peering
-  dashboard_vpc_id   = local.dashboard_vpc_id
-  dashboard_vpc_cidr = local.dashboard_vpc_cidr
-  dashboard_sg_id    = local.dashboard_sg_id
 
   # Ensure NAT Gateway + route are ready before instance boots (user_data needs internet)
   depends_on = [module.vpc, module.cs_storage]
@@ -661,11 +651,6 @@ module "goad" {
 
   # CS license key for automated activation (team server retrieves at runtime)
   cs_license_secret_name = length(module.cs_storage) > 0 ? module.cs_storage[0].cs_license_secret_name : ""
-
-  # Dashboard server peering
-  dashboard_vpc_id   = local.dashboard_vpc_id
-  dashboard_vpc_cidr = local.dashboard_vpc_cidr
-  dashboard_sg_id    = local.dashboard_sg_id
 
   tags = local.enhanced_tags
 }
