@@ -1,17 +1,63 @@
-# Centralized Multi-Operator Dashboard — Design Spec
+# Deployment Dashboard — Design Spec
 
-**Date:** 2026-04-01
+**Date:** 2026-04-01 (updated 2026-04-03)
 **Status:** Draft — Pending review
 
 ---
 
 ## Overview
 
-Convert the current localhost-only Flask webapp into a centralized, AWS-hosted dashboard server that two operators can access from different machines. Shared deployment management — both operators see and interact with the same deployments, beacons, configs, and status.
+The dashboard supports two deployment modes from a single codebase — no code forks, no feature flags. The same Flask app, frontend, and Terraform modules work in both:
+
+- **Local Mode** — runs on the operator's laptop for single-user engagements
+- **Server Mode** — runs on an EC2 instance in AWS for multi-operator shared access
 
 ---
 
-## Architecture Decisions
+## Dual-Mode Architecture
+
+| | Local Mode | Server Mode |
+|---|---|---|
+| **Runs on** | Operator's laptop | EC2 instance (`t3.medium`) |
+| **Accessed via** | `http://localhost:5000` directly | SSH tunnel → `http://localhost:5000` |
+| **AWS credentials** | Operator's `~/.aws/credentials` | IAM instance role (no creds on disk) |
+| **Terraform state** | Local `.tfstate` per workspace | S3 backend + DynamoDB locking |
+| **CS archive** | `uploads/` in project dir | `/opt/redteam/uploads/` on EBS (SCP once) |
+| **Terminal SSH** | ProxyJump through bastion | Direct via VPC peering |
+| **Operator identity** | Single user (no tracking) | Per-user Linux accounts + audit trail |
+| **Multi-operator** | No | Yes (2+ operators via SSH tunnel) |
+| **Prerequisites** | Terraform, AWS CLI, Python, SSH | SSH client + browser (nothing else) |
+
+**What stays identical in both modes:**
+- All Flask routes, services, and utilities
+- Frontend HTML/CSS/JS (topology, terminal, beacon, all tabs)
+- Terraform modules (C2, GOAD, bastion, redirectors, etc.)
+- File-based app state (`logs/`, `configs/`)
+- Deployment workflow through the UI
+
+**What differs (configuration only, no code changes):**
+- Terraform backend (local vs S3 — one line in `main.tf`)
+- Start method (`./webapp/start.sh` vs `systemd` service)
+- VPC peering wiring (optional variables, no code change)
+- Operator identity middleware (returns username in both, just more useful on server)
+
+---
+
+## Local Mode Setup
+
+```
+1. Clone the repo
+2. ./webapp/start.sh
+3. Open http://localhost:5000
+4. Configure deployment on the Configuration page
+5. Deploy
+```
+
+Prerequisites: Terraform, AWS CLI, Python 3, jq, SSH key, registered domain.
+
+---
+
+## Server Mode — Architecture Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -283,7 +329,7 @@ Step 5: All subsequent deployments through dashboard UI
 
 ---
 
-## 12. Not In Scope
+## 12. Not In Scope (Server Mode)
 
 - No database (file-based state is fine for 2 operators)
 - No RBAC/permissions (both operators are equal)
@@ -293,3 +339,22 @@ Step 5: All subsequent deployments through dashboard UI
 - No CI/CD (git pull to update)
 - No VPN (SSH tunnel sufficient)
 - No HTTPS on dashboard (localhost via tunnel)
+
+---
+
+## 13. Choosing a Mode
+
+| Scenario | Recommended Mode |
+|----------|-----------------|
+| Solo operator, short engagement | Local |
+| Solo operator, wants to close laptop and keep infra running | Server |
+| Two operators, same engagement | Server |
+| Training / GOAD lab for one person | Local |
+| Long-running engagement (weeks) | Server |
+| Quick test deployment | Local |
+
+Both modes can be switched at any time. To migrate from local to server:
+1. Stand up the dashboard server (Section 10)
+2. `terraform init -migrate-state` to move state to S3
+3. SCP the CS archive to the server
+4. Done — all existing deployments are visible on the server

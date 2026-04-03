@@ -36,41 +36,53 @@ The infrastructure is built using:
 
 > **New to this project?** Start with the [Getting Started Guide](./docs/GETTING_STARTED.md) for detailed step-by-step instructions.
 
-### Web Application (Recommended)
+### Option A: Run Locally (Single Operator)
 
-For a user-friendly interface, use the web application:
+Run the dashboard on your own machine. You need Terraform, AWS CLI, Python 3, and an SSH key.
 
 ```bash
-# Start web application
+# 1. Clone the repo
+git clone https://github.com/harr-sudo/Red_Team_Infra.git
+cd Red_Team_Infra
+
+# 2. Start the dashboard
 ./webapp/start.sh
 
-# Then open browser to: http://127.0.0.1:5000
+# 3. Open http://localhost:5000
 ```
 
-The web application provides:
-- Configuration editor
-- **Prerequisite validation** (Domain configuration & Cobalt Strike file)
-- One-click deployment
-- **GOAD Lab selection** (vulnerable AD environments)
-- Status dashboard
-- Health checks
-- AWS permissions checker
+Configure your deployment, upload Cobalt Strike, and deploy — all through the browser.
 
-See [Web Application README](./webapp/README.md) for details.
+### Option B: Centralized Server (Multi-Operator)
 
-### Command Line
-
-Alternatively, use the command-line scripts:
+Deploy the dashboard to an EC2 instance in AWS. Multiple operators access it via SSH tunnel — they only need an SSH client and a browser.
 
 ```bash
-# Deploy infrastructure
-./scripts/deployment/deploy.sh
+# 1. Stand up the dashboard server
+cd terraform
+terraform apply -target=module.dashboard_server
 
-# Check infrastructure status
-./scripts/utilities/health-check.sh
+# 2. SCP the Cobalt Strike archive (once)
+scp cobaltstrike-dist.tar ubuntu@<dashboard-ip>:/opt/redteam/uploads/
 
-# Destroy infrastructure
-./scripts/deployment/destroy.sh
+# 3. SSH tunnel in
+ssh -L 5000:localhost:5000 youruser@<dashboard-ip>
+
+# 4. Open http://localhost:5000
+```
+
+Second operator onboarding: add their SSH public key + IP to the dashboard Terraform config, `terraform apply`, done.
+
+See [Centralized Dashboard Design](./docs/CENTRALIZED_DASHBOARD_DESIGN.md) for full architecture.
+
+### Command Line (Alternative)
+
+Deploy without the web UI:
+
+```bash
+./scripts/deployment/deploy.sh      # Deploy infrastructure
+./scripts/utilities/health-check.sh # Check status
+./scripts/deployment/destroy.sh     # Tear down
 ```
 
 ### Prerequisites
@@ -223,11 +235,16 @@ See [GOAD Integration Plan](./docs/GOAD_INTEGRATION_PLAN.md) for detailed archit
 See [GOAD Quick Start](./docs/GOAD_QUICK_START.md) for deployment instructions.
 
 ### 🌐 Web Application
-- **Local web interface** for infrastructure management
-- **Configuration editor** for terraform.tfvars
-- **Prerequisite validation** - Checks domain configuration and Cobalt Strike file before deployment
-- **One-click deployment** with real-time status
-- **AWS permissions checker** to validate required permissions
+- **Configuration editor** with deployment templates (save/load)
+- **Prerequisite validation** — domain, Cobalt Strike, AWS permissions checked before deploy
+- **One-click deployment** with real-time progress and streaming logs
+- **Deployment Manager** — multi-project management, stop/start instances, destroy
+- **Infrastructure Topology** — full-screen interactive graph with subnet clustering, draggable nodes, config-driven port labels, side panel with details
+- **Beacon Management** — CS REST API integration with health monitoring, task correlation, network graph, quick payload generator
+- **Terminal** — in-browser local shell + SSH to any deployed instance, multi-tab, tunnel shortcuts (RDP, CS Client, REST API)
+- **Elastic Detection Rules** — MITRE-mapped SIEM rules for CS commands with one-click update
+- **AWS Cost Tracking** — per-project cost monitoring with budget alerts
+- **Host Setup Checker** — SSM-based validation of bootstrap scripts across all instances
 
 See [Web Application Guide](./webapp/README.md) for details.
 
