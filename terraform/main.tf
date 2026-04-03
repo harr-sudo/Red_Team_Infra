@@ -156,6 +156,13 @@ locals {
   )
 
   # -------------------------------------------------------------------------
+  # Dashboard server peering (empty when disabled — no-op for deployment modules)
+  # -------------------------------------------------------------------------
+  dashboard_vpc_id   = var.enable_dashboard_server ? module.dashboard_server[0].dashboard_vpc_id : ""
+  dashboard_vpc_cidr = var.enable_dashboard_server ? module.dashboard_server[0].dashboard_vpc_cidr : ""
+  dashboard_sg_id    = var.enable_dashboard_server ? module.dashboard_server[0].dashboard_sg_id : ""
+
+  # -------------------------------------------------------------------------
   # Enhanced Tags
   # -------------------------------------------------------------------------
   enhanced_tags = merge(
@@ -343,6 +350,11 @@ module "security" {
 
   enable_cs_rest_api = var.enable_cs_rest_api
 
+  # Dashboard server peering
+  dashboard_vpc_id   = local.dashboard_vpc_id
+  dashboard_vpc_cidr = local.dashboard_vpc_cidr
+  dashboard_sg_id    = local.dashboard_sg_id
+
   tags = var.tags
 }
 
@@ -392,6 +404,11 @@ module "c2_team_server" {
 
   # Custom user_data overrides centralized script if provided
   user_data = var.c2_server_user_data
+
+  # Dashboard server peering
+  dashboard_vpc_id   = local.dashboard_vpc_id
+  dashboard_vpc_cidr = local.dashboard_vpc_cidr
+  dashboard_sg_id    = local.dashboard_sg_id
 
   # Ensure NAT Gateway + route are ready before instance boots (user_data needs internet)
   depends_on = [module.vpc, module.cs_storage]
@@ -447,6 +464,11 @@ module "c2_phase_servers" {
 
   # Custom user_data per phase
   user_data = each.value.user_data != "" ? each.value.user_data : ""
+
+  # Dashboard server peering
+  dashboard_vpc_id   = local.dashboard_vpc_id
+  dashboard_vpc_cidr = local.dashboard_vpc_cidr
+  dashboard_sg_id    = local.dashboard_sg_id
 
   # Ensure NAT Gateway + route are ready before instance boots (user_data needs internet)
   depends_on = [module.vpc, module.cs_storage]
@@ -640,6 +662,11 @@ module "goad" {
   # CS license key for automated activation (team server retrieves at runtime)
   cs_license_secret_name = length(module.cs_storage) > 0 ? module.cs_storage[0].cs_license_secret_name : ""
 
+  # Dashboard server peering
+  dashboard_vpc_id   = local.dashboard_vpc_id
+  dashboard_vpc_cidr = local.dashboard_vpc_cidr
+  dashboard_sg_id    = local.dashboard_sg_id
+
   tags = local.enhanced_tags
 }
 
@@ -667,6 +694,27 @@ module "vpc_peering" {
   tags                 = local.enhanced_tags
 
   depends_on = [module.vpc, module.goad]
+}
+
+# =============================================================================
+# DASHBOARD SERVER (Optional — centralized multi-operator dashboard)
+# =============================================================================
+
+module "dashboard_server" {
+  count  = var.enable_dashboard_server ? 1 : 0
+  source = "./modules/dashboard_server"
+
+  dashboard_allowed_ips    = var.dashboard_allowed_ips
+  operator_ssh_public_keys = var.operator_ssh_public_keys
+  instance_type            = var.dashboard_instance_type
+  aws_region               = var.aws_region
+  project_name             = var.project_name
+
+  tags = {
+    Project     = var.project_name
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
 }
 
 # =============================================================================

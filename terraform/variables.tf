@@ -655,6 +655,34 @@ variable "terraform_backend_dynamodb_table" {
 }
 
 # =============================================================================
+# DASHBOARD SERVER
+# =============================================================================
+
+variable "enable_dashboard_server" {
+  description = "Deploy centralized dashboard server"
+  type        = bool
+  default     = false
+}
+
+variable "dashboard_allowed_ips" {
+  description = "Operator IP CIDRs for dashboard SSH access"
+  type        = list(string)
+  default     = []
+}
+
+variable "operator_ssh_public_keys" {
+  description = "Map of operator name to SSH public key"
+  type        = map(string)
+  default     = {}
+}
+
+variable "dashboard_instance_type" {
+  description = "Dashboard server instance type"
+  type        = string
+  default     = "t3.medium"
+}
+
+# =============================================================================
 # Tags
 # =============================================================================
 
