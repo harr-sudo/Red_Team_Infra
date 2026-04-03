@@ -159,7 +159,8 @@ def terminal_local(ws):
         ws.close()
         return
 
-    shell = os.environ.get('SHELL', '/bin/bash')
+    # Always use /bin/bash — the service user (dashboard) has /usr/sbin/nologin as $SHELL
+    shell = '/bin/bash'
     home = os.environ.get('HOME', '/tmp')
 
     # Wait for initial resize message from client
@@ -211,11 +212,16 @@ def terminal_ssh(ws):
         return
 
     # Resolve SSH key path
+    # Priority: shared key location (setup script copies here) > operator home dir > defaults
     if not key_path:
-        for candidate in ['~/.ssh/id_ed25519', '~/.ssh/id_rsa']:
-            expanded = os.path.expanduser(candidate)
-            if os.path.exists(expanded):
-                key_path = expanded
+        for candidate in [
+            '/opt/redteam/.ssh/id_ed25519',      # Shared key (copied by setup script)
+            '/opt/redteam/.ssh/id_rsa',
+            os.path.expanduser('~/.ssh/id_ed25519'),
+            os.path.expanduser('~/.ssh/id_rsa'),
+        ]:
+            if os.path.exists(candidate):
+                key_path = candidate
                 break
 
     # Build SSH command
@@ -225,18 +231,20 @@ def terminal_ssh(ws):
            '-o', 'ServerAliveInterval=30',
            '-o', 'LogLevel=ERROR']
 
+    using_jump = False
     if bastion and not _is_host_reachable(host):
         cmd += ['-J', f'ubuntu@{bastion}']
+        using_jump = True
     elif bastion and _is_host_reachable(host):
-        ws.send('\x1b[90mDirect route available — skipping bastion jump\x1b[0m\r\n')
+        ws.send('\x1b[36mDirect route available — skipping bastion jump\x1b[0m\r\n')
 
     if key_path:
-        cmd += ['-i', os.path.expanduser(key_path)]
+        cmd += ['-i', key_path]
 
     cmd.append(f'{user}@{host}')
 
-    ws.send(f'\x1b[90mConnecting to {user}@{host}' +
-            (f' via {bastion}' if bastion else '') +
+    ws.send(f'\x1b[36mConnecting to {user}@{host}' +
+            (f' via {bastion}' if using_jump else '') +
             '...\x1b[0m\r\n')
 
     _pty_session(ws, cmd)

@@ -157,10 +157,12 @@ locals {
 
   # -------------------------------------------------------------------------
   # Dashboard server peering (empty when disabled — no-op for deployment modules)
+  # Uses module outputs when dashboard is in this workspace, or direct variable overrides
+  # when the dashboard was created in a different workspace (e.g., default)
   # -------------------------------------------------------------------------
-  dashboard_vpc_id   = var.enable_dashboard_server ? module.dashboard_server[0].dashboard_vpc_id : ""
-  dashboard_vpc_cidr = var.enable_dashboard_server ? module.dashboard_server[0].dashboard_vpc_cidr : ""
-  dashboard_sg_id    = var.enable_dashboard_server ? module.dashboard_server[0].dashboard_sg_id : ""
+  dashboard_vpc_id   = var.dashboard_vpc_id != "" ? var.dashboard_vpc_id : (var.enable_dashboard_server ? module.dashboard_server[0].dashboard_vpc_id : "")
+  dashboard_vpc_cidr = var.dashboard_vpc_cidr != "" ? var.dashboard_vpc_cidr : (var.enable_dashboard_server ? module.dashboard_server[0].dashboard_vpc_cidr : "")
+  dashboard_sg_id    = var.dashboard_sg_id != "" ? var.dashboard_sg_id : (var.enable_dashboard_server ? module.dashboard_server[0].dashboard_sg_id : "")
 
   # -------------------------------------------------------------------------
   # Enhanced Tags
@@ -700,6 +702,58 @@ module "dashboard_server" {
     Environment = var.environment
     ManagedBy   = "Terraform"
   }
+}
+
+# =============================================================================
+# DASHBOARD VPC PEERING (connects dashboard server to deployment VPCs)
+# Only created when dashboard VPC ID is provided (via module output or variable override)
+# =============================================================================
+
+resource "aws_vpc_peering_connection" "dashboard_to_deployment" {
+  count       = local.dashboard_vpc_id != "" && length(module.vpc) > 0 ? 1 : 0
+  vpc_id      = local.dashboard_vpc_id       # Dashboard VPC (requester)
+  peer_vpc_id = module.vpc[0].vpc_id         # Deployment VPC (accepter)
+  auto_accept = true                         # Same account
+
+  tags = merge(local.enhanced_tags, {
+    Name = "${var.project_name}-dashboard-peering"
+  })
+}
+
+# Route: Dashboard VPC → Deployment VPC (added to dashboard route table)
+resource "aws_route" "dashboard_to_deployment" {
+  count                     = local.dashboard_vpc_id != "" && length(module.vpc) > 0 ? 1 : 0
+  route_table_id            = data.aws_route_tables.dashboard[0].ids[0]
+  destination_cidr_block    = module.vpc[0].vpc_cidr_block
+  vpc_peering_connection_id = aws_vpc_peering_connection.dashboard_to_deployment[0].id
+}
+
+# Route: Deployment VPC → Dashboard VPC (on all deployment route tables)
+resource "aws_route" "deployment_to_dashboard_public" {
+  count                     = local.dashboard_vpc_id != "" && length(module.vpc) > 0 ? 1 : 0
+  route_table_id            = module.vpc[0].public_route_table_id
+  destination_cidr_block    = local.dashboard_vpc_cidr
+  vpc_peering_connection_id = aws_vpc_peering_connection.dashboard_to_deployment[0].id
+}
+
+resource "aws_route" "deployment_to_dashboard_private" {
+  count                     = local.dashboard_vpc_id != "" && length(module.vpc) > 0 ? 1 : 0
+  route_table_id            = module.vpc[0].private_route_table_id
+  destination_cidr_block    = local.dashboard_vpc_cidr
+  vpc_peering_connection_id = aws_vpc_peering_connection.dashboard_to_deployment[0].id
+}
+
+resource "aws_route" "deployment_to_dashboard_management" {
+  count                     = local.dashboard_vpc_id != "" && length(module.vpc) > 0 && length(module.vpc[0].management_route_table_id) > 0 ? 1 : 0
+  route_table_id            = module.vpc[0].management_route_table_id
+  destination_cidr_block    = local.dashboard_vpc_cidr
+  vpc_peering_connection_id = aws_vpc_peering_connection.dashboard_to_deployment[0].id
+}
+
+# Data source: find the dashboard VPC's route table (for adding the return route)
+data "aws_route_tables" "dashboard" {
+  count  = local.dashboard_vpc_id != "" ? 1 : 0
+  vpc_id = local.dashboard_vpc_id
 }
 
 # =============================================================================

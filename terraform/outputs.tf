@@ -474,3 +474,27 @@ output "ansible_inventory" {
     proxy_redirectors = []
   }
 }
+
+# =============================================================================
+# 9. Dashboard Server (Optional)
+# =============================================================================
+
+output "dashboard_public_ip" {
+  description = "Dashboard server public IP"
+  value       = var.enable_dashboard_server ? module.dashboard_server[0].dashboard_public_ip : ""
+}
+
+output "dashboard_instance_id" {
+  description = "Dashboard server EC2 instance ID"
+  value       = var.enable_dashboard_server ? module.dashboard_server[0].dashboard_instance_id : ""
+}
+
+output "dashboard_vpc_id" {
+  description = "Dashboard server VPC ID"
+  value       = var.enable_dashboard_server ? module.dashboard_server[0].dashboard_vpc_id : ""
+}
+
+output "dashboard_tfstate_bucket" {
+  description = "S3 bucket for Terraform state (server mode)"
+  value       = var.enable_dashboard_server ? module.dashboard_server[0].tfstate_bucket : ""
+}

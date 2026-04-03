@@ -99,8 +99,9 @@ if __name__ == '__main__':
     print("=" * 60)
     
     app.run(
-        host='127.0.0.1',  # Localhost only
+        host='127.0.0.1',  # Localhost only — SSH tunnel provides external access
         port=5000,
-        debug=False
+        debug=False,
+        threaded=True  # Allow concurrent requests (prevents one slow endpoint from blocking all others)
     )
 

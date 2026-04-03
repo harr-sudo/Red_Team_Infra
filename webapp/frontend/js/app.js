@@ -13869,7 +13869,12 @@ async function refreshDeployments() {
         ]);
 
         const data = await infraResponse.json();
-        const goadData = await goadResponse.json();
+        let goadData = { success: false, has_deployment: false };
+        try {
+            goadData = await goadResponse.json();
+        } catch (e) {
+            console.warn('GOAD status endpoint returned non-JSON (server may not have GOAD configured):', e.message);
+        }
 
         // Cache SSH key info for connection info rendering (user-global)
         try {
@@ -19207,6 +19212,45 @@ const TERMINAL = {
         }
     },
 
+    async _checkRestApiBanner() {
+        const banner = document.getElementById('terminal-rest-api-banner');
+        const textEl = document.getElementById('terminal-rest-api-text');
+        if (!banner || !textEl) return;
+
+        try {
+            const resp = await fetch('/api/beacon/health');
+            const data = await resp.json();
+            if (data.status === 'connected' && data.authenticated) {
+                banner.style.display = 'none';
+                return;
+            }
+        } catch { /* not connected */ }
+
+        // REST API not connected — find a C2 deployment to build the tunnel command
+        let tunnelCmd = '';
+        for (const dep of this.deployments) {
+            const type = dep.deployment_type || '';
+            if (!type.startsWith('c2-') && !type.startsWith('combined-')) continue;
+            const name = dep._filename || '';
+            const outputs = _getCachedOutputs(name);
+            if (!outputs) continue;
+            const tsIp = (outputs.c2_servers && outputs.c2_servers[0]?.private_ip) || outputs.teamserver_private_ip;
+            const jumpHost = outputs.bastion_public_ip || outputs.jumpbox_public_ip;
+            if (tsIp && jumpHost) {
+                tunnelCmd = `ssh -L 50443:${tsIp}:50443 -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no ubuntu@${jumpHost}`;
+                break;
+            }
+        }
+
+        banner.style.display = 'flex';
+        if (tunnelCmd) {
+            const escapedCmd = tunnelCmd.replace(/'/g, "\\'");
+            textEl.innerHTML = `CS REST API not connected — <button class="btn btn-sm btn-warning" onclick="TERMINAL.openTunnel('REST API Tunnel', '${escapedCmd}')" style="margin-left: 8px;">Open REST API Tunnel</button>`;
+        } else {
+            textEl.textContent = 'CS REST API not connected — select a C2 deployment to see the tunnel command';
+        }
+    },
+
     async _loadDeployments() {
         const select = document.getElementById('terminal-deployment-select');
         if (!select) return;
@@ -19316,15 +19360,18 @@ const TERMINAL = {
         if (!btnRow) return;
         const instances = [];
         const bastionIp = outputs.bastion_public_ip;
+        // Prefer private IP for SSH (works via VPC peering on server, avoids SG restrictions on public IP)
+        const bastionSshIp = outputs.bastion_private_ip || bastionIp;
+        const jumpboxSshIp = outputs.jumpbox_private_ip || outputs.jumpbox_public_ip;
 
-        if (bastionIp) {
-            instances.push({ label: 'Bastion', host: bastionIp, user: 'ubuntu', bastion: null, icon: '🛡', state: outputs.bastion_state });
+        if (bastionSshIp) {
+            instances.push({ label: 'Bastion', host: bastionSshIp, user: 'ubuntu', bastion: null, icon: '🛡', state: outputs.bastion_state });
         }
 
         if (outputs.redirectors) {
             outputs.redirectors.forEach((r, i) => {
                 if (r.private_ip) {
-                    instances.push({ label: `Redir-${i + 1}`, host: r.private_ip, user: 'ubuntu', bastion: bastionIp, icon: '🔀', state: r.state });
+                    instances.push({ label: `Redir-${i + 1}`, host: r.private_ip, user: 'ubuntu', bastion: bastionSshIp, icon: '🔀', state: r.state });
                 }
             });
         }
@@ -19332,19 +19379,17 @@ const TERMINAL = {
         if (outputs.c2_servers) {
             outputs.c2_servers.forEach((ts, i) => {
                 if (ts.private_ip) {
-                    instances.push({ label: `TeamSrv-${i + 1}`, host: ts.private_ip, user: 'ubuntu', bastion: bastionIp, icon: '🖥', state: ts.state });
+                    instances.push({ label: `TeamSrv-${i + 1}`, host: ts.private_ip, user: 'ubuntu', bastion: bastionSshIp, icon: '🖥', state: ts.state });
                 }
             });
         } else if (outputs.teamserver_private_ip) {
-            instances.push({ label: 'Team Server', host: outputs.teamserver_private_ip, user: 'ubuntu', bastion: bastionIp || outputs.jumpbox_public_ip, icon: '🖥', state: outputs.teamserver_state });
+            instances.push({ label: 'Team Server', host: outputs.teamserver_private_ip, user: 'ubuntu', bastion: bastionSshIp || jumpboxSshIp, icon: '🖥', state: outputs.teamserver_state });
         }
 
-        if (outputs.attackbox_private_ip) {
-            instances.push({ label: 'Attack Box', host: outputs.attackbox_private_ip, user: 'Administrator', bastion: bastionIp || outputs.jumpbox_public_ip, icon: '⚔', state: outputs.attackbox_state });
-        }
+        // Attack Box — Windows, no SSH. RDP access via the tunnel buttons.
 
         if (outputs.jumpbox_public_ip) {
-            instances.push({ label: 'Jumpbox', host: outputs.jumpbox_public_ip, user: 'ubuntu', bastion: null, icon: '🔑', state: outputs.jumpbox_state });
+            instances.push({ label: 'Jumpbox', host: jumpboxSshIp, user: 'ubuntu', bastion: null, icon: '🔑', state: outputs.jumpbox_state });
         }
 
         ['dc01', 'dc02', 'srv01', 'srv02', 'srv03', 'ws01'].forEach(vm => {
@@ -19363,46 +19408,50 @@ const TERMINAL = {
                 return `<button class="btn btn-sm btn-info" ${disabled} onclick="TERMINAL.openSSH('${_esc(inst.host)}', '${_esc(inst.user)}', ${inst.bastion ? "'" + _esc(inst.bastion) + "'" : 'null'}, '${_esc(inst.label)}')">${stateDot}${inst.icon} ${_esc(inst.label)}</button>`;
             }).join('');
 
-            // Tunnel shortcut buttons — adapts to deployment type
+            // Tunnel shortcut buttons — adapts to deployment type and server/local mode
             const tunnels = [];
             const keyPath = '~/.ssh/id_ed25519';
             const sshOpts = `-i ${keyPath} -o StrictHostKeyChecking=no`;
             const jumpboxIp = outputs.jumpbox_public_ip;
 
-            // C2 team server IP (from c2_servers array or flat field)
-            const c2TsIp = outputs.c2_servers?.[0]?.private_ip;
-            // GOAD team server IP (flat field, only if different from C2)
+            const c2TsIp = outputs.c2_servers?.[0]?.private_ip || outputs.teamserver_private_ip;
             const goadTsIp = outputs.teamserver_private_ip;
-            // Pick the right team server and jump host based on what's available
             const tsIp = c2TsIp || goadTsIp;
             const abIp = outputs.attackbox_private_ip;
 
-            // RDP to Attack Box — via bastion (C2 VPC) or jumpbox (GOAD VPC)
-            if (abIp) {
-                const jumpHost = bastionIp || jumpboxIp;
-                if (jumpHost) {
-                    const cmd = `ssh -L 3389:${abIp}:3389 ${sshOpts} ubuntu@${jumpHost}`;
-                    const via = bastionIp ? 'via Bastion' : 'via Jumpbox';
-                    tunnels.push({ label: `RDP Tunnel → Attack Box (${via})`, cmd, color: 'btn-warning' });
-                }
+            // Tunnel commands adapt based on where they run:
+            // - Laptop: SSH through bastion/jumpbox public IP (internet)
+            // - Server: SSH through bastion/jumpbox private IP (VPC peering) or team server directly
+            const bastionPrivate = outputs.bastion_private_ip;
+            const jumpboxPrivate = outputs.jumpbox_private_ip;
+            // Prefer private IP (works via peering on server), fall back to public (works from laptop)
+            const tunnelHost = bastionPrivate || bastionIp || jumpboxPrivate || jumpboxIp;
+
+            // RDP to Attack Box — tunnel through a Linux host that can reach it
+            if (abIp && tunnelHost) {
+                const cmd = `ssh -L 3389:${abIp}:3389 ${sshOpts} ubuntu@${tunnelHost}`;
+                tunnels.push({ label: 'RDP Tunnel → Attack Box', cmd, color: 'btn-warning' });
             }
 
-            // CS Client + REST API tunnels — via bastion (C2 deployments) or jumpbox (GOAD)
-            if (tsIp) {
-                const jumpHost = bastionIp || jumpboxIp;
-                if (jumpHost) {
-                    const via = bastionIp ? 'via Bastion' : 'via Jumpbox';
-                    const cmd50050 = `ssh -L 50050:${tsIp}:50050 ${sshOpts} ubuntu@${jumpHost}`;
-                    tunnels.push({ label: `CS Client Tunnel (${via})`, cmd: cmd50050, color: 'btn-warning' });
-                    const cmd50443 = `ssh -L 50443:${tsIp}:50443 ${sshOpts} ubuntu@${jumpHost}`;
-                    tunnels.push({ label: `REST API Tunnel (${via})`, cmd: cmd50443, color: 'btn-warning' });
-                }
+            // CS Client tunnel — forward local port to team server
+            if (tsIp && tunnelHost) {
+                const cmd50050 = `ssh -L 50050:${tsIp}:50050 ${sshOpts} ubuntu@${tunnelHost}`;
+                tunnels.push({ label: 'CS Client Tunnel', cmd: cmd50050, color: 'btn-warning' });
             }
 
-            // Combined deployments: also show GOAD tunnels via jumpbox if separate from C2
-            if (bastionIp && jumpboxIp && goadTsIp && c2TsIp && goadTsIp !== c2TsIp) {
-                const cmd = `ssh -L 50050:${goadTsIp}:50050 ${sshOpts} ubuntu@${jumpboxIp}`;
-                tunnels.push({ label: 'CS Client Tunnel (GOAD via Jumpbox)', cmd, color: 'btn-warning' });
+            // REST API tunnel — forward local port to team server REST API
+            if (tsIp && tunnelHost) {
+                const cmd50443 = `ssh -L 50443:${tsIp}:50443 ${sshOpts} ubuntu@${tunnelHost}`;
+                tunnels.push({ label: 'REST API Tunnel', cmd: cmd50443, color: 'btn-warning' });
+            }
+
+            // Combined: GOAD tunnel via jumpbox if separate from C2
+            if (goadTsIp && c2TsIp && goadTsIp !== c2TsIp) {
+                const jbHost = jumpboxPrivate || jumpboxIp;
+                if (jbHost) {
+                    const cmd = `ssh -L 50050:${goadTsIp}:50050 ${sshOpts} ubuntu@${jbHost}`;
+                    tunnels.push({ label: 'CS Client Tunnel (GOAD)', cmd, color: 'btn-warning' });
+                }
             }
 
             if (tunnels.length > 0) {
@@ -19554,7 +19603,7 @@ const TERMINAL = {
         };
 
         ws.onclose = () => {
-            term.write('\r\n\x1b[90m[Session ended]\x1b[0m\r\n');
+            term.write('\r\n\x1b[33m[Session ended]\x1b[0m\r\n');
         };
 
         ws.onerror = () => {
@@ -20723,8 +20772,20 @@ const TOPOLOGY = {
             banner.style.borderColor = '#F0CA4A';
         } else {
             banner.style.display = '';
-            banner.innerHTML = 'Beacons not shown — connect to the CS REST API via the Beacon tab to overlay live beacons on this graph';
+            // Build the REST API tunnel command from infra data
+            const d = this.infraData || {};
+            const tsIp = (d.c2_servers && d.c2_servers[0]?.private_ip) || d.teamserver_private_ip || '';
+            const bastionIp = d.bastion_public_ip || '';
+            const jumpboxIp = d.jumpbox_public_ip || '';
+            const jumpHost = bastionIp || jumpboxIp;
+            let tunnelBtn = '';
+            if (tsIp && jumpHost) {
+                const cmd = `ssh -L 50443:${tsIp}:50443 -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no ubuntu@${jumpHost}`;
+                tunnelBtn = ` <button class="btn btn-sm btn-warning" style="margin-left: 12px; pointer-events: auto;" onclick="TOPOLOGY.close(); APP.showPage('terminal'); setTimeout(() => TERMINAL.openTunnel('REST API Tunnel', '${cmd.replace(/'/g, "\\'")}'), 500);">Open REST API Tunnel</button>`;
+            }
+            banner.innerHTML = `Beacons not shown — CS REST API not connected${tunnelBtn}`;
             banner.style.borderColor = '#F0CA4A';
+            banner.style.pointerEvents = 'auto';
         }
     },
 

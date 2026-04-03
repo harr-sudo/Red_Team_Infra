@@ -682,6 +682,26 @@ variable "dashboard_instance_type" {
   default     = "t3.medium"
 }
 
+# Dashboard peering overrides — use these when the dashboard was created in a
+# different workspace (pass the VPC ID, CIDR, and SG ID from the dashboard output)
+variable "dashboard_vpc_id" {
+  description = "Dashboard VPC ID for peering (override when dashboard is in different workspace)"
+  type        = string
+  default     = ""
+}
+
+variable "dashboard_vpc_cidr" {
+  description = "Dashboard VPC CIDR for route tables"
+  type        = string
+  default     = ""
+}
+
+variable "dashboard_sg_id" {
+  description = "Dashboard security group ID for ingress rules"
+  type        = string
+  default     = ""
+}
+
 # =============================================================================
 # Tags
 # =============================================================================

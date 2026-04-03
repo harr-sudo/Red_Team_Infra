@@ -39,6 +39,167 @@ AWS_IDENTITY=$(aws sts get-caller-identity 2>/dev/null) || error "AWS credential
 AWS_ACCOUNT=$(echo "$AWS_IDENTITY" | jq -r '.Account')
 success "AWS account: $AWS_ACCOUNT"
 
+# --- Check if dashboard already exists (resume mode) ---
+cd "$TERRAFORM_DIR"
+EXISTING_DASHBOARD_IP=$(terraform output -raw dashboard_public_ip 2>/dev/null || echo "")
+if [ -n "$EXISTING_DASHBOARD_IP" ] && [ "$EXISTING_DASHBOARD_IP" != "" ]; then
+    echo ""
+    success "Dashboard server already provisioned: $EXISTING_DASHBOARD_IP"
+    read -rp "Resume setup (rsync code + start service)? (yes/no): " RESUME
+    if [ "$RESUME" = "yes" ]; then
+        DASHBOARD_IP="$EXISTING_DASHBOARD_IP"
+        INSTANCE_ID=$(terraform output -raw dashboard_instance_id 2>/dev/null || echo "")
+
+        # Still need SSH key and operator name for rsync/SSH
+        SSH_KEY_PATH=""
+        for candidate in \
+            ~/.ssh/id_ed25519.pub \
+            ~/.ssh/id_rsa.pub \
+            ~/.ssh/id_ecdsa.pub \
+            /mnt/c/Users/${USER:-}/.ssh/id_ed25519.pub \
+            /mnt/c/Users/${USER:-}/.ssh/id_rsa.pub \
+            "${USERPROFILE:-}/.ssh/id_ed25519.pub" \
+            "${USERPROFILE:-}/.ssh/id_rsa.pub"; do
+            if [ -n "$candidate" ] && [ -f "$candidate" ] 2>/dev/null; then
+                SSH_KEY_PATH="$candidate"
+                break
+            fi
+        done
+        SSH_KEY_PRIVATE="${SSH_KEY_PATH%.pub}"
+
+        # Read operator name from the dashboard.tfvars (matches the Linux user on the server)
+        OPERATOR_NAME=""
+        if [ -f "$TFVARS_FILE" ]; then
+            OPERATOR_NAME=$(grep 'operator_ssh_public_keys' -A5 "$TFVARS_FILE" | grep '"[a-z]' | head -1 | sed 's/.*"\([a-z][a-z0-9_-]*\)".*/\1/')
+        fi
+        if [ -z "$OPERATOR_NAME" ]; then
+            OPERATOR_NAME=$(whoami | tr '[:upper:]' '[:lower:]')
+        fi
+
+        AWS_REGION=$(aws configure get region 2>/dev/null || echo "eu-central-1")
+
+        info "Using SSH key: $SSH_KEY_PATH"
+        info "Using operator: $OPERATOR_NAME"
+        echo ""
+        info "Copying codebase to server..."
+        rsync -rltz --progress --no-perms --no-owner --no-group \
+            --exclude='uploads/' \
+            --exclude='uploads_client/' \
+            --exclude='uploads_tools/' \
+            --exclude='local-only/' \
+            --exclude='.git/' \
+            --exclude='venv/' \
+            --exclude='logs/' \
+            --exclude='terraform.tfstate*' \
+            --exclude='*.tfplan' \
+            --exclude='.terraform/' \
+            --exclude='.DS_Store' \
+            --exclude='.claude/' \
+            --exclude='.obsidian/' \
+            --exclude='.c2lint_cache/' \
+            --exclude='.mcp.json' \
+            --exclude='*.rtf' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='Research/' \
+            --exclude='goad_workspace/' \
+            --exclude='ssh_keys/' \
+            --exclude='tools/goad/' \
+            --exclude='configs/*.tfvars' \
+            --exclude='configs/ssh/' \
+            --exclude='*.png' \
+            --exclude='c2-adhoc-architecture.png' \
+            --exclude='domain_categorization_results.csv' \
+            --exclude='SpeakView*' \
+            --exclude='PLAN.md' \
+            -e "ssh -i $SSH_KEY_PRIVATE -o StrictHostKeyChecking=accept-new" \
+            "$PROJECT_ROOT/" \
+            "$OPERATOR_NAME@$DASHBOARD_IP:/opt/redteam/" || true
+        # rsync exit code 23 = partial transfer (some files skipped) — acceptable
+
+        success "Codebase synced"
+
+        # Step 1: Set up venv and install deps (as operator — owns the files via group)
+        info "Installing Python dependencies on server..."
+        ssh -i "$SSH_KEY_PRIVATE" -o StrictHostKeyChecking=accept-new "$OPERATOR_NAME@$DASHBOARD_IP" bash -e <<'REMOTE_PIP'
+cd /opt/redteam
+
+# Remove stale venv if it exists with wrong ownership
+if [ -d venv ] && [ ! -w venv ]; then
+    echo "Removing stale venv with wrong permissions..."
+    rm -rf venv 2>/dev/null || true
+fi
+
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+echo "Dependencies installed OK"
+REMOTE_PIP
+
+        # Step 2: Terraform init (as operator — no sudo needed, uses operator's AWS creds via instance role)
+        info "Initializing Terraform on server..."
+        ssh -i "$SSH_KEY_PRIVATE" -o StrictHostKeyChecking=accept-new "$OPERATOR_NAME@$DASHBOARD_IP" bash -e <<'REMOTE_TF'
+cd /opt/redteam/terraform
+terraform init -backend-config=/opt/redteam/backend.hcl || echo "Terraform init completed (may show warnings)"
+REMOTE_TF
+
+        # Step 3: Create systemd service (needs root — use EC2 Instance Connect via ubuntu)
+        info "Creating systemd service..."
+        aws ec2-instance-connect send-ssh-public-key \
+            --instance-id "$INSTANCE_ID" \
+            --instance-os-user ubuntu \
+            --ssh-public-key "file://$SSH_KEY_PATH" \
+            --region "$AWS_REGION" > /dev/null 2>&1
+
+        ssh -i "$SSH_KEY_PRIVATE" -o StrictHostKeyChecking=accept-new "ubuntu@$DASHBOARD_IP" bash <<'REMOTE_SVC'
+# Create systemd service if it doesn't exist (or update it)
+sudo tee /etc/systemd/system/dashboard.service > /dev/null <<'SERVICE'
+[Unit]
+Description=Red Team Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=dashboard
+Group=redteam
+WorkingDirectory=/opt/redteam
+ExecStart=/opt/redteam/venv/bin/python3 webapp/backend/app.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/redteam
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+sudo hostnamectl set-hostname redteam-dashboard 2>/dev/null || true
+sudo systemctl daemon-reload
+sudo systemctl enable dashboard
+sudo systemctl restart dashboard
+echo "Dashboard service started"
+REMOTE_SVC
+
+        success "Dashboard service started"
+        echo ""
+        echo "============================================"
+        echo "  Dashboard Server Ready!"
+        echo "============================================"
+        echo ""
+        echo "  IP:       $DASHBOARD_IP"
+        echo "  Connect:  ssh -L 5000:localhost:5000 $OPERATOR_NAME@$DASHBOARD_IP"
+        echo "  Open:     http://localhost:5000"
+        echo ""
+        echo "============================================"
+        exit 0
+    fi
+fi
+cd "$PROJECT_ROOT"
+
 # --- Auto-detect values ---
 
 # SSH key — check common locations across macOS, Linux, Windows (WSL/Git Bash)
@@ -47,11 +208,11 @@ for candidate in \
     ~/.ssh/id_ed25519.pub \
     ~/.ssh/id_rsa.pub \
     ~/.ssh/id_ecdsa.pub \
-    /mnt/c/Users/$USER/.ssh/id_ed25519.pub \
-    /mnt/c/Users/$USER/.ssh/id_rsa.pub \
-    "$USERPROFILE/.ssh/id_ed25519.pub" \
-    "$USERPROFILE/.ssh/id_rsa.pub"; do
-    if [ -f "$candidate" 2>/dev/null ]; then
+    /mnt/c/Users/${USER:-}/.ssh/id_ed25519.pub \
+    /mnt/c/Users/${USER:-}/.ssh/id_rsa.pub \
+    "${USERPROFILE:-}/.ssh/id_ed25519.pub" \
+    "${USERPROFILE:-}/.ssh/id_rsa.pub"; do
+    if [ -n "$candidate" ] && [ -f "$candidate" ] 2>/dev/null; then
         SSH_KEY_PATH="$candidate"
         break
     fi
@@ -87,13 +248,16 @@ fi
 success "SSH key: $SSH_KEY_PATH"
 
 # Operator name
-read -rp "Your operator name [$DETECTED_USER]: " INPUT_USER
-OPERATOR_NAME="${INPUT_USER:-$DETECTED_USER}"
-
-# Validate operator name (must be valid Linux username)
-if ! echo "$OPERATOR_NAME" | grep -qE '^[a-z][a-z0-9_-]{0,31}$'; then
-    error "Invalid operator name. Must be lowercase, start with letter, 1-32 chars, only a-z 0-9 _ -"
-fi
+while true; do
+    read -rp "Your operator name [$DETECTED_USER]: " INPUT_USER
+    OPERATOR_NAME="${INPUT_USER:-$DETECTED_USER}"
+    # Auto-lowercase
+    OPERATOR_NAME=$(echo "$OPERATOR_NAME" | tr '[:upper:]' '[:lower:]')
+    if echo "$OPERATOR_NAME" | grep -qE '^[a-z][a-z0-9_-]{0,31}$'; then
+        break
+    fi
+    warn "Invalid name '$OPERATOR_NAME'. Must be lowercase, start with letter, 1-32 chars, only a-z 0-9 _ -. Try again."
+done
 
 # Public IP
 read -rp "Your public IP [$DETECTED_IP]: " INPUT_IP
@@ -115,12 +279,17 @@ if [ -n "$OP2_KEY" ]; then
     if ! echo "$OP2_KEY" | grep -qE '^ssh-(ed25519|rsa|ecdsa-sha2-nistp[0-9]+) [A-Za-z0-9+/=]+'; then
         error "Invalid SSH public key format for second operator"
     fi
-    read -rp "Second operator name: " OP2_NAME
-    if ! echo "$OP2_NAME" | grep -qE '^[a-z][a-z0-9_-]{0,31}$'; then
-        error "Invalid operator name. Must be lowercase, start with letter, 1-32 chars, only a-z 0-9 _ -"
-    fi
-    read -rp "Second operator IP: " OP2_IP
-    [ -n "$OP2_IP" ] || error "Operator IP required"
+    while true; do
+        read -rp "Second operator name: " OP2_NAME
+        OP2_NAME=$(echo "$OP2_NAME" | tr '[:upper:]' '[:lower:]')
+        if echo "$OP2_NAME" | grep -qE '^[a-z][a-z0-9_-]{0,31}$'; then break; fi
+        warn "Invalid name. Must be lowercase, start with letter, 1-32 chars. Try again."
+    done
+    while true; do
+        read -rp "Second operator IP: " OP2_IP
+        if [ -n "$OP2_IP" ]; then break; fi
+        warn "IP is required. Try again."
+    done
 fi
 
 # --- Generate tfvars ---
@@ -148,6 +317,15 @@ EOF
 
 success "Generated: $TFVARS_FILE"
 
+# --- Find existing deployment tfvars (provides root variables like project_name, environment) ---
+EXISTING_TFVARS=""
+for candidate in "$CONFIGS_DIR/terraform.tfvars" "$CONFIGS_DIR"/*.tfvars; do
+    if [ -f "$candidate" ] && [ "$candidate" != "$TFVARS_FILE" ]; then
+        EXISTING_TFVARS="$candidate"
+        break
+    fi
+done
+
 # --- Terraform ---
 echo ""
 info "Initializing Terraform..."
@@ -155,7 +333,12 @@ cd "$TERRAFORM_DIR"
 terraform init
 
 info "Planning dashboard server..."
-terraform plan -var-file="$TFVARS_FILE" -target=module.dashboard_server -out=dashboard.tfplan
+PLAN_CMD="terraform plan -var-file=$TFVARS_FILE -target=module.dashboard_server -out=dashboard.tfplan"
+if [ -n "$EXISTING_TFVARS" ]; then
+    info "Using existing config: $EXISTING_TFVARS"
+    PLAN_CMD="terraform plan -var-file=$EXISTING_TFVARS -var-file=$TFVARS_FILE -target=module.dashboard_server -out=dashboard.tfplan"
+fi
+eval "$PLAN_CMD"
 
 echo ""
 read -rp "Apply this plan? (yes/no): " CONFIRM

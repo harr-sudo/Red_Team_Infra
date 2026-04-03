@@ -27,10 +27,13 @@ def get_operator():
     except OSError:
         pass
 
-    # Server mode: trace the request's source port to its SSH tunnel owner
+    # Server mode: trace the request's source port to its SSH tunnel owner.
+    # Method 1: ss -tnp (may need root to see PIDs of other users' processes)
+    # Method 2: scan /proc for sshd processes with port forwarding
     try:
         remote_port = request.environ.get('REMOTE_PORT')
         if remote_port:
+            # Try ss first (works if dashboard user can see socket PIDs)
             result = subprocess.run(
                 ['ss', '-tnp', f'sport = :{remote_port}'],
                 capture_output=True, text=True, timeout=2
@@ -44,6 +47,27 @@ def get_operator():
                 ).stdout.strip()
                 if user and user not in ('root', 'dashboard', ''):
                     return user
+
+            # Fallback: find sshd processes and their owners
+            # Each operator's SSH tunnel creates an sshd child process owned by their Linux user
+            result = subprocess.run(
+                ['ps', '-eo', 'user,pid,args'],
+                capture_output=True, text=True, timeout=2
+            )
+            for line in result.stdout.splitlines():
+                parts = line.split(None, 2)
+                if len(parts) >= 3 and 'sshd' in parts[2] and parts[0] not in ('root', 'dashboard', 'USER', ''):
+                    return parts[0]  # Return the first non-root sshd user
+    except Exception:
+        pass
+
+    # Final fallback: check who has active SSH sessions via 'who'
+    try:
+        result = subprocess.run(['who'], capture_output=True, text=True, timeout=2)
+        for line in result.stdout.splitlines():
+            user = line.split()[0] if line.strip() else ''
+            if user and user not in ('root', 'dashboard'):
+                return user
     except Exception:
         pass
 

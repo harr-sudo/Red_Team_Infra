@@ -4567,52 +4567,32 @@ def get_terraform_outputs():
             outputs['portal_url'] = f"https://www.{domain}/login" if domain else None
         outputs['ssl_provider'] = config.get('ssl_provider', 'letsencrypt')
 
-        # Get DNS nameservers from Route 53 if a domain is configured
-        domain_name = config.get('primary_domain_name', '')
-        if domain_name:
+        # --- Run DNS lookup and password retrieval in parallel ---
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _fetch_dns():
+            """Get DNS nameservers from Route 53."""
+            domain_name = config.get('primary_domain_name', '')
+            if not domain_name:
+                return {}
             try:
                 route53 = boto3.client('route53', region_name=aws_region)
                 zones = route53.list_hosted_zones_by_name(DNSName=domain_name, MaxItems='1')
                 for zone in zones.get('HostedZones', []):
-                    # Match exact domain (Route 53 appends a trailing dot)
                     zone_name = zone['Name'].rstrip('.')
                     if zone_name == domain_name:
                         zone_id = zone['Id'].split('/')[-1]
                         zone_detail = route53.get_hosted_zone(Id=zone_id)
                         ns_records = zone_detail.get('DelegationSet', {}).get('NameServers', [])
                         if ns_records:
-                            outputs['dns_nameservers'] = ns_records
-                            outputs['dns_domain'] = domain_name
-                        break
-            except Exception as e:
-                # Route 53 query failed - not critical, continue without nameservers
+                            return {'dns_nameservers': ns_records, 'dns_domain': domain_name}
+            except Exception:
                 pass
+            return {}
 
-        # Get attackbox password via EC2Launch v2 decryption
-        try:
-            service = get_service_for_project(project_name)
-            service.init()
-            service.ensure_workspace()
-            tf_outputs = service.output()
-            if tf_outputs.get("success"):
-                tf_out = tf_outputs.get("outputs", {})
-                # Decrypt Windows password from EC2Launch v2
-                ab_instance_id = tf_out.get("attack_box_instance_id", {}).get("value")
-                if ab_instance_id:
-                    win_pwd = get_windows_password(ab_instance_id, service)
-                    if win_pwd:
-                        outputs['attackbox_password'] = win_pwd
-                # Fallback for GOAD-only deployments
-                if not outputs.get('attackbox_password'):
-                    goad_pwd = tf_out.get("goad_attackbox_password", {}).get("value")
-                    if goad_pwd:
-                        outputs['attackbox_password'] = goad_pwd
-        except Exception as e:
-            # If we can't get password, continue without it
-            pass
-
-        # Retrieve attack box password from deployment state if not already set
-        if outputs.get('attackbox_instance_id') and not outputs.get('attackbox_password'):
+        def _fetch_password():
+            """Get attack box password — try cached state first, fall back to terraform."""
+            # Fast path: check deployment state cache first
             try:
                 state_file = project_root / "logs" / "deployment_state" / f"{project_name}.state.json"
                 if state_file.exists():
@@ -4621,9 +4601,43 @@ def get_terraform_outputs():
                     stored_outputs = state_data.get("output", {})
                     ab_pw = stored_outputs.get("attack_box_admin_password", {}).get("value")
                     if ab_pw:
-                        outputs['attackbox_password'] = ab_pw
+                        return {'attackbox_password': ab_pw}
+                    goad_pw = stored_outputs.get("goad_attackbox_password", {}).get("value")
+                    if goad_pw:
+                        return {'attackbox_password': goad_pw}
             except Exception:
                 pass
+
+            # Slow path: terraform output + EC2 password decryption (only if no cached password)
+            try:
+                service = get_service_for_project(project_name)
+                service.init()
+                service.ensure_workspace()
+                tf_outputs = service.output()
+                if tf_outputs.get("success"):
+                    tf_out = tf_outputs.get("outputs", {})
+                    ab_instance_id = tf_out.get("attack_box_instance_id", {}).get("value")
+                    if ab_instance_id:
+                        win_pwd = get_windows_password(ab_instance_id, service)
+                        if win_pwd:
+                            return {'attackbox_password': win_pwd}
+                    goad_pwd = tf_out.get("goad_attackbox_password", {}).get("value")
+                    if goad_pwd:
+                        return {'attackbox_password': goad_pwd}
+            except Exception:
+                pass
+            return {}
+
+        # Run DNS and password fetch in parallel
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            dns_future = executor.submit(_fetch_dns)
+            pwd_future = executor.submit(_fetch_password)
+
+            for future in as_completed([dns_future, pwd_future], timeout=30):
+                try:
+                    outputs.update(future.result())
+                except Exception:
+                    pass
 
         return jsonify({
             "success": True,

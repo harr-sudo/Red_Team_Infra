@@ -435,3 +435,15 @@ resource "aws_security_group_rule" "attackbox_from_dashboard_ssh" {
   description              = "SSH from dashboard server"
 }
 
+# Dashboard → Bastion: SSH (for terminal access + tunnel forwarding)
+resource "aws_security_group_rule" "bastion_from_dashboard_ssh" {
+  count                    = var.dashboard_sg_id != "" ? 1 : 0
+  type                     = "ingress"
+  from_port                = var.ssh_port
+  to_port                  = var.ssh_port
+  protocol                 = "tcp"
+  source_security_group_id = var.dashboard_sg_id
+  security_group_id        = aws_security_group.bastion_sg.id
+  description              = "SSH from dashboard server"
+}
+

@@ -54,7 +54,7 @@ CURRENT_STEP=0
 CURRENT_STEP_NAME=""
 
 write_step_status() {
-    local step_num=$1 step_name=$2 step_status=$3 message="${4:-}"
+    local step_num=$1 step_name=$2 step_status=$3 message="$${4:-}"
     local now=$(date +%s)
     local duration=$((now - SETUP_STEP_START))
     SETUP_STEP_START=$now
@@ -4532,7 +4532,7 @@ content = content.replace('    location /health', portal_locations + '    locati
 # 3. Update blocked_agent check to exempt portal paths
 content = content.replace(
     'if ($blocked_agent) {',
-    'set $block_check "${blocked_agent}${portal_path}";\n        if ($block_check = "10") {',
+    'set $block_check "$${blocked_agent}$${portal_path}";\n        if ($block_check = "10") {',
     1
 )
 
