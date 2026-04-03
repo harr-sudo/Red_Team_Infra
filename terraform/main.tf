@@ -693,7 +693,7 @@ module "dashboard_server" {
   operator_ssh_public_keys = var.operator_ssh_public_keys
   instance_type            = var.dashboard_instance_type
   aws_region               = var.aws_region
-  project_name             = var.project_name
+  project_name             = "redteam-dashboard"  # Fixed name — not the deployment project name
 
   tags = {
     Project     = var.project_name
