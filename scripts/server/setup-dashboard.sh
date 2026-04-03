@@ -41,10 +41,17 @@ success "AWS account: $AWS_ACCOUNT"
 
 # --- Auto-detect values ---
 
-# SSH key
+# SSH key — check common locations across macOS, Linux, Windows (WSL/Git Bash)
 SSH_KEY_PATH=""
-for candidate in ~/.ssh/id_ed25519.pub ~/.ssh/id_rsa.pub; do
-    if [ -f "$candidate" ]; then
+for candidate in \
+    ~/.ssh/id_ed25519.pub \
+    ~/.ssh/id_rsa.pub \
+    ~/.ssh/id_ecdsa.pub \
+    /mnt/c/Users/$USER/.ssh/id_ed25519.pub \
+    /mnt/c/Users/$USER/.ssh/id_rsa.pub \
+    "$USERPROFILE/.ssh/id_ed25519.pub" \
+    "$USERPROFILE/.ssh/id_rsa.pub"; do
+    if [ -f "$candidate" 2>/dev/null ]; then
         SSH_KEY_PATH="$candidate"
         break
     fi
@@ -65,7 +72,10 @@ info "Configure your dashboard server:"
 echo ""
 
 # SSH key
-read -rp "Your SSH public key path [$SSH_KEY_PATH]: " INPUT_KEY
+if [ -n "$SSH_KEY_PATH" ]; then
+    success "Auto-detected SSH key: $SSH_KEY_PATH"
+fi
+read -rp "SSH public key path (press Enter to use detected) [$SSH_KEY_PATH]: " INPUT_KEY
 SSH_KEY_PATH="${INPUT_KEY:-$SSH_KEY_PATH}"
 [ -f "$SSH_KEY_PATH" ] || error "SSH public key not found: $SSH_KEY_PATH"
 SSH_KEY_CONTENT=$(cat "$SSH_KEY_PATH")
