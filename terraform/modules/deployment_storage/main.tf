@@ -386,6 +386,61 @@ resource "aws_iam_role" "cs_download_c2" {
   })
 }
 
+# =============================================================================
+# CONDITIONAL POLICY STATEMENTS (shared across C2/GOAD/Legacy download policies)
+# Extracted from dynamic blocks — aws_iam_policy_document doesn't support
+# dynamic statement blocks in AWS provider 5.x. Merged via source_policy_documents.
+# =============================================================================
+
+data "aws_iam_policy_document" "github_token_stmt" {
+  count = var.github_token != "" ? 1 : 0
+
+  statement {
+    sid       = "AllowGetGitHubToken"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.github_token[0].arn]
+  }
+}
+
+data "aws_iam_policy_document" "cs_license_stmt" {
+  count = var.cs_license_secret_name != "" ? 1 : 0
+
+  statement {
+    sid       = "AllowGetCSLicenseKey"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = ["arn:aws:secretsmanager:${var.aws_region != "" ? var.aws_region : "*"}:${data.aws_caller_identity.current.account_id}:secret:${var.cs_license_secret_name}-*"]
+  }
+}
+
+data "aws_iam_policy_document" "route53_dns_stmt" {
+  count = var.enable_route53_dns_validation ? 1 : 0
+
+  statement {
+    sid    = "AllowRoute53DNSValidation"
+    effect = "Allow"
+    actions = [
+      "route53:ChangeResourceRecordSets"
+    ]
+    resources = ["arn:aws:route53:::hostedzone/*"]
+  }
+
+  statement {
+    sid    = "AllowRoute53ListAndGetChange"
+    effect = "Allow"
+    actions = [
+      "route53:ListHostedZones",
+      "route53:GetChange"
+    ]
+    resources = ["*"]
+  }
+}
+
+# =============================================================================
+# DOWNLOAD POLICIES (base statements + conditional merges)
+# =============================================================================
+
 # C2 Download Policy
 data "aws_iam_policy_document" "cs_download_c2" {
   count = local.create_c2_role ? 1 : 0
@@ -437,55 +492,14 @@ data "aws_iam_policy_document" "cs_download_c2" {
     ]
   }
 
-  # Secrets Manager -- GitHub token (attack box)
-  dynamic "statement" {
-    for_each = var.github_token != "" ? [1] : []
-    content {
-      sid       = "AllowGetGitHubToken"
-      effect    = "Allow"
-      actions   = ["secretsmanager:GetSecretValue"]
-      resources = [aws_secretsmanager_secret.github_token[0].arn]
-    }
-  }
+  # Conditional statements merged via source_policy_documents below
+  # (dynamic blocks broken in aws_iam_policy_document on AWS provider 5.x)
 
-  # Secrets Manager -- CS license key (team servers, pre-existing secret)
-  dynamic "statement" {
-    for_each = var.cs_license_secret_name != "" ? [1] : []
-    content {
-      sid       = "AllowGetCSLicenseKey"
-      effect    = "Allow"
-      actions   = ["secretsmanager:GetSecretValue"]
-      resources = ["arn:aws:secretsmanager:${var.aws_region != "" ? var.aws_region : "*"}:${data.aws_caller_identity.current.account_id}:secret:${var.cs_license_secret_name}-*"]
-    }
-  }
-
-  # Route53 -- DNS-01 certbot validation (redirectors request Let's Encrypt certs)
-  # Uses DNS-01 instead of HTTP-01 so round-robin DNS doesn't break validation
-  # Scoped to ChangeResourceRecordSets on hosted zones only; role is already VPC-restricted
-  dynamic "statement" {
-    for_each = var.enable_route53_dns_validation ? [1] : []
-    content {
-      sid    = "AllowRoute53DNSValidation"
-      effect = "Allow"
-      actions = [
-        "route53:ChangeResourceRecordSets"
-      ]
-      resources = ["arn:aws:route53:::hostedzone/*"]
-    }
-  }
-
-  dynamic "statement" {
-    for_each = var.enable_route53_dns_validation ? [1] : []
-    content {
-      sid    = "AllowRoute53ListAndGetChange"
-      effect = "Allow"
-      actions = [
-        "route53:ListHostedZones",
-        "route53:GetChange"
-      ]
-      resources = ["*"]
-    }
-  }
+  source_policy_documents = compact([
+    var.github_token != "" ? data.aws_iam_policy_document.github_token_stmt[0].json : "",
+    var.cs_license_secret_name != "" ? data.aws_iam_policy_document.cs_license_stmt[0].json : "",
+    var.enable_route53_dns_validation ? data.aws_iam_policy_document.route53_dns_stmt[0].json : "",
+  ])
 }
 
 # C2 SSH Key Exchange Policy
@@ -707,27 +721,10 @@ data "aws_iam_policy_document" "cs_download_goad" {
     ]
   }
 
-  # Secrets Manager -- GitHub token (attack box)
-  dynamic "statement" {
-    for_each = var.github_token != "" ? [1] : []
-    content {
-      sid       = "AllowGetGitHubToken"
-      effect    = "Allow"
-      actions   = ["secretsmanager:GetSecretValue"]
-      resources = [aws_secretsmanager_secret.github_token[0].arn]
-    }
-  }
-
-  # Secrets Manager -- CS license key (team servers, pre-existing secret)
-  dynamic "statement" {
-    for_each = var.cs_license_secret_name != "" ? [1] : []
-    content {
-      sid       = "AllowGetCSLicenseKey"
-      effect    = "Allow"
-      actions   = ["secretsmanager:GetSecretValue"]
-      resources = ["arn:aws:secretsmanager:${var.aws_region != "" ? var.aws_region : "*"}:${data.aws_caller_identity.current.account_id}:secret:${var.cs_license_secret_name}-*"]
-    }
-  }
+  source_policy_documents = compact([
+    var.github_token != "" ? data.aws_iam_policy_document.github_token_stmt[0].json : "",
+    var.cs_license_secret_name != "" ? data.aws_iam_policy_document.cs_license_stmt[0].json : "",
+  ])
 }
 
 # GOAD SSH Key Exchange Policy
@@ -930,27 +927,10 @@ data "aws_iam_policy_document" "cs_download_legacy" {
     ]
   }
 
-  # Secrets Manager -- GitHub token (attack box)
-  dynamic "statement" {
-    for_each = var.github_token != "" ? [1] : []
-    content {
-      sid       = "AllowGetGitHubToken"
-      effect    = "Allow"
-      actions   = ["secretsmanager:GetSecretValue"]
-      resources = [aws_secretsmanager_secret.github_token[0].arn]
-    }
-  }
-
-  # Secrets Manager -- CS license key (team servers, pre-existing secret)
-  dynamic "statement" {
-    for_each = var.cs_license_secret_name != "" ? [1] : []
-    content {
-      sid       = "AllowGetCSLicenseKey"
-      effect    = "Allow"
-      actions   = ["secretsmanager:GetSecretValue"]
-      resources = ["arn:aws:secretsmanager:${var.aws_region != "" ? var.aws_region : "*"}:${data.aws_caller_identity.current.account_id}:secret:${var.cs_license_secret_name}-*"]
-    }
-  }
+  source_policy_documents = compact([
+    var.github_token != "" ? data.aws_iam_policy_document.github_token_stmt[0].json : "",
+    var.cs_license_secret_name != "" ? data.aws_iam_policy_document.cs_license_stmt[0].json : "",
+  ])
 }
 
 # Legacy SSH Key Exchange Policy

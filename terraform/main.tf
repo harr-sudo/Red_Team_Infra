@@ -744,8 +744,8 @@ resource "aws_route" "deployment_to_dashboard_private" {
 }
 
 resource "aws_route" "deployment_to_dashboard_management" {
-  count                     = local.dashboard_vpc_id != "" && length(module.vpc) > 0 && length(module.vpc[0].management_route_table_id) > 0 ? 1 : 0
-  route_table_id            = module.vpc[0].management_route_table_id
+  count                     = local.dashboard_vpc_id != "" && length(module.vpc) > 0 && try(length(module.vpc[0].management_route_table_id) > 0, false) ? 1 : 0
+  route_table_id            = length(module.vpc) > 0 ? module.vpc[0].management_route_table_id : ""
   destination_cidr_block    = local.dashboard_vpc_cidr
   vpc_peering_connection_id = aws_vpc_peering_connection.dashboard_to_deployment[0].id
 }
