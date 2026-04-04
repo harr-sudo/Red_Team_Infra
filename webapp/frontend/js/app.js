@@ -19762,6 +19762,8 @@ const TOPOLOGY = {
         beacon:      { color: '#7ECF8C', label: 'Beacon',      w: 140, h: 54, awsIcon: null,            fallbackIcon: '💻' },
         jumpbox:     { color: '#B0B8CC', label: 'Jumpbox',     w: 150, h: 52, awsIcon: 'ec2.svg',       fallbackIcon: '🔑' },
         goad_vm:     { color: '#7A849E', label: 'GOAD VM',     w: 140, h: 48, awsIcon: 'ec2.svg',       fallbackIcon: '🏢' },
+        s3_bucket:   { color: '#3B48CC', label: 'S3 Bucket',   w: 160, h: 48, awsIcon: 's3.svg',        fallbackIcon: '📦' },
+        nat_gateway: { color: '#7ECF8C', label: 'NAT Gateway', w: 155, h: 48, awsIcon: 'nat.svg',       fallbackIcon: '🌐' },
     },
 
     // Preloaded Image objects keyed by filename
@@ -19910,6 +19912,14 @@ const TOPOLOGY = {
         } else {
             this.configData = null;
         }
+
+        // Fetch actual SG rules for accurate edge labels
+        this._sgRules = null;
+        try {
+            const sgResp = await fetch(`/api/deploy/sg-rules?project=${encodeURIComponent(projectName)}`);
+            const sgJson = await sgResp.json();
+            if (sgJson.success) this._sgRules = sgJson.connections;
+        } catch { /* ignore — fall back to static labels */ }
 
         // Check if CS REST API is actually connected via the health endpoint
         this.beaconStatus = 'not_connected';
@@ -20127,7 +20137,7 @@ const TOPOLOGY = {
                     // domain_fronting/main.tf: origin_protocol_policy = "http-only"
                     this.edges.push({ from: cfId, to: rid, label: 'HTTP/80 (CF origin)' });
                 } else if (d.primary_domain_name) {
-                    this.edges.push({ from: domainId, to: rid, label: `HTTPS/${this._cfg('c2_listener_port', 443)}` });
+                    this.edges.push({ from: domainId, to: rid, label: this._getSgLabel('internet', 'redirector') || 'HTTPS/443' });
                 }
             });
         } else if (isC2Deploy && d.redirector_public_ip) {
@@ -20137,7 +20147,7 @@ const TOPOLOGY = {
             this.nodes.push({ id: rid, type: 'redirector', label: 'Redirector', sublabel: singleRedirSub, x: 0, y: 0, subnet: 'dmz', data: { public_ip: d.redirector_public_ip, private_ip: d.redirector_private_ip, instance_id: d.redirector_instance_id, state: d.redirector_state } });
             subnetNodes.dmz.push(rid);
             if (cfId) this.edges.push({ from: cfId, to: rid, label: 'HTTP/80 (CF origin)' });
-            else if (d.primary_domain_name) this.edges.push({ from: domainId, to: rid, label: `HTTPS/${this._cfg('c2_listener_port', 443)}` });
+            else if (d.primary_domain_name) this.edges.push({ from: domainId, to: rid, label: this._getSgLabel('internet', 'redirector') || 'HTTPS/443' });
         }
 
         // C2 Team Servers — C2 VPC private subnet (c2-* and combined-* deployments)
@@ -20148,7 +20158,7 @@ const TOPOLOGY = {
                 tsIds.push(tid);
                 this.nodes.push({ id: tid, type: 'teamserver', label: `Team Server ${i + 1}`, sublabel: ts.private_ip || '', x: 0, y: 0, subnet: 'private', data: { ...ts, index: i + 1, cs_password: d.cs_teamserver_password, profile: d.malleable_profile } });
                 subnetNodes.private.push(tid);
-                redirIds.forEach(rid => this.edges.push({ from: rid, to: tid, label: `TCP/${this._cfg('c2_listener_port', 443)} (listener)` }));
+                redirIds.forEach(rid => this.edges.push({ from: rid, to: tid, label: this._getSgLabel('redirector', 'teamserver') || `TCP/${this._cfg('c2_listener_port', 443)} (listener)` }));
             });
         } else if (isC2Deploy && d.teamserver_private_ip) {
             // Fallback: outputs return teamserver_private_ip but not c2_servers array
@@ -20156,7 +20166,7 @@ const TOPOLOGY = {
             tsIds.push(tid);
             this.nodes.push({ id: tid, type: 'teamserver', label: 'Team Server', sublabel: d.teamserver_private_ip, x: 0, y: 0, subnet: 'private', data: { private_ip: d.teamserver_private_ip, instance_id: d.teamserver_instance_id, state: d.teamserver_state, cs_password: d.cs_teamserver_password, profile: d.malleable_profile } });
             subnetNodes.private.push(tid);
-            redirIds.forEach(rid => this.edges.push({ from: rid, to: tid, label: `TCP/${this._cfg('c2_listener_port', 443)} (listener)` }));
+            redirIds.forEach(rid => this.edges.push({ from: rid, to: tid, label: this._getSgLabel('redirector', 'teamserver') || `TCP/${this._cfg('c2_listener_port', 443)} (listener)` }));
         }
         // GOAD Team Server — lives in GOAD VPC private subnet (goad-* and combined-* deployments)
         if (isGoadDeploy && d.teamserver_private_ip) {
@@ -20198,17 +20208,24 @@ const TOPOLOGY = {
             || this.beaconStatus === 'no_beacons';
 
         if (bastionId) {
-            // security/main.tf: attack_box_sg allows RDP/3389 + SSH from bastion_sg
-            if (attackboxId) this.edges.push({ from: bastionId, to: attackboxId, label: `RDP/3389 · SSH/${sshPort}`, dashed: true });
-            // security/main.tf: c2_sg allows SSH + CS port (+ REST/50443 if enabled) from bastion_sg
-            const bastionToTs = `SSH/${sshPort} · CS/${csPort}` + (restEnabled ? ' · REST/50443' : '');
-            tsIds.forEach(tid => this.edges.push({ from: bastionId, to: tid, label: bastionToTs, dashed: true }));
-            // security/main.tf: proxy_redirector_sg allows SSH from bastion_sg
-            redirIds.forEach(rid => this.edges.push({ from: bastionId, to: rid, label: `SSH/${sshPort}`, dashed: true }));
+            if (attackboxId) {
+                const abLabel = this._getSgLabel('bastion', 'attackbox') || 'RDP/3389';
+                this.edges.push({ from: bastionId, to: attackboxId, label: abLabel, dashed: true });
+            }
+            tsIds.forEach(tid => {
+                const tsLabel = this._getSgLabel('bastion', 'teamserver') || `SSH/${sshPort} · CS/${csPort}`;
+                this.edges.push({ from: bastionId, to: tid, label: tsLabel, dashed: true });
+            });
+            redirIds.forEach(rid => {
+                const rLabel = this._getSgLabel('bastion', 'redirector') || `SSH/${sshPort}`;
+                this.edges.push({ from: bastionId, to: rid, label: rLabel, dashed: true });
+            });
         }
-        // security/main.tf: c2_sg allows SSH + CS port from attack_box_sg
         if (attackboxId) {
-            tsIds.forEach(tid => this.edges.push({ from: attackboxId, to: tid, label: `SSH/${sshPort} · CS/${csPort}`, dashed: true }));
+            tsIds.forEach(tid => {
+                const abTsLabel = this._getSgLabel('attackbox', 'teamserver') || `SSH/${sshPort} · CS/${csPort}`;
+                this.edges.push({ from: attackboxId, to: tid, label: abTsLabel, dashed: true });
+            });
         }
 
         // Jumpbox (GOAD public subnet — GOAD/combined only)
@@ -20249,14 +20266,59 @@ const TOPOLOGY = {
                 ...subnetNodes.private,
                 ...subnetNodes.goad,
             ];
-            allDeploymentNodes.forEach((targetId, i) => {
+            // Only show peering edges to instances the dashboard can actually reach
+            // Attack box is Windows (no SSH) — accessed via RDP tunnel through bastion, not direct
+            const peerableTypes = ['bastion', 'redirector', 'teamserver', 'jumpbox', 'goad_vm'];
+            allDeploymentNodes.forEach((targetId) => {
                 const targetNode = this.nodes.find(n => n.id === targetId);
-                if (!targetNode) return;
-                // Label with the actual ports allowed by SG rules
-                let portLabel = 'SSH/22';
-                if (targetNode.type === 'teamserver') portLabel = 'SSH/22 · CS/50050 · REST/50443';
+                if (!targetNode || !peerableTypes.includes(targetNode.type)) return;
+                // Use live SG rules if available, otherwise fall back to static
+                const portLabel = this._getSgLabel('dashboard', targetNode.type) || 'SSH/22';
                 this.edges.push({ from: dashboardId, to: targetId, label: portLabel, dashed: true });
             });
+        }
+
+        // S3 deployment bucket (CS archive storage)
+        if (d.cs_storage_bucket) {
+            const s3Id = nid();
+            // S3 is regional, place in DMZ subnet area for visual proximity to redirectors/TS
+            const s3Subnet = isC2Deploy ? 'dmz' : (isGoadDeploy ? 'goad' : 'dmz');
+            this.nodes.push({
+                id: s3Id, type: 's3_bucket',
+                label: 'S3 Deploy Bucket',
+                sublabel: d.cs_storage_bucket.length > 25 ? d.cs_storage_bucket.slice(0, 22) + '...' : d.cs_storage_bucket,
+                x: 0, y: 0, subnet: s3Subnet,
+                data: {
+                    bucket_name: d.cs_storage_bucket,
+                    upload_command: d.cs_upload_command || '',
+                    contents: 'CS archive, bootstrap scripts, client files',
+                    encryption: 'AES-256 server-side',
+                }
+            });
+            if (s3Subnet === 'dmz') subnetNodes.dmz.push(s3Id);
+            else subnetNodes.goad.push(s3Id);
+        }
+
+        // NAT Gateway — lives in public subnet but serves private subnet
+        // Place in private subnet visually (since that's what it serves)
+        // Side panel explains it's physically in the public subnet
+        if (d.enable_nat_gateway !== false && (subnetNodes.private.length > 0 || subnetNodes.goad.length > 0)) {
+            const natId = nid();
+            const natSubnet = isC2Deploy ? 'private' : 'goad';
+            this.nodes.push({
+                id: natId, type: 'nat_gateway',
+                label: 'NAT Gateway',
+                sublabel: 'Private → Internet (outbound)',
+                x: 0, y: 0, subnet: natSubnet,
+                data: {
+                    purpose: 'Outbound internet for private subnets (updates, S3 access, package downloads)',
+                    actual_placement: 'First public/DMZ subnet (requires EIP + internet access)',
+                    serves: 'Private subnet instances (team server, attack box)',
+                    cost: '~$32/month + data transfer',
+                    note: 'AWS requires NAT in a public subnet, but it only handles outbound traffic from private instances. No inbound access.',
+                }
+            });
+            subnetNodes[natSubnet].push(natId);
         }
 
         // Store subnet groupings (only subnets that have nodes)
@@ -20355,27 +20417,52 @@ const TOPOLOGY = {
 
     // ── Position nodes in layered top-down layout with subnet clustering ──
     _layoutNodes() {
-        const padX = 60, padY = 80, subPadX = 30, subPadY = 40;
-        const centerX = this.W / 2;
+        const padX = 60, padY = 70, subPadY = 35;
 
-        // Subnet layout order (top to bottom)
-        const subnetOrder = ['operator', 'dashboard', 'external', 'dmz', 'management', 'private', 'goad'];
+        // Multi-column layout:
+        // LEFT column: Operator, Dashboard (access chain)
+        // CENTER column: External, DMZ, Private (C2 traffic flow)
+        // RIGHT column: Management (Bastion — separate access path)
+        // BOTTOM: GOAD (if present, full width)
 
-        // Within each subnet, layer by node type
-        const layerOrder = { domain: 0, cloudfront: 0, redirector: 0, jumpbox: 0, bastion: 0, teamserver: 0, attackbox: 0, listener: 1, beacon: 2, goad_vm: 0 };
+        const leftX = this.W * 0.22;    // Left column center
+        const centerX = this.W * 0.50;  // Center column center
+        const rightX = this.W * 0.78;   // Right column center
 
-        // Position nodes per subnet group, tracking bounding boxes
-        // Subnet bounds computed dynamically in _drawSubnets from live node positions
-        let currentY = subPadY;
+        // Column assignments
+        const columnMap = {
+            operator:   'left',
+            dashboard:  'left',
+            external:   'center',
+            dmz:        'center',
+            private:    'center',
+            management: 'right',
+            goad:       'center',  // Full width at bottom
+        };
 
-        subnetOrder.forEach(subKey => {
+        // Row order within each column
+        const rowOrder = {
+            left:   ['operator', 'dashboard'],
+            center: ['external', 'dmz', 'private', 'goad'],
+            right:  ['management'],
+        };
+
+        const layerOrder = { domain: 0, cloudfront: 0, redirector: 0, s3_bucket: 0, jumpbox: 0, bastion: 0, teamserver: 0, attackbox: 0, nat_gateway: 0, listener: 1, beacon: 2, goad_vm: 0 };
+
+        // Track Y position per column — stagger starts so VPCs don't overlap vertically
+        const colY = { left: subPadY, center: subPadY, right: subPadY };
+
+        // Layout helper: position a subnet group in a column
+        const layoutSubnet = (subKey, colKey) => {
             const nodeIds = this._subnetGroups?.[subKey];
             if (!nodeIds || nodeIds.length === 0) return;
 
             const subNodes = this.nodes.filter(n => nodeIds.includes(n.id));
             if (subNodes.length === 0) return;
 
-            // Group nodes within the subnet by layer
+            const xCenter = colKey === 'left' ? leftX : colKey === 'right' ? rightX : centerX;
+
+            // Group by layer
             const layers = {};
             subNodes.forEach(n => {
                 const layer = layerOrder[n.type] ?? 0;
@@ -20383,29 +20470,40 @@ const TOPOLOGY = {
                 layers[layer].push(n);
             });
 
-            const layerKeys = Object.keys(layers).sort((a, b) => a - b);
-            const subStartY = currentY;
-            let subMaxX = 0;
-
-            layerKeys.forEach(lk => {
+            Object.keys(layers).sort((a, b) => a - b).forEach(lk => {
                 const nodes = layers[lk];
                 const totalW = nodes.reduce((sum, n) => sum + (this.NODE_TYPES[n.type]?.w || 140), 0) + (nodes.length - 1) * padX;
-                let startX = centerX - totalW / 2;
+                let startX = xCenter - totalW / 2;
                 nodes.forEach(n => {
                     const nc = this.NODE_TYPES[n.type] || { w: 140, h: 48 };
                     n.x = startX + nc.w / 2;
-                    n.y = currentY + nc.h / 2;
+                    n.y = colY[colKey] + nc.h / 2;
                     startX += nc.w + padX;
-                    subMaxX = Math.max(subMaxX, n.x + nc.w / 2);
                 });
                 const tallest = Math.max(...nodes.map(n => this.NODE_TYPES[n.type]?.h || 48));
-                currentY += tallest + subPadY;
+                colY[colKey] += tallest + subPadY;
             });
 
-            currentY += padY; // Gap between subnet groups
-        });
+            colY[colKey] += padY;
+        };
 
-        // Position beacon/listener nodes that aren't in a subnet group (below the last subnet)
+        // Layout left column first (operator + dashboard)
+        rowOrder.left.forEach(subKey => layoutSubnet(subKey, 'left'));
+
+        // Center and right columns start at the same Y as where left column's dashboard ends
+        // This aligns DMZ with the dashboard horizontally
+        const dmzStartY = colY.left;
+        colY.center = Math.max(colY.center, dmzStartY);
+        colY.right = Math.max(colY.right, dmzStartY);
+
+        // Layout center column (external → DMZ → private → goad)
+        rowOrder.center.forEach(subKey => layoutSubnet(subKey, 'center'));
+
+        // Right column (management/bastion) — align with DMZ row
+        rowOrder.right.forEach(subKey => layoutSubnet(subKey, 'right'));
+
+        // Position beacon/listener nodes below the center column (C2 traffic flow)
+        let beaconY = Math.max(colY.left, colY.center, colY.right) + padY * 0.3;
         const ungroupedTypes = ['listener', 'beacon'];
         const ungrouped = this.nodes.filter(n => ungroupedTypes.includes(n.type) && !Object.values(this._subnetGroups || {}).flat().includes(n.id));
         if (ungrouped.length > 0) {
@@ -20430,11 +20528,11 @@ const TOPOLOGY = {
                 nodes.forEach(n => {
                     const nc = this.NODE_TYPES[n.type] || { w: 140, h: 48 };
                     n.x = startX + nc.w / 2;
-                    n.y = currentY + nc.h / 2;
+                    n.y = beaconY + nc.h / 2;
                     startX += nc.w + padX;
                 });
                 const tallest = Math.max(...nodes.map(n => this.NODE_TYPES[n.type]?.h || 48));
-                currentY += tallest + subPadY;
+                beaconY += tallest + subPadY;
             });
         }
 
@@ -20971,6 +21069,20 @@ const TOPOLOGY = {
             html += this._row('Private IP', d.private_ip);
             html += this._row('Instance', d.instance_id);
             html += this._row('State', d.state);
+        } else if (node.type === 's3_bucket') {
+            html += this._row('Bucket', d.bucket_name);
+            html += this._row('Contents', d.contents);
+            html += this._row('Encryption', d.encryption);
+            if (d.upload_command) {
+                html += '<div class="topology-section-title">Upload Command</div>';
+                html += this._row('Command', d.upload_command);
+            }
+        } else if (node.type === 'nat_gateway') {
+            html += this._row('Purpose', d.purpose);
+            html += this._row('Serves', d.serves);
+            html += this._row('AWS Placement', d.actual_placement);
+            html += this._row('Cost', d.cost);
+            if (d.note) html += this._row('Note', d.note);
         } else if (node.type === 'goad_vm') {
             html += this._row('Private IP', d.private_ip);
             html += this._row('Instance', d.instance_id);
@@ -21006,6 +21118,21 @@ const TOPOLOGY = {
             <span class="topology-detail-label">${this._esc(label)}</span>
             <span class="topology-detail-value" onclick="navigator.clipboard.writeText('${this._esc(v)}')" title="Click to copy">${this._esc(v)}</span>
         </div>`;
+    },
+
+    // Get actual port labels between two roles from live SG rules
+    _getSgLabel(sourceRole, destRole) {
+        if (!this._sgRules) return null; // Fallback to static labels
+        const ports = [];
+        const portNames = { '22': 'SSH', '80': 'HTTP', '443': 'HTTPS', '3389': 'RDP', '50050': 'CS', '50443': 'REST', '5985': 'WinRM' };
+        for (const rule of this._sgRules) {
+            if (rule.source_role === sourceRole && rule.dest_role === destRole) {
+                const name = portNames[rule.port] || rule.port;
+                const label = `${name}/${rule.port}`;
+                if (!ports.includes(label)) ports.push(label);
+            }
+        }
+        return ports.length > 0 ? ports.join(' · ') : null;
     },
 
     _esc(s) {

@@ -124,6 +124,21 @@ if [ -n "$EXISTING_DASHBOARD_IP" ] && [ "$EXISTING_DASHBOARD_IP" != "" ]; then
         ssh -i "$SSH_KEY_PRIVATE" -o StrictHostKeyChecking=accept-new "$OPERATOR_NAME@$DASHBOARD_IP" bash -e <<'REMOTE_PIP'
 cd /opt/redteam
 
+# Ensure server SSH keypair exists
+if [ ! -f /opt/redteam/.ssh/id_ed25519 ]; then
+    mkdir -p /opt/redteam/.ssh
+    ssh-keygen -t ed25519 -f /opt/redteam/.ssh/id_ed25519 -N "" -C "dashboard-server"
+    chown dashboard:redteam /opt/redteam/.ssh/id_ed25519 /opt/redteam/.ssh/id_ed25519.pub 2>/dev/null || true
+    chmod 600 /opt/redteam/.ssh/id_ed25519
+    echo "Server SSH keypair generated"
+fi
+
+# Update terraform.tfvars with server's key
+SERVER_PUB_KEY=$(cat /opt/redteam/.ssh/id_ed25519.pub)
+if grep -q "^user_public_key" /opt/redteam/configs/terraform.tfvars 2>/dev/null; then
+    sed -i "s|^user_public_key = .*|user_public_key = \"$SERVER_PUB_KEY\"|" /opt/redteam/configs/terraform.tfvars
+fi
+
 # Remove stale venv if it exists with wrong ownership
 if [ -d venv ] && [ ! -w venv ]; then
     echo "Removing stale venv with wrong permissions..."
@@ -391,6 +406,42 @@ ssh -i "$SSH_KEY_PRIVATE" -o StrictHostKeyChecking=accept-new "$OPERATOR_NAME@$D
 set -euo pipefail
 cd /opt/redteam
 
+# Generate server SSH keypair (used for SSH to all deployed instances)
+if [ ! -f /opt/redteam/.ssh/id_ed25519 ]; then
+    mkdir -p /opt/redteam/.ssh
+    ssh-keygen -t ed25519 -f /opt/redteam/.ssh/id_ed25519 -N "" -C "dashboard-server"
+    # Make readable by dashboard service user
+    chown dashboard:redteam /opt/redteam/.ssh/id_ed25519 /opt/redteam/.ssh/id_ed25519.pub
+    chmod 600 /opt/redteam/.ssh/id_ed25519
+    chmod 644 /opt/redteam/.ssh/id_ed25519.pub
+    echo "Server SSH keypair generated"
+fi
+
+# Update terraform.tfvars to use the server's key for new deployments
+SERVER_PUB_KEY=$(cat /opt/redteam/.ssh/id_ed25519.pub)
+if grep -q "^user_public_key" /opt/redteam/configs/terraform.tfvars 2>/dev/null; then
+    sed -i "s|^user_public_key = .*|user_public_key = \"$SERVER_PUB_KEY\"|" /opt/redteam/configs/terraform.tfvars
+else
+    echo "user_public_key = \"$SERVER_PUB_KEY\"" >> /opt/redteam/configs/terraform.tfvars
+fi
+echo "terraform.tfvars updated with server SSH key"
+
+# Add dashboard peering variables if not already set
+if ! grep -q "^dashboard_vpc_id" /opt/redteam/configs/terraform.tfvars 2>/dev/null; then
+    # Read from backend.hcl or terraform outputs
+    DASH_VPC=$(cd /opt/redteam/terraform && terraform output -raw dashboard_vpc_id 2>/dev/null || echo "")
+    DASH_CIDR=$(cd /opt/redteam/terraform && terraform output -raw dashboard_vpc_cidr 2>/dev/null || echo "")
+    DASH_SG=$(cd /opt/redteam/terraform && terraform output -raw dashboard_sg_id 2>/dev/null || echo "")
+    if [ -n "$DASH_VPC" ]; then
+        cat >> /opt/redteam/configs/terraform.tfvars <<PEERING
+dashboard_vpc_id   = "$DASH_VPC"
+dashboard_vpc_cidr = "$DASH_CIDR"
+dashboard_sg_id    = "$DASH_SG"
+PEERING
+        echo "Dashboard peering variables added to terraform.tfvars"
+    fi
+fi
+
 # Create venv and install dependencies
 python3 -m venv venv
 source venv/bin/activate
@@ -399,7 +450,7 @@ pip install -r requirements.txt
 
 # Initialize Terraform with S3 backend
 cd terraform
-sudo terraform init -backend-config=/opt/redteam/backend.hcl
+terraform init -backend-config=/opt/redteam/backend.hcl || true
 
 # Create systemd service
 sudo tee /etc/systemd/system/dashboard.service > /dev/null <<'SERVICE'

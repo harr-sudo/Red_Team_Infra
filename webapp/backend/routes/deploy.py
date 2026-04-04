@@ -4566,6 +4566,19 @@ def get_terraform_outputs():
             domain = config.get('primary_domain_name', '')
             outputs['portal_url'] = f"https://www.{domain}/login" if domain else None
         outputs['ssl_provider'] = config.get('ssl_provider', 'letsencrypt')
+        outputs['enable_nat_gateway'] = config.get('enable_nat_gateway', True)
+
+        # S3 bucket from deployment state
+        try:
+            state_file2 = project_root / "logs" / "deployment_state" / f"{project_name}.state.json"
+            if state_file2.exists():
+                import json as json_mod2
+                sd = json_mod2.loads(state_file2.read_text())
+                so = sd.get("output", {})
+                outputs['cs_storage_bucket'] = so.get("cs_storage_bucket", {}).get("value", "")
+                outputs['cs_upload_command'] = so.get("cs_storage_upload_command", {}).get("value", "")
+        except Exception:
+            pass
 
         # --- Run DNS lookup and password retrieval in parallel ---
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -4649,6 +4662,125 @@ def get_terraform_outputs():
             "success": False,
             "error": str(e)
         }), 500
+
+
+@bp.route('/sg-rules', methods=['GET'])
+def get_sg_rules():
+    """
+    Get actual security group rules for a deployment.
+    Returns a connection map: source_instance → destination_instance → [ports].
+    Used by the topology graph for accurate edge labels.
+    """
+    try:
+        import boto3
+
+        project_name = request.args.get('project')
+        if not project_name:
+            return jsonify({"success": False, "error": "Project name required"}), 400
+
+        config_dir = project_root / "configs"
+        tfvars_file = config_dir / "terraform.tfvars"
+        from webapp.backend.utils.config_parser import ConfigParser
+        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        aws_region = config.get('aws_region', 'eu-central-1')
+
+        ec2 = boto3.client('ec2', region_name=aws_region)
+
+        # Get all instances for this project with their SGs
+        response = ec2.describe_instances(
+            Filters=[{'Name': 'tag:Project', 'Values': [project_name]}]
+        )
+
+        # Build instance → SG mapping and SG → role mapping
+        sg_to_role = {}   # sg_id → role name (bastion, redirector, teamserver, etc.)
+        sg_to_ip = {}     # sg_id → private IP
+        all_sg_ids = set()
+
+        for res in response.get('Reservations', []):
+            for inst in res.get('Instances', []):
+                tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                name = tags.get('Name', '').lower()
+                role = tags.get('Role', '').lower()
+                ip = inst.get('PrivateIpAddress', '')
+
+                # Determine role from name/tags
+                inst_role = 'unknown'
+                if 'bastion' in name or 'bastion' in role:
+                    inst_role = 'bastion'
+                elif 'redirector' in name or 'proxy' in name:
+                    inst_role = 'redirector'
+                elif 'teamserver' in name or 'c2-team' in name or 'c2_team' in name:
+                    inst_role = 'teamserver'
+                elif 'attackbox' in name or 'attack' in name:
+                    inst_role = 'attackbox'
+                elif 'jumpbox' in name:
+                    inst_role = 'jumpbox'
+                elif 'dc0' in name:
+                    inst_role = 'goad_vm'
+
+                for sg in inst.get('SecurityGroups', []):
+                    sg_id = sg['GroupId']
+                    sg_to_role[sg_id] = inst_role
+                    sg_to_ip[sg_id] = ip
+                    all_sg_ids.add(sg_id)
+
+        # Also include the dashboard SG if peering exists
+        try:
+            dashboard_sg_resp = ec2.describe_security_groups(
+                Filters=[{'Name': 'tag:Name', 'Values': ['redteam-dashboard-sg']}]
+            )
+            for sg in dashboard_sg_resp.get('SecurityGroups', []):
+                sg_to_role[sg['GroupId']] = 'dashboard'
+                all_sg_ids.add(sg['GroupId'])
+        except Exception:
+            pass
+
+        if not all_sg_ids:
+            return jsonify({"success": True, "connections": []})
+
+        # Get all inbound rules for all SGs
+        rules_resp = ec2.describe_security_group_rules(
+            Filters=[{'Name': 'group-id', 'Values': list(all_sg_ids)}]
+        )
+
+        # Build connection map
+        connections = []
+        for rule in rules_resp.get('SecurityGroupRules', []):
+            if rule.get('IsEgress'):
+                continue
+
+            dest_sg = rule.get('GroupId')
+            dest_role = sg_to_role.get(dest_sg, 'unknown')
+            from_port = rule.get('FromPort')
+            to_port = rule.get('ToPort')
+            protocol = rule.get('IpProtocol', 'tcp')
+
+            # Source is either a SG reference or a CIDR
+            ref = rule.get('ReferencedGroupInfo', {})
+            source_sg = ref.get('GroupId')
+            source_cidr = rule.get('CidrIpv4')
+            description = rule.get('Description', '')
+
+            source_role = sg_to_role.get(source_sg, '') if source_sg else ''
+            if source_cidr == '0.0.0.0/0':
+                source_role = 'internet'
+
+            port_str = str(from_port) if from_port == to_port else f"{from_port}-{to_port}"
+
+            connections.append({
+                'source_role': source_role,
+                'source_sg': source_sg or source_cidr or '',
+                'dest_role': dest_role,
+                'dest_sg': dest_sg,
+                'port': port_str,
+                'protocol': protocol,
+                'description': description,
+            })
+
+        return jsonify({"success": True, "connections": connections})
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @bp.route('/ssl-status', methods=['GET'])

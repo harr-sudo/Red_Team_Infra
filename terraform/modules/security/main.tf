@@ -423,17 +423,8 @@ resource "aws_security_group_rule" "redirector_from_dashboard" {
   description              = "SSH from dashboard server"
 }
 
-# Dashboard → Attack Box: SSH only (operators RDP via their own SSH tunnels)
-resource "aws_security_group_rule" "attackbox_from_dashboard_ssh" {
-  count                    = var.dashboard_sg_id != "" ? 1 : 0
-  type                     = "ingress"
-  from_port                = var.ssh_port
-  to_port                  = var.ssh_port
-  protocol                 = "tcp"
-  source_security_group_id = var.dashboard_sg_id
-  security_group_id        = aws_security_group.attack_box_sg.id
-  description              = "SSH from dashboard server"
-}
+# Note: No dashboard → attack box rule. Attack box is Windows (no SSH).
+# RDP access goes through bastion tunnel: dashboard → bastion SSH → RDP forward → attack box.
 
 # Dashboard → Bastion: SSH (for terminal access + tunnel forwarding)
 resource "aws_security_group_rule" "bastion_from_dashboard_ssh" {
