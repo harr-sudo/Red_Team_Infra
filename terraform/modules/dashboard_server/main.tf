@@ -139,16 +139,45 @@ resource "aws_iam_policy" "dashboard" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "EC2Full"
-        Effect   = "Allow"
-        Action   = ["ec2:*"]
+        Sid    = "EC2Scoped"
+        Effect = "Allow"
+        Action = [
+          "ec2:Describe*",
+          "ec2:RunInstances", "ec2:TerminateInstances", "ec2:StartInstances", "ec2:StopInstances",
+          "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup",
+          "ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
+          "ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress",
+          "ec2:UpdateSecurityGroupRuleDescriptionsIngress", "ec2:UpdateSecurityGroupRuleDescriptionsEgress",
+          "ec2:CreateVpc", "ec2:DeleteVpc", "ec2:ModifyVpcAttribute",
+          "ec2:CreateSubnet", "ec2:DeleteSubnet",
+          "ec2:CreateRouteTable", "ec2:DeleteRouteTable", "ec2:CreateRoute", "ec2:DeleteRoute",
+          "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable",
+          "ec2:CreateInternetGateway", "ec2:DeleteInternetGateway",
+          "ec2:AttachInternetGateway", "ec2:DetachInternetGateway",
+          "ec2:CreateNatGateway", "ec2:DeleteNatGateway",
+          "ec2:AllocateAddress", "ec2:ReleaseAddress", "ec2:AssociateAddress", "ec2:DisassociateAddress",
+          "ec2:CreateTags", "ec2:DeleteTags",
+          "ec2:CreateKeyPair", "ec2:DeleteKeyPair", "ec2:ImportKeyPair",
+          "ec2:ModifyInstanceAttribute",
+          "ec2:CreateNetworkInterface", "ec2:DeleteNetworkInterface", "ec2:AttachNetworkInterface", "ec2:DetachNetworkInterface",
+          "ec2:CreateVpcPeeringConnection", "ec2:AcceptVpcPeeringConnection", "ec2:DeleteVpcPeeringConnection",
+          "ec2:CreateManagedPrefixList", "ec2:DeleteManagedPrefixList", "ec2:ModifyManagedPrefixList", "ec2:GetManagedPrefixListEntries",
+          "ec2:GetPasswordData",
+          "ec2:CreateNetworkAcl", "ec2:DeleteNetworkAcl", "ec2:CreateNetworkAclEntry", "ec2:DeleteNetworkAclEntry", "ec2:ReplaceNetworkAclAssociation",
+          "ec2:CreateVpcEndpoint", "ec2:DeleteVpcEndpoints", "ec2:ModifyVpcEndpoint",
+        ]
         Resource = "*"
         Condition = { StringEquals = { "aws:RequestedRegion" = [var.aws_region, "us-east-1"] } }
       },
       {
         Sid    = "NetworkingAndCDN"
         Effect = "Allow"
-        Action = ["elasticloadbalancing:*", "cloudfront:*"]
+        Action = [
+          "elasticloadbalancing:*",
+          "cloudfront:CreateDistribution", "cloudfront:GetDistribution", "cloudfront:UpdateDistribution",
+          "cloudfront:DeleteDistribution", "cloudfront:TagResource", "cloudfront:UntagResource",
+          "cloudfront:ListDistributions", "cloudfront:ListTagsForResource",
+        ]
         Resource = "*"
       },
       {
@@ -191,9 +220,22 @@ resource "aws_iam_policy" "dashboard" {
         Resource = "*"
       },
       {
-        Sid    = "SecretsManager"
+        Sid    = "SecretsManagerScoped"
         Effect = "Allow"
-        Action = ["secretsmanager:*"]
+        Action = [
+          "secretsmanager:CreateSecret", "secretsmanager:DeleteSecret",
+          "secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue",
+          "secretsmanager:UpdateSecret", "secretsmanager:DescribeSecret",
+          "secretsmanager:TagResource", "secretsmanager:UntagResource",
+          "secretsmanager:GetResourcePolicy", "secretsmanager:PutResourcePolicy",
+          "secretsmanager:DeleteResourcePolicy",
+        ]
+        Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:*"
+      },
+      {
+        Sid      = "SecretsManagerList"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:ListSecrets"]
         Resource = "*"
       },
       {
@@ -203,9 +245,16 @@ resource "aws_iam_policy" "dashboard" {
         Resource = "*"
       },
       {
-        Sid    = "SSM"
+        Sid    = "SSMScoped"
         Effect = "Allow"
-        Action = ["ssm:*"]
+        Action = [
+          "ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:ListCommandInvocations",
+          "ssm:StartSession", "ssm:TerminateSession", "ssm:ResumeSession", "ssm:DescribeSessions",
+          "ssm:DescribeInstanceInformation",
+          "ssm:GetParameter", "ssm:GetParameters", "ssm:PutParameter", "ssm:DeleteParameter",
+          "ssm:DescribeParameters", "ssm:GetParametersByPath",
+          "ssm:ListDocuments", "ssm:DescribeDocument", "ssm:GetDocument",
+        ]
         Resource = "*"
       },
       {

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Red Team Infrastructure Web Application
-Local-only web interface for managing infrastructure deployment
+Red Team Infrastructure Dashboard Server
+Centralized web interface for managing red team infrastructure deployment.
+Access via SSH tunnel only — Flask binds to loopback, loopback guard rejects all other sources.
 """
 
 import os
@@ -25,10 +26,17 @@ app = Flask(__name__,
             static_folder=str(frontend_path),
             static_url_path='',
             template_folder=str(frontend_path))
-CORS(app)  # Enable CORS for local development
+CORS(app, origins=["http://127.0.0.1:5000", "http://localhost:5000"])
 
 # Configure file upload limits
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
+
+
+# Defense-in-depth: reject requests not from loopback (SSH tunnel delivers from 127.0.0.1)
+@app.before_request
+def enforce_loopback():
+    if request.remote_addr != '127.0.0.1':
+        return jsonify({"error": "Access denied - connect via SSH tunnel"}), 403
 
 # Register blueprints
 app.register_blueprint(config.bp, url_prefix='/api/config')
@@ -90,11 +98,10 @@ def api_info():
     })
 
 if __name__ == '__main__':
-    # Run on localhost only for security
     print("=" * 60)
-    print("Red Team Infrastructure Web Application")
+    print("Red Team Infrastructure Dashboard Server")
     print("=" * 60)
-    print("Access the application at: http://127.0.0.1:5000")
+    print("Listening on 127.0.0.1:5000 (SSH tunnel access)")
     print("Press Ctrl+C to stop the server")
     print("=" * 60)
     

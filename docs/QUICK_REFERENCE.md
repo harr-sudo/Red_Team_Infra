@@ -39,9 +39,9 @@ pip install -r requirements.txt
 ## Local Mode Commands
 
 ```bash
-# Start web app locally
-./webapp/start.sh
-# Open http://127.0.0.1:5000
+# Dashboard server (first-time setup)
+./scripts/server/setup-dashboard.sh
+# Then SSH tunnel: ssh -L 5000:localhost:5000 <user>@<dashboard-ip>
 
 # Full deployment
 ./scripts/deployment/deploy.sh

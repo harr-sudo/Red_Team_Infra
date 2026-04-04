@@ -53,10 +53,11 @@ webapp/                     # Deployment & management UI
 │   ├── index.html          # Main UI
 │   ├── js/app.js           # Frontend logic
 │   └── css/style.css
-└── start.sh                # Startup script
+└── (server-only — runs via systemd on dashboard EC2)
 
 scripts/                    # Orchestration & utilities
 ├── deployment/             # deploy.sh, destroy.sh
+├── server/                 # setup-dashboard.sh, dashboard-manage.sh
 ├── setup/                  # create-tools-repo.sh
 └── utilities/              # health-check.sh, generate-inventory.sh, setup-ssh-keys.sh
 
@@ -81,8 +82,10 @@ The `deployment_type` variable drives all architecture decisions. There are 11 o
 ## Key Commands
 
 ```bash
-# Web app (recommended entry point)
-./webapp/start.sh                     # http://127.0.0.1:5000
+# Dashboard server (recommended entry point)
+./scripts/server/setup-dashboard.sh           # First-time server provisioning
+./scripts/server/dashboard-manage.sh start    # start/stop/restart/status/logs/upgrade
+ssh -L 5000:localhost:5000 <user>@<dashboard-ip>  # SSH tunnel for dashboard access
 
 # Terraform
 cd terraform
@@ -95,10 +98,6 @@ terraform destroy -var-file=../configs/terraform.tfvars
 ./scripts/deployment/deploy.sh        # Full deployment orchestration
 ./scripts/deployment/destroy.sh       # Teardown
 ./scripts/utilities/health-check.sh   # Validate infrastructure
-
-# Python
-pip install -r requirements.txt
-python3 webapp/backend/app.py
 
 # SSM (preferred for remote instance access — no SSH key hopping needed)
 aws ssm send-command --instance-ids <id> --region <region> \
@@ -219,13 +218,17 @@ Separate IAM roles per VPC (C2 vs GOAD). See `docs/S3_CONFUSED_DEPUTY_FIX.md`.
 |---|---|
 | `terraform/main.tf` | Core orchestration, deployment mode detection |
 | `terraform/variables.tf` | All input variable definitions |
+| `terraform/modules/dashboard_server/main.tf` | Dashboard server EC2 + VPC + IAM + S3 state |
 | `terraform/modules/deployment_storage/main.tf` | S3 storage, IAM, secrets (confused deputy protection) |
 | `terraform/modules/c2_team_server/main.tf` | Cobalt Strike server provisioning |
-| `webapp/backend/app.py` | Flask API entry point |
+| `webapp/backend/app.py` | Flask API entry point (server-only, loopback guard) |
 | `webapp/backend/routes/deploy.py` | Deployment API endpoints |
 | `webapp/backend/services/terraform_service.py` | Terraform integration logic |
 | `webapp/frontend/js/app.js` | Frontend deployment UI logic |
 | `configs/terraform.tfvars.example` | Configuration template |
+| `configs/dashboard.tfvars.example` | Dashboard server configuration template |
+| `scripts/server/setup-dashboard.sh` | Dashboard server provisioning & code sync |
+| `scripts/server/dashboard-manage.sh` | Dashboard service lifecycle management |
 | `scripts/deployment/deploy.sh` | CLI deployment orchestrator |
 
 ## Testing & Validation

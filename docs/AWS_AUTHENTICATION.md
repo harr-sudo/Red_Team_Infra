@@ -466,7 +466,7 @@ terraform validate
 
 ### Using Web Application
 
-1. Start web application: `./webapp/start.sh`
+1. Connect to dashboard: `ssh -L 5000:localhost:5000 <operator>@<dashboard-ip>`
 2. Go to **Health** tab
 3. Click **Check AWS**
 4. Verify account and user information

@@ -1,6 +1,6 @@
 """
 Terminal WebSocket Routes
-Provides local shell and remote SSH terminal sessions over WebSocket.
+Provides server shell and remote SSH terminal sessions over WebSocket.
 """
 
 import os
@@ -153,7 +153,7 @@ def _pty_session(ws, cmd, env=None):
 
 @sock.route('/api/terminal/local')
 def terminal_local(ws):
-    """Local shell session — spawns operator's default shell."""
+    """Server shell session — spawns bash on the dashboard server."""
     if len(_active_sessions) >= _MAX_SESSIONS:
         ws.send('\r\n\x1b[31mSession limit reached (max 5). Close a tab first.\x1b[0m\r\n')
         ws.close()
@@ -176,10 +176,8 @@ def terminal_local(ws):
     except Exception:
         pass
 
-    # Use interactive (not login) shell to avoid macOS "Restored session" message
     _pty_session(ws, [shell, '-i'], env={
         'HOME': home,
-        'SHELL_SESSIONS_DISABLE': '1',  # Suppress macOS session save/restore
     })
 
 
@@ -211,14 +209,11 @@ def terminal_ssh(ws):
         ws.send('\r\n\x1b[31mNo target host specified.\x1b[0m\r\n')
         return
 
-    # Resolve SSH key path
-    # Priority: shared key location (setup script copies here) > operator home dir > defaults
+    # Resolve SSH key path — server shared key only
     if not key_path:
         for candidate in [
-            '/opt/redteam/.ssh/id_ed25519',      # Shared key (copied by setup script)
+            '/opt/redteam/.ssh/id_ed25519',
             '/opt/redteam/.ssh/id_rsa',
-            os.path.expanduser('~/.ssh/id_ed25519'),
-            os.path.expanduser('~/.ssh/id_rsa'),
         ]:
             if os.path.exists(candidate):
                 key_path = candidate
@@ -226,8 +221,8 @@ def terminal_ssh(ws):
 
     # Build SSH command
     cmd = ['ssh',
-           '-o', 'StrictHostKeyChecking=no',
-           '-o', 'UserKnownHostsFile=/dev/null',
+           '-o', 'StrictHostKeyChecking=accept-new',
+           '-o', 'UserKnownHostsFile=/opt/redteam/.ssh/known_hosts',
            '-o', 'ServerAliveInterval=30',
            '-o', 'LogLevel=ERROR']
 

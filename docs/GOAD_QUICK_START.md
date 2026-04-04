@@ -22,10 +22,10 @@ Get a vulnerable Active Directory lab running alongside your C2 infrastructure i
 
 ### Option 1: Via Web Application (Recommended)
 
-1. **Start the web app**:
+1. **Connect to the dashboard**:
    ```bash
-   ./webapp/start.sh
-   # Open http://127.0.0.1:5000
+   ssh -L 5000:localhost:5000 <operator>@<dashboard-ip>
+   # Open http://localhost:5000
    ```
 
 2. **Go to Configuration page**

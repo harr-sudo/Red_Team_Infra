@@ -36,42 +36,23 @@ The infrastructure is built using:
 
 > **New to this project?** Start with the [Getting Started Guide](./docs/GETTING_STARTED.md) for detailed step-by-step instructions.
 
-### Option A: Run Locally (Single Operator)
+### Quick Start
 
-Run the dashboard on your own machine. You need Terraform, AWS CLI, Python 3, and an SSH key.
+Deploy the dashboard to a dedicated EC2 instance in AWS. Operators access it via SSH tunnel — they only need an SSH key and a browser.
 
 ```bash
-# 1. Clone the repo
+# 1. Clone the repo and provision the dashboard server
 git clone https://github.com/harr-sudo/Red_Team_Infra.git
 cd Red_Team_Infra
+./scripts/server/setup-dashboard.sh
 
-# 2. Start the dashboard
-./webapp/start.sh
+# 2. SSH tunnel in
+ssh -L 5000:localhost:5000 youruser@<dashboard-ip>
 
 # 3. Open http://localhost:5000
 ```
 
-Configure your deployment, upload Cobalt Strike, and deploy — all through the browser.
-
-### Option B: Centralized Server (Multi-Operator)
-
-Deploy the dashboard to an EC2 instance in AWS. Multiple operators access it via SSH tunnel — they only need an SSH client and a browser.
-
-```bash
-# 1. Stand up the dashboard server
-cd terraform
-terraform apply -target=module.dashboard_server
-
-# 2. SCP the Cobalt Strike archive (once)
-scp cobaltstrike-dist.tar ubuntu@<dashboard-ip>:/opt/redteam/uploads/
-
-# 3. SSH tunnel in
-ssh -L 5000:localhost:5000 youruser@<dashboard-ip>
-
-# 4. Open http://localhost:5000
-```
-
-Second operator onboarding: add their SSH public key + IP to the dashboard Terraform config, `terraform apply`, done.
+Configure your deployment, upload Cobalt Strike, and deploy — all through the browser. Second operator onboarding: add their SSH public key + IP to the dashboard Terraform config, `terraform apply`, done.
 
 See [Centralized Dashboard Design](./docs/CENTRALIZED_DASHBOARD_DESIGN.md) for full architecture.
 
@@ -151,7 +132,7 @@ cp configs/terraform.tfvars.example configs/terraform.tfvars
 
 # 8. Deploy infrastructure
 ./scripts/deployment/deploy.sh
-# Or use web app: ./webapp/start.sh
+# Or use web dashboard: ssh -L 5000:localhost:5000 <user>@<dashboard-ip>
 ```
 
 ### First Time Setup

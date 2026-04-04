@@ -1,11 +1,21 @@
 variable "dashboard_allowed_ips" {
   description = "Operator IP CIDRs allowed to SSH into the dashboard"
   type        = list(string)
+
+  validation {
+    condition     = length(var.dashboard_allowed_ips) > 0
+    error_message = "At least one operator IP CIDR is required for dashboard SSH access."
+  }
 }
 
 variable "operator_ssh_public_keys" {
   description = "Map of operator name to SSH public key"
   type        = map(string)
+
+  validation {
+    condition     = length(var.operator_ssh_public_keys) > 0
+    error_message = "At least one operator SSH key is required."
+  }
 
   validation {
     condition     = alltrue([for name, _ in var.operator_ssh_public_keys : can(regex("^[a-z][a-z0-9_-]{0,31}$", name))])

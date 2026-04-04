@@ -1,6 +1,6 @@
-# Red Team Infrastructure Web Application
+# Red Team Infrastructure Dashboard
 
-Local-only web interface for managing and deploying Red Team Infrastructure with integrated GOAD (vulnerable AD) labs.
+Centralized web interface for managing and deploying Red Team Infrastructure with integrated GOAD (vulnerable AD) labs. Runs on a dedicated EC2 instance — operators access via SSH tunnel.
 
 ## Overview
 
@@ -10,38 +10,35 @@ This web application provides a user-friendly interface for:
 - Monitoring infrastructure status
 - Running health checks
 - Managing infrastructure lifecycle
-- Connecting to deployed resources
+- Connecting to deployed resources via in-browser terminal
 
 ## Features
 
-- ✅ **Configuration Editor** - Web-based form for editing terraform.tfvars
-- ✅ **Engagement Types** - Pre-configured setups (Ad-Hoc, Purple Team, Full Red Team)
-- ✅ **GOAD Lab Selection** - Deploy vulnerable AD environments alongside C2 infrastructure
-- ✅ **Deployment Control** - One-click deployment with real-time status
-- ✅ **Deployment Manager** - View all deployments, connection info, and manage lifecycle
-- ✅ **Status Dashboard** - View infrastructure status and outputs
-- ✅ **Health Checks** - Check prerequisites and infrastructure health
-- ✅ **AWS Permissions Check** - Validate required AWS permissions before deployment
-- ✅ **GitHub CLI Check** - Verify access to private tools repository
-- ✅ **Connection Instructions** - SSH tunnel, RDP, and direct connection commands
-- ✅ **Local Only** - Runs on localhost only (127.0.0.1:5000)
+- **Configuration Editor** - Web-based form for editing terraform.tfvars
+- **Engagement Types** - Pre-configured setups (Ad-Hoc, Purple Team, Full Red Team)
+- **GOAD Lab Selection** - Deploy vulnerable AD environments alongside C2 infrastructure
+- **Deployment Control** - One-click deployment with real-time status
+- **Deployment Manager** - View all deployments, connection info, and manage lifecycle
+- **Infrastructure Topology** - Interactive Canvas graph showing VPCs, subnets, and connections
+- **In-Browser Terminal** - SSH to deployed instances, local server shell, tunnel shortcuts
+- **Beacon Management** - Cobalt Strike REST API integration for beacon interaction
+- **Health Checks** - Check prerequisites and infrastructure health
+- **AWS Permissions Check** - Validate required AWS permissions before deployment
+- **SSH Tunnel Access** - Loopback-only binding with defense-in-depth guard
 
 ## Quick Start
 
-### Option 1: Using Start Script (Recommended)
-
 ```bash
-cd Red_Team_Infra
-./webapp/start.sh
+# Provision the dashboard server
+./scripts/server/setup-dashboard.sh
+
+# SSH tunnel in
+ssh -L 5000:localhost:5000 <operator>@<dashboard-ip>
+
+# Open http://localhost:5000
 ```
 
-The script will:
-- Create virtual environment if needed
-- Install dependencies
-- Start the web server
-- Open browser to http://127.0.0.1:5000
-
-### Option 2: Manual Start
+### Manual Start (on server)
 
 ```bash
 # Install dependencies
@@ -176,7 +173,7 @@ webapp/
 │   ├── index.html          # Main page
 │   ├── css/                # Styles
 │   └── js/                 # JavaScript
-└── start.sh                # Startup script
+└── QUICK_START.md          # Quick start guide
 ```
 
 ### Adding New Features

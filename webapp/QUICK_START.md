@@ -1,47 +1,33 @@
-# Web Application Quick Start
+# Dashboard Quick Start
 
-## Starting the Web Application
-
-### Method 1: Using Start Script (Easiest)
+## Provisioning the Dashboard Server
 
 ```bash
 cd Red_Team_Infra
-./webapp/start.sh
+./scripts/server/setup-dashboard.sh
 ```
 
 The script will:
-1. Create Python virtual environment (if needed)
-2. Install all dependencies
-3. Start the web server
-4. Display the URL to access
+1. Prompt for operator name, SSH key, and IP allowlist
+2. Provision a dedicated EC2 instance with IAM role, VPC, and S3 state backend
+3. Sync the codebase and start the dashboard as a systemd service
 
-### Method 2: Manual Start
+## Accessing the Dashboard
+
+SSH tunnel to the dashboard server, then open the browser:
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Start the application
-cd Red_Team_Infra
-python3 webapp/backend/app.py
+ssh -L 5000:localhost:5000 <operator>@<dashboard-ip>
+# Open http://localhost:5000
 ```
-
-## Accessing the Application
-
-Once started, open your web browser and navigate to:
-
-**http://127.0.0.1:5000**
-
-The application runs on **localhost only** for security.
 
 ## First Steps
 
 1. **Check Prerequisites** (Health tab)
-   - Verify all tools are installed
-   - Check AWS connectivity
+   - Verify AWS connectivity and IAM permissions
 
 2. **Configure Infrastructure** (Configuration tab)
-   - Select engagement type
+   - Select deployment type (c2-adhoc, goad-light, etc.)
    - Fill in required fields
    - Save configuration
 
@@ -52,22 +38,18 @@ The application runs on **localhost only** for security.
 
 4. **Monitor** (Status tab)
    - View infrastructure status
-   - Check outputs
-   - View resources
+   - Check outputs and connection info
 
-## Troubleshooting
+## Managing the Service
 
-### Port Already in Use
-Change the port in `webapp/backend/app.py`:
-```python
-app.run(host='127.0.0.1', port=5001)  # Change to different port
-```
-
-### Dependencies Missing
 ```bash
-pip install -r requirements.txt
+# On the server (via SSH)
+./scripts/server/dashboard-manage.sh status
+./scripts/server/dashboard-manage.sh restart
+./scripts/server/dashboard-manage.sh logs
+./scripts/server/dashboard-manage.sh upgrade   # Pull latest code + restart
 ```
 
-### Application Won't Start
-Check that you're in the project root directory and all files are present.
+## Adding Another Operator
 
+Add their SSH public key and IP to `configs/dashboard.tfvars`, then `terraform apply`.

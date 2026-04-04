@@ -1,33 +1,22 @@
 """
 Operator Identity
-Local mode: returns laptop username via os.getlogin()
-Server mode: traces the SSH tunnel back to the Linux user who owns it
+Traces the SSH tunnel back to the Linux user who owns it.
 """
 
+import logging
 import os
 import re
 import subprocess
 from flask import Blueprint, jsonify, request
 
 bp = Blueprint('identity', __name__)
+log = logging.getLogger(__name__)
 
 
 def get_operator():
-    """Detect the current operator.
-
-    Local mode: os.getlogin() returns the macOS/Linux username.
-    Server mode: traces the TCP connection from Flask back through the
-    SSH tunnel to determine which Linux user owns the forwarding sshd process.
-    """
-    # Try os.getlogin() first — works in local mode
-    try:
-        name = os.getlogin()
-        if name and name not in ('root', 'dashboard'):
-            return name
-    except OSError:
-        pass
-
-    # Server mode: trace the request's source port to its SSH tunnel owner.
+    """Detect the current operator by tracing the SSH tunnel back to
+    the Linux user who owns the forwarding sshd process."""
+    # Trace the request's source port to its SSH tunnel owner.
     # Method 1: ss -tnp (may need root to see PIDs of other users' processes)
     # Method 2: scan /proc for sshd processes with port forwarding
     try:
@@ -71,7 +60,9 @@ def get_operator():
     except Exception:
         pass
 
-    return os.environ.get('USER', 'unknown')
+    fallback = os.environ.get('USER', 'unknown')
+    log.warning("Could not trace SSH tunnel — falling back to $USER='%s'", fallback)
+    return fallback
 
 
 @bp.route('/api/whoami', methods=['GET'])

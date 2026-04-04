@@ -28,32 +28,33 @@ The dashboard supports two deployment modes from a single codebase — no code f
 | **Multi-operator** | No | Yes (2+ operators via SSH tunnel) |
 | **Prerequisites** | Terraform, AWS CLI, Python, SSH | SSH client + browser (nothing else) |
 
-**What stays identical in both modes:**
-- All Flask routes, services, and utilities
-- Frontend HTML/CSS/JS (topology, terminal, beacon, all tabs)
-- Terraform modules (C2, GOAD, bastion, redirectors, etc.)
-- File-based app state (`logs/`, `configs/`)
-- Deployment workflow through the UI
+**Architecture:**
+- Dashboard runs on a dedicated EC2 instance in its own VPC (10.100.0.0/16)
+- Operators access via SSH tunnel to localhost:5000
+- VPC peering connects dashboard to deployment VPCs
+- S3 backend for Terraform state, DynamoDB for locking
+- Per-operator Linux accounts with scoped sudo
 
-**What differs (configuration only, no code changes):**
-- Terraform backend (local vs S3 — one line in `main.tf`)
-- Start method (`./webapp/start.sh` vs `systemd` service)
-- VPC peering wiring (optional variables, no code change)
-- Operator identity middleware (returns username in both, just more useful on server)
+**Security model:**
+- SSH tunnel is the authentication layer (SSH key + IP allowlist)
+- Flask binds to 127.0.0.1 only, with loopback guard rejecting non-localhost requests
+- CORS locked to localhost origins
+- Scoped IAM role (no `ec2:*` / `secretsmanager:*` wildcards)
+- StrictHostKeyChecking=accept-new with persistent known_hosts
+- Shared SSH key for instance access (accepted risk — per-operator keys tracked as future improvement)
 
----
-
-## Local Mode Setup
+## Setup
 
 ```
 1. Clone the repo
-2. ./webapp/start.sh
-3. Open http://localhost:5000
-4. Configure deployment on the Configuration page
-5. Deploy
+2. ./scripts/server/setup-dashboard.sh
+3. ssh -L 5000:localhost:5000 <operator>@<dashboard-ip>
+4. Open http://localhost:5000
+5. Configure deployment on the Configuration page
+6. Deploy
 ```
 
-Prerequisites: Terraform, AWS CLI, Python 3, jq, SSH key, registered domain.
+Prerequisites: AWS account, SSH key, registered domain.
 
 ---
 
