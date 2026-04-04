@@ -6,6 +6,48 @@ This document provides ideas and options for accessing C2 team servers from home
 
 C2 servers are deployed in **private subnets** for security, which means they're not directly accessible from the internet. Here are various methods to access them.
 
+The framework supports two deployment modes — **Server Mode** and **Local Mode** — each with different access patterns.
+
+---
+
+## Server Mode (Recommended)
+
+When the dashboard runs on a centralized EC2 server, most access complexity disappears. The server sits inside AWS with VPC peering to all deployment VPCs, so it can reach every instance directly.
+
+### Operator Access
+
+1. **SSH tunnel into the dashboard server:**
+   ```bash
+   ssh -L 5000:localhost:5000 harris@<dashboard-server-ip>
+   ```
+   Then open `http://localhost:5000` in your browser.
+
+2. **Terminal tab** — The dashboard provides an in-browser SSH terminal to all deployed instances (C2 team servers, redirectors, attack box, jumpbox). No manual SSH tunnels or bastion hopping required.
+
+3. **REST API** — The Cobalt Strike REST API and all management endpoints are reachable directly from the dashboard server via VPC peering. No port forwarding or tunnels needed on the server side.
+
+4. **CS Client tunnel** — The Cobalt Strike GUI client still runs on your laptop and needs a tunnel to the team server's port 50050. Use the **Tunnel button** in the Terminal tab to set this up, or manually:
+   ```bash
+   # Through the dashboard server
+   ssh -L 50050:<c2-private-ip>:50050 harris@<dashboard-server-ip>
+   ```
+
+### Why Server Mode Is Simpler
+
+| Concern | Local Mode | Server Mode |
+|---------|-----------|-------------|
+| AWS credentials | Configured on every operator laptop | IAM instance role on server (no creds on disk) |
+| SSH to instances | Bastion hop or SSM | Terminal tab in browser |
+| REST API access | Tunnel through bastion | Direct via VPC peering |
+| CS Client | Tunnel through bastion | Tunnel through dashboard server |
+| Multi-operator | Each operator sets up everything | One server, operators just SSH tunnel in |
+
+---
+
+## Local Mode
+
+> **Note:** The methods below apply to **Local Mode** (running the dashboard from your laptop). If you are using Server Mode, see the section above.
+
 ---
 
 ## Part 1: Operator Access (From Home - C2 Client Access)

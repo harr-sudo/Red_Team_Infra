@@ -36,9 +36,13 @@ cp configs/terraform.tfvars.example configs/terraform.tfvars
 pip install -r requirements.txt
 ```
 
-## Deployment Commands
+## Local Mode Commands
 
 ```bash
+# Start web app locally
+./webapp/start.sh
+# Open http://127.0.0.1:5000
+
 # Full deployment
 ./scripts/deployment/deploy.sh
 
@@ -47,6 +51,22 @@ pip install -r requirements.txt
 
 # Destroy infrastructure
 ./scripts/deployment/destroy.sh
+```
+
+## Server Mode Commands
+
+```bash
+# Connect to dashboard (from operator laptop)
+ssh -L 5000:localhost:5000 harris@<dashboard-ip>
+
+# Setup script (first time on the server)
+./scripts/server/setup-dashboard.sh
+
+# Server management (on the server)
+./scripts/server/dashboard-manage.sh start|stop|restart|status|logs
+
+# Push code updates to server
+./scripts/server/setup-dashboard.sh  # select Resume
 ```
 
 ## Manual Terraform Commands

@@ -98,7 +98,28 @@ ssh -D 1080 -p 1080 localhost
 
 ## Accessing the GOAD Lab
 
-### SSH to Jumpbox
+### Server Mode Access
+
+When running the dashboard in server mode, access to the GOAD lab is simplified by VPC peering between the dashboard VPC (10.100.0.0/16) and the GOAD VPC (192.168.56.0/24).
+
+- **Terminal tab** in the dashboard provides direct SSH to the jumpbox and GOAD team server — no manual SSH tunnel needed from the operator laptop
+- **VPC peering** gives the dashboard server direct network access to all GOAD instances (jumpbox, team server, Windows VMs)
+- **GOAD provisioning** can be triggered directly from the dashboard UI; the server communicates with the jumpbox over the peered network to run Ansible
+- **No SOCKS proxy needed** for dashboard-initiated operations — the server reaches GOAD VMs directly
+
+Operators only need to SSH tunnel to the dashboard server itself:
+```bash
+ssh -L 5000:localhost:5000 harris@<dashboard-ip>
+# Then open http://localhost:5000 and use the Terminal tab for GOAD access
+```
+
+For RDP access to Windows GOAD VMs from the operator laptop, tunnel through the dashboard server:
+```bash
+ssh -L 3389:192.168.56.10:3389 harris@<dashboard-ip>
+# Then RDP to localhost:3389
+```
+
+### SSH to Jumpbox (Local Mode)
 
 ```bash
 # Direct SSH

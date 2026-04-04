@@ -6,6 +6,73 @@ This document explains how the Red Team Infrastructure deployment connects to yo
 
 The deployment uses the **AWS credential chain** to authenticate with AWS. This means Terraform and AWS CLI automatically look for credentials in a specific order until they find valid ones.
 
+The framework supports two deployment modes with different authentication models:
+
+- **Server Mode** — IAM instance role on the dashboard EC2 server (recommended)
+- **Local Mode** — AWS credentials configured on your laptop
+
+---
+
+## Server Mode Authentication
+
+When the dashboard runs on a centralized EC2 server (t3.medium in its own VPC at 10.100.0.0/16), authentication is handled by an **IAM instance role** attached to the server.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────┐
+│  Dashboard Server (EC2)                 │
+│  IAM Instance Role auto-attached        │
+└─────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────┐
+│  AWS Credential Chain (automatic)       │
+│  → IAM Role credentials (auto-rotating) │
+└─────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────┐
+│  AWS API (Terraform, AWS CLI, etc.)     │
+└─────────────────────────────────────────┘
+```
+
+### Key Benefits
+
+- **No credentials on disk** — The instance role provides temporary credentials that rotate automatically. There are no access keys stored in `~/.aws/credentials` or environment variables.
+- **Operators don't need AWS CLI configured locally** — The server handles all AWS API calls. Operators only need SSH access to the dashboard server.
+- **Terraform runs ON the server** — `terraform plan` and `terraform apply` execute on the EC2 instance using the instance role. No credentials leave the server.
+- **More secure than local mode** — Eliminates the risk of long-lived access keys on operator laptops, which can be lost, stolen, or accidentally committed to Git.
+- **Automatic rotation** — IAM instance role credentials are rotated by AWS automatically (typically every ~6 hours). No manual key rotation needed.
+
+### What Operators Need
+
+Operators connecting to the dashboard server only need:
+
+1. **SSH access** to the dashboard server (key-based authentication)
+2. A browser to open `http://localhost:5000` after tunneling in
+
+They do **not** need:
+- AWS CLI installed locally
+- AWS access keys or secret keys
+- `~/.aws/credentials` or `~/.aws/config` files
+- Any AWS IAM user account (unless they need direct AWS Console access)
+
+### Verification (On the Server)
+
+```bash
+# SSH into the dashboard server
+ssh harris@<dashboard-server-ip>
+
+# Verify the instance role is working
+aws sts get-caller-identity
+# Should show the instance role ARN, not an IAM user
+```
+
+---
+
+## Local Mode Authentication
+
+> **Note:** This section applies when running the dashboard from your laptop. If you are using Server Mode, see the section above.
+
 ## How It Works
 
 ### Authentication Flow

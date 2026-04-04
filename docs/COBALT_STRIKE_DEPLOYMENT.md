@@ -99,6 +99,8 @@ Password is prompted interactively and never touches Terraform state or user_dat
 
 ## S3 Archive Requirements
 
+> **Server Mode:** SCP the CS archive once to the dashboard server: `scp cobaltstrike.tar harris@<server-ip>:/opt/redteam/uploads/`. It persists on the server's EBS volume and is reused for all subsequent deployments. No need to re-upload.
+
 Upload your Cobalt Strike distribution archive via the web app before deploying. The archive should contain at minimum:
 
 - `update` — The CS updater script (runs `./update` to download licensed binaries)

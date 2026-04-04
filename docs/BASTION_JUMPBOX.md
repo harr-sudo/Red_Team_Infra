@@ -1,5 +1,22 @@
 # Bastion Host - Linux SSH Relay
 
+> **Server Mode Note:** In Server Mode, the centralized dashboard server replaces most bastion functions. The dashboard provides in-browser SSH via the Terminal tab and has direct access to all instances through VPC peering. The bastion is still created for fallback/legacy access but is no longer the primary access path. See the Centralized Dashboard Design doc for server mode architecture.
+
+## Server Mode vs Local Mode
+
+In **Server Mode**, the dashboard server handles what the bastion traditionally does:
+
+- **SSH access to instances** — The Terminal tab in the dashboard provides in-browser SSH to all C2 servers, redirectors, and the attack box. No manual bastion hopping required.
+- **VPC peering** — The dashboard server's VPC (10.100.0.0/16) is peered with all deployment VPCs, giving it direct network access to every instance.
+- **Bastion is still useful for:**
+  - **RDP tunnel to attack box** — If you prefer a native RDP client over the web terminal, you can still tunnel through the bastion (or through the dashboard server).
+  - **Direct SSH from operator laptop** — As a fallback when the dashboard is down or for operators who prefer CLI-only workflows.
+  - **Legacy compatibility** — Existing scripts and SSH configs that reference the bastion will continue to work.
+
+In **Local Mode**, the bastion remains the primary access point as described below.
+
+---
+
 ## Overview
 
 The bastion is a **lightweight Ubuntu 22.04 LTS instance** in the management subnet. It serves as an SSH relay/tunnel host for accessing private-subnet resources (C2 team servers, attack box). No red team tools are installed on the bastion — all operations happen on the Windows attack box.

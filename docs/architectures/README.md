@@ -38,9 +38,51 @@ This directory contains detailed architecture documentation for all deployment m
 
 | Component | Description | Documentation |
 |-----------|-------------|---------------|
+| **Dashboard Server** | Dedicated EC2 (t3.medium) in its own VPC (10.100.0.0/16), peers with every deployment VPC for direct management access | See per-deployment docs |
 | **Windows Attack Box** | Detailed breakdown of the Windows attack box with WSL2 | [📄 attackbox.md](./attackbox.md) |
 | **IAM Security** | Separate IAM roles per VPC with least privilege | [📄 iam-security.md](./iam-security.md) |
 | **SSH Key Management** | Automated SSH key distribution architecture | [📄 ssh-key-management.md](./ssh-key-management.md) |
+
+## Dashboard Server (Server Mode)
+
+When the web application runs in **server mode**, a dedicated **Dashboard Server** (EC2 t3.medium, Ubuntu 22.04) is deployed in its own VPC and provides centralized management for all deployment types.
+
+### Dashboard VPC
+
+| Property | Value |
+|----------|-------|
+| **VPC CIDR** | 10.100.0.0/16 |
+| **Subnet** | 10.100.1.0/24 |
+| **Instance** | t3.medium, Elastic IP |
+| **Services** | Flask web UI (:5000), SSH client to all peered instances |
+
+### VPC Peering
+
+The Dashboard VPC establishes a peering connection to **every deployment VPC** that is active:
+
+| Deployment Category | Deployment VPC CIDR | Peering |
+|--------------------|--------------------|---------|
+| C2 (ad-hoc, purple, full) | 10.0.0.0/16 | Dashboard VPC <-> C2 VPC |
+| GOAD (mini, light, sccm, full, nha) | 192.168.56.0/24 | Dashboard VPC <-> GOAD VPC |
+| Combined (C2 + GOAD) | Both CIDRs above | Dashboard peers with both VPCs |
+
+Through these peering connections the dashboard has **direct SSH access** (port 22) to every EC2 instance in the deployment, plus service-specific ports on team servers (CS/50050, REST/50443). Security groups on each instance allow inbound from the dashboard's security group or VPC CIDR.
+
+### Operator Workflow
+
+```
+Operator laptop
+   │ SSH tunnel (-L 5000:127.0.0.1:5000)
+   ▼
+Dashboard Server (10.100.1.10, EIP)
+   │ VPC Peering (direct routes)
+   ├──► C2 VPC instances (bastion, redirectors, team server, attack box)
+   └──► GOAD VPC instances (jumpbox, DCs, team server, attack box)
+```
+
+The operator opens `http://localhost:5000` in a browser and uses the web UI to manage infrastructure, open terminal sessions, view topology, and interact with beacons. The dashboard effectively replaces the bastion (C2 deployments) or jumpbox (GOAD deployments) as the primary management entry point, though those instances remain available as fallback.
+
+For deployment-specific details, see the "Dashboard Server (Server Mode)" section in each architecture document.
 
 ## Architecture Diagrams
 

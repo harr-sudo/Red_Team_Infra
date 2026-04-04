@@ -405,16 +405,56 @@ mv ~/.ssh/red-team-jumpbox-key-new.pub ~/.ssh/red-team-jumpbox-key.pub
 #     -a "user=ec2-user key='$(cat ~/.ssh/red-team-jumpbox-key-old.pub)' state=absent"
 ```
 
+## Server Mode SSH Keys
+
+When running the dashboard in server mode, SSH key management works differently from the local/Ansible approach described above. The dashboard server has its own keypair and uses SSM to distribute it — no Ansible required.
+
+### How It Works
+
+- The dashboard server generates its own Ed25519 keypair at `/opt/redteam/.ssh/id_ed25519` during initial setup
+- The public key is pushed to all deployed instances via AWS SSM (`AWS-RunShellScript` / `AWS-RunPowerShellScript`), adding it to each instance's `authorized_keys`
+- The operator's private key **never leaves their laptop** — it is only used to SSH into the dashboard server itself
+- The dashboard's Terminal tab uses the server's keypair to provide in-browser SSH access to all infrastructure instances (team servers, redirectors, bastion, jumpbox)
+- The server keypair is separate from any operator keys or the AWS EC2 key pair used at launch
+
+### Migrated Deployments
+
+If infrastructure was originally deployed in local mode and later migrated to server mode, the server's public key must be added to existing instances after the fact:
+
+```bash
+# The setup script handles this automatically via SSM:
+# For each instance, it runs:
+aws ssm send-command --instance-ids <id> --region <region> \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["echo \"<server-public-key>\" >> /home/ubuntu/.ssh/authorized_keys"]'
+```
+
+This means the server can SSH to all instances without the operator needing to distribute keys manually or run Ansible playbooks.
+
+### Key Differences: Local vs Server Mode
+
+| Aspect | Local Mode | Server Mode |
+|--------|-----------|-------------|
+| Key generation | Jump box or operator laptop | Dashboard server (`/opt/redteam/.ssh/`) |
+| Distribution method | Ansible playbook | AWS SSM (no Ansible needed) |
+| Operator private key | On laptop, used for SSH | On laptop, used only to reach dashboard |
+| Instance access | SSH from jump box / bastion | Terminal tab in browser (via server keypair) |
+
 ## Summary
 
-✅ **Automated SSH key distribution** via Ansible  
-✅ **One script** handles everything: `setup-ssh-keys.sh`  
-✅ **Multiple keys supported** for multiple operators  
-✅ **Works from jump box** (WSL2) or any machine  
-✅ **Easy to use** - just run the script after deployment  
+✅ **Automated SSH key distribution** via Ansible (local mode) or SSM (server mode)
+✅ **One script** handles everything: `setup-ssh-keys.sh` (local) or `setup-dashboard.sh` (server)
+✅ **Multiple keys supported** for multiple operators
+✅ **Works from jump box** (WSL2) or any machine
+✅ **Easy to use** - just run the script after deployment
 
-**Workflow:**
+**Workflow (Local Mode):**
 1. Deploy infrastructure
 2. Run `setup-ssh-keys.sh`
 3. SSH to any instance easily!
+
+**Workflow (Server Mode):**
+1. Deploy infrastructure from dashboard
+2. Server keypair is auto-distributed via SSM
+3. Use Terminal tab for in-browser SSH to any instance
 

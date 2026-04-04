@@ -421,14 +421,66 @@ Target ──HTTPS──▶ CloudFront Edge ──origin──▶ Redirector ─
 
 ---
 
+## Server Mode Traffic Flow
+
+When the dashboard runs in server mode, the operator's access path changes significantly. The dashboard server lives in its own VPC (10.100.0.0/16) with VPC peering to the C2 VPC, eliminating multi-hop SSH entirely.
+
+### Server Mode Access Diagram
+
+```
+Operator Laptop
+  | SSH tunnel (port 5000)
+  v
+Dashboard Server (10.100.0.0/16)
+  | VPC Peering (direct)
+  |---> Team Server (10.0.10.x) --- SSH/22, CS/50050, REST/50443
+  |---> Redirectors (10.0.1-2.x) --- SSH/22
+  |---> Bastion (10.0.0.x) --- SSH/22
+  '---> Attack Box (10.0.10.x) --- RDP via tunnel
+```
+
+### What Changes in Server Mode
+
+1. **No multi-hop SSH** — The dashboard server has direct VPC peering to the C2 VPC. SSH to any instance is a single hop from the server, not operator laptop -> bastion -> target.
+
+2. **REST API is direct** — The Cobalt Strike REST API (port 50443) is reachable directly from the dashboard server via peering. No SSH tunnel needed for API calls. The backend Flask app connects to `https://10.0.10.x:50443` over the peered network.
+
+3. **Terminal tab for all SSH** — The dashboard's in-browser Terminal tab uses the server's own keypair to SSH into any instance. Operators never need to manage SSH keys or tunnels for routine access.
+
+4. **RDP via dashboard tunnel** — For graphical access to the Windows attack box, operators can tunnel RDP through the dashboard server instead of through the bastion.
+
+5. **CS client still uses SSH tunnel** — Operators who want to run the CS GUI client on their laptop still create an SSH tunnel, but now through the dashboard server instead of the bastion:
+   ```bash
+   # Server mode: tunnel CS client through dashboard server
+   ssh -L 50050:10.0.10.10:50050 harris@<dashboard-ip>
+   # Then CS client connects to localhost:50050
+   ```
+
+### Server Mode vs Local Mode (Operator Access)
+
+| Access Type | Local Mode | Server Mode |
+|-------------|-----------|-------------|
+| Dashboard UI | `localhost:5000` (run locally) | `ssh -L 5000:localhost:5000 harris@<server>` |
+| SSH to instances | Bastion -> target (multi-hop) | Terminal tab (single hop via peering) |
+| CS REST API | SSH tunnel through bastion | Direct from server (VPC peering) |
+| CS GUI client | `ssh -L 50050:c2:50050 ubuntu@bastion` | `ssh -L 50050:c2:50050 harris@server` |
+| RDP to attack box | Through bastion | Through dashboard server tunnel |
+
+### C2 Traffic Path (Unchanged)
+
+Server mode only changes **operator access**. The actual C2 traffic path (beacon callbacks through redirectors) is completely unchanged — targets still poll redirectors, redirectors still proxy to team servers. The dashboard server is never in the C2 traffic path.
+
+---
+
 ## Key Takeaways
 
 1. **Redirectors are proxies**: They forward traffic in **both directions**
 2. **Beacons come IN**: Targets initiate connections to redirectors (pull-based)
 3. **Commands go OUT as responses**: Team servers NEVER initiate connections to targets
 4. **SSL uses DNS-01**: Each redirector gets its own Let's Encrypt cert via Route53 — works with round-robin DNS
-5. **Operator access via SSH tunnel**: CS client never directly reaches the team server — always through bastion
+5. **Operator access via SSH tunnel**: CS client never directly reaches the team server — always through bastion (local mode) or dashboard server (server mode)
 6. **Color-coded diagrams**: Blue = inbound beacons, Red = outbound commands, Green = internal proxy traffic
+7. **Server mode simplifies access**: VPC peering eliminates multi-hop SSH; REST API connects directly
 
 ---
 

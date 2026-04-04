@@ -2,15 +2,32 @@
 
 This guide will walk you through setting up and deploying the Red Team Infrastructure from scratch. Follow these steps in order.
 
+## Deployment Modes
+
+This project supports two ways to run the dashboard:
+
+- **Local Mode** — Run everything from your laptop. You need AWS credentials, Terraform, and all prerequisites installed locally.
+- **Server Mode (Recommended)** — Run the dashboard on a centralized EC2 server. Operators SSH tunnel in. AWS credentials are handled by an IAM instance role. One server serves the whole team.
+
+Choose your mode and follow the corresponding setup section below.
+
 ## Table of Contents
 
-1. [Prerequisites](#prerequisites)
-2. [Initial Setup](#initial-setup)
-3. [AWS Configuration](#aws-configuration)
-4. [Project Configuration](#project-configuration)
-5. [First Deployment](#first-deployment)
-6. [Verification](#verification)
-7. [Troubleshooting](#troubleshooting)
+1. [Local Mode Setup](#local-mode-setup)
+   - [Prerequisites](#prerequisites)
+   - [Initial Setup](#initial-setup)
+   - [AWS Configuration](#aws-configuration)
+   - [Project Configuration](#project-configuration)
+   - [First Deployment](#first-deployment)
+   - [Verification](#verification)
+2. [Server Mode Setup](#server-mode-setup)
+3. [Troubleshooting](#troubleshooting)
+
+---
+
+## Local Mode Setup
+
+> **Note:** This section covers running the dashboard from your laptop. If you want to run it on a centralized server, skip to [Server Mode Setup](#server-mode-setup).
 
 ## Prerequisites
 
@@ -474,6 +491,84 @@ ssh -i ~/.ssh/red-team-keypair.pem ec2-user@$INSTANCE_IP "echo 'SSH connection s
 cd ansible
 ansible all -i inventory/hosts.yml -m ping
 ```
+
+---
+
+## Server Mode Setup
+
+Server Mode runs the dashboard on a dedicated EC2 instance (t3.medium) in its own VPC (10.100.0.0/16). The server uses an IAM instance role for AWS authentication, so no credentials are stored on disk. Operators SSH tunnel into the server to access the dashboard.
+
+### Step 1: Clone the Repository
+
+On the machine you will use to provision the server (your laptop, or any machine with AWS CLI configured):
+
+```bash
+git clone <repository-url>
+cd Red_Team_Infra
+```
+
+### Step 2: Run the Server Setup Script
+
+```bash
+./scripts/server/setup-dashboard.sh
+```
+
+This script will:
+1. Provision the dashboard EC2 instance with an IAM instance role
+2. Create the dashboard VPC (10.100.0.0/16) with VPC peering to deployment VPCs
+3. Install all dependencies (Terraform, Ansible, Python, etc.) on the server
+4. Configure the Flask dashboard to start on boot
+5. Output the server's public IP and SSH connection details
+
+### Step 3: Upload the Cobalt Strike Archive
+
+SCP the Cobalt Strike archive to the server once. It will be reused for all future deployments:
+
+```bash
+scp cobaltstrike-dist.tgz harris@<dashboard-server-ip>:~/
+```
+
+### Step 4: SSH Tunnel In and Open the Dashboard
+
+```bash
+# Create the SSH tunnel
+ssh -L 5000:localhost:5000 harris@<dashboard-server-ip>
+
+# Open in your browser
+# http://localhost:5000
+```
+
+The dashboard will detect it is running in server mode and enable:
+- Direct VPC peering access to all instances
+- In-browser Terminal tab for SSH to any instance
+- IAM instance role authentication (no AWS credentials prompt)
+
+### Step 5: Onboard Additional Operators
+
+Each additional operator needs:
+
+1. **SSH access to the dashboard server** — Add their public key to `~/.ssh/authorized_keys` on the server.
+2. **SSH tunnel command:**
+   ```bash
+   ssh -L 5000:localhost:5000 <operator-username>@<dashboard-server-ip>
+   ```
+3. **Browser** — Open `http://localhost:5000` after tunneling in.
+
+That is it. Operators do not need AWS CLI, Terraform, or any other tooling installed locally. The server handles everything.
+
+### Server Mode vs Local Mode Summary
+
+| | Local Mode | Server Mode |
+|---|-----------|-------------|
+| **Where dashboard runs** | Operator laptop | EC2 instance |
+| **AWS auth** | `~/.aws/credentials` on each laptop | IAM instance role (auto-rotating) |
+| **Terraform runs on** | Operator laptop | Server |
+| **Instance access** | Bastion hop / SSM | Terminal tab (in-browser SSH) |
+| **CS archive** | Each operator needs it | SCP once to server |
+| **Multi-operator** | Each sets up independently | One server, SSH tunnel in |
+| **REST API** | Tunnel through bastion | Direct via VPC peering |
+
+---
 
 ## Next Steps
 

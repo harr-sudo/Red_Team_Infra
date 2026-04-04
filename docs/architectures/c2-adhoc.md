@@ -601,6 +601,104 @@ sudo systemctl reload nginx
    rm -rf ssh_keys/*
    ```
 
+## Dashboard Server (Server Mode)
+
+When the web application is deployed in **server mode**, the dashboard runs on a dedicated EC2 instance in its own VPC and replaces the bastion as the primary management access point.
+
+### Dashboard Infrastructure
+
+| Component | Type | VPC / Subnet | Private IP | Public IP | Purpose |
+|-----------|------|-------------|-----------|-----------|---------|
+| **Dashboard Server** | t3.medium (Ubuntu 22.04) | Dashboard VPC (10.100.0.0/16) / 10.100.1.0/24 | 10.100.1.10 | EIP (Elastic IP) | Web UI, SSH relay to all deployment instances |
+
+### Network Connectivity
+
+The Dashboard VPC peers with the C2 VPC, giving the dashboard server direct routable access to every instance in the deployment:
+
+- **VPC Peering:** Dashboard VPC (10.100.0.0/16) <-> C2 VPC (10.0.0.0/16)
+- Route tables on both sides carry the peering routes so traffic flows without NAT or tunnels
+
+### Dashboard Access to C2 Instances
+
+| Target | Ports | Purpose |
+|--------|-------|---------|
+| Bastion (10.0.0.10) | SSH/22 | Management shell |
+| Redirector 1 (10.0.1.10) | SSH/22 | nginx config, health checks |
+| Redirector 2 (10.0.2.10) | SSH/22 | nginx config, health checks |
+| C2 Team Server (10.0.10.10) | SSH/22, CS/50050, REST/50443 | Shell, CS client tunnel, REST API |
+| Attack Box (10.0.10.50) | SSH/22 | Management shell, RDP tunnel |
+
+Security groups on each instance allow inbound traffic from the dashboard's security group (or the Dashboard VPC CIDR) on the ports listed above.
+
+### Operator Access via Dashboard
+
+Instead of SSH-hopping through the bastion, the operator creates a single tunnel to the dashboard and interacts with everything through the web UI:
+
+```bash
+# SSH tunnel from operator laptop to dashboard (port 5000)
+ssh -i key.pem -L 5000:127.0.0.1:5000 ubuntu@<dashboard-eip>
+
+# Open browser
+http://localhost:5000
+```
+
+From the web UI the operator can:
+- **Terminal tab** — in-browser SSH to any instance (bastion, redirectors, team server, attack box)
+- **Topology graph** — visual map of the deployment with live status
+- **Beacon management** — interact with CS beacons via the REST API (port 50443)
+- **Deploy / destroy** — manage infrastructure lifecycle without a local Terraform install
+
+### Full Architecture with Dashboard (Server Mode)
+
+```
+Operator Laptop
+   │
+   │ SSH tunnel (port 5000)
+   ▼
+┌─────────────────────────────────────────────────┐
+│  Dashboard VPC  10.100.0.0/16                   │
+│  Subnet 10.100.1.0/24                           │
+│                                                 │
+│  Dashboard Server (10.100.1.10, EIP)            │
+│    - Flask web UI on :5000                      │
+│    - Direct SSH to all C2 instances             │
+│    - REST API client to CS on :50443            │
+└──────────────────────┬──────────────────────────┘
+                       │ VPC Peering
+                       │ (10.100.0.0/16 ↔ 10.0.0.0/16)
+                       ▼
+┌─────────────────────────────────────────────────┐
+│  C2 VPC  10.0.0.0/16                            │
+│                                                 │
+│  Management Subnet (10.0.0.0/24)                │
+│    └── Bastion (10.0.0.10, EIP)                 │
+│                                                 │
+│  DMZ Subnets (10.0.1.0/24, 10.0.2.0/24)        │
+│    ├── Redirector 1 (10.0.1.10, EIP) ← :443    │
+│    └── Redirector 2 (10.0.2.10, EIP) ← :443    │
+│                                                 │
+│  Private Subnet (10.0.10.0/24)                  │
+│    ├── C2 Team Server (10.0.10.10)              │
+│    │     :50050 (CS client), :50443 (REST API)  │
+│    └── Attack Box (10.0.10.50)                  │
+│                                                 │
+│  NAT Gateway → Internet (outbound only)         │
+└─────────────────────────────────────────────────┘
+
+Beacon traffic (from targets):
+  Target → HTTPS :443 → Redirector 1/2 → C2 Team Server :443
+```
+
+### Dashboard vs Bastion
+
+| | Bastion (Local Mode) | Dashboard (Server Mode) |
+|---|---|---|
+| **Operator connects to** | Bastion EIP via SSH | Dashboard EIP via SSH tunnel (:5000) |
+| **Reaches private instances via** | SSH hop from bastion shell | Direct SSH from dashboard (VPC peering) |
+| **CS client access** | `ssh -L 50050:10.0.10.10:50050` through bastion | Terminal tab in web UI, or REST API |
+| **Management UI** | None (CLI only) | Full web UI (topology, terminal, beacons) |
+| **Bastion still exists?** | Yes, primary entry point | Yes, but dashboard replaces it for daily use |
+
 ## When to Upgrade
 
 ### Upgrade to Purple Team Mode if:

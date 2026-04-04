@@ -249,6 +249,95 @@ nc -zv 192.168.56.10 445
 nc -zv 192.168.56.10 135
 ```
 
+## Dashboard Server (Server Mode)
+
+When the web application is deployed in **server mode**, the dashboard runs on a dedicated EC2 instance in its own VPC and provides direct management access to all GOAD instances without SSH-hopping through the jumpbox.
+
+### Dashboard Infrastructure
+
+| Component | Type | VPC / Subnet | Private IP | Public IP | Purpose |
+|-----------|------|-------------|-----------|-----------|---------|
+| **Dashboard Server** | t3.medium (Ubuntu 22.04) | Dashboard VPC (10.100.0.0/16) / 10.100.1.0/24 | 10.100.1.10 | EIP (Elastic IP) | Web UI, SSH relay to all GOAD instances |
+
+### Network Connectivity
+
+The Dashboard VPC peers with the GOAD VPC, giving the dashboard server direct routable access to every instance in the lab:
+
+- **VPC Peering:** Dashboard VPC (10.100.0.0/16) <-> GOAD VPC (192.168.56.0/24)
+- Route tables on both sides carry the peering routes so traffic flows without NAT or tunnels
+
+### Dashboard Access to GOAD Instances
+
+| Target | Ports | Purpose |
+|--------|-------|---------|
+| Jumpbox (192.168.56.100) | SSH/22 | Ansible provisioning, lab management |
+| Team Server (192.168.56.40) | SSH/22, CS/50050 | Shell, CS client tunnel |
+| Attack Box (192.168.56.50) | SSH/22 | Management shell, RDP tunnel |
+| DC01 kingslanding (192.168.56.10) | RDP/3389, WinRM/5985 | Lab access (via dashboard tunnel) |
+
+Security groups allow inbound traffic from the dashboard's security group (or the Dashboard VPC CIDR) on the ports listed above.
+
+### Operator Access via Dashboard
+
+Instead of SSH-hopping through the jumpbox, the operator creates a single tunnel to the dashboard and uses the web UI:
+
+```bash
+# SSH tunnel from operator laptop to dashboard (port 5000)
+ssh -i key.pem -L 5000:127.0.0.1:5000 ubuntu@<dashboard-eip>
+
+# Open browser
+http://localhost:5000
+```
+
+From the web UI the operator can:
+- **Terminal tab** — in-browser SSH to the jumpbox, team server, or attack box
+- **Topology graph** — visual map of the GOAD lab with live instance status
+- **Beacon management** — interact with CS beacons via the REST API
+- **GOAD provisioning** — trigger and monitor Ansible provisioning runs
+
+### Full Architecture with Dashboard (Server Mode)
+
+```
+Operator Laptop
+   │
+   │ SSH tunnel (port 5000)
+   ▼
+┌─────────────────────────────────────────────────┐
+│  Dashboard VPC  10.100.0.0/16                   │
+│  Subnet 10.100.1.0/24                           │
+│                                                 │
+│  Dashboard Server (10.100.1.10, EIP)            │
+│    - Flask web UI on :5000                      │
+│    - Direct SSH to all GOAD instances           │
+└──────────────────────┬──────────────────────────┘
+                       │ VPC Peering
+                       │ (10.100.0.0/16 ↔ 192.168.56.0/24)
+                       ▼
+┌─────────────────────────────────────────────────┐
+│  GOAD VPC  192.168.56.0/24                      │
+│                                                 │
+│  Public Subnet (192.168.56.64/26)               │
+│    ├── Jumpbox (.100, EIP) — Ansible, SSH GW    │
+│    ├── Internet Gateway                         │
+│    └── NAT Gateway (outbound for private)       │
+│                                                 │
+│  Private Subnet (192.168.56.0/26)               │
+│    ├── DC01 kingslanding (.10) — sevenkingdoms   │
+│    ├── Team Server (.40) — CS :50050            │
+│    └── Attack Box (.50) — CS Client + tools     │
+└─────────────────────────────────────────────────┘
+```
+
+### Dashboard vs Jumpbox
+
+| | Jumpbox (Local Mode) | Dashboard (Server Mode) |
+|---|---|---|
+| **Operator connects to** | Jumpbox EIP via SSH | Dashboard EIP via SSH tunnel (:5000) |
+| **Reaches private instances via** | SSH hop from jumpbox shell | Direct SSH from dashboard (VPC peering) |
+| **CS client access** | `ssh -L 50050:192.168.56.40:50050` through jumpbox | Terminal tab in web UI |
+| **Management UI** | None (CLI only) | Full web UI (topology, terminal, beacons) |
+| **Jumpbox still exists?** | Yes, primary entry point | Yes, but dashboard replaces it for daily use |
+
 ## Learning Path
 
 ### Week 1: Reconnaissance
