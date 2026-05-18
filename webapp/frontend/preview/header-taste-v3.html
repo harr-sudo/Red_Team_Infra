@@ -8,11 +8,14 @@
     <style>
         /* ============================================================
            HEADER — TASTE-SKILL V3 (calm professional)
-           Dials: VARIANCE=5 | MOTION=4 | DENSITY=5
+           Dials: VARIANCE=5 | MOTION=6 | DENSITY=5
            - VARIANCE 5: balanced, considered, type-weight + spacing
              designed but never asymmetric drama
-           - MOTION   4: noticeable hover, ≤200ms transitions, one
-             subtle focus shimmer; no scroll/magnetic effects
+           - MOTION   6: more noticeable hover (250-320ms with spring
+             overshoot allowed on micro-feedback), one gentle
+             continuous shimmer per major element (brand, dial spec,
+             cost amount, sparkline), animated underline; no magnetic
+             chips, no scribbles, no particles — still calmer than V4
            - DENSITY  5: airy, generous padding, captions optional,
              breathing room between chips
            Vanilla CSS only. palette.css tokens only. Dual-theme.
@@ -67,7 +70,9 @@
             border: 1.5px solid var(--brand);
             border-radius: 5px;
             flex-shrink: 0;
-            transition: border-color 180ms ease, background-color 180ms ease;
+            overflow: hidden;
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
         }
         .gh-brand-mark::before {
             content: "";
@@ -79,7 +84,29 @@
             background: var(--brand);
             border-radius: 2px;
             transform: translate(-50%, -50%);
-            transition: background-color 180ms ease;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        /* Continuous subtle alpha sweep — must read as static at first
+           glance. No rotation, no particle drift (that's V4 territory). */
+        .gh-brand-mark::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: 4px;
+            background: linear-gradient(
+                115deg,
+                transparent 35%,
+                color-mix(in srgb, var(--brand-light) 18%, transparent) 50%,
+                transparent 65%
+            );
+            pointer-events: none;
+            animation: v3-brand-shimmer 3500ms ease-in-out infinite;
+            will-change: opacity, transform;
+        }
+        @keyframes v3-brand-shimmer {
+            0%, 100% { opacity: 0; transform: translateX(-30%); }
+            45%      { opacity: 0.85; transform: translateX(0%); }
+            55%      { opacity: 0.85; transform: translateX(0%); }
         }
         .gh-brand:hover .gh-brand-mark {
             border-color: var(--brand-light);
@@ -185,13 +212,16 @@
             color: var(--text-primary);
             cursor: pointer;
             text-align: left;
-            transition: border-color 180ms ease,
-                        background-color 180ms ease,
-                        box-shadow 180ms ease;
+            transform: translateY(0);
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
         }
         .gh-combobox:hover {
             border-color: var(--border-light);
             background: var(--bg-card-hover);
+            transform: translateY(-1px);
         }
         .gh-combobox:focus-visible {
             outline: none;
@@ -243,7 +273,8 @@
             opacity: 0;
             transform: translateY(-4px);
             pointer-events: none;
-            transition: opacity 160ms ease, transform 160ms ease;
+            transition: opacity 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
         }
         .gh-listbox[data-open="true"] {
             opacity: 1;
@@ -457,14 +488,19 @@
             box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 28%, transparent);
         }
 
-        /* Reduced motion: kill pulse + transitions */
+        /* Reduced motion: kill pulse + transitions + new shimmers */
         @media (prefers-reduced-motion: reduce) {
-            .gh-operator-dot::after { animation: none; }
+            .gh-operator-dot::after,
+            .gh-brand-mark::after {
+                animation: none;
+            }
+            .gh-brand-mark::after { opacity: 0; }
             .gh-combobox, .gh-combobox-chevron, .gh-listbox, .gh-option,
             .gh-theme-toggle, .gh-theme-glyph, .demo-toggle-btn,
             .gh-brand-mark, .gh-brand-mark::before {
                 transition: none;
             }
+            .gh-combobox:hover { transform: none; }
         }
 
         /* ── FLOATING VARIANT SWITCHER ────────────────────────────────
@@ -547,8 +583,10 @@
 
         /* ============================================================
            V3 LAYOUT EXTENSION — full dashboard mock, calm SaaS admin
-           DENSITY=5 (airy), MOTION=4 (≤200ms, hover lifts, sparkline
-           fade-in, animated underline), VARIANCE=5 (balanced, symmetric
+           DENSITY=5 (airy), MOTION=6 (250-320ms transitions, hover
+           lifts -2px with spring overshoot on micro-feedback,
+           continuous gentle shimmer on brand/dial-spec/cost/sparkline,
+           animated underline), VARIANCE=5 (balanced, symmetric
            grid; type-weight and whitespace do the work, not borders).
            Palette tokens only. Dual-theme. Anti-emoji.
            ============================================================ */
@@ -566,8 +604,25 @@
             to   { opacity: 1; }
         }
         @keyframes v3-underline-in {
-            from { transform: scaleX(0); }
-            to   { transform: scaleX(1); }
+            0%   { transform: scaleX(0); box-shadow: none; }
+            70%  { transform: scaleX(1.04); box-shadow: 0 0 6px color-mix(in srgb, var(--brand-light) 55%, transparent); }
+            100% { transform: scaleX(1); box-shadow: none; }
+        }
+        /* MOTION=6: very subtle continuous shimmer on the dollar amount.
+           Tiny background-position drift — reads as static at first glance. */
+        @keyframes v3-cost-shimmer {
+            0%, 100% { background-position: 0% 50%; }
+            50%      { background-position: 100% 50%; }
+        }
+        /* MOTION=6: gentle breathing on the sparkline stroke dasharray. */
+        @keyframes v3-spark-breath {
+            0%, 100% { stroke-dasharray: 600 0; stroke-dashoffset: 0; opacity: 0.92; }
+            50%      { stroke-dasharray: 580 20; stroke-dashoffset: -8; opacity: 1; }
+        }
+        /* MOTION=6: barely-perceptible border shimmer on dial-spec card. */
+        @keyframes v3-dial-border-shimmer {
+            0%, 100% { border-color: var(--border); }
+            50%      { border-color: var(--border-light); }
         }
 
         /* ── SECTION 1: STACKED NAV + SUB-PILLS ────────────────────────
@@ -621,7 +676,7 @@
         }
         .layout-nav__item.is-active::after {
             transform: scaleX(1);
-            animation: v3-underline-in 220ms cubic-bezier(0.4, 0, 0.2, 1);
+            animation: v3-underline-in 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
         }
 
         /* Sub-pills — softer, slightly larger, gentle shadow on active.  */
@@ -703,11 +758,18 @@
             display: flex;
             flex-direction: column;
             min-width: 0;
-            transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                        border-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                        box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                        transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+            transform: translateY(0);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
             animation: v3-fade-in 280ms cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+        .v3-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--border-light);
+            box-shadow: 0 8px 20px -10px rgba(0, 0, 0, 0.35),
+                        0 2px 4px -2px rgba(0, 0, 0, 0.18);
         }
         .v3-card__title {
             font-size: 11px;
@@ -735,17 +797,18 @@
             border-radius: 6px;
             text-decoration: none;
             color: inherit;
-            transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                        border-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                        box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                        transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+            transform: translateY(0);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
         }
         .deploy-card:hover {
             background: var(--bg-card-hover);
             border-color: var(--border-light);
-            box-shadow: 0 6px 18px -10px rgba(0, 0, 0, 0.35),
+            box-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.38),
                         0 2px 4px -2px rgba(0, 0, 0, 0.18);
-            transform: translateY(-2px);
+            transform: translateY(-3px);
         }
         .deploy-card__name {
             font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
@@ -787,16 +850,17 @@
             font-size: 13px;
             font-weight: 600;
             cursor: pointer;
-            transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                        border-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                        color 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                        transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+            transform: translateY(0);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
         }
         .deploy-card--cta:hover {
             background: var(--bg-card-hover);
             border-color: var(--brand-light);
             color: var(--text-primary);
-            transform: translateY(-2px);
+            transform: translateY(-3px);
         }
         .deploy-card--cta__plus {
             display: inline-block;
@@ -824,6 +888,7 @@
             flex-direction: column;
         }
         .activity-row {
+            position: relative;
             display: grid;
             grid-template-columns: auto 1fr;
             align-items: baseline;
@@ -831,11 +896,37 @@
             padding: 10px 8px;
             border-bottom: 1px solid var(--border-subtle);
             border-radius: 4px;
-            transition: background-color 160ms cubic-bezier(0.4, 0, 0.2, 1);
+            transform: translateX(0);
+            transition: background-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 180ms cubic-bezier(0.4, 0, 0.2, 1);
             min-height: 32px;
         }
+        /* Left-border accent revealed on hover (160-200ms entrance). */
+        .activity-row::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 6px;
+            bottom: 6px;
+            width: 2px;
+            border-radius: 2px;
+            background: var(--brand-light);
+            opacity: 0;
+            transform: scaleY(0.4);
+            transform-origin: center;
+            transition: opacity 180ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            pointer-events: none;
+        }
         .activity-row:last-child { border-bottom: none; }
-        .activity-row:hover { background: var(--bg-card-hover); }
+        .activity-row:hover {
+            background: var(--bg-card-hover);
+            transform: translateX(2px);
+        }
+        .activity-row:hover::before {
+            opacity: 1;
+            transform: scaleY(1);
+        }
         .activity-row__time {
             font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
             font-size: 11.5px;
@@ -867,6 +958,24 @@
             color: var(--text-primary);
             letter-spacing: -0.03em;
             line-height: 1.05;
+            /* MOTION=6: ticker-style subtle background drift. A barely
+               visible bright stripe slowly traverses the number. The
+               fallback color above keeps contrast safe in both themes. */
+            background: linear-gradient(
+                90deg,
+                var(--text-primary) 0%,
+                var(--text-primary) 42%,
+                color-mix(in srgb, var(--brand-light) 65%, var(--text-primary)) 50%,
+                var(--text-primary) 58%,
+                var(--text-primary) 100%
+            );
+            background-size: 220% 100%;
+            background-position: 0% 50%;
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: v3-cost-shimmer 3000ms ease-in-out infinite;
+            will-change: background-position;
         }
         .cost-tile__caption {
             font-size: 12.5px;
@@ -895,6 +1004,13 @@
             height: 56px;
             display: block;
             animation: v3-sparkline-draw 800ms cubic-bezier(0.4, 0, 0.2, 1) 120ms both;
+        }
+        /* MOTION=6: gentle continuous dasharray "breathing" on the
+           sparkline. Stroke-width stays 1.5px; only the dash and a
+           tiny offset/opacity oscillate. */
+        .cost-tile__spark polyline {
+            animation: v3-spark-breath 2800ms ease-in-out 920ms infinite;
+            will-change: stroke-dasharray, stroke-dashoffset, opacity;
         }
         .cost-tile__spark-foot {
             font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
@@ -929,7 +1045,20 @@
             gap: 8px;
             box-shadow: 0 4px 14px -8px rgba(0, 0, 0, 0.35),
                         0 2px 4px -2px rgba(0, 0, 0, 0.18);
-            animation: v3-fade-in 240ms cubic-bezier(0.4, 0, 0.2, 1) both;
+            transform: scale(1);
+            /* MOTION=6: fade-in + barely-perceptible border shimmer
+               (loops at 3s — just enough to feel "alive") + spring
+               overshoot scale on hover (1.015 max, very subtle). */
+            animation:
+                v3-fade-in 240ms cubic-bezier(0.4, 0, 0.2, 1) both,
+                v3-dial-border-shimmer 3000ms ease-in-out 600ms infinite;
+            transition: transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .dial-spec:hover {
+            transform: scale(1.015);
+            box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.38),
+                        0 2px 4px -2px rgba(0, 0, 0, 0.18);
         }
         .dial-spec__title {
             font-size: 13.5px;
@@ -955,17 +1084,40 @@
             .dial-spec { position: static; }
         }
 
-        /* Reduced motion: kill draws and lifts. */
+        /* Reduced motion: kill draws, lifts, continuous shimmers and
+           spring transitions. All MOTION=6 additions (brand shimmer,
+           cost shimmer, sparkline breathing, dial-spec border shimmer,
+           card lifts, activity translateX, dial-spec hover scale) must
+           strip back to a plain static appearance. */
         @media (prefers-reduced-motion: reduce) {
             .v3-card, .dial-spec, .cost-tile__spark,
+            .cost-tile__spark polyline,
+            .cost-tile__big,
             .layout-nav__item.is-active::after {
                 animation: none;
             }
+            /* Cost number falls back to plain text colour — strip the
+               gradient/clip so contrast is guaranteed. */
+            .cost-tile__big {
+                background: none;
+                -webkit-text-fill-color: var(--text-primary);
+                color: var(--text-primary);
+            }
             .layout-nav__item, .layout-subpills__pill,
             .deploy-card, .deploy-card--cta,
-            .activity-row, .v3-card {
+            .activity-row, .activity-row::before,
+            .v3-card, .dial-spec {
                 transition: none;
             }
+            /* No transforms on hover under reduced-motion. */
+            .v3-card:hover,
+            .deploy-card:hover,
+            .deploy-card--cta:hover,
+            .activity-row:hover,
+            .dial-spec:hover {
+                transform: none;
+            }
+            .activity-row::before { opacity: 0; }
         }
     </style>
 </head>
@@ -1065,8 +1217,8 @@
         <div class="layout-content">
             <div class="layout-content__main">
                 <h2>Header preview &mdash; Taste-skill V3</h2>
-                <p>Variant V3 &mdash; dials 5/4/5 &mdash; calm professional. The dropdown is a custom listbox (works identically on Mac/Linux/Windows).</p>
-                <p>Density pulls back from V1's compact rail: chips are spaced by gap (no vertical rules), padding is generous, captions breathe. Motion stays in the 4-band &mdash; one subtle focus ring shimmer, &le;200ms hover transitions, no scroll-driven or magnetic behaviour. Variance is balanced rather than asymmetric: type-weight and spacing are designed, but the layout reads as considered, not theatrical.</p>
+                <p>Variant V3 &mdash; dials 5/6/5 &mdash; calm professional. The dropdown is a custom listbox (works identically on Mac/Linux/Windows).</p>
+                <p>Density pulls back from V1's compact rail: chips are spaced by gap (no vertical rules), padding is generous, captions breathe. Motion sits in the 6-band &mdash; 250&ndash;320ms hover transitions with light spring overshoot on micro-feedback, one gentle continuous shimmer per major element (brand mark, cost amount, sparkline, dial spec border), animated underline; still no scroll-driven, magnetic, or particle behaviour. Variance is balanced rather than asymmetric: type-weight and spacing are designed, but the layout reads as considered, not theatrical.</p>
 
                 <!-- Section 2 — mock dashboard content (symmetric 3-col grid) -->
                 <section class="layout-dashboard" aria-label="Dashboard overview">
@@ -1159,7 +1311,7 @@
 
             <!-- Section 3 — dial spec card (floating, sticky top-right) -->
             <aside class="dial-spec" aria-label="Variant dial spec">
-                <span class="dial-spec__title">V3 &mdash; 5 &middot; 4 &middot; 5</span>
+                <span class="dial-spec__title">V3 &mdash; 5 &middot; 6 &middot; 5</span>
                 <span class="dial-spec__caption">Variance &middot; Motion &middot; Density</span>
                 <span class="dial-spec__feel">Calm production SaaS admin &mdash; institutional, unhurried.</span>
             </aside>
@@ -1293,7 +1445,7 @@
         <span class="variant-switcher__label">Variant</span>
         <a href="/preview/header?variant=taste"    class="variant-switcher__btn" data-variant="v1" aria-pressed="false">V1 <span class="variant-switcher__dials">6/3/6</span></a>
         <a href="/preview/header?variant=taste-v2" class="variant-switcher__btn" data-variant="v2" aria-pressed="false">V2 <span class="variant-switcher__dials">8/2/7</span></a>
-        <a href="/preview/header?variant=taste-v3" class="variant-switcher__btn is-active" data-variant="v3" aria-pressed="true">V3 <span class="variant-switcher__dials">5/4/5</span></a>
+        <a href="/preview/header?variant=taste-v3" class="variant-switcher__btn is-active" data-variant="v3" aria-pressed="true">V3 <span class="variant-switcher__dials">5/6/5</span></a>
         <a href="/preview/header?variant=taste-v4" class="variant-switcher__btn" data-variant="v4" aria-pressed="false">V4 <span class="variant-switcher__dials">10/10/7</span></a>
         <span class="variant-switcher__sep" aria-hidden="true"></span>
         <a href="/preview/header" class="variant-switcher__btn variant-switcher__btn--compare">&#8592; Compare</a>
