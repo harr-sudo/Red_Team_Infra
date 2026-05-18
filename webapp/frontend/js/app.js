@@ -140,9 +140,19 @@ function resolveNavigationTarget(input) {
  * stale operator browsers. URL hash wins (so deep-links work); falls back
  * to sessionStorage. Accepts both new JSON format and legacy plain strings.
  * Returns null if nothing resolvable is stored.
+ *
+ * D6.1 — Now also supports a query string embedded INSIDE the hash, e.g.
+ * `#deployments-tab/configure?dep=c2_adhoc_...`. The `?dep=` half is parsed
+ * by _initFromUrl() (which sets APP.activeDeployment); here we just strip it
+ * off the hash so the parent/subPill extraction still works.
  */
 function _readPersistedTarget() {
-    const hashParts = (window.location.hash || '').replace('#', '').split('/');
+    const rawHash = (window.location.hash || '').replace('#', '');
+    // D6.1 — Strip any `?query` suffix from the hash before splitting on '/'
+    // so a combined deep-link like `#deployments-tab/configure?dep=foo`
+    // still yields {parent: 'deployments-tab', subPill: 'configure'}.
+    const hashPart = rawHash.split('?')[0];
+    const hashParts = hashPart.split('/');
     const hashPage = hashParts[0];
     const hashSubPill = hashParts[1] || null;
     if (hashPage && APP.pages.includes(hashPage)) {
@@ -163,6 +173,70 @@ function _readPersistedTarget() {
         }
     }
     return null;
+}
+
+/**
+ * D6.1 — Bootstrap the global active-deployment context from the URL on
+ * initial page load. Operators can land on a deep-link of the form:
+ *
+ *     /?dep=c2_adhoc_dev_harriss_macbook_pro_01#deployments-tab/manage
+ *     /#deployments-tab/configure?dep=goad_mini_dev_harriss_macbook_pro
+ *
+ * Both ?dep= locations (search half + inside-hash) are honored — the
+ * combined form is what navigateTo() emits when both an active deployment
+ * AND a tab are set. The first-seen value wins (window.location.search is
+ * checked first; the inside-hash query is a fallback for compactness).
+ *
+ * Must run BEFORE navigateTo() during init so subscribers fire on the right
+ * deployment context.
+ */
+function _initFromUrl() {
+    // Merge both `?...` halves: window.location.search wins, but if it's
+    // empty we fall back to the query suffix inside the hash (D6.1).
+    const searchParams = new URLSearchParams(window.location.search);
+    let dep = searchParams.get('dep');
+    if (!dep) {
+        const rawHash = (window.location.hash || '').replace('#', '');
+        const hashQuery = rawHash.split('?')[1] || '';
+        if (hashQuery) {
+            const hashParams = new URLSearchParams(hashQuery);
+            dep = hashParams.get('dep');
+        }
+    }
+    if (dep && APP.activeDeployment) {
+        APP.activeDeployment.set(dep);
+    }
+}
+
+/**
+ * D6.2 — Centralised URL writer. Builds the bookmarkable URL for the
+ * current (parent, subPill, activeDeployment) triple and pushes it via
+ * history.replaceState (which doesn't add a history entry, so the back
+ * button isn't polluted by every tab/sub-pill flip).
+ *
+ * Format examples:
+ *   /                                                — default state
+ *   /#dashboard                                      — no active deployment
+ *   /#deployments-tab/manage                         — tab + sub-pill
+ *   /?dep=c2_adhoc_dev_xyz#deployments-tab/manage    — all three set
+ *
+ * Project names are URL-encoded defensively even though the validator
+ * restricts them to `[a-z0-9_]+` per webapp/backend/utils/validators.py.
+ */
+function _updateUrlState(parent, subPill) {
+    const hashBase = subPill ? `${parent}/${subPill}` : parent;
+    const dep = APP.activeDeployment && APP.activeDeployment.current;
+    const fullUrl = dep
+        ? `${window.location.pathname}?dep=${encodeURIComponent(dep)}#${hashBase}`
+        : `${window.location.pathname}#${hashBase}`;
+    try {
+        history.replaceState(null, '', fullUrl);
+    } catch (e) {
+        // Some sandboxed contexts (file://, opaque origins) reject replaceState.
+        // Fall back to the legacy location.hash assignment — operators in those
+        // environments lose the ?dep= part but the tab/sub-pill still survives.
+        window.location.hash = hashBase;
+    }
 }
 
 const APP = {
@@ -202,6 +276,11 @@ const APP = {
         // (Beacon / Terminal / Tools data-legacy flag) was deleted along with
         // the 3 legacy nav buttons. Legacy navigateTo('beacon'|'terminal'|'tools')
         // callers continue to work via NAVIGATE_ALIASES (top of this file).
+
+        // D6.1 — Restore activeDeployment from `?dep=NAME` BEFORE any tab
+        // navigation fires, so subscribers (cost chip, beacon/terminal panes)
+        // see the right context on their initialization sweep.
+        _initFromUrl();
 
         // Apply saved theme
         this.initTheme();
@@ -470,10 +549,16 @@ const APP = {
         // D0.2 — sessionStorage now stores the full {parent, subPill} tuple as JSON.
         // The hash form is `#parent` or `#parent/subPill`. Backwards-compat with
         // stale plain-string values is handled by _readPersistedTarget() at init.
+        // D6.2 — Use history.replaceState (NOT pushState, NOT location.hash=) so
+        // (a) the back-button history isn't polluted with every tab/sub-pill flip
+        // and (b) we avoid the implicit scroll-to-anchor that `location.hash=`
+        // triggers. We also include `?dep=NAME` so the URL is a bookmarkable
+        // deep-link to the current (tab, sub-pill, deployment) triple.
         this.currentPage = pageName;
         this.currentSubPill = target.subPill || null;
         sessionStorage.setItem('currentPage', JSON.stringify(target));
-        window.location.hash = target.subPill ? `${pageName}/${target.subPill}` : pageName;
+        _updateUrlState(pageName, target.subPill);
+        APP._urlReady = true;  // unblock activeDeployment subscriber (D6.2)
 
         // Load page-specific content
         this.loadPageContent(pageName);
@@ -1939,10 +2024,25 @@ APP.setActiveSubPill = function (parentTabName, subPillName) {
     });
     APP.currentSubPill = subPillName;
     sessionStorage.setItem('currentPage', JSON.stringify({ parent: parentTabName, subPill: subPillName }));
+    // D6.2 — Sub-pill switch (e.g. operator clicking a pill button directly,
+    // not going through navigateTo) must also refresh the bookmarkable URL.
+    _updateUrlState(parentTabName, subPillName);
 
     // D3.5 — Run init hook for the newly-active sub-pill
     APP._runSubPillInit(parentTabName, subPillName);
 };
+
+// D6.2 — Re-render the URL whenever the active deployment changes (via the
+// global combobox, per-tab override dropdown, "Resume" link, etc.). Skip
+// before the first navigateTo() has fired so we don't paint a half-formed
+// URL during boot — `_urlReady` flips on inside navigateTo() the first time
+// it runs (i.e. at the end of init()), and after that any deployment change
+// rewrites the URL. Without this guard the fire-immediately subscribe call
+// would clobber an inbound deep-link URL with the default `#dashboard`.
+APP.activeDeployment.subscribe(() => {
+    if (!APP._urlReady) return;
+    _updateUrlState(APP.currentPage, APP.currentSubPill);
+});
 
 // ============================================================================
 // M-Redesign Agent 3 — Motion fluidity helpers + state utilities
