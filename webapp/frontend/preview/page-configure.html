@@ -655,7 +655,7 @@
         /* ── STICKY FOOTER ──────────────────────────────────────────── */
         .cfg-foot {
             position: fixed;
-            left: 0;
+            left: var(--demo-rail-w);
             right: 0;
             bottom: 0;
             display: grid;
@@ -749,26 +749,39 @@
             }
         }
     
-        /* ── DEMO CHROME (app-level nav stub for demo context) ──────── */
-        .demo-chrome {
+        /* ── DEMO LEFT-RAIL (vertical app-level nav stub) ───────────── */
+        :root {
+            --demo-rail-w: 220px;
+            --demo-rail-top: 47px;  /* hypothesis-strip height; rail starts below it */
+        }
+        main {
+            margin-left: var(--demo-rail-w);
+        }
+        .demo-rail {
+            position: fixed;
+            top: var(--demo-rail-top);
+            left: 0;
+            bottom: 0;
+            width: var(--demo-rail-w);
             background: var(--bg-section);
-            border-bottom: 1px solid var(--border);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 16px 12px 12px;
+            gap: 2px;
+            z-index: 90;
+            overflow-y: auto;
             font-family: var(--font-family-base);
         }
-        .demo-chrome__top {
+        .demo-rail__brand {
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            gap: 16px;
-            padding: 10px 28px;
+            gap: 10px;
+            padding: 6px 8px 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 10px;
         }
-        .demo-chrome__brand {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            min-width: 0;
-        }
-        .demo-chrome__brand-mark {
+        .demo-rail__brand-mark {
             width: 22px;
             height: 22px;
             border: 1.5px solid var(--brand-light);
@@ -776,48 +789,181 @@
             position: relative;
             flex-shrink: 0;
         }
-        .demo-chrome__brand-mark::after {
+        .demo-rail__brand-mark::after {
             content: "";
             position: absolute;
             inset: 5px;
             background: var(--brand-light);
             border-radius: 2px;
         }
-        .demo-chrome__brand-text {
+        .demo-rail__brand-text {
             display: flex;
-            align-items: baseline;
-            gap: 8px;
+            flex-direction: column;
+            line-height: 1.2;
             min-width: 0;
         }
-        .demo-chrome__brand-eyebrow {
+        .demo-rail__brand-eyebrow {
             font-family: var(--font-family-mono);
-            font-size: 11px;
+            font-size: 10.5px;
             font-weight: 700;
             color: var(--text-primary);
-            letter-spacing: 0.16em;
+            letter-spacing: 0.14em;
             text-transform: uppercase;
             white-space: nowrap;
         }
-        .demo-chrome__brand-sub {
+        .demo-rail__brand-sub {
             font-family: var(--font-family-mono);
-            font-size: 10px;
+            font-size: 9.5px;
             font-weight: 500;
             color: var(--text-secondary);
             letter-spacing: 0.12em;
             text-transform: uppercase;
-            white-space: nowrap;
+            margin-top: 2px;
         }
-        .demo-chrome__rail {
+        .demo-rail__group-label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 10px 10px 6px;
+        }
+        .demo-rail__item {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            position: relative;
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
+            padding: 9px 12px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            text-align: left;
+            width: 100%;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__item:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .demo-rail__item.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__item.is-active::before {
+            content: "";
+            position: absolute;
+            left: -12px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__item:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px var(--brand-light);
+        }
+        .demo-rail__icon {
+            width: 16px;
+            height: 16px;
+            display: inline-flex;
+            color: currentColor;
             flex-shrink: 0;
         }
-        .demo-chrome__op {
+        .demo-rail__icon svg { display: block; }
+        .demo-rail__label {
+            flex: 1;
+            white-space: nowrap;
+        }
+        .demo-rail__caret {
+            width: 6px;
+            height: 6px;
+            border-right: 1.4px solid currentColor;
+            border-bottom: 1.4px solid currentColor;
+            transform: rotate(-45deg);
+            opacity: 0.55;
+            transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__item.is-expanded .demo-rail__caret {
+            transform: rotate(45deg);
+        }
+        .demo-rail__children {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__children > div { overflow: hidden; }
+        .demo-rail__children.is-open {
+            grid-template-rows: 1fr;
+        }
+        .demo-rail__child {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 2px 0 2px 0;
+            padding: 7px 12px 7px 36px;
+            font-family: inherit;
+            font-size: 12.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            text-align: left;
+            position: relative;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__child:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .demo-rail__child.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__child.is-active::before {
+            content: "";
+            position: absolute;
+            left: 16px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__child:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px var(--brand-light);
+        }
+        .demo-rail__footer {
+            margin-top: auto;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .demo-rail__op {
+            appearance: none;
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            padding: 5px 10px;
+            padding: 6px 10px;
             border-radius: 5px;
             background: var(--bg-card);
             border: 1px solid var(--border-subtle);
@@ -827,126 +973,63 @@
             cursor: pointer;
             transition: border-color 200ms;
         }
-        .demo-chrome__op:hover { border-color: var(--border-light); }
-        .demo-chrome__op-name { font-weight: 600; color: var(--text-primary); }
-        .demo-chrome__op-chev {
-            width: 6px; height: 6px;
+        .demo-rail__op:hover { border-color: var(--border-light); }
+        .demo-rail__op-name { font-weight: 600; color: var(--text-primary); flex: 1; text-align: left; }
+        .demo-rail__op-chev {
+            width: 5px; height: 5px;
             border-right: 1.5px solid var(--text-secondary);
             border-bottom: 1.5px solid var(--text-secondary);
             transform: translateY(-2px) rotate(45deg);
             display: inline-block;
         }
-        .demo-chrome__cost {
+        .demo-rail__util-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 0 4px;
+        }
+        .demo-rail__theme {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 5px 9px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: border-color 200ms, color 200ms, background-color 200ms;
+        }
+        .demo-rail__theme:hover {
+            border-color: var(--brand-light);
+            color: var(--text-primary);
+            background: var(--bg-card-hover);
+        }
+        .demo-rail__cost {
             display: inline-flex;
             flex-direction: column;
             align-items: flex-end;
             gap: 1px;
-            padding: 3px 8px;
-            border-radius: 4px;
             font-family: var(--font-family-mono);
         }
-        .demo-chrome__cost-value {
-            font-size: 12.5px;
+        .demo-rail__cost-value {
+            font-size: 12px;
             font-weight: 700;
             color: var(--text-primary);
             font-variant-numeric: tabular-nums;
         }
-        .demo-chrome__cost-caption {
+        .demo-rail__cost-caption {
             font-size: 8.5px;
             font-weight: 500;
             color: var(--text-muted);
             letter-spacing: 0.14em;
             text-transform: uppercase;
         }
-        .demo-chrome__theme {
-            appearance: none;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            color: var(--text-secondary);
-            font-family: var(--font-family-mono);
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            padding: 6px 10px;
-            border-radius: 5px;
-            cursor: pointer;
-            transition: border-color 200ms, color 200ms, background-color 200ms;
-        }
-        .demo-chrome__theme:hover {
-            border-color: var(--brand-light);
-            color: var(--text-primary);
-            background: var(--bg-card-hover);
-        }
-        .demo-chrome__tabs {
-            display: flex;
-            gap: 0;
-            padding: 0 20px;
-            border-top: 1px solid var(--border-subtle);
-        }
-        .demo-chrome__tab {
-            appearance: none;
-            background: transparent;
-            border: 0;
-            color: var(--text-secondary);
-            font-family: inherit;
-            font-size: 13px;
-            font-weight: 500;
-            padding: 11px 18px;
-            cursor: pointer;
-            position: relative;
-            transition: color 200ms, background-color 200ms, box-shadow 200ms;
-        }
-        .demo-chrome__tab:hover {
-            color: var(--text-primary);
-            background: var(--bg-card-hover);
-        }
-        .demo-chrome__tab.is-active {
-            color: var(--text-primary);
-            background: var(--bg-card);
-            box-shadow: inset 0 -2px 0 var(--brand-light);
-            font-weight: 600;
-        }
-        .demo-chrome__tab:focus-visible {
-            outline: none;
-            box-shadow: inset 0 0 0 2px var(--brand-light);
-        }
-        .demo-chrome__subpills {
-            display: flex;
-            gap: 4px;
-            padding: 8px 28px;
-            background: var(--bg-container);
-            border-top: 1px solid var(--border-subtle);
-        }
-        .demo-chrome__pill {
-            appearance: none;
-            background: transparent;
-            border: 0;
-            color: var(--text-secondary);
-            font-family: inherit;
-            font-size: 13px;
-            font-weight: 500;
-            padding: 7px 14px;
-            cursor: pointer;
-            border-radius: 4px;
-            position: relative;
-            transition: color 200ms, background-color 200ms, box-shadow 200ms;
-        }
-        .demo-chrome__pill:hover {
-            color: var(--text-primary);
-            background: var(--bg-card-hover);
-        }
-        .demo-chrome__pill.is-active {
-            color: var(--text-primary);
-            background: var(--bg-input);
-            box-shadow: inset 0 -2px 0 var(--brand-light);
-            font-weight: 600;
-        }
-        .demo-chrome__pill:focus-visible {
-            outline: none;
-            box-shadow: inset 0 0 0 2px var(--brand-light);
-        }
-        .demo-chrome-toast {
+        .demo-rail-toast {
             position: fixed;
             top: 18px;
             right: 18px;
@@ -963,9 +1046,30 @@
             transition: opacity 240ms, transform 240ms;
             z-index: 1000;
         }
-        .demo-chrome-toast[data-show="true"] {
+        .demo-rail-toast[data-show="true"] {
             opacity: 1;
             transform: translateY(0);
+        }
+        @media (max-width: 880px) {
+            :root { --demo-rail-w: 64px; }
+            .demo-rail__label,
+            .demo-rail__caret,
+            .demo-rail__group-label,
+            .demo-rail__brand-text,
+            .demo-rail__children,
+            .demo-rail__footer .demo-rail__op-name,
+            .demo-rail__footer .demo-rail__op-chev,
+            .demo-rail__cost-caption {
+                display: none;
+            }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .demo-rail__item,
+            .demo-rail__child,
+            .demo-rail__caret,
+            .demo-rail__children {
+                transition-duration: 0.01ms !important;
+            }
         }
 </style>
 </head>
@@ -995,43 +1099,87 @@
         <button class="preview-strip__toggle" type="button" id="theme-toggle">Toggle theme</button>
     </header>
 
-    <!-- Demo chrome (app-level nav stub) — see demo-chrome init script below. -->
-    <nav class="demo-chrome" aria-label="App navigation (demo)">
-        <div class="demo-chrome__top">
-            <div class="demo-chrome__brand">
-                <span class="demo-chrome__brand-mark" aria-hidden="true"></span>
-                <span class="demo-chrome__brand-text">
-                    <span class="demo-chrome__brand-eyebrow">RED TEAM INFRA</span>
-                    <span class="demo-chrome__brand-sub">v3 · demo</span>
-                </span>
-            </div>
-            <div class="demo-chrome__rail">
-                <span class="demo-chrome__cost" title="Estimated monthly cost (demo)">
-                    <span class="demo-chrome__cost-value">~$340</span>
-                    <span class="demo-chrome__cost-caption">est / mo</span>
-                </span>
-                <button class="demo-chrome__op" type="button" data-demo-nav="operator menu">
-                    <span class="operator-dot" style="background: #3b82f6;" aria-hidden="true"></span>
-                    <span class="demo-chrome__op-name">alice</span>
-                    <span class="demo-chrome__op-chev" aria-hidden="true"></span>
-                </button>
-                <button class="demo-chrome__theme" type="button" data-demo-theme>Theme</button>
+    <!-- Demo left rail (vertical app-level nav stub) — see demo-rail init script below. -->
+    <nav class="demo-rail" aria-label="App navigation (demo)">
+        <div class="demo-rail__brand">
+            <span class="demo-rail__brand-mark" aria-hidden="true"></span>
+            <span class="demo-rail__brand-text">
+                <span class="demo-rail__brand-eyebrow">RED TEAM INFRA</span>
+                <span class="demo-rail__brand-sub">v3 · demo</span>
+            </span>
+        </div>
+
+        <span class="demo-rail__group-label">Workspace</span>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="dashboard" data-demo-nav="Dashboard">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="8.5" y="1.5" width="6" height="3" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="8.5" y="5.5" width="6" height="9" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="1.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                </svg></span>
+            <span class="demo-rail__label">Dashboard</span>
+        </button>
+
+        <button class="demo-rail__item is-active is-expanded" type="button" data-demo-parent="deployments" aria-expanded="true">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.5" y="1.5" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="1.5" y="10" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <circle cx="4" cy="3.75" r="0.7" fill="currentColor"/>
+                    <circle cx="4" cy="12.25" r="0.7" fill="currentColor"/>
+                </svg></span>
+            <span class="demo-rail__label">Deployments</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="demo-rail__children is-open" data-children-of="deployments">
+            <div>
+                <button class="demo-rail__child is-active" type="button" data-demo-sub="configure" data-demo-nav="Configure">Configure</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="deploy" data-demo-nav="Deploy">Deploy</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="manage" data-demo-nav="Manage">Manage</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="cleanup" data-demo-nav="Cleanup">Cleanup</button>
             </div>
         </div>
-        <div class="demo-chrome__tabs" role="tablist" aria-label="App sections">
-            <button class="demo-chrome__tab" data-demo-nav="Dashboard" type="button">Dashboard</button>
-            <button class="demo-chrome__tab is-active" data-demo-nav="Deployments" type="button" aria-current="page">Deployments</button>
-            <button class="demo-chrome__tab" data-demo-nav="Operations" type="button">Operations</button>
-            <button class="demo-chrome__tab" data-demo-nav="Settings" type="button">Settings</button>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="operations" aria-expanded="false">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4M12.6 12.6l-1.4-1.4M4.8 4.8L3.4 3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg></span>
+            <span class="demo-rail__label">Operations</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="demo-rail__children" data-children-of="operations">
+            <div>
+                <button class="demo-rail__child" type="button" data-demo-sub="beacons" data-demo-nav="Beacons">Beacons</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="terminal" data-demo-nav="Terminal">Terminal</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="payloads" data-demo-nav="Payloads">Payloads</button>
+            </div>
         </div>
-        <div class="demo-chrome__subpills" role="tablist" aria-label="Sub-views">
-            <button class="demo-chrome__pill is-active" data-demo-nav="Configure" type="button" aria-current="page">Configure</button>
-            <button class="demo-chrome__pill" data-demo-nav="Deploy" type="button">Deploy</button>
-            <button class="demo-chrome__pill" data-demo-nav="Manage" type="button">Manage</button>
-            <button class="demo-chrome__pill" data-demo-nav="Cleanup" type="button">Cleanup</button>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="settings" data-demo-nav="Settings">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M2.5 8 a5.5 5.5 0 0 1 0.5 -2.3 L1.8 4.6 L3.6 2.8 L4.7 3.5 a5.5 5.5 0 0 1 2.3 -1 L7.4 1.3 H8.6 L9 2.5 a5.5 5.5 0 0 1 2.3 1 L12.4 2.8 L14.2 4.6 L13.5 5.7 a5.5 5.5 0 0 1 0.5 2.3 a5.5 5.5 0 0 1 -0.5 2.3 L14.2 11.4 L12.4 13.2 L11.3 12.5 a5.5 5.5 0 0 1 -2.3 1 L8.6 14.7 H7.4 L7 13.5 a5.5 5.5 0 0 1 -2.3 -1 L3.6 13.2 L1.8 11.4 L2.5 10.3 a5.5 5.5 0 0 1 -0.5 -2.3 Z" stroke="currentColor" stroke-width="1.1" fill="none"/>
+                </svg></span>
+            <span class="demo-rail__label">Settings</span>
+        </button>
+
+        <div class="demo-rail__footer">
+            <button class="demo-rail__op" type="button" data-demo-nav="operator menu">
+                <span class="operator-dot" style="background: #3b82f6;" aria-hidden="true"></span>
+                <span class="demo-rail__op-name">alice</span>
+                <span class="demo-rail__op-chev" aria-hidden="true"></span>
+            </button>
+            <div class="demo-rail__util-row">
+                <span class="demo-rail__cost" title="Estimated monthly cost (demo)">
+                    <span class="demo-rail__cost-value">~$340</span>
+                    <span class="demo-rail__cost-caption">est / mo</span>
+                </span>
+                <button class="demo-rail__theme" type="button" data-demo-theme>Theme</button>
+            </div>
         </div>
     </nav>
-    <div class="demo-chrome-toast" id="demo-chrome-toast" role="status" aria-live="polite"></div>
+    <div class="demo-rail-toast" id="demo-rail-toast" role="status" aria-live="polite"></div>
 
     <main class="cfg-shell">
         <div class="cfg-eyebrow">
@@ -1631,9 +1779,9 @@
             }
         })();
     
-        // ── Demo chrome — non-routing tabs + theme toggle + toast ────
-        (function demoChromeInit() {
-            const toast = document.getElementById('demo-chrome-toast');
+        // ── Demo left rail — non-routing nav + theme toggle + toast ────
+        (function demoRailInit() {
+            const toast = document.getElementById('demo-rail-toast');
             let toastTimer = null;
             function showToast(label) {
                 if (!toast || !label) return;
@@ -1642,14 +1790,44 @@
                 window.clearTimeout(toastTimer);
                 toastTimer = window.setTimeout(() => toast.setAttribute('data-show', 'false'), 2400);
             }
-            document.querySelectorAll('.demo-chrome [data-demo-nav]').forEach(btn => {
+            // Parent items — clicking a non-active parent expands its children (if any)
+            document.querySelectorAll('.demo-rail__item[data-demo-parent]').forEach(btn => {
                 btn.addEventListener('click', (ev) => {
-                    if (btn.classList.contains('is-active')) return;
                     ev.preventDefault();
+                    const parent = btn.dataset.demoParent;
+                    const children = document.querySelector('[data-children-of="' + parent + '"]');
+                    if (children) {
+                        // Toggle expand for this parent; collapse others (only one open at a time)
+                        const willOpen = !children.classList.contains('is-open');
+                        document.querySelectorAll('.demo-rail__children').forEach(c => c.classList.remove('is-open'));
+                        document.querySelectorAll('.demo-rail__item[data-demo-parent]').forEach(i => {
+                            if (i !== btn) i.classList.remove('is-expanded');
+                        });
+                        if (willOpen) {
+                            children.classList.add('is-open');
+                            btn.classList.add('is-expanded');
+                            btn.setAttribute('aria-expanded', 'true');
+                        } else {
+                            btn.classList.remove('is-expanded');
+                            btn.setAttribute('aria-expanded', 'false');
+                        }
+                        return;
+                    }
+                    // Leaf parent (no children) — emit nav toast
+                    if (btn.classList.contains('is-active')) return;
                     showToast(btn.dataset.demoNav);
                 });
             });
-            const themeBtn = document.querySelector('.demo-chrome [data-demo-theme]');
+            // Sub-pills (children) — emit nav toast for non-active
+            document.querySelectorAll('.demo-rail__child').forEach(btn => {
+                btn.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    if (btn.classList.contains('is-active')) return;
+                    showToast(btn.dataset.demoNav);
+                });
+            });
+            // Theme toggle
+            const themeBtn = document.querySelector('.demo-rail [data-demo-theme]');
             if (themeBtn) {
                 themeBtn.addEventListener('click', () => {
                     const cur = document.documentElement.getAttribute('data-theme') || 'dark';
