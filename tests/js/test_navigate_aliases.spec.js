@@ -54,16 +54,19 @@ describe('D0 NAVIGATE_ALIASES map', () => {
         }
     });
 
-    it('All alias values are currently passthrough (subPill: null) — D0 introduces no behavior change', () => {
+    it('D3.2/3/4 — legacy flat names resolve to deployments-tab sub-pills', () => {
         const src = loadAppJsSource();
         const match = src.match(/const NAVIGATE_ALIASES = \{[\s\S]*?\n\};/);
         expect(match).not.toBeNull();
         const block = match[0];
-        // No non-null subPill values yet — those land in D3.6 / D4.6 when the
-        // merged parent tabs exist
-        expect(block).not.toContain("subPill: 'configure'");
-        expect(block).not.toContain("subPill: 'deploy'");
-        expect(block).not.toContain("subPill: 'manage'");
+        // D3.2 re-parented Configuration under #subpill-pane-configure.
+        // D3.3 re-parented Deploy under #subpill-pane-deploy.
+        // D3.4 re-parented Deployment Manager under #subpill-pane-manage.
+        // Aliases route through the merged parent so all 14 cross-link call
+        // sites (`APP.navigateTo('configuration')` etc.) keep working.
+        expect(block).toMatch(/'configuration':\s*\{\s*parent:\s*'deployments-tab',\s*subPill:\s*'configure'/);
+        expect(block).toMatch(/'deployment':\s*\{\s*parent:\s*'deployments-tab',\s*subPill:\s*'deploy'/);
+        expect(block).toMatch(/'deployments':\s*\{\s*parent:\s*'deployments-tab',\s*subPill:\s*'manage'/);
     });
 
     it('APP object declares currentSubPill state field', () => {

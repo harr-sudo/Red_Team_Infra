@@ -162,27 +162,6 @@
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="configure" id="subpill-pane-configure">
                         <!-- D3.2: Configuration tab content re-parents here -->
-                        <p style="color: var(--text-muted); padding: 20px;">
-                            Configure sub-pane (placeholder &mdash; re-parented in D3.2).
-                        </p>
-                    </div>
-                    <div class="subpill-pane" data-subpill-pane="deploy" id="subpill-pane-deploy" hidden>
-                        <!-- D3.3: Deploy tab content re-parents here -->
-                        <p style="color: var(--text-muted); padding: 20px;">
-                            Deploy sub-pane (placeholder &mdash; re-parented in D3.3).
-                        </p>
-                    </div>
-                    <div class="subpill-pane" data-subpill-pane="manage" id="subpill-pane-manage" hidden>
-                        <!-- D3.4: Deployment Manager content re-parents here -->
-                        <p style="color: var(--text-muted); padding: 20px;">
-                            Manage sub-pane (placeholder &mdash; re-parented in D3.4).
-                        </p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Configuration Page -->
-            <div class="tab-page" data-page="configuration">
                     <h2 class="page-title">Configuration Editor</h2>
 
                     <!-- What to Deploy Section -->
@@ -925,10 +904,9 @@ ns-143.awsdns-17.org
                     </div>
 
                     <div id="config-message" class="message"></div>
-            </div>
-
-            <!-- Deployment Page -->
-            <div class="tab-page" data-page="deployment">
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="deploy" id="subpill-pane-deploy" hidden>
+                        <!-- D3.3: Deploy tab content re-parents here -->
                     <h2 class="page-title">Deployment Control</h2>
 
                     <!-- Prerequisites Section -->
@@ -946,7 +924,7 @@ ns-143.awsdns-17.org
                         <div id="config-summary-section" class="config-summary" style="display: none;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                                 <h4 style="margin: 0;">Configuration Summary</h4>
-                                <button class="btn btn-secondary btn-sm" onclick="APP.navigateTo('configuration')">
+                                <button class="btn btn-secondary btn-sm" onclick="APP.toggleInlineConfigPanel()">
                                     Edit Config
                                 </button>
                             </div>
@@ -959,6 +937,21 @@ ns-143.awsdns-17.org
                             <div id="config-summary-warnings" style="margin-top: 15px; display: none;">
                                 <!-- Populated by JavaScript if there are issues -->
                             </div>
+
+                            <!-- D3.3 — inline-collapse "Edit Config" entrypoint.
+                                 Operator stays on the Deploy sub-pill (preserves scroll/form state)
+                                 but gets a visible reminder + one-click jump to Configure. -->
+                            <details id="inline-config-panel" style="margin-top: 12px;">
+                                <summary style="cursor: pointer; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); font-weight: 600; color: var(--text-primary);">
+                                    Edit configuration inline
+                                </summary>
+                                <div id="inline-config-content" style="padding: 12px; border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius);">
+                                    <p style="color: var(--text-muted); font-size: 0.9em; margin: 0 0 12px 0;">
+                                        Switch to the Configure tab to make changes &mdash; your scroll position and form state are preserved.
+                                    </p>
+                                    <button class="btn btn-primary" onclick="APP.setActiveSubPill('deployments-tab', 'configure')">Open Configure sub-pill</button>
+                                </div>
+                            </details>
                         </div>
 
                         <!-- Domain Configuration Check (C2 deployments only) -->
@@ -1345,6 +1338,187 @@ ns-143.awsdns-17.org
                     </div>
 
                     <div id="deployment-output" class="output-display"></div>
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="manage" id="subpill-pane-manage" hidden>
+                        <!-- D3.4: Deployment Manager content re-parents here -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h2 style="color: var(--gold); margin: 0; font-size: 1.7em;">Deployment Manager</h2>
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <span id="deployments-last-updated" style="color: var(--text-muted); font-size: 0.9em;"></span>
+                            <button id="refresh-all-btn" class="btn btn-info" onclick="refreshAll()">Refresh All</button>
+                        </div>
+                    </div>
+
+                    <!-- Budget Alert Banner (lightweight — links to Settings for details) -->
+                    <div id="cost-budget-alert" style="display: none; margin-bottom: 20px;"></div>
+
+                    <!-- Deployment Status Overview -->
+                    <div id="deployments-overview" style="margin-bottom: 30px;">
+                    </div>
+
+                    <!-- Lifecycle Management Section -->
+                    <div id="lifecycle-section" style="margin-bottom: 30px; display: none;">
+                        <div class="grid-auto">
+
+                            <!-- Stop Infrastructure -->
+                            <div class="lifecycle-card">
+                                <h4>Stop EC2 Instances</h4>
+                                <p>
+                                    <strong>Pause compute without deleting.</strong> All EC2 instances (C2 servers, jumpbox, Windows VMs) will be stopped.
+                                    Data and configuration preserved.
+                                </p>
+                                <button class="btn btn-warning" onclick="stopInfrastructure()" style="width: 100%;">
+                                    Stop All EC2 Instances
+                                </button>
+                            </div>
+
+                            <!-- Start Infrastructure -->
+                            <div class="lifecycle-card">
+                                <h4>Start EC2 Instances</h4>
+                                <p>
+                                    <strong>Resume stopped instances.</strong> Bring your EC2 instances back online.
+                                    All configurations and data preserved from when you stopped.
+                                </p>
+                                <button class="btn btn-success" onclick="startInfrastructure()" style="width: 100%;">
+                                    Start All EC2 Instances
+                                </button>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                    <!-- Full Resource List Section (collapsed by default) -->
+                    <div id="resource-list-section" style="margin-bottom: 30px;">
+                        <details class="details-card">
+                            <summary>All Deployed Resources</summary>
+                            <div>
+                                <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
+                                    <div id="resource-scope-info" style="color: var(--text-muted); font-size: 0.88em;"></div>
+                                    <div style="display: flex; gap: 5px;">
+                                        <button class="btn btn-secondary btn-sm" onclick="refreshResourceList()">
+                                            Refresh
+                                        </button>
+                                        <button class="btn btn-secondary btn-sm" onclick="exportResourceList()">
+                                            Export CSV
+                                        </button>
+                                    </div>
+                                </div>
+                                <div style="margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
+                                    <select id="resource-type-filter" onchange="filterResources()">
+                                        <option value="all">All Types</option>
+                                        <option value="ec2">EC2 Instances</option>
+                                        <option value="vpc">VPC</option>
+                                        <option value="subnet">Subnets</option>
+                                        <option value="sg">Security Groups</option>
+                                        <option value="eip">Elastic IPs</option>
+                                        <option value="nat">NAT Gateways</option>
+                                        <option value="s3">S3 Buckets</option>
+                                    </select>
+                                    <input type="text" id="resource-search" placeholder="Search by name or ID..."
+                                           onkeyup="filterResources()"
+                                           style="flex: 1; min-width: 200px;">
+                                </div>
+                                <div id="resource-list-container" style="border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;">
+                                    <div id="resource-table-body" style="max-height: 520px; overflow-y: auto;">
+                                    </div>
+                                </div>
+                                <div id="resource-count" style="margin-top: 8px; color: var(--text-muted); font-size: 0.88em;"></div>
+                            </div>
+                        </details>
+                    </div>
+
+                    <!-- Deployment History & Logs Section -->
+                    <div id="deployment-history-section" style="margin-bottom: 30px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <h3 style="margin: 0;">Deployment History & Logs</h3>
+                            <div>
+                                <button class="btn btn-secondary btn-sm" onclick="viewArchivedLogs()">
+                                    Archived Logs
+                                </button>
+                                <button class="btn btn-secondary btn-sm" onclick="clearDeploymentLogs()" style="margin-left: 5px;">
+                                    Clear Logs
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Deployment Timeline -->
+                        <div id="deployment-timeline" style="margin-bottom: 20px;">
+                            <div id="timeline-content">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                        </div>
+
+                        <!-- Detailed Logs -->
+                        <div style="background: var(--bg-terminal); border-radius: var(--radius-lg); overflow: hidden; border: 1px solid var(--border);">
+                            <div style="background: var(--bg-elevated); padding: 10px 15px; display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-weight: bold; color: var(--text-terminal);">Detailed Logs</span>
+                                <div>
+                                    <button onclick="copyLogs()" class="btn btn-secondary btn-sm">
+                                        Copy
+                                    </button>
+                                    <button onclick="downloadLogs()" class="btn btn-secondary btn-sm" style="margin-left: 5px;">
+                                        Download
+                                    </button>
+                                </div>
+                            </div>
+                            <!-- Log Level Filter -->
+                            <div style="padding: 8px 15px; display: flex; gap: 10px; align-items: center; border-bottom: 1px solid var(--border);">
+                                <span style="color: var(--text-muted); font-size: 0.88em;">Filter:</span>
+                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                    <input type="checkbox" id="log-filter-info" checked onchange="filterLogs()">
+                                    <span class="btn btn-info btn-sm">INFO</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                    <input type="checkbox" id="log-filter-success" checked onchange="filterLogs()">
+                                    <span class="btn btn-success btn-sm">SUCCESS</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                    <input type="checkbox" id="log-filter-warning" checked onchange="filterLogs()">
+                                    <span class="btn btn-warning btn-sm">WARNING</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                    <input type="checkbox" id="log-filter-error" checked onchange="filterLogs()">
+                                    <span class="btn btn-danger btn-sm">ERROR</span>
+                                </label>
+                            </div>
+                            <div id="deployment-logs" style="padding: 15px; max-height: 400px; overflow-y: auto; font-family: 'SF Mono', 'Consolas', monospace; font-size: 0.88em; line-height: 1.6;">
+                                <div class="t-muted">No deployment logs yet. Deploy infrastructure to see logs here.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- GOAD Lab Section -->
+                    <div id="goad-lab-section" class="section-card section-card--highlight" style="margin-bottom: 25px; display: none;">
+                        <h3>GOAD Lab (Active Directory)</h3>
+                        <p>Vulnerable Active Directory environment for testing.</p>
+                        <div id="goad-lab-details" class="infrastructure-details">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                        <div id="goad-lab-actions" style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                        <div id="goad-provision-section" style="margin-top: 15px; display: none;">
+                            <div style="border-top: 1px solid var(--border); padding-top: 15px;">
+                                <h4>Active Directory Provisioning</h4>
+                                <div id="goad-provision-status-panel">
+                                    <!-- Populated by JavaScript -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- No Deployment State -->
+                    <div id="no-deployment-message" style="display: none; text-align: center; padding: 40px;">
+                        <h3>No Active Deployments</h3>
+                        <p style="color: var(--text-muted); margin-bottom: 20px;">You haven't deployed any infrastructure yet.</p>
+                        <button class="btn btn-success" onclick="APP.navigateTo('deployment')">Go to Deploy Tab</button>
+                    </div>
+
+
+
+                    </div>
+                </div>
             </div>
 
             <!-- D2 — Pre Reqs content moved into Settings tab below as a section card. -->
@@ -2350,186 +2524,6 @@ ns-143.awsdns-17.org
                             </div>
                         </details>
                     </div>
-            </div>
-
-            <!-- Deployments Page (Active Infrastructure) -->
-            <div class="tab-page" data-page="deployments">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <h2 style="color: var(--gold); margin: 0; font-size: 1.7em;">Deployment Manager</h2>
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <span id="deployments-last-updated" style="color: var(--text-muted); font-size: 0.9em;"></span>
-                            <button id="refresh-all-btn" class="btn btn-info" onclick="refreshAll()">Refresh All</button>
-                        </div>
-                    </div>
-
-                    <!-- Budget Alert Banner (lightweight — links to Settings for details) -->
-                    <div id="cost-budget-alert" style="display: none; margin-bottom: 20px;"></div>
-
-                    <!-- Deployment Status Overview -->
-                    <div id="deployments-overview" style="margin-bottom: 30px;">
-                    </div>
-
-                    <!-- Lifecycle Management Section -->
-                    <div id="lifecycle-section" style="margin-bottom: 30px; display: none;">
-                        <div class="grid-auto">
-
-                            <!-- Stop Infrastructure -->
-                            <div class="lifecycle-card">
-                                <h4>Stop EC2 Instances</h4>
-                                <p>
-                                    <strong>Pause compute without deleting.</strong> All EC2 instances (C2 servers, jumpbox, Windows VMs) will be stopped.
-                                    Data and configuration preserved.
-                                </p>
-                                <button class="btn btn-warning" onclick="stopInfrastructure()" style="width: 100%;">
-                                    Stop All EC2 Instances
-                                </button>
-                            </div>
-
-                            <!-- Start Infrastructure -->
-                            <div class="lifecycle-card">
-                                <h4>Start EC2 Instances</h4>
-                                <p>
-                                    <strong>Resume stopped instances.</strong> Bring your EC2 instances back online.
-                                    All configurations and data preserved from when you stopped.
-                                </p>
-                                <button class="btn btn-success" onclick="startInfrastructure()" style="width: 100%;">
-                                    Start All EC2 Instances
-                                </button>
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                    <!-- Full Resource List Section (collapsed by default) -->
-                    <div id="resource-list-section" style="margin-bottom: 30px;">
-                        <details class="details-card">
-                            <summary>All Deployed Resources</summary>
-                            <div>
-                                <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
-                                    <div id="resource-scope-info" style="color: var(--text-muted); font-size: 0.88em;"></div>
-                                    <div style="display: flex; gap: 5px;">
-                                        <button class="btn btn-secondary btn-sm" onclick="refreshResourceList()">
-                                            Refresh
-                                        </button>
-                                        <button class="btn btn-secondary btn-sm" onclick="exportResourceList()">
-                                            Export CSV
-                                        </button>
-                                    </div>
-                                </div>
-                                <div style="margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
-                                    <select id="resource-type-filter" onchange="filterResources()">
-                                        <option value="all">All Types</option>
-                                        <option value="ec2">EC2 Instances</option>
-                                        <option value="vpc">VPC</option>
-                                        <option value="subnet">Subnets</option>
-                                        <option value="sg">Security Groups</option>
-                                        <option value="eip">Elastic IPs</option>
-                                        <option value="nat">NAT Gateways</option>
-                                        <option value="s3">S3 Buckets</option>
-                                    </select>
-                                    <input type="text" id="resource-search" placeholder="Search by name or ID..."
-                                           onkeyup="filterResources()"
-                                           style="flex: 1; min-width: 200px;">
-                                </div>
-                                <div id="resource-list-container" style="border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;">
-                                    <div id="resource-table-body" style="max-height: 520px; overflow-y: auto;">
-                                    </div>
-                                </div>
-                                <div id="resource-count" style="margin-top: 8px; color: var(--text-muted); font-size: 0.88em;"></div>
-                            </div>
-                        </details>
-                    </div>
-
-                    <!-- Deployment History & Logs Section -->
-                    <div id="deployment-history-section" style="margin-bottom: 30px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                            <h3 style="margin: 0;">Deployment History & Logs</h3>
-                            <div>
-                                <button class="btn btn-secondary btn-sm" onclick="viewArchivedLogs()">
-                                    Archived Logs
-                                </button>
-                                <button class="btn btn-secondary btn-sm" onclick="clearDeploymentLogs()" style="margin-left: 5px;">
-                                    Clear Logs
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Deployment Timeline -->
-                        <div id="deployment-timeline" style="margin-bottom: 20px;">
-                            <div id="timeline-content">
-                                <!-- Populated by JavaScript -->
-                            </div>
-                        </div>
-
-                        <!-- Detailed Logs -->
-                        <div style="background: var(--bg-terminal); border-radius: var(--radius-lg); overflow: hidden; border: 1px solid var(--border);">
-                            <div style="background: var(--bg-elevated); padding: 10px 15px; display: flex; justify-content: space-between; align-items: center;">
-                                <span style="font-weight: bold; color: var(--text-terminal);">Detailed Logs</span>
-                                <div>
-                                    <button onclick="copyLogs()" class="btn btn-secondary btn-sm">
-                                        Copy
-                                    </button>
-                                    <button onclick="downloadLogs()" class="btn btn-secondary btn-sm" style="margin-left: 5px;">
-                                        Download
-                                    </button>
-                                </div>
-                            </div>
-                            <!-- Log Level Filter -->
-                            <div style="padding: 8px 15px; display: flex; gap: 10px; align-items: center; border-bottom: 1px solid var(--border);">
-                                <span style="color: var(--text-muted); font-size: 0.88em;">Filter:</span>
-                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-                                    <input type="checkbox" id="log-filter-info" checked onchange="filterLogs()">
-                                    <span class="btn btn-info btn-sm">INFO</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-                                    <input type="checkbox" id="log-filter-success" checked onchange="filterLogs()">
-                                    <span class="btn btn-success btn-sm">SUCCESS</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-                                    <input type="checkbox" id="log-filter-warning" checked onchange="filterLogs()">
-                                    <span class="btn btn-warning btn-sm">WARNING</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-                                    <input type="checkbox" id="log-filter-error" checked onchange="filterLogs()">
-                                    <span class="btn btn-danger btn-sm">ERROR</span>
-                                </label>
-                            </div>
-                            <div id="deployment-logs" style="padding: 15px; max-height: 400px; overflow-y: auto; font-family: 'SF Mono', 'Consolas', monospace; font-size: 0.88em; line-height: 1.6;">
-                                <div class="t-muted">No deployment logs yet. Deploy infrastructure to see logs here.</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- GOAD Lab Section -->
-                    <div id="goad-lab-section" class="section-card section-card--highlight" style="margin-bottom: 25px; display: none;">
-                        <h3>GOAD Lab (Active Directory)</h3>
-                        <p>Vulnerable Active Directory environment for testing.</p>
-                        <div id="goad-lab-details" class="infrastructure-details">
-                            <!-- Populated by JavaScript -->
-                        </div>
-                        <div id="goad-lab-actions" style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-                            <!-- Populated by JavaScript -->
-                        </div>
-                        <div id="goad-provision-section" style="margin-top: 15px; display: none;">
-                            <div style="border-top: 1px solid var(--border); padding-top: 15px;">
-                                <h4>Active Directory Provisioning</h4>
-                                <div id="goad-provision-status-panel">
-                                    <!-- Populated by JavaScript -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- No Deployment State -->
-                    <div id="no-deployment-message" style="display: none; text-align: center; padding: 40px;">
-                        <h3>No Active Deployments</h3>
-                        <p style="color: var(--text-muted); margin-bottom: 20px;">You haven't deployed any infrastructure yet.</p>
-                        <button class="btn btn-success" onclick="APP.navigateTo('deployment')">Go to Deploy Tab</button>
-                    </div>
-
-
-
             </div>
 
         </div>

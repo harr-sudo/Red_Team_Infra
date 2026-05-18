@@ -87,10 +87,12 @@ function _invalidateOutputsCache(projectName) {
  * 14 cross-link call sites will continue working without modification.
  */
 const NAVIGATE_ALIASES = {
-    // D3 future-mappings — currently passthrough (the merged tab doesn't exist yet)
-    'configuration': { parent: 'configuration', subPill: null },
-    'deployment':    { parent: 'deployment',    subPill: null },
-    'deployments':   { parent: 'deployments',   subPill: null },
+    // D3.2/3/4 — legacy flat names now resolve to sub-pills of the merged
+    // 'deployments-tab'. Cross-link call sites (`APP.navigateTo('configuration')`
+    // etc.) keep working: the alias activates the parent tab + the matching pill.
+    'configuration': { parent: 'deployments-tab', subPill: 'configure' },
+    'deployment':    { parent: 'deployments-tab', subPill: 'deploy' },
+    'deployments':   { parent: 'deployments-tab', subPill: 'manage' },
     // D4 future-mappings — currently passthrough
     'beacon':        { parent: 'beacon',        subPill: null },
     'terminal':      { parent: 'terminal',      subPill: null },
@@ -1895,6 +1897,16 @@ APP.setActiveSubPill = function (parentTabName, subPillName) {
     });
     APP.currentSubPill = subPillName;
     sessionStorage.setItem('currentPage', JSON.stringify({ parent: parentTabName, subPill: subPillName }));
+};
+
+// D3.3 — Inline "Edit Config" collapse toggle. Lives next to the Configuration
+// Summary card on the Deploy sub-pane and toggles the <details id="inline-
+// config-panel"> open/closed without switching sub-pills (preserves operator
+// scroll position + form state). Future D3.8 polish can replace this with a
+// full inline editor; today's MVP is a visible signpost to the Configure pill.
+APP.toggleInlineConfigPanel = function () {
+    const panel = document.getElementById('inline-config-panel');
+    if (panel) panel.open = !panel.open;
 };
 
 // Wire pill buttons. Listener attached at DOMContentLoaded so the .subpill-nav__pill
