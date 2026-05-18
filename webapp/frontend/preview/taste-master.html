@@ -266,22 +266,15 @@
     </header>
 
     <nav class="hub-sidebar" aria-label="Demo navigation">
-        <!-- Bolt-on feature (Phase 1) — new work currently under review -->
+        <!-- Bolt-on feature (Phase 1) — blended target page is the pick -->
         <section class="hub-sidebar__section hub-sidebar__section-decision">
             <span class="hub-sidebar__section-label">Bolt-on feature (Phase 1)<span class="hub-sidebar__pending-pill">DECISION PENDING</span></span>
-            <button class="hub-sidebar__item" data-url="/preview/page-bolton-catalog.html"
-                    data-title="Bolt-on catalog (vulnerabilities browser)"
-                    data-eyebrow="BOLT-ON · CATALOG"
-                    data-hypothesis="The bolt-on catalog is the operator's vulnerability shopping mall — categorized cards filterable by compatibility, with MITRE TTP + detection coverage stamped on every entry.">
-                <span class="hub-sidebar__item-name">Catalog browser</span>
-                <span class="hub-sidebar__item-hint">18 cards · 8 compat states · 4 coverage states</span>
-            </button>
-            <button class="hub-sidebar__item" data-url="/preview/page-bolton-host.html"
-                    data-title="Bolt-on per-host installed view"
-                    data-eyebrow="BOLT-ON · HOST"
-                    data-hypothesis="Per host, see what's installed, what's patchable, what's missing detection coverage — the operator's command center for one machine's vulnerability state.">
-                <span class="hub-sidebar__item-name">Per-host installed view</span>
-                <span class="hub-sidebar__item-hint">Patch / uninstall / detect-fired rows</span>
+            <button class="hub-sidebar__item is-pick" data-url="/preview/page-bolton-target.html"
+                    data-title="Bolt-on target (blended catalog + per-host)"
+                    data-eyebrow="BOLT-ON · TARGET (BLENDED)"
+                    data-hypothesis="The bolt-on target page is one host's vulnerability state in one place — installed, patchable, available, blocked, and patched, all in a single scrollable spec-list sorted by what the operator can do next.">
+                <span class="hub-sidebar__item-name">Target (blended)</span>
+                <span class="hub-sidebar__item-hint">★ Picked direction — one host, one unified spec-list, 5 status sections</span>
             </button>
             <button class="hub-sidebar__item" data-url="/preview/page-bolton-install.html"
                     data-title="Bolt-on install confirmation + progress + agent"
@@ -289,6 +282,20 @@
                     data-hypothesis="Install confirmation surfaces compatibility, detection coverage, and what will change — then a live-streaming progress view that exposes the agentic fallback if scripts fail.">
                 <span class="hub-sidebar__item-name">Install + progress + agent</span>
                 <span class="hub-sidebar__item-hint">4 scenarios via seg-control</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-bolton-catalog.html"
+                    data-title="Bolt-on catalog (legacy — superseded by blended)"
+                    data-eyebrow="BOLT-ON · CATALOG"
+                    data-hypothesis="The bolt-on catalog is the operator's vulnerability shopping mall — categorized cards filterable by compatibility, with MITRE TTP + detection coverage stamped on every entry.">
+                <span class="hub-sidebar__item-name">Catalog browser</span>
+                <span class="hub-sidebar__item-hint">(legacy — see blended) · 18 cards · 8 compat states</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-bolton-host.html"
+                    data-title="Bolt-on per-host installed view (legacy — superseded by blended)"
+                    data-eyebrow="BOLT-ON · HOST"
+                    data-hypothesis="Per host, see what's installed, what's patchable, what's missing detection coverage — the operator's command center for one machine's vulnerability state.">
+                <span class="hub-sidebar__item-name">Per-host installed view</span>
+                <span class="hub-sidebar__item-hint">(legacy — see blended) · Patch / uninstall / detect-fired</span>
             </button>
         </section>
 
