@@ -162,6 +162,34 @@ def api_version():
     return jsonify(get_version_info())
 
 
+# Preview routes (P1 #7.7 — T1 design pilot)
+# These are temporary — slated for removal at D1 completion per §17/§24.
+_PREVIEW_DIR = project_root / 'webapp' / 'frontend' / 'preview'
+
+
+@app.route('/preview/header')
+def preview_header_compare():
+    """Side-by-side compare of header-baseline.html and header-taste.html.
+    Honors ?variant=baseline|taste|both (default both)."""
+    variant = request.args.get('variant', 'both')
+    if variant == 'baseline':
+        return send_from_directory(str(_PREVIEW_DIR), 'header-baseline.html')
+    if variant == 'taste':
+        return send_from_directory(str(_PREVIEW_DIR), 'header-taste.html')
+    # Default: both side-by-side (compare view served from compare HTML below)
+    return send_from_directory(str(_PREVIEW_DIR), 'header-compare.html')
+
+
+@app.route('/preview/header/baseline')
+def preview_header_baseline():
+    return send_from_directory(str(_PREVIEW_DIR), 'header-baseline.html')
+
+
+@app.route('/preview/header/taste')
+def preview_header_taste():
+    return send_from_directory(str(_PREVIEW_DIR), 'header-taste.html')
+
+
 # P1 #7.6 — serve the project CHANGELOG.md as plain-text (Markdown).
 # The frontend version modal links here; users open in a new tab.
 _CHANGELOG_FILE = project_root / 'CHANGELOG.md'

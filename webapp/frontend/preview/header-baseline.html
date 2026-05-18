@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Header — Baseline</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ====================================================================
+           Local preview styles — scoped to this page only.
+           Do not extract these into style.css.
+           ==================================================================== */
+        html, body {
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+            min-height: 100vh;
+            background: var(--bg-body);
+            color: var(--text-primary);
+        }
+
+        /* ── Global header bar ─────────────────────────────────────────────── */
+        .global-header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 54px;
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 0 20px;
+            z-index: 100;
+            font-size: 14px;
+        }
+
+        /* ── Brand label (left) ────────────────────────────────────────────── */
+        .gh-brand {
+            color: var(--text-primary);
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            white-space: nowrap;
+        }
+
+        .gh-brand-divider {
+            width: 1px;
+            height: 22px;
+            background: var(--border);
+        }
+
+        /* ── Active-deployment selector (center-left) ──────────────────────── */
+        .gh-deploy {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .gh-deploy-label {
+            color: var(--text-secondary);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .gh-deploy-select {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 5px 10px;
+            font-size: 13px;
+            font-family: inherit;
+            min-width: 280px;
+            cursor: pointer;
+        }
+
+        .gh-deploy-select:focus {
+            outline: none;
+            border-color: var(--border-focus);
+        }
+
+        /* ── Right-side cluster (cost, operator, theme toggle) ─────────────── */
+        .gh-right {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        /* ── Cost indicator ────────────────────────────────────────────────── */
+        .gh-cost {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        .gh-cost-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--brand-light);
+            display: inline-block;
+        }
+
+        .gh-cost-amount {
+            color: var(--text-primary);
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .gh-cost-unit {
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+
+        /* ── Operator badge ────────────────────────────────────────────────── */
+        .gh-operator {
+            font-size: 12px;
+            color: var(--text-muted);
+            padding: 4px 10px;
+            border: 1px solid var(--border-light);
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+
+        .gh-operator-key {
+            color: var(--text-secondary);
+        }
+
+        .gh-operator-value {
+            color: var(--text-primary);
+        }
+
+        /* ── Theme toggle ──────────────────────────────────────────────────── */
+        .gh-theme-toggle {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            border-radius: 4px;
+            padding: 5px 12px;
+            font-size: 12px;
+            font-family: inherit;
+            cursor: pointer;
+            letter-spacing: 0.3px;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+
+        .gh-theme-toggle:hover {
+            background: var(--border);
+            color: var(--text-primary);
+        }
+
+        /* ── Main / preview body ───────────────────────────────────────────── */
+        .preview-body {
+            padding: 80px 24px 24px;
+            max-width: 880px;
+        }
+
+        .preview-body h2 {
+            color: var(--text-primary);
+            margin-top: 0;
+        }
+
+        .preview-body p {
+            color: var(--text-secondary);
+            line-height: 1.55;
+        }
+
+        .preview-body .meta {
+            color: var(--text-muted);
+            font-size: 13px;
+            margin-top: 24px;
+            border-top: 1px solid var(--border-subtle);
+            padding-top: 16px;
+        }
+
+        .preview-body .meta code {
+            background: var(--bg-input);
+            border: 1px solid var(--border-subtle);
+            padding: 1px 6px;
+            border-radius: 3px;
+            color: var(--text-primary);
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <header class="global-header" role="banner">
+        <div class="gh-brand">Red Team Infrastructure</div>
+        <div class="gh-brand-divider" aria-hidden="true"></div>
+
+        <div class="gh-deploy">
+            <label class="gh-deploy-label" for="gh-deploy-select">Active</label>
+            <select class="gh-deploy-select" id="gh-deploy-select" aria-label="Active deployment">
+                <option value="c2_adhoc_dev_harriss_macbook_pro_01">c2_adhoc_dev_harriss_macbook_pro_01</option>
+                <option value="goad_mini_dev_harriss_macbook_pro">goad_mini_dev_harriss_macbook_pro</option>
+                <option value="">(none)</option>
+            </select>
+        </div>
+
+        <div class="gh-right">
+            <div class="gh-cost" title="Estimated monthly cost">
+                <span class="gh-cost-dot" aria-hidden="true"></span>
+                <span class="gh-cost-amount">$407</span>
+                <span class="gh-cost-unit">/mo</span>
+            </div>
+
+            <div class="gh-operator">
+                <span class="gh-operator-key">operator:</span>
+                <span class="gh-operator-value">harriss</span>
+            </div>
+
+            <button type="button" class="gh-theme-toggle" id="gh-theme-toggle" aria-label="Toggle theme">
+                <span id="gh-theme-label">Light</span>
+            </button>
+        </div>
+    </header>
+
+    <main class="preview-body">
+        <h2>Header preview — BASELINE</h2>
+        <p>
+            This is what the global header looks like with a plain, professional implementation.
+            No design skills applied — just following palette.css and dual-theme conventions.
+        </p>
+        <p>
+            Use the toggle on the right to flip between dark and light themes. The brand label,
+            deployment selector, cost indicator, operator badge, and toggle should all remain
+            legible in both modes.
+        </p>
+        <div class="meta">
+            <div>Variables used: <code>--bg-section</code>, <code>--border</code>, <code>--text-primary</code>,
+                <code>--text-secondary</code>, <code>--text-muted</code>, <code>--bg-input</code>,
+                <code>--brand-light</code>, <code>--bg-elevated</code>, <code>--border-light</code>.</div>
+        </div>
+    </main>
+
+    <script>
+        (function () {
+            var btn = document.getElementById('gh-theme-toggle');
+            var label = document.getElementById('gh-theme-label');
+            function syncLabel() {
+                var current = document.documentElement.getAttribute('data-theme') || 'dark';
+                // Label shows the theme you'll switch TO.
+                label.textContent = current === 'light' ? 'Dark' : 'Light';
+            }
+            btn.addEventListener('click', function () {
+                var current = document.documentElement.getAttribute('data-theme') || 'dark';
+                var next = current === 'light' ? 'dark' : 'light';
+                document.documentElement.setAttribute('data-theme', next);
+                syncLabel();
+            });
+            syncLabel();
+        })();
+    </script>
+</body>
+</html>

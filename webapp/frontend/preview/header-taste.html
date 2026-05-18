@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Header — Taste-skill</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           HEADER — TASTE-SKILL ARM
+           Dials: VARIANCE=6 | MOTION=3 | DENSITY=6
+           Vanilla CSS only. Palette variables only. Dual-theme.
+           ============================================================ */
+
+        /* Reset main padding so the header sits flush at top */
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+        }
+
+        /* ── COMMAND BAR ──────────────────────────────────────────────
+           Asymmetric weight: calmer left, denser right.
+           Border-bottom plus a subtle inset glow line for depth.
+           ──────────────────────────────────────────────────────────── */
+        .global-header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 56px;
+            display: grid;
+            grid-template-columns: minmax(280px, 1fr) auto;
+            align-items: stretch;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border);
+            box-shadow: inset 0 -1px 0 0 var(--border-subtle),
+                        0 1px 0 0 var(--bg-body);
+            z-index: 100;
+            font-size: 13px;
+            letter-spacing: 0.01em;
+        }
+
+        /* ── BRAND CLUSTER (left) ─────────────────────────────────────
+           Calmer side. Brand mark + product label stacked tightly.
+           ──────────────────────────────────────────────────────────── */
+        .gh-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 0 20px 0 24px;
+            border-right: 1px solid var(--border-subtle);
+        }
+
+        /* CSS-drawn brand mark — small square with internal slash */
+        .gh-brand-mark {
+            position: relative;
+            width: 22px;
+            height: 22px;
+            border: 1.5px solid var(--brand);
+            border-radius: 4px;
+            flex-shrink: 0;
+            transition: transform 160ms ease, border-color 160ms ease;
+        }
+        .gh-brand-mark::before {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 12px;
+            height: 1.5px;
+            background: var(--brand);
+            transform: translate(-50%, -50%) rotate(-45deg);
+            transform-origin: center;
+        }
+        .gh-brand:hover .gh-brand-mark {
+            transform: rotate(-6deg);
+            border-color: var(--brand-light);
+        }
+
+        .gh-brand-text {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.1;
+        }
+        .gh-brand-name {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 0.02em;
+        }
+        .gh-brand-kicker {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 10px;
+            font-weight: 400;
+            color: var(--text-muted);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+
+        /* ── CHIP RAIL (right) ────────────────────────────────────────
+           Denser side. Vertical divider rails between chips.
+           ──────────────────────────────────────────────────────────── */
+        .gh-rail {
+            display: flex;
+            align-items: stretch;
+        }
+
+        .gh-chip {
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            border-left: 1px solid var(--border-subtle);
+            transition: background-color 160ms ease;
+        }
+        .gh-chip:hover {
+            background: var(--bg-card);
+        }
+
+        /* Stacked label pattern: large value over tiny mono caption */
+        .gh-stack {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.05;
+            min-width: 0;
+        }
+        .gh-stack-value {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            white-space: nowrap;
+        }
+        .gh-stack-caption {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 400;
+            color: var(--text-muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-top: 3px;
+        }
+
+        /* ── DEPLOYMENT SELECTOR ──────────────────────────────────────
+           Custom select wrapper. CSS-drawn arrow. Hover lift via transform.
+           ──────────────────────────────────────────────────────────── */
+        .gh-deploy {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .gh-deploy-label {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 400;
+            color: var(--text-muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .gh-select-wrap {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            transition: transform 160ms ease;
+        }
+        .gh-chip.gh-deploy:hover .gh-select-wrap {
+            transform: translateY(-1px);
+        }
+
+        .gh-select {
+            appearance: none;
+            -webkit-appearance: none;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 5px 28px 5px 10px;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: border-color 160ms ease, background-color 160ms ease;
+            line-height: 1.3;
+        }
+        .gh-select:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+        }
+        .gh-select:focus {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 2px var(--bg-body),
+                        0 0 0 3px var(--brand);
+        }
+        .gh-select:focus-visible {
+            outline: none;
+        }
+
+        /* CSS-drawn caret — chevron made from two borders */
+        .gh-select-caret {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            width: 6px;
+            height: 6px;
+            border-right: 1.5px solid var(--text-secondary);
+            border-bottom: 1.5px solid var(--text-secondary);
+            transform: translateY(-70%) rotate(45deg);
+            pointer-events: none;
+            transition: border-color 160ms ease;
+        }
+        .gh-select-wrap:hover .gh-select-caret {
+            border-color: var(--text-primary);
+        }
+
+        /* ── COST CHIP ────────────────────────────────────────────────
+           Value-over-caption pattern; tabular numerals.
+           ──────────────────────────────────────────────────────────── */
+        .gh-cost-value {
+            font-variant-numeric: tabular-nums;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+        .gh-cost-currency {
+            color: var(--text-muted);
+            font-weight: 400;
+            margin-right: 1px;
+        }
+
+        /* ── OPERATOR CHIP ────────────────────────────────────────────
+           Pulsing CSS-drawn status dot (no emoji), name in mono-ish.
+           Motion limited to opacity (hardware-accelerated, subtle).
+           ──────────────────────────────────────────────────────────── */
+        .gh-operator {
+            gap: 10px;
+        }
+        .gh-operator-dot {
+            position: relative;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--success);
+            flex-shrink: 0;
+        }
+        .gh-operator-dot::after {
+            content: "";
+            position: absolute;
+            inset: -3px;
+            border-radius: 50%;
+            border: 1px solid var(--success);
+            opacity: 0.6;
+            animation: gh-pulse 2400ms ease-out infinite;
+            will-change: transform, opacity;
+        }
+        @keyframes gh-pulse {
+            0%   { transform: scale(0.6); opacity: 0.7; }
+            70%  { transform: scale(1.4); opacity: 0; }
+            100% { transform: scale(1.4); opacity: 0; }
+        }
+        .gh-operator-name {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .gh-operator-name::before {
+            content: "operator:";
+            color: var(--text-muted);
+            font-weight: 400;
+            margin-right: 6px;
+            letter-spacing: 0.04em;
+        }
+
+        /* ── THEME TOGGLE ─────────────────────────────────────────────
+           Custom square button with CSS-drawn sun/moon glyph.
+           ──────────────────────────────────────────────────────────── */
+        .gh-theme-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            margin: 0 16px 0 0;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 0;
+            transition: border-color 160ms ease, transform 160ms ease,
+                        background-color 160ms ease;
+        }
+        .gh-theme-toggle:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+            transform: translateY(-1px);
+        }
+        .gh-theme-toggle:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 2px var(--bg-body),
+                        0 0 0 3px var(--brand);
+        }
+
+        /* CSS-drawn glyph: small circle (moon body) with offset mask circle */
+        .gh-theme-glyph {
+            position: relative;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+            transition: background-color 160ms ease, box-shadow 160ms ease;
+        }
+        .gh-theme-glyph::before {
+            content: "";
+            position: absolute;
+            top: -1px;
+            right: -3px;
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            background: var(--bg-container);
+            transition: background-color 160ms ease;
+        }
+        [data-theme="light"] .gh-theme-glyph {
+            background: var(--text-primary);
+            box-shadow: 0 0 0 1px var(--text-primary);
+        }
+        [data-theme="light"] .gh-theme-glyph::before {
+            background: var(--bg-container);
+        }
+        .gh-theme-toggle:hover .gh-theme-glyph {
+            background: var(--text-primary);
+        }
+
+        /* ── DEMO BODY ────────────────────────────────────────────────
+           Below the fixed header.
+           ──────────────────────────────────────────────────────────── */
+        .demo-main {
+            padding: 88px 32px 32px;
+            max-width: 880px;
+            margin: 0 auto;
+        }
+        .demo-main h2 {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin: 0 0 10px;
+            letter-spacing: -0.005em;
+        }
+        .demo-main p {
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin: 0 0 12px;
+            font-size: 14px;
+        }
+        .demo-main code {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 12px;
+            padding: 1px 5px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 3px;
+            color: var(--text-primary);
+        }
+        .demo-toggle-btn {
+            margin-top: 16px;
+            padding: 8px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 160ms ease, border-color 160ms ease,
+                        transform 160ms ease;
+        }
+        .demo-toggle-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            transform: translateY(-1px);
+        }
+        .demo-toggle-btn:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 2px var(--bg-body),
+                        0 0 0 3px var(--brand);
+        }
+
+        /* Reduced motion: kill the pulse and lifts */
+        @media (prefers-reduced-motion: reduce) {
+            .gh-operator-dot::after { animation: none; }
+            .gh-chip, .gh-brand-mark, .gh-select-wrap, .gh-theme-toggle,
+            .demo-toggle-btn {
+                transition: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="global-header" role="banner">
+        <!-- LEFT: brand cluster -->
+        <div class="gh-brand">
+            <span class="gh-brand-mark" aria-hidden="true"></span>
+            <div class="gh-brand-text">
+                <span class="gh-brand-name">Red Team Infrastructure</span>
+                <span class="gh-brand-kicker">command bar</span>
+            </div>
+        </div>
+
+        <!-- RIGHT: chip rail -->
+        <div class="gh-rail">
+            <!-- Deployment selector -->
+            <div class="gh-chip gh-deploy">
+                <span class="gh-deploy-label">deployment</span>
+                <span class="gh-select-wrap">
+                    <select class="gh-select" aria-label="Active deployment">
+                        <option>c2-adhoc-dev-harriss</option>
+                        <option>goad-light-lab01</option>
+                        <option>combined-full-engagement-acme</option>
+                    </select>
+                    <span class="gh-select-caret" aria-hidden="true"></span>
+                </span>
+            </div>
+
+            <!-- Cost indicator -->
+            <div class="gh-chip">
+                <div class="gh-stack">
+                    <span class="gh-stack-value gh-cost-value">
+                        <span class="gh-cost-currency">$</span>407<span class="gh-cost-currency">/mo</span>
+                    </span>
+                    <span class="gh-stack-caption">monthly burn</span>
+                </div>
+            </div>
+
+            <!-- Operator badge -->
+            <div class="gh-chip gh-operator">
+                <span class="gh-operator-dot" aria-hidden="true"></span>
+                <div class="gh-stack">
+                    <span class="gh-operator-name">harriss</span>
+                    <span class="gh-stack-caption">session active</span>
+                </div>
+            </div>
+
+            <!-- Theme toggle -->
+            <div class="gh-chip" style="padding-right: 0;">
+                <button class="gh-theme-toggle" type="button"
+                        aria-label="Toggle theme"
+                        onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+                    <span class="gh-theme-glyph" aria-hidden="true"></span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="demo-main">
+        <h2>Header preview &mdash; TASTE-SKILL</h2>
+        <p>Dials: <code>VARIANCE=6</code>, <code>MOTION=3</code>, <code>DENSITY=6</code>. Vanilla HTML/CSS, palette.css only, dual-theme verified.</p>
+        <p>This arm treats the header as a <strong>command bar</strong>: asymmetric weight (calm brand cluster on the left, denser chip rail on the right), monospace micro-captions under primary values, a CSS-drawn pulsing operator dot, custom select caret, and hover lifts via <code>transform</code> only (no width/top animations). All colors resolve through palette tokens, so the bar inverts cleanly between dark and light themes.</p>
+        <button class="demo-toggle-btn" type="button"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+            Toggle theme
+        </button>
+    </main>
+</body>
+</html>
