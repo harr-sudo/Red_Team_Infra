@@ -85,6 +85,13 @@
             <symbol id="icon-bolt" viewBox="0 0 14 14">
                 <path d="M8 1 L3 8 L7 8 L6 13 L11 6 L7 6 Z"/>
             </symbol>
+            <!-- v3 PALETTE (Agent B) — magnifier glyph for the ⌘K trigger
+                 in the top utility bar. Outlined 14x14, matches the rest
+                 of the icon library's stroke weight + viewBox. -->
+            <symbol id="icon-search" viewBox="0 0 14 14">
+                <circle cx="6" cy="6" r="4"/>
+                <path d="M9 9 L12 12"/>
+            </symbol>
         </defs>
     </svg>
 
@@ -124,6 +131,21 @@
             <div class="app-topbar__breadcrumb" id="app-topbar-breadcrumb" aria-label="Current location">
                 <span class="app-topbar__crumb is-current" id="app-topbar-crumb-page">Dashboard</span>
             </div>
+            <!-- v3 PALETTE (Agent B) — ⌘K trigger mounts in the top bar
+                 between the breadcrumb and the right-side chips. Clicking
+                 opens APP.palette; the same overlay is also triggered by
+                 the ⌘K / Ctrl-K keybinding wired in APP.palette.init(). -->
+            <button class="app-topbar__palette-trigger" type="button"
+                    id="palette-trigger"
+                    aria-label="Open command palette (Cmd+K)">
+                <svg class="app-topbar__palette-icon icon" width="14" height="14" aria-hidden="true">
+                    <use href="#icon-search"/>
+                </svg>
+                <span class="app-topbar__palette-label">Search anything…</span>
+                <span class="app-topbar__palette-kbd" aria-hidden="true">
+                    <kbd>⌘K</kbd>
+                </span>
+            </button>
             <div class="app-topbar__right global-header__rail">
                 <!-- Active deployment selector (custom combobox listbox) — relocated
                      from the left side per 2026-05-18 directive. Same IDs / classes
@@ -245,7 +267,10 @@
                             <button class="app-rail__child" type="button"
                                     data-rail-target="deployments-tab"
                                     data-rail-subpill="cleanup">Cleanup</button>
-                            <!-- Bolt-ons sub-pill mounts here (agent D). -->
+                            <!-- v3 production rollout — 5th Deployments sub-pill (Agent D). -->
+                            <button class="app-rail__child" type="button"
+                                    data-rail-target="deployments-tab"
+                                    data-rail-subpill="bolt-ons">Bolt-ons</button>
                         </div>
                     </div>
                 </div>
@@ -377,18 +402,38 @@
                          'prereqs-verified-at' is absent. Cleared after any prereq check
                          succeeds. Link routes through APP.navigateTo('aws-check'),
                          which the NAVIGATE_ALIASES map redirects to Settings + anchor. -->
-                    <div id="prereqs-first-run-banner" class="dashboard-alert dashboard-alert--warning" style="display: none;">
+                    <!-- v3 Agent C — banner is itself a clickable overlay
+                         trigger. The inline link is kept as a visual cue but
+                         routes through APP.overlay (handler in app.js so the
+                         anchor + banner click land on the same overlay).  -->
+                    <div id="prereqs-first-run-banner"
+                         class="dashboard-alert dashboard-alert--warning"
+                         data-v3-widget="prereqs"
+                         role="button"
+                         tabindex="0"
+                         style="display: none; cursor: pointer;">
                         <strong>Prerequisites not verified.</strong>
                         Run the AWS &amp; SSH prerequisite checks in
-                        <a href="#" onclick="APP.navigateTo('aws-check'); return false;">Settings &rarr; AWS &amp; SSH Prerequisites</a>
+                        <a href="#" data-v3-widget-link="prereqs">Settings &rarr; AWS &amp; SSH Prerequisites</a>
                         before your first deployment.
                     </div>
                     <div id="budget-alert-banner" class="dashboard-alert dashboard-alert--warning" style="display: none;"></div>
-                    <div id="failed-deployments-alert" class="dashboard-alert dashboard-alert--danger" style="display: none;"></div>
+                    <!-- v3 Agent C — failed deployment alert opens a drill-down
+                         overlay with retry / destroy buttons per failed project. -->
+                    <div id="failed-deployments-alert"
+                         class="dashboard-alert dashboard-alert--danger"
+                         data-v3-widget="failed"
+                         role="button"
+                         tabindex="0"
+                         style="display: none; cursor: pointer;"></div>
                 </section>
 
-                <!-- 3. Live deployments grid — Phase 3e: eyebrow + title rhythm -->
-                <section class="dashboard-widget">
+                <!-- 3. Live deployments grid — Phase 3e: eyebrow + title rhythm.
+                     v3 Agent C — per-card clicks open an overlay (manage view)
+                     instead of navigating. The grid renderer in app.js stamps
+                     `data-v3-deployment-card="<name>"` on each card so the
+                     delegated handler can route to APP.overlay. -->
+                <section class="dashboard-widget" data-v3-widget="deployments">
                     <header class="dashboard-widget__head">
                         <div class="dashboard-widget__head-text">
                             <span class="dashboard-widget__eyebrow">Active Infrastructure</span>
@@ -400,9 +445,18 @@
                     </div>
                 </section>
 
-                <!-- 4. 3-col widget row: Active Beacons + Cost Trend + Architecture -->
+                <!-- 4. 3-col widget row: Active Beacons + Cost Trend + Architecture
+                     v3 Agent C — widgets opens as OVERLAYS now (not navigation).
+                     The whole card is a click target; the legacy "Open ___ →"
+                     anchors are preserved as visual affordances but their
+                     onclick handlers route through APP.overlay so both the
+                     anchor and the card surface land on the same overlay. -->
                 <section class="dashboard-widget-row">
-                    <div class="dashboard-widget dashboard-widget--compact">
+                    <div class="dashboard-widget dashboard-widget--compact"
+                         data-v3-widget="beacons"
+                         role="button"
+                         tabindex="0"
+                         aria-label="Active beacons — open overlay">
                         <header class="dashboard-widget__head">
                             <div class="dashboard-widget__head-text">
                                 <span class="dashboard-widget__eyebrow">Operations</span>
@@ -412,10 +466,14 @@
                         <div id="dashboard-beacons-widget">
                             <div class="dashboard-stat-big" id="dashboard-beacons-count">&mdash;</div>
                             <div class="dashboard-stat-caption">Last callback: <span id="dashboard-beacons-last">&mdash;</span></div>
-                            <a href="#" onclick="APP.navigateTo('operations-tab', 'beacons'); return false;" class="dashboard-stat-link">Open beacons &rarr;</a>
+                            <a href="#" class="dashboard-stat-link" data-v3-widget-link="beacons">Open beacons &rarr;</a>
                         </div>
                     </div>
-                    <div class="dashboard-widget dashboard-widget--compact">
+                    <div class="dashboard-widget dashboard-widget--compact"
+                         data-v3-widget="cost"
+                         role="button"
+                         tabindex="0"
+                         aria-label="Cost trend — open Cost Tracker overlay">
                         <header class="dashboard-widget__head">
                             <div class="dashboard-widget__head-text">
                                 <span class="dashboard-widget__eyebrow">Last 14 days</span>
@@ -426,10 +484,16 @@
                             <div class="dashboard-stat-big" id="dashboard-cost-total">&mdash;</div>
                             <svg id="dashboard-cost-sparkline" viewBox="0 0 200 40" class="dashboard-cost-sparkline" preserveAspectRatio="none" aria-hidden="true"></svg>
                             <div class="dashboard-cost-delta" id="dashboard-cost-delta">&mdash;</div>
-                            <a href="#" onclick="APP.navigateTo('settings'); return false;" class="dashboard-stat-link">Cost tracker &rarr;</a>
+                            <a href="#" class="dashboard-stat-link" data-v3-widget-link="cost">Cost tracker &rarr;</a>
                         </div>
                     </div>
-                    <div class="dashboard-widget dashboard-widget--compact" id="dashboard-architecture-widget">
+                    <!-- Architecture widget — v3 Agent C: keeps the existing
+                         APP.openArchitectureModal() pathway (canonical APP.modal
+                         pattern, already overlay-shaped). data-v3-widget tag
+                         lets the suite tests detect it alongside the others. -->
+                    <div class="dashboard-widget dashboard-widget--compact"
+                         id="dashboard-architecture-widget"
+                         data-v3-widget="architecture">
                         <header class="dashboard-widget__head">
                             <div class="dashboard-widget__head-text">
                                 <span class="dashboard-widget__eyebrow">Active deployment</span>
@@ -454,16 +518,23 @@
                      tab activation + manual refresh button + after operator
                      switch. Empty state when no entries.
                      Phase 3e: now renders as .spec-list with .operator-dot per row. -->
-                <section class="dashboard-widget" id="dashboard-activity-widget">
+                <section class="dashboard-widget"
+                         id="dashboard-activity-widget"
+                         data-v3-widget="activity"
+                         role="button"
+                         tabindex="0"
+                         aria-label="Recent activity — open full audit log overlay">
                     <header class="dashboard-widget__head">
                         <div class="dashboard-widget__head-text">
                             <span class="dashboard-widget__eyebrow">Operator audit trail</span>
                             <h3 class="dashboard-widget__title">Recent Activity</h3>
                         </div>
                         <div class="dashboard-widget__head-actions">
+                            <!-- Stop propagation so the inline refresh button
+                                 doesn't trip the widget-level overlay open. -->
                             <button class="dashboard-activity-widget__refresh"
                                     type="button"
-                                    onclick="loadDashboardActivity(true)"
+                                    onclick="event.stopPropagation(); loadDashboardActivity(true)"
                                     aria-label="Refresh activity feed"
                                     title="Refresh">&#x21BB;</button>
                         </div>
@@ -475,8 +546,16 @@
                     </div>
                 </section>
 
-                <!-- 6. Elastic Detection Rules card (preserved, polished for launchpad) -->
-                <section class="dashboard-widget" id="dashboard-elastic-rules-widget">
+                <!-- 6. Elastic Detection Rules card (preserved, polished for launchpad).
+                     v3 Agent C — card click opens a rules browser overlay. The
+                     "Update Rules" button stops propagation so the regen run
+                     doesn't double-fire the overlay open. -->
+                <section class="dashboard-widget"
+                         id="dashboard-elastic-rules-widget"
+                         data-v3-widget="elastic"
+                         role="button"
+                         tabindex="0"
+                         aria-label="Elastic detection rules — open rules browser overlay">
                     <header class="dashboard-widget__head">
                         <div class="dashboard-widget__head-text">
                             <span class="dashboard-widget__eyebrow">SIEM mappings</span>
@@ -486,7 +565,7 @@
                     <div class="dashboard-elastic-rules-row">
                         <span id="elastic-rules-count" class="badge badge-info">&mdash;</span>
                         <span id="elastic-rules-date" class="t-muted">Last updated: &mdash;</span>
-                        <button class="btn btn-sm btn-info" id="btn-update-elastic-rules" type="button" onclick="updateElasticRules()">Update Rules</button>
+                        <button class="btn btn-sm btn-info" id="btn-update-elastic-rules" type="button" onclick="event.stopPropagation(); updateElasticRules()">Update Rules</button>
                         <span id="elastic-rules-status" class="t-muted"></span>
                     </div>
                     <p class="t-muted dashboard-elastic-rules-help">
@@ -523,6 +602,11 @@
                             data-subpill="cleanup"
                             aria-selected="false"
                             id="subpill-cleanup">Cleanup</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
+                            data-subpill="bolt-ons"
+                            aria-selected="false"
+                            id="subpill-bolt-ons">Bolt-ons</button>
                 </div>
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="configure" id="subpill-pane-configure">
@@ -1995,6 +2079,200 @@ ns-143.awsdns-17.org
                             </div>
                         </div>
                     </div>
+
+                    <!-- v3 production rollout (Agent D) — Bolt-ons sub-pill pane.
+                         Mirrors webapp/frontend/preview/page-bolton-target.html with
+                         live wiring to /api/bolton/*. JS controller is APP.bolton. -->
+                    <div class="subpill-pane" data-subpill-pane="bolt-ons" id="subpill-pane-bolt-ons" hidden>
+                        <div class="bolton-live" data-bolton-root>
+                            <div class="bolton-live__eyebrow">
+                                <div class="bolton-live__eyebrow-text">
+                                    <span class="bolton-live__eyebrow-label">VULNERABILITY CATALOG</span>
+                                    <h2 class="bolton-live__title">Bolt-ons</h2>
+                                    <p class="bolton-live__description">
+                                        Per-host vulnerability state for the active lab. Install, patch, uninstall,
+                                        or revert any bolt-on across the deployment. Compatibility is evaluated
+                                        per host against the active facts; coverage shows the matching Elastic rules.
+                                    </p>
+                                </div>
+                                <div class="bolton-live__eyebrow-actions">
+                                    <label class="bolton-live__host-label" for="bolton-host-select">Target host</label>
+                                    <select id="bolton-host-select" class="form-select bolton-live__host-select" aria-label="Target host">
+                                        <option value="">— select a host —</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Empty / loading state placeholder -->
+                            <div id="bolton-empty-state" class="bolton-live__placeholder">
+                                <p>Select a host above to view its bolt-on catalog.</p>
+                            </div>
+
+                            <!-- Host hero (populated on host select) -->
+                            <section class="bolton-live__hero" id="bolton-hero" hidden aria-label="Target host overview">
+                                <span class="bolton-live__hero-icon" aria-hidden="true">
+                                    <svg class="icon icon--lg" aria-hidden="true"><use href="#icon-server"/></svg>
+                                </span>
+                                <div class="bolton-live__hero-body">
+                                    <span class="bolton-live__hero-kicker" id="bolton-hero-kicker">—</span>
+                                    <h3 class="bolton-live__hero-title" id="bolton-hero-title">—</h3>
+                                    <p class="bolton-live__hero-sub" id="bolton-hero-sub"></p>
+                                </div>
+                                <div class="bolton-live__hero-actions">
+                                    <button class="spec-edit-btn"
+                                            type="button"
+                                            id="bolton-refresh-facts">Refresh facts</button>
+                                </div>
+                            </section>
+
+                            <!-- 4 summary stat tiles -->
+                            <div class="bolton-live__summary" id="bolton-summary" hidden role="group" aria-label="Per-host bolt-on stats">
+                                <div class="bolton-live__summary-tile">
+                                    <span class="bolton-live__summary-num" id="bolton-stat-installed">0</span>
+                                    <span class="bolton-live__summary-label">Installed</span>
+                                </div>
+                                <div class="bolton-live__summary-tile">
+                                    <span class="bolton-live__summary-num bolton-live__summary-num--ok" id="bolton-stat-patched">0</span>
+                                    <span class="bolton-live__summary-label">Patched</span>
+                                </div>
+                                <div class="bolton-live__summary-tile">
+                                    <span class="bolton-live__summary-num bolton-live__summary-num--danger" id="bolton-stat-no-coverage">0</span>
+                                    <span class="bolton-live__summary-label">Pending detection coverage</span>
+                                </div>
+                                <div class="bolton-live__summary-tile">
+                                    <span class="bolton-live__summary-num bolton-live__summary-num--warn" id="bolton-stat-available">0</span>
+                                    <span class="bolton-live__summary-label">Available compatible</span>
+                                </div>
+                            </div>
+
+                            <!-- Filter bar (chips: category × compatibility × coverage) -->
+                            <div class="bolton-live__filters" id="bolton-filters" hidden aria-label="Filters">
+                                <div class="bolton-live__filters-row bolton-live__filters-row--top">
+                                    <span class="bolton-live__filters-title">Filters
+                                        <small id="bolton-active-count">— bolt-ons shown</small>
+                                    </span>
+                                </div>
+                                <div class="bolton-live__filters-row">
+                                    <span class="bolton-live__filters-rowlabel">Category</span>
+                                    <div class="bolton-live__chips" data-chip-group="category">
+                                        <button class="bt-chip is-active" data-group="category" data-value="all" type="button">All</button>
+                                    </div>
+                                </div>
+                                <div class="bolton-live__filters-row">
+                                    <span class="bolton-live__filters-rowlabel">Compatibility</span>
+                                    <div class="bolton-live__chips" data-chip-group="state">
+                                        <button class="bt-chip is-active" data-group="state" data-value="all" type="button">All</button>
+                                        <button class="bt-chip" data-group="state" data-value="ALREADY_INSTALLED" type="button">Installed</button>
+                                        <button class="bt-chip" data-group="state" data-value="INSTALLABLE" type="button">Available</button>
+                                        <button class="bt-chip" data-group="state" data-value="PATCHED" type="button">Patched</button>
+                                        <button class="bt-chip" data-group="state" data-value="INCOMPATIBLE_OS" type="button">Incompatible OS</button>
+                                        <button class="bt-chip" data-group="state" data-value="INCOMPATIBLE_ROLE" type="button">Incompatible role</button>
+                                        <button class="bt-chip" data-group="state" data-value="MISSING_PREREQ" type="button">Missing prereq</button>
+                                        <button class="bt-chip" data-group="state" data-value="MISSING_SOFTWARE" type="button">Missing software</button>
+                                        <button class="bt-chip" data-group="state" data-value="CONFLICTS_WITH_INSTALLED" type="button">Conflicts</button>
+                                    </div>
+                                </div>
+                                <div class="bolton-live__filters-row">
+                                    <span class="bolton-live__filters-rowlabel">Coverage</span>
+                                    <div class="bolton-live__chips" data-chip-group="coverage">
+                                        <button class="bt-chip is-active" data-group="coverage" data-value="all" type="button">All</button>
+                                        <button class="bt-chip" data-group="coverage" data-value="covered" type="button">Covered</button>
+                                        <button class="bt-chip" data-group="coverage" data-value="partial" type="button">Partial</button>
+                                        <button class="bt-chip" data-group="coverage" data-value="no-rule" type="button">No-rule</button>
+                                        <button class="bt-chip" data-group="coverage" data-value="rule-stale" type="button">Stale</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 6-section spec-list (rendered by APP.bolton.render()) -->
+                            <div class="bolton-live__sections" id="bolton-sections" hidden>
+                                <section class="bt-section" data-open="true" data-section="installed">
+                                    <button class="bt-section__header" type="button" aria-expanded="true">
+                                        <span class="bt-section__header-left">
+                                            <span class="bt-section__chevron" aria-hidden="true"></span>
+                                            <h3 class="bt-section__title">Installed · <span data-count="installed">0</span></h3>
+                                        </span>
+                                        <span class="bt-section__hint">Active bolt-ons on this host</span>
+                                    </button>
+                                    <div class="bt-section__body">
+                                        <div class="bt-section__body-inner">
+                                            <div class="spec-list" role="list" data-rows="installed"></div>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="bt-section" data-open="true" data-section="available">
+                                    <button class="bt-section__header" type="button" aria-expanded="true">
+                                        <span class="bt-section__header-left">
+                                            <span class="bt-section__chevron" aria-hidden="true"></span>
+                                            <h3 class="bt-section__title">Available to install · <span data-count="available">0</span></h3>
+                                        </span>
+                                        <span class="bt-section__hint">Compatible with this host</span>
+                                    </button>
+                                    <div class="bt-section__body">
+                                        <div class="bt-section__body-inner">
+                                            <div class="spec-list" role="list" data-rows="available"></div>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="bt-section" data-open="false" data-section="incompatible">
+                                    <button class="bt-section__header" type="button" aria-expanded="false">
+                                        <span class="bt-section__header-left">
+                                            <span class="bt-section__chevron" aria-hidden="true"></span>
+                                            <h3 class="bt-section__title">Incompatible · <span data-count="incompatible">0</span></h3>
+                                        </span>
+                                        <span class="bt-section__hint">Cannot install on this host</span>
+                                    </button>
+                                    <div class="bt-section__body">
+                                        <div class="bt-section__body-inner">
+                                            <div class="spec-list" role="list" data-rows="incompatible"></div>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="bt-section" data-open="false" data-section="conflicts">
+                                    <button class="bt-section__header" type="button" aria-expanded="false">
+                                        <span class="bt-section__header-left">
+                                            <span class="bt-section__chevron" aria-hidden="true"></span>
+                                            <h3 class="bt-section__title">Conflicts · <span data-count="conflicts">0</span></h3>
+                                        </span>
+                                        <span class="bt-section__hint">Cannot coexist with installed bolt-ons</span>
+                                    </button>
+                                    <div class="bt-section__body">
+                                        <div class="bt-section__body-inner">
+                                            <div class="spec-list" role="list" data-rows="conflicts"></div>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="bt-section" data-open="false" data-section="already-elsewhere">
+                                    <button class="bt-section__header" type="button" aria-expanded="false">
+                                        <span class="bt-section__header-left">
+                                            <span class="bt-section__chevron" aria-hidden="true"></span>
+                                            <h3 class="bt-section__title">Already installed elsewhere · <span data-count="already-elsewhere">0</span></h3>
+                                        </span>
+                                        <span class="bt-section__hint">Installed on another host in this lab</span>
+                                    </button>
+                                    <div class="bt-section__body">
+                                        <div class="bt-section__body-inner">
+                                            <div class="spec-list" role="list" data-rows="already-elsewhere"></div>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="bt-section" data-open="false" data-section="patched">
+                                    <button class="bt-section__header" type="button" aria-expanded="false">
+                                        <span class="bt-section__header-left">
+                                            <span class="bt-section__chevron" aria-hidden="true"></span>
+                                            <h3 class="bt-section__title">Patched · <span data-count="patched">0</span></h3>
+                                        </span>
+                                        <span class="bt-section__hint">Underlying CVE patched on host</span>
+                                    </button>
+                                    <div class="bt-section__body">
+                                        <div class="bt-section__body-inner">
+                                            <div class="spec-list" role="list" data-rows="patched"></div>
+                                        </div>
+                                    </div>
+                                </section>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -3405,6 +3683,78 @@ ns-143.awsdns-17.org
          aria-labelledby="journey-takeover-title"
          hidden>
         <div id="journey-takeover-body"></div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         v3 OVERLAY STACK MOUNT (Agent C, 2026-05-18)
+
+         Body-level root that APP.overlay populates with stacked scrim +
+         card overlays. Each call to APP.overlay.open() appends a new
+         .app-overlay node into this container; APP.overlay.close() pops
+         the matching node off the DOM.
+
+         Dashboard widget clicks ROUTE THROUGH APP.overlay (not navigation)
+         so heavy contextual surfaces (beacons list, full audit log, cost
+         tracker, prereqs checker, etc.) open in-place. Phase 2b primitives
+         (.scrim-takeover / .takeover-card) remain authoritative for the
+         New Deployment journey; this stack composes them with z-layered
+         depth + dashboard dim/blur ramps.
+         ════════════════════════════════════════════════════════════════════ -->
+    <div id="app-overlay-root" aria-live="polite"></div>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         v3 PALETTE (Agent B, 2026-05-18)
+
+         Body-level ⌘K command palette overlay. Hidden by default; opened
+         by APP.palette.open() (triggered by #palette-trigger click or the
+         Cmd/Ctrl-K keybinding). Scrim dims the rest of the app; the card
+         is centered horizontally and anchored ~15vh from the top so the
+         search results scroll below without pushing content off-viewport.
+
+         The entire interior (search input chrome + dynamic results) is
+         painted by APP.palette._render() — only the static shell ships
+         in HTML so the contrast invariants suite can audit it without
+         JS execution.
+         ════════════════════════════════════════════════════════════════════ -->
+    <div id="palette-overlay" class="palette-overlay" hidden
+         role="dialog" aria-modal="true" aria-labelledby="palette-input">
+        <div class="palette-overlay__scrim" data-palette-close></div>
+        <div class="palette-overlay__card" role="document">
+            <div class="palette-overlay__header">
+                <span class="palette-overlay__kbd-hint" aria-hidden="true">
+                    <svg width="14" height="14" aria-hidden="true">
+                        <use href="#icon-search"/>
+                    </svg>
+                </span>
+                <input id="palette-input"
+                       class="palette-overlay__input"
+                       type="text"
+                       placeholder="Type to search anything…"
+                       autocomplete="off"
+                       autocorrect="off"
+                       autocapitalize="off"
+                       spellcheck="false"
+                       aria-label="Command palette search"
+                       aria-controls="palette-results"
+                       aria-autocomplete="list">
+                <button class="palette-overlay__close"
+                        type="button"
+                        data-palette-close
+                        aria-label="Close command palette">&times;</button>
+            </div>
+            <div class="palette-overlay__sections"
+                 id="palette-results"
+                 role="listbox"
+                 aria-label="Palette results">
+                <!-- Painted by APP.palette._render(). Sections are RECENT
+                     first, then bucketed by kind (ROUTES, ACTIONS, …). -->
+            </div>
+            <div class="palette-overlay__footer" aria-hidden="true">
+                <span><kbd>&uarr;</kbd><kbd>&darr;</kbd> navigate</span>
+                <span><kbd>&crarr;</kbd> select</span>
+                <span><kbd>esc</kbd> close</span>
+            </div>
+        </div>
     </div>
 </body>
 </html>

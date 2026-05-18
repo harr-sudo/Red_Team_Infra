@@ -9250,3 +9250,1173 @@ body:has(.app-shell) {
 /* ════════════════════════════════════════════════════════════════════════
    END v3 SHELL
    ════════════════════════════════════════════════════════════════════════ */
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   v3 PALETTE (Agent B, 2026-05-18)
+
+   The global ⌘K command palette. Composed of:
+     1. .app-topbar__palette-trigger — the trigger button in the top bar
+     2. .palette-overlay             — body-level full-viewport scrim + card
+     3. .palette-overlay__row(s)     — fuzzy-match results painted by JS
+
+   ALL surfaces use semantic palette tokens — never raw hex values — so
+   the dual-theme contrast invariants suite passes without per-theme
+   overrides. Tested in both data-theme="dark" (default) and
+   data-theme="light" via tests/browser/test_v3_palette.spec.js.
+
+   Z-stack contract: the palette overlay sits at z-index 200, above the
+   journey takeover (z-index 150) and overlay stack (z-index 120) so it
+   can always be summoned, even mid-overlay. Esc closes the palette
+   first; only after the palette is gone does Esc unwind overlay layers.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── TOP-BAR TRIGGER ─────────────────────────────────────────────────── */
+/* Subtle search-styled button sitting between the breadcrumb and the
+   right-side chips. Mirrors the Spotlight / Cmd-K affordance most
+   developers already recognise.
+
+   The parent .app-topbar.global-header uses grid `1fr auto`; injecting a
+   third child would break that layout. We force the grid to become
+   `auto 1fr auto` so the breadcrumb stays compact-left, the trigger
+   takes the centered "1fr" slot, and the right cluster keeps `auto`.
+   The Agent A breadcrumb's `min-width: 0; overflow: hidden` already
+   handles the truncation in narrow viewports. */
+.app-topbar.global-header:has(.app-topbar__palette-trigger) {
+    grid-template-columns: auto 1fr auto;
+}
+
+.app-topbar__palette-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 10px 0 9px;
+    margin: 0 24px;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    min-width: 200px;
+    max-width: 420px;
+    width: 100%;
+    justify-self: center;
+    transition: background-color var(--motion-duration-fast) var(--motion-easing-standard),
+                border-color var(--motion-duration-fast) var(--motion-easing-standard),
+                color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.app-topbar__palette-trigger:hover {
+    /* Layer baseline: .app-topbar sits on bg-container. bg-elevated as
+       hover surface keeps --text-primary >= 7:1 in both themes. */
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.app-topbar__palette-trigger:focus-visible {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 32%, transparent);
+}
+
+.app-topbar__palette-icon {
+    flex-shrink: 0;
+    color: currentColor;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.85;
+}
+
+.app-topbar__palette-label {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.app-topbar__palette-kbd {
+    display: inline-flex;
+    flex-shrink: 0;
+    margin-left: auto;
+}
+.app-topbar__palette-kbd kbd {
+    display: inline-block;
+    padding: 1px 6px;
+    font-family: var(--font-family-mono);
+    font-size: 10px;
+    font-weight: 600;
+    /* Layer baseline: trigger surface is bg-input → bg-elevated on hover.
+       Kbd chip uses bg-container for clear separation; text-secondary
+       resolves >= 4.5:1 against bg-container in both themes. */
+    color: var(--text-secondary);
+    background: var(--bg-container);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    line-height: 1.4;
+}
+
+/* On narrow viewports collapse to icon-only so the right cluster still fits. */
+@media (max-width: 1100px) {
+    .app-topbar__palette-trigger {
+        min-width: 0;
+        max-width: 36px;
+        padding: 0 8px;
+    }
+    .app-topbar__palette-label,
+    .app-topbar__palette-kbd {
+        display: none;
+    }
+}
+
+
+/* ── OVERLAY SHELL ───────────────────────────────────────────────────── */
+.palette-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    /* Anchor the card ~15vh from top so plenty of result rows are visible
+       above the fold without dominating the viewport. */
+    padding-top: 15vh;
+}
+
+.palette-overlay[hidden] {
+    display: none;
+}
+
+.palette-overlay__scrim {
+    position: fixed;
+    inset: 0;
+    background: var(--scrim);
+    backdrop-filter: var(--scrim-blur);
+    -webkit-backdrop-filter: var(--scrim-blur);
+    z-index: -1;
+    cursor: pointer;
+    animation: palette-fade-in var(--motion-duration-base) var(--motion-easing-enter);
+}
+
+.palette-overlay__card {
+    width: min(640px, calc(100vw - 32px));
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 24px 64px -16px rgba(0, 0, 0, 0.55),
+                0 8px 24px -8px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+    animation: palette-slide-in var(--motion-duration-base) var(--motion-easing-spring);
+}
+
+@keyframes palette-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+@keyframes palette-slide-in {
+    from {
+        opacity: 0;
+        transform: translateY(-12px) scale(0.985);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .palette-overlay__scrim,
+    .palette-overlay__card {
+        animation: none;
+    }
+}
+
+
+/* ── HEADER (search input row) ───────────────────────────────────────── */
+.palette-overlay__header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    /* Layer baseline: header sits on bg-card. */
+}
+
+.palette-overlay__kbd-hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+.palette-overlay__kbd-hint svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.palette-overlay__input {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    font-family: var(--font-family-base);
+    font-size: 18px;
+    font-weight: 500;
+    /* Layer baseline: header is bg-card. --text-primary passes >=7:1 in
+       both themes against bg-card. */
+    color: var(--text-primary);
+    letter-spacing: var(--letter-spacing-tight);
+}
+.palette-overlay__input::placeholder {
+    color: var(--text-muted);
+    font-weight: 400;
+}
+.palette-overlay__input:focus {
+    outline: none;
+}
+
+.palette-overlay__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: 0;
+    color: var(--text-muted);
+    border-radius: 6px;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background-color var(--motion-duration-fast) var(--motion-easing-standard),
+                color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+.palette-overlay__close:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+
+
+/* ── RESULTS BODY ────────────────────────────────────────────────────── */
+.palette-overlay__sections {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 6px 0;
+    /* Layer baseline: still bg-card. */
+}
+
+.palette-overlay__section-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px 4px;
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    /* text-secondary (cream/dim-cream → muted-navy in light) resolves
+       >=4.5:1 on bg-card in both themes. */
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: var(--letter-spacing-caps);
+}
+
+.palette-overlay__row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: background-color var(--motion-duration-fast) var(--motion-easing-standard),
+                border-left-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.palette-overlay__row:hover,
+.palette-overlay__row.is-active {
+    /* bg-section is the next layer above bg-card. --text-primary still
+       passes >=7:1 in both themes. */
+    background: var(--bg-section);
+    border-left-color: var(--brand-light);
+}
+
+.palette-overlay__row-kind {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 64px;
+    padding: 1px 7px;
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    /* Layer baseline: chip sits inside row over bg-section (active/hover)
+       or bg-card (resting). Use --text-secondary on a bg-input chip so
+       it reads in both states without per-state overrides. */
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.palette-overlay__row-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.palette-overlay__row-label {
+    /* text-primary passes >=7:1 on bg-card AND bg-section in both themes. */
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.palette-overlay__row-subtitle {
+    /* text-muted passes >=4.5:1 on bg-card / bg-section in both themes. */
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.palette-overlay__row-kbd {
+    color: var(--text-muted);
+    font-family: var(--font-family-mono);
+    font-size: 10px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity var(--motion-duration-fast) var(--motion-easing-standard);
+}
+.palette-overlay__row:hover .palette-overlay__row-kbd,
+.palette-overlay__row.is-active .palette-overlay__row-kbd {
+    opacity: 1;
+}
+
+.palette-overlay__row-dot {
+    /* Operator-color swatch (operator: kind only). */
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: currentColor;
+    margin: 0 4px 0 -2px;
+}
+
+.palette-overlay__empty {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+
+/* ── FOOTER ──────────────────────────────────────────────────────────── */
+.palette-overlay__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 8px 16px;
+    border-top: 1px solid var(--border-subtle);
+    /* text-secondary passes >=4.5:1 on bg-card in both themes. */
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+    font-size: 10px;
+    flex-wrap: wrap;
+}
+.palette-overlay__footer span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.palette-overlay__footer kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    font-family: var(--font-family-mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    line-height: 1.3;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   END v3 PALETTE
+   ════════════════════════════════════════════════════════════════════════ */
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   === v3 BOLT-ON LIVE (Agent D) ===
+   Live wiring for the Deployments → Bolt-ons sub-pill. Mirrors the
+   blended preview at webapp/frontend/preview/page-bolton-target.html.
+   All colors use palette variables that resolve correctly in both themes.
+   ════════════════════════════════════════════════════════════════════════ */
+
+.bolton-live {
+    padding: 20px 24px 32px;
+    color: var(--text-primary);
+}
+
+.bolton-live__eyebrow {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 24px;
+    margin-bottom: 18px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.bolton-live__eyebrow-text { max-width: 720px; }
+
+.bolton-live__eyebrow-label {
+    display: block;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 1.4px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+}
+
+.bolton-live__title {
+    margin: 0 0 6px;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.bolton-live__description {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.bolton-live__eyebrow-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    min-width: 240px;
+}
+
+.bolton-live__host-label {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+.bolton-live__host-select {
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 13px;
+}
+
+.bolton-live__placeholder {
+    padding: 30px 14px;
+    color: var(--text-secondary);
+    background: var(--bg-card);
+    border: 1px dashed var(--border-subtle);
+    border-radius: 8px;
+    text-align: center;
+    font-size: 13px;
+    margin-top: 14px;
+}
+
+/* HOST HERO ------------------------------------------------------------- */
+.bolton-live__hero {
+    display: grid;
+    grid-template-columns: 44px 1fr auto;
+    gap: 16px;
+    align-items: center;
+    padding: 18px 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    margin: 18px 0 16px;
+}
+
+.bolton-live__hero-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+}
+
+.bolton-live__hero-kicker {
+    display: block;
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    letter-spacing: 0.6px;
+}
+
+.bolton-live__hero-title {
+    margin: 4px 0 2px;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.bolton-live__hero-sub {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12.5px;
+}
+
+.bolton-live__hero-actions { display: flex; gap: 8px; }
+
+/* SUMMARY TILES --------------------------------------------------------- */
+.bolton-live__summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.bolton-live__summary-tile {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.bolton-live__summary-num {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.bolton-live__summary-num--ok { color: var(--success-text); }
+.bolton-live__summary-num--danger { color: var(--danger-text); }
+.bolton-live__summary-num--warn { color: var(--warning-text); }
+
+.bolton-live__summary-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* FILTERS --------------------------------------------------------------- */
+.bolton-live__filters {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.bolton-live__filters-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.bolton-live__filters-row--top {
+    justify-content: space-between;
+    border-bottom: 1px dashed var(--border-subtle);
+    padding-bottom: 6px;
+}
+
+.bolton-live__filters-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+}
+
+.bolton-live__filters-title small {
+    margin-left: 8px;
+    text-transform: none;
+    color: var(--text-secondary);
+    font-weight: 400;
+    letter-spacing: 0;
+}
+
+.bolton-live__filters-rowlabel {
+    min-width: 100px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-secondary);
+}
+
+.bolton-live__chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* SECTIONS -------------------------------------------------------------- */
+.bolton-live__sections {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Per-row state tinting — mirrors page-bolton-target.html. Uses palette
+   tokens so light + dark modes both meet 4.5:1 contrast. */
+.bolton-live .bt-row[data-state="ALREADY_INSTALLED"] .spec-row__head {
+    border-left: 3px solid var(--brand-light, var(--text-secondary));
+}
+
+.bolton-live .bt-row[data-state="INSTALLABLE"] .spec-row__head {
+    border-left: 3px solid var(--success-text, var(--text-secondary));
+}
+
+.bolton-live .bt-row[data-state="PATCHED"] .spec-row__head {
+    background: var(--success-bg);
+    border-left: 3px solid var(--success-text);
+}
+
+.bolton-live .bt-row[data-state="AS_PATCHED_BUT_VULN"] .spec-row__head {
+    background: var(--danger-bg);
+    border-left: 3px solid var(--danger-text);
+}
+
+.bolton-live .bt-row[data-state^="INCOMPATIBLE"] .spec-row__head,
+.bolton-live .bt-row[data-state="MISSING_PREREQ"] .spec-row__head,
+.bolton-live .bt-row[data-state="MISSING_SOFTWARE"] .spec-row__head {
+    opacity: 0.65;
+    border-left: 3px solid var(--border-subtle);
+}
+
+.bolton-live .bt-row[data-state="CONFLICTS_WITH_INSTALLED"] .spec-row__head {
+    background: var(--warning-bg);
+    border-left: 3px solid var(--warning-text);
+}
+
+.bolton-live .bt-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.bolton-live .bt-section__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 14px 16px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: pointer;
+    color: var(--text-primary);
+    text-align: left;
+}
+
+.bolton-live .bt-section__header:hover {
+    background: var(--bg-card-hover, var(--bg-card));
+}
+
+.bolton-live .bt-section__header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.bolton-live .bt-section__chevron {
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--text-secondary);
+    border-bottom: 2px solid var(--text-secondary);
+    transform: rotate(-45deg);
+    transition: transform 0.15s ease;
+}
+
+.bolton-live .bt-section[data-open="true"] .bt-section__chevron {
+    transform: rotate(45deg);
+}
+
+.bolton-live .bt-section__title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.bolton-live .bt-section__hint {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+}
+
+.bolton-live .bt-section[data-open="false"] .bt-section__body {
+    display: none;
+}
+
+.bolton-live .bt-section__body { padding: 0; }
+.bolton-live .bt-section__body-inner { padding: 4px 0; }
+
+.bolton-live .bt-row__lead { display: flex; flex-direction: column; gap: 4px; }
+.bolton-live .bt-row__eyebrow { display: flex; gap: 6px; flex-wrap: wrap; }
+.bolton-live .bt-row__title {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.bolton-live .bt-row__hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.bolton-live .bt-row__actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.bolton-live .bt-row__why {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    text-decoration: underline dotted;
+    cursor: help;
+}
+.bolton-live .bt-row__why:hover { color: var(--text-primary); }
+
+/* RESPONSIVE ------------------------------------------------------------ */
+@media (max-width: 900px) {
+    .bolton-live__summary {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .bolton-live__eyebrow {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   END v3 BOLT-ON LIVE
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════════════
+   v3 OVERLAY STACK (Agent C, 2026-05-18)
+
+   Dashboard widgets-as-OS overlays. Builds on the Phase 2b primitives
+   (.scrim-takeover / .takeover-card) but with per-overlay z-stacking,
+   layer-aware dashboard dim/blur, and a "Promote to full page" CTA that
+   surfaces when the stack gets deep.
+
+   Layering map:
+     body[data-overlay-depth="1"]   first overlay — dashboard blurs 8px / 28%
+     body[data-overlay-depth="2"]   second overlay — blur 10px / 24%
+     body[data-overlay-depth="3"]   third overlay — blur 12px / 22% (CTA fires)
+
+   Z-index baseline 1000, +10 per layer (set inline by APP.overlay.open).
+
+   Surface tokens:
+     .app-overlay__card sits on var(--bg-card) — same as journey takeover.
+     All inner text uses --text-primary / --text-secondary (audited contrast
+     in both themes — see contrast-audit notes).
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Mount root + per-overlay shell ─────────────────────────────────────── */
+#app-overlay-root {
+    /* The container itself has no presence — overlays inside it position
+       themselves fixed. Empty when no overlays are open. */
+    position: relative;
+    z-index: 0;
+}
+
+.app-overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    /* Inline z-index set by APP.overlay.open() (Z_BASE + depth*Z_STEP). */
+}
+.app-overlay.is-open {
+    pointer-events: auto;
+}
+
+/* ── Scrim (one per overlay; click closes top) ─────────────────────────── */
+.app-overlay__scrim {
+    position: fixed;
+    inset: 0;
+    background: var(--scrim);
+    backdrop-filter: var(--scrim-blur);
+    -webkit-backdrop-filter: var(--scrim-blur);
+    opacity: 0;
+    transition: opacity var(--motion-duration-base) var(--motion-easing-standard);
+    cursor: pointer;
+}
+.app-overlay.is-open .app-overlay__scrim {
+    opacity: 1;
+}
+
+/* ── Card surface ──────────────────────────────────────────────────────── */
+.app-overlay__card {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, calc(-50% + 8px));
+    width: calc(100% - 48px);
+    max-width: 680px;
+    max-height: calc(100vh - 96px);
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 20px 80px rgba(0, 0, 0, 0.45),
+                0 6px 20px rgba(0, 0, 0, 0.18);
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity var(--motion-duration-base) var(--motion-easing-standard),
+                transform var(--motion-duration-base) var(--motion-easing-standard);
+}
+.app-overlay.is-open .app-overlay__card {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+}
+.app-overlay.is-closing .app-overlay__card {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px));
+}
+
+/* Wide variant — for tables / lists that need horizontal room. */
+.app-overlay__card--wide {
+    max-width: 880px;
+}
+
+/* ── Header (eyebrow + title left, promote + close right) ──────────────── */
+.app-overlay__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 22px 26px 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    flex-shrink: 0;
+}
+
+.app-overlay__header-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+}
+
+.app-overlay__eyebrow {
+    /* Layer baseline: .app-overlay__card sits on --bg-card. --text-secondary
+       passes >=4.5:1 in both themes against bg-card. */
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+
+.app-overlay__title {
+    font-size: 18px;
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin: 0;
+    word-break: break-word;
+}
+
+.app-overlay__header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.app-overlay__promote {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 5px 11px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: var(--font-weight-semibold);
+    transition: background-color 180ms ease, border-color 180ms ease;
+}
+.app-overlay__promote:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-light);
+}
+.app-overlay__promote:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 35%, transparent);
+}
+/* Prominent variant — fires at depth >= PROMOTE_THRESHOLD (3 layers).
+   Switches to brand-light fill so the operator notices it. Both themes:
+   --brand-light against --text-primary maintains contrast. */
+.app-overlay__promote--prominent {
+    background: var(--brand-light);
+    border-color: var(--brand-light);
+    color: var(--text-primary);
+    /* Subtle pulse so it earns the attention. */
+    animation: app-overlay-promote-pulse 1800ms ease-in-out infinite;
+}
+@keyframes app-overlay-promote-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand-light) 45%, transparent); }
+    50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand-light) 0%, transparent); }
+}
+[data-theme="light"] .app-overlay__promote--prominent {
+    /* In light mode, --brand-light is a deep teal (#162D38). Use text-on-dark
+       (cream) for contrast so the prominent variant reads. */
+    color: var(--bg-card);
+}
+
+.app-overlay__close {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: background-color 180ms ease, border-color 180ms ease;
+}
+.app-overlay__close:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-light);
+}
+.app-overlay__close:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 35%, transparent);
+}
+
+/* ── Body (scrollable content area) ────────────────────────────────────── */
+.app-overlay__body {
+    padding: 18px 26px 22px;
+    overflow-y: auto;
+    flex: 1;
+    /* The body inherits .spec-list / .spec-row / .spec-pill rules from
+       Phase 2b — Phase 3e contrast invariants already cover that surface. */
+}
+
+.app-overlay__empty,
+.app-overlay__loading {
+    padding: 16px 0;
+}
+
+/* ── Filter bar (audit log + rules browser) ────────────────────────────── */
+.app-overlay__filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.app-overlay__filter-search {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: 12px;
+}
+.app-overlay__filter-search:focus {
+    outline: none;
+    border-color: var(--brand-light);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-light) 28%, transparent);
+}
+.app-overlay__filter-search::placeholder {
+    color: var(--text-secondary);
+}
+.app-overlay__filter-export {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: var(--font-weight-semibold);
+    flex-shrink: 0;
+    transition: background-color 180ms ease, border-color 180ms ease;
+}
+.app-overlay__filter-export:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-light);
+}
+
+/* ── Cost overlay hero (sits above the per-project spec-list) ──────────── */
+.app-overlay__cost-hero {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: 18px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.app-overlay__cost-hero-num {
+    font-family: var(--font-family-mono);
+    font-size: 32px;
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    line-height: 1.05;
+    letter-spacing: -0.018em;
+}
+.app-overlay__cost-hero-unit {
+    font-size: 16px;
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-medium);
+    margin-left: 4px;
+}
+.app-overlay__cost-hero-sub {
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    letter-spacing: 0.04em;
+}
+
+/* ── Footer action row (deployment, cost, prereqs overlays) ────────────── */
+.app-overlay__footer-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* ── Activity / Beacons / Rules list — light hover on spec-rows ────────── */
+.app-overlay__activity-list .spec-row,
+.app-overlay__beacons-list .spec-row,
+.app-overlay__rules-list .spec-row {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.app-overlay__beacons-list .spec-row[data-v3-beacon-row]:hover {
+    background: var(--bg-card-hover);
+    cursor: pointer;
+}
+
+/* ── Body-level dim/blur ramps — keyed off data-overlay-depth ──────────── */
+body[data-overlay-depth] .app-content {
+    /* When ANY overlay is open the dashboard blurs out underneath. The
+       Phase 2b journey takeover already does this via body[data-journey-open]
+       — we mirror the visual rhythm so the operator's mental model is
+       consistent. */
+    transition: filter var(--motion-duration-base) var(--motion-easing-standard),
+                opacity var(--motion-duration-base) var(--motion-easing-standard);
+    pointer-events: none;
+}
+body[data-overlay-depth="1"] .app-content {
+    filter: blur(8px);
+    opacity: 0.28;
+}
+body[data-overlay-depth="2"] .app-content {
+    filter: blur(10px);
+    opacity: 0.24;
+}
+body[data-overlay-depth="3"] .app-content,
+body[data-overlay-depth="4"] .app-content,
+body[data-overlay-depth="5"] .app-content {
+    filter: blur(12px);
+    opacity: 0.22;
+}
+
+/* The rail + topbar fade slightly too so the overlay reads as the singular
+   foreground — but less than the content area so navigation stays visible.
+   pointer-events suppressed so a scrim click in the rail's footprint
+   reaches the scrim (the rail is z-90, scrim is z-1000+ — z-stacking is
+   correct, but suppressing events here is a belt-and-braces guard for any
+   stacking context surprises). */
+body[data-overlay-depth] .app-rail,
+body[data-overlay-depth] .app-topbar {
+    transition: opacity var(--motion-duration-base) var(--motion-easing-standard);
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* ── Responsive — narrow viewports stretch the card edge-to-edge ───────── */
+@media (max-width: 640px) {
+    .app-overlay__card,
+    .app-overlay__card--wide {
+        width: calc(100% - 16px);
+        max-width: calc(100% - 16px);
+    }
+    .app-overlay__header {
+        padding: 16px 18px 14px;
+    }
+    .app-overlay__body {
+        padding: 14px 18px 18px;
+    }
+}
+
+/* ── Reduced-motion overrides ──────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    .app-overlay__scrim,
+    .app-overlay__card,
+    body[data-overlay-depth] .app-content,
+    body[data-overlay-depth] .app-rail,
+    body[data-overlay-depth] .app-topbar {
+        transition: none;
+    }
+    .app-overlay__promote--prominent {
+        animation: none;
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   END v3 OVERLAY STACK (Agent C)
+   ════════════════════════════════════════════════════════════════════════ */

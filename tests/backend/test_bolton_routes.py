@@ -873,3 +873,137 @@ def test_full_audit_action_namespace_emitted(authed_client, services, audit_spy)
     assert expected.issubset(actions), (
         f"missing audit actions: {expected - actions}"
     )
+
+
+# =========================================================================
+# REAL SERVICES — Agent D reconcile validation. Runs the routes against
+# the actual webapp.backend.services.* modules to prove the function-name
+# alignment holds end-to-end (not just under mocks).
+# =========================================================================
+
+@pytest.fixture
+def real_services(monkeypatch, tmp_path):
+    """Use the real services (no MagicMocks).
+
+    Pins the bolton state roots to a tmpdir so concurrent tests don't
+    share disk. Resets the in-memory install registry between tests.
+    """
+    # Drop any cached mock modules left over from a prior test.
+    for short in _SERVICE_NAMES:
+        monkeypatch.delitem(sys.modules, _BASE + short, raising=False)
+
+    # Import real modules so we can rebind their state paths.
+    from webapp.backend.services import (
+        bolton_catalog_service,
+        bolton_facts_service,
+        bolton_install_service,
+        bolton_probe_service,
+    )
+
+    monkeypatch.setattr(bolton_facts_service, "STATE_ROOT", tmp_path / "host_facts")
+    monkeypatch.setattr(bolton_install_service, "JOBS_ROOT", tmp_path / "jobs")
+    monkeypatch.setattr(bolton_probe_service, "PROBES_ROOT", tmp_path / "probes")
+    bolton_install_service._reset_registry_for_tests()
+    bolton_catalog_service._reset_for_tests()
+    bolton_install_service._set_simulated_duration_for_tests(0.01)
+    yield
+    bolton_install_service._set_simulated_duration_for_tests(2.0)
+    bolton_install_service._reset_registry_for_tests()
+    bolton_catalog_service._reset_for_tests()
+
+
+def test_real_list_vulns(authed_client, real_services):
+    """Real catalog service serves the descriptor summaries."""
+    r = authed_client.get("/api/bolton/vulns")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["success"] is True
+    assert isinstance(body["vulns"], list)
+    # 5 worked descriptors ship with the repo (see webapp/bolton/catalog).
+    assert body["total"] >= 1
+
+
+def test_real_list_hosts(authed_client, real_services):
+    """Real facts service returns mocked-host rows for a fresh lab."""
+    r = authed_client.get("/api/bolton/labs/goad-light/hosts")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["success"] is True
+    assert isinstance(body["hosts"], list)
+    names = {h["name"] for h in body["hosts"]}
+    assert "dc01" in names
+
+
+def test_real_get_host_facts(authed_client, real_services):
+    """Real facts gather returns a populated fact bundle."""
+    r = authed_client.get("/api/bolton/labs/goad-light/hosts/dc01/facts")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["success"] is True
+    assert body["host_id"] == "dc01"
+    assert body["os_family"] == "windows"
+
+
+def test_real_host_catalog(authed_client, real_services):
+    """Real compatibility evaluator annotates the catalog for a host."""
+    r = authed_client.get("/api/bolton/labs/goad-light/hosts/dc01/catalog")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["success"] is True
+    assert body["host_id"] == "dc01"
+    assert "counts_by_state" in body
+
+
+def test_real_install_dispatch_and_get_job(authed_client, real_services):
+    """Real install dispatcher creates a job; the jobs service retrieves it."""
+    # Pick any known descriptor; if no descriptors ship, skip.
+    r = authed_client.get("/api/bolton/vulns")
+    vulns = r.get_json().get("vulns") or []
+    if not vulns:
+        pytest.skip("no descriptors in catalog — skipping live install test")
+    vuln_id = vulns[0]["id"]
+    # Use a fresh host so the compat backstop doesn't trip.
+    r = authed_client.post(
+        f"/api/bolton/labs/goad-light/hosts/exotic-host/install/{vuln_id}",
+        json={},
+    )
+    # Accept 200 (queued) OR 409 (compat refused — descriptor narrow on OS).
+    assert r.status_code in (200, 409), r.get_data(as_text=True)
+    if r.status_code == 200:
+        body = r.get_json()
+        assert body["success"] is True
+        assert body["job_id"]
+        # The job is visible to the jobs service.
+        r2 = authed_client.get(f"/api/bolton/jobs/{body['job_id']}")
+        assert r2.status_code == 200
+
+
+def test_real_list_jobs_and_cancel(authed_client, real_services):
+    """The jobs service list endpoint walks the registry."""
+    r = authed_client.get("/api/bolton/jobs")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["success"] is True
+    assert isinstance(body["jobs"], list)
+
+
+def test_real_detection_gaps(authed_client, real_services):
+    """The coverage service emits a gaps + summary envelope."""
+    r = authed_client.get("/api/bolton/detection/gaps")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["success"] is True
+    assert "gaps" in body
+    assert "summary" in body
+    summary = body["summary"]
+    for key in ("covered", "partial", "no_rule", "stale"):
+        assert key in summary
+
+
+def test_real_navigator_layer(authed_client, real_services):
+    """The coverage service emits a Navigator-shaped JSON layer."""
+    r = authed_client.get("/api/bolton/coverage/navigator-layer?lab=goad-light")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["success"] is True
+    assert body["layer"]["domain"] == "enterprise-attack"

@@ -2094,6 +2094,7 @@ const SHELL_SUBPILL_LABELS = {
     'deploy':    'Deploy',
     'manage':    'Manage',
     'cleanup':   'Cleanup',
+    'bolt-ons':  'Bolt-ons',
     'beacons':   'Beacons',
     'terminal':  'Terminal',
     'payloads':  'Payloads',
@@ -2377,6 +2378,12 @@ APP._runSubPillInit = function (parentTabName, subPillName) {
             }
         } else if (subPillName === 'cleanup') {
             if (typeof loadCleanupResources === 'function') loadCleanupResources(false);
+        } else if (subPillName === 'bolt-ons') {
+            // v3 production rollout (Agent D) — initialize the bolt-on
+            // catalog viewer for the active deployment.
+            if (APP.bolton && typeof APP.bolton.init === 'function') {
+                APP.bolton.init();
+            }
         }
     } else if (parentTabName === 'operations-tab') {
         // D4.5 — Operations sub-pill init. Mirrors the legacy flat-tab
@@ -4268,10 +4275,15 @@ async function _renderDashboardDeploymentsGrid() {
             const metaHtml = ownerHtml
                 ? `<div class="dashboard-deployment-card__meta-row">${ownerHtml}</div>`
                 : '';
+            // v3 Agent C — the inline onclick was: APP.activeDeployment.set +
+            // APP.navigateTo('deployments-tab','manage'). We now stamp
+            // `data-v3-deployment-card="<name>"` so the delegated handler in
+            // APP.overlay._wireDashboard() opens the per-project Manage view
+            // as an overlay instead of navigating away from the Dashboard.
             return `<a href="#" class="dashboard-deployment-card"
                        data-project="${escapeHtml(name)}"
                        data-status="${escapeHtml(status)}"
-                       onclick="APP.activeDeployment.set('${safeName}'); APP.navigateTo('deployments-tab', 'manage'); return false;">
+                       data-v3-deployment-card="${escapeHtml(name)}">
                 <div class="dashboard-deployment-card__head">
                     <span class="dashboard-deployment-card__kicker">${escapeHtml(name)}</span>
                     <span class="spec-pill spec-pill--${pillVariant}">
@@ -4425,8 +4437,11 @@ async function _renderDashboardBudgetAlert() {
             banner.style.display = '';
             const pct = data.used_percent != null ? data.used_percent : '?';
             const thr = data.threshold != null ? data.threshold : '?';
+            // v3 Agent C — "View cost tracker" now opens the Cost Tracker
+            // overlay instead of navigating to Settings. Same target as the
+            // Cost Trend widget so the operator stays on the Dashboard.
             banner.innerHTML = `<strong>Budget at ${pct}% of $${thr}.</strong>
-                <a href="#" onclick="APP.navigateTo('settings'); return false;">View cost tracker &rarr;</a>`;
+                <a href="#" data-v3-widget-link="cost">View cost tracker &rarr;</a>`;
             banner.classList.toggle('dashboard-alert--danger', data.level === 'danger');
             banner.classList.toggle('dashboard-alert--warning', data.level !== 'danger');
         } else {
@@ -4449,8 +4464,12 @@ async function _renderDashboardFailedAlert() {
         if (failed.length > 0) {
             banner.style.display = '';
             const names = failed.map(f => f._filename || f.project_name || 'unknown').join(', ');
+            // v3 Agent C — inline anchor routes through APP.overlay (a click
+            // anywhere on the banner ALSO opens the overlay via the delegated
+            // handler, so this is the visible affordance). Stop propagation so
+            // the click doesn't double-fire the open.
             banner.innerHTML = `<strong>${failed.length} deployment(s) in error state:</strong> ${names}.
-                <a href="#" onclick="APP.navigateTo('deployments-tab', 'manage'); return false;">View manage &rarr;</a>`;
+                <a href="#" data-v3-widget-link="failed">View manage &rarr;</a>`;
         } else {
             banner.style.display = 'none';
         }
@@ -26245,3 +26264,2061 @@ if (typeof window !== 'undefined') {
     }
 }
 // === end PHASE 3A Manage sub-pill =====================================
+
+
+// ============================================================================
+// v3 PALETTE (Agent B, 2026-05-18)
+//
+// Global ⌘K (Ctrl-K) command palette. Indexes the backend's
+// /api/palette/index surface (routes, actions, deployments, operators,
+// audit entries, bolt-on vulns, settings sections, …) and presents a
+// fuzzy-matched, keyboard-navigable list overlay.
+//
+// Design notes:
+//   - The full index is fetched on FIRST open and cached for the
+//     remainder of the session. A second open re-uses the cache. The
+//     palette is cheap to rebuild server-side, so we don't aggressively
+//     invalidate; APP.palette.refresh() is provided for callers who
+//     change palette-relevant state (operator switch, new deployment).
+//   - Item dispatch goes through _dispatchTarget which understands two
+//     shapes:
+//         { page: '<name>', subpill?: '<name>', anchor?: '<id>' }
+//             → APP.navigateTo() + post-render scroll if anchor supplied
+//         { action: '<verb>', ...params }
+//             → switch over known APP.* / DOM hooks
+//   - Selections POST to /api/palette/select so the operator's
+//     recently-used list is server-side (per-operator, persisted).
+//   - Sibling agents C / D may extend the action verb list, but the
+//     palette itself does not import from their namespaces — every
+//     dispatch goes through a single switch keyed on target.action.
+// ============================================================================
+
+APP.palette = {
+    // Cached index from /api/palette/index. Populated on first open.
+    index: [],
+    recentlyUsed: [],
+    _loaded: false,
+    _loading: null,        // pending fetch promise (debounce concurrent opens)
+    _open: false,
+    _previousFocus: null,
+    _activeIndex: 0,
+    _visibleItems: [],     // currently-rendered (filtered) item list
+    _lastQuery: '',
+
+    /**
+     * Wire the trigger button + global ⌘K / Ctrl-K keybinding. Idempotent.
+     */
+    init() {
+        if (this._wired) return;
+        this._wired = true;
+
+        const trigger = document.getElementById('palette-trigger');
+        if (trigger) {
+            trigger.addEventListener('click', () => this.open());
+        }
+
+        // Close handlers — wired once on the static shell.
+        document.querySelectorAll('[data-palette-close]').forEach((el) => {
+            el.addEventListener('click', () => this.close());
+        });
+
+        // Search input — re-filter on every keystroke.
+        const input = document.getElementById('palette-input');
+        if (input) {
+            input.addEventListener('input', () => this._onInput());
+            input.addEventListener('keydown', (e) => this._onKey(e));
+        }
+
+        // Global keybinding. preventDefault stops the browser's "find" /
+        // "history" defaults. We toggle so a second press dismisses.
+        document.addEventListener('keydown', (e) => {
+            const key = (e.key || '').toLowerCase();
+            if ((e.metaKey || e.ctrlKey) && key === 'k') {
+                e.preventDefault();
+                if (this._open) this.close();
+                else this.open();
+            }
+        });
+    },
+
+    /**
+     * Open the palette overlay. Lazy-loads the index on first call.
+     */
+    open() {
+        if (this._open) return;
+        const overlay = document.getElementById('palette-overlay');
+        if (!overlay) return;
+        this._previousFocus = document.activeElement;
+        overlay.hidden = false;
+        this._open = true;
+
+        // Clear input + selection from the prior session so the operator
+        // always starts from a clean RECENT view.
+        const input = document.getElementById('palette-input');
+        if (input) {
+            input.value = '';
+            this._lastQuery = '';
+        }
+        this._activeIndex = 0;
+
+        // Load (or use cached) index, then paint.
+        this._ensureIndex().then(() => {
+            this._render();
+            // Focus the input AFTER paint so the operator can immediately type.
+            if (input) input.focus();
+        }).catch((err) => {
+            console.warn('palette: index load failed', err);
+            this._renderError(err);
+            if (input) input.focus();
+        });
+    },
+
+    /**
+     * Close the palette overlay and restore prior focus.
+     */
+    close() {
+        if (!this._open) return;
+        const overlay = document.getElementById('palette-overlay');
+        if (overlay) overlay.hidden = true;
+        this._open = false;
+        // Restore focus to whoever had it before open() (typically the
+        // top-bar trigger; could also be a deep-page element if the
+        // operator hit ⌘K from anywhere).
+        if (this._previousFocus && typeof this._previousFocus.focus === 'function') {
+            try { this._previousFocus.focus(); } catch (_) {}
+        }
+        this._previousFocus = null;
+    },
+
+    /**
+     * Force-reload the index (e.g., after operator switch / new deployment).
+     */
+    refresh() {
+        this._loaded = false;
+        this._loading = null;
+        if (this._open) {
+            this._ensureIndex().then(() => this._render());
+        }
+    },
+
+    /**
+     * Fetch + cache the index. Returns the cached promise if a fetch is
+     * already in flight.
+     */
+    _ensureIndex() {
+        if (this._loaded) return Promise.resolve();
+        if (this._loading) return this._loading;
+        this._loading = fetch('/api/palette/index')
+            .then((r) => {
+                if (!r.ok) throw new Error('palette index HTTP ' + r.status);
+                return r.json();
+            })
+            .then((data) => {
+                this.index = Array.isArray(data.items) ? data.items : [];
+                this.recentlyUsed = Array.isArray(data.recently_used)
+                    ? data.recently_used : [];
+                this._loaded = true;
+                this._loading = null;
+            })
+            .catch((err) => {
+                this._loading = null;
+                throw err;
+            });
+        return this._loading;
+    },
+
+    /**
+     * Fuzzy-match scorer. Splits the query into whitespace terms; each
+     * item is scored across label / subtitle / keywords. The final score
+     * is the sum across terms minus a small length penalty so short,
+     * specific items rank above long, generic ones at the same hit type.
+     *
+     * Hit weights (per term):
+     *   exact label match  → 10000
+     *   label prefix       →  1000
+     *   label substring    →   100
+     *   subtitle substring →    10
+     *   keyword substring  →     5
+     *   misses             →     0 (entire item is dropped if total = 0)
+     */
+    search(query) {
+        const q = (query || '').trim().toLowerCase();
+        if (!q) return this.index.slice();
+
+        const terms = q.split(/\s+/).filter(Boolean);
+        const scored = [];
+        for (const item of this.index) {
+            const label = (item.label || '').toLowerCase();
+            const subtitle = (item.subtitle || '').toLowerCase();
+            const keywords = Array.isArray(item.keywords) ? item.keywords : [];
+
+            let score = 0;
+            let matchedTerms = 0;
+            for (const term of terms) {
+                let termScore = 0;
+                if (label === term) termScore = 10000;
+                else if (label.startsWith(term)) termScore = 1000;
+                else if (label.includes(term)) termScore = 100;
+                else if (subtitle.includes(term)) termScore = 10;
+                else {
+                    for (const kw of keywords) {
+                        if (typeof kw === 'string' && kw.toLowerCase().includes(term)) {
+                            termScore = 5;
+                            break;
+                        }
+                    }
+                }
+                if (termScore > 0) matchedTerms++;
+                score += termScore;
+            }
+            // Require all terms to hit somewhere — partial matches drop.
+            if (matchedTerms !== terms.length || score === 0) continue;
+
+            // Penalize longer labels marginally so short ones win on ties.
+            const lenPenalty = Math.min(label.length, 80) * 0.1;
+            scored.push({ item, score: score - lenPenalty });
+        }
+        scored.sort((a, b) => b.score - a.score);
+        return scored.map((s) => s.item);
+    },
+
+    /**
+     * Filter on input; re-paint. Resets active selection to row 0 so the
+     * Enter key always reads the top match after typing.
+     */
+    _onInput() {
+        const input = document.getElementById('palette-input');
+        if (!input) return;
+        this._lastQuery = input.value;
+        this._activeIndex = 0;
+        this._render();
+    },
+
+    /**
+     * Keyboard navigation inside the palette.
+     */
+    _onKey(e) {
+        if (!this._open) return;
+        switch (e.key) {
+            case 'Escape':
+                e.preventDefault();
+                this.close();
+                return;
+            case 'ArrowDown':
+                e.preventDefault();
+                this._move(1);
+                return;
+            case 'ArrowUp':
+                e.preventDefault();
+                this._move(-1);
+                return;
+            case 'Enter':
+                e.preventDefault();
+                if (this._visibleItems.length > 0) {
+                    const idx = Math.max(0, Math.min(this._activeIndex,
+                        this._visibleItems.length - 1));
+                    this.selectItem(this._visibleItems[idx]);
+                }
+                return;
+            default:
+                return;
+        }
+    },
+
+    _move(delta) {
+        if (this._visibleItems.length === 0) return;
+        const n = this._visibleItems.length;
+        this._activeIndex = (this._activeIndex + delta + n) % n;
+        this._highlight();
+    },
+
+    _highlight() {
+        const rows = document.querySelectorAll('#palette-results .palette-overlay__row');
+        rows.forEach((row, i) => {
+            row.classList.toggle('is-active', i === this._activeIndex);
+            if (i === this._activeIndex) {
+                row.scrollIntoView({ block: 'nearest' });
+            }
+        });
+    },
+
+    /**
+     * Paint the results sections. Two phases:
+     *   - Empty query → RECENT (resolved from MRU id list) + full index
+     *     bucketed by kind, in the canonical ROUTES → ACTIONS → … order.
+     *   - Non-empty query → flat TOP RESULTS section, capped at 30.
+     */
+    _render() {
+        const container = document.getElementById('palette-results');
+        if (!container) return;
+
+        const q = (this._lastQuery || '').trim();
+        let sections;
+        if (q) {
+            const results = this.search(q).slice(0, 30);
+            sections = [{ label: 'TOP RESULTS', items: results }];
+            this._visibleItems = results.slice();
+        } else {
+            sections = this._buildEmptySections();
+            this._visibleItems = sections.reduce((acc, s) =>
+                acc.concat(s.items), []);
+        }
+
+        if (this._visibleItems.length === 0) {
+            container.innerHTML = '<div class="palette-overlay__empty">No matches.</div>';
+            return;
+        }
+
+        // Bound the active index to the visible list.
+        if (this._activeIndex >= this._visibleItems.length) {
+            this._activeIndex = 0;
+        }
+
+        let html = '';
+        let runningIndex = 0;
+        for (const section of sections) {
+            if (section.items.length === 0) continue;
+            html += `<div class="palette-overlay__section-label">${this._esc(section.label)}</div>`;
+            for (const item of section.items) {
+                html += this._renderRow(item, runningIndex === this._activeIndex);
+                runningIndex++;
+            }
+        }
+        container.innerHTML = html;
+
+        // Wire row click handlers + hover-to-active.
+        const rows = container.querySelectorAll('.palette-overlay__row');
+        rows.forEach((row, i) => {
+            row.addEventListener('mouseenter', () => {
+                this._activeIndex = i;
+                this._highlight();
+            });
+            row.addEventListener('click', () => {
+                if (this._visibleItems[i]) {
+                    this.selectItem(this._visibleItems[i]);
+                }
+            });
+        });
+    },
+
+    _renderRow(item, isActive) {
+        const kind = String(item.kind || '').toUpperCase();
+        const label = this._esc(item.label || '');
+        const subtitle = this._esc(item.subtitle || '');
+        const dot = item.color
+            ? `<span class="palette-overlay__row-dot" style="color: ${this._esc(item.color)}"></span>`
+            : '';
+        return (
+            `<div class="palette-overlay__row${isActive ? ' is-active' : ''}"` +
+            ` role="option" aria-selected="${isActive ? 'true' : 'false'}"` +
+            ` data-palette-id="${this._esc(item.id || '')}">` +
+                `<span class="palette-overlay__row-kind">${this._esc(kind)}</span>` +
+                dot +
+                `<span class="palette-overlay__row-body">` +
+                    `<span class="palette-overlay__row-label">${label}</span>` +
+                    (subtitle
+                        ? `<span class="palette-overlay__row-subtitle">${subtitle}</span>`
+                        : '') +
+                `</span>` +
+                `<span class="palette-overlay__row-kbd">&crarr;</span>` +
+            `</div>`
+        );
+    },
+
+    /**
+     * Group the full index into RECENT + by-kind sections for the empty-
+     * search state.
+     */
+    _buildEmptySections() {
+        const indexById = new Map();
+        for (const it of this.index) indexById.set(it.id, it);
+
+        const recents = (this.recentlyUsed || [])
+            .map((id) => indexById.get(id))
+            .filter(Boolean)
+            .slice(0, 8);
+        const recentIds = new Set(recents.map((r) => r.id));
+
+        const buckets = {
+            route: [], action: [], deployment: [], beacon: [], session: [],
+            operator: [], 'audit-entry': [], vuln: [], setting: [],
+        };
+        for (const item of this.index) {
+            if (recentIds.has(item.id)) continue;
+            const kind = item.kind || 'other';
+            if (buckets[kind]) buckets[kind].push(item);
+            else (buckets._other = buckets._other || []).push(item);
+        }
+
+        const sections = [
+            { label: 'RECENT', items: recents },
+            { label: 'ROUTES', items: buckets.route },
+            { label: 'ACTIONS', items: buckets.action },
+            { label: 'DEPLOYMENTS', items: buckets.deployment },
+            { label: 'OPERATORS', items: buckets.operator },
+            { label: 'BEACONS', items: buckets.beacon },
+            { label: 'SESSIONS', items: buckets.session },
+            { label: 'VULNERABILITIES', items: buckets.vuln },
+            { label: 'AUDIT', items: buckets['audit-entry'].slice(0, 10) },
+        ];
+        if (buckets._other) {
+            sections.push({ label: 'OTHER', items: buckets._other });
+        }
+        return sections;
+    },
+
+    _renderError(err) {
+        const container = document.getElementById('palette-results');
+        if (!container) return;
+        container.innerHTML =
+            '<div class="palette-overlay__empty">' +
+            'Failed to load palette index — ' + this._esc(String(err && err.message || err)) +
+            '</div>';
+        this._visibleItems = [];
+    },
+
+    _esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    },
+
+    /**
+     * Record the selection server-side (best-effort), then dispatch the
+     * item's target. We don't await the POST — operators expect the UI
+     * to react instantly. The MRU is reconciled on next open via refresh.
+     */
+    selectItem(item) {
+        if (!item || !item.id) return;
+        fetch('/api/palette/select', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: item.id }),
+        }).then(() => {
+            // Invalidate the cache so the next open shows updated RECENT.
+            this._loaded = false;
+        }).catch(() => {});
+
+        this.close();
+        this._dispatchTarget(item.target || {});
+    },
+
+    /**
+     * Map the item's `target` blob to an APP-level action. Two shapes:
+     *   { action: '<verb>', ... }  — verb switch
+     *   { page, subpill?, anchor? } — navigateTo + optional anchor scroll
+     */
+    _dispatchTarget(target) {
+        if (!target || typeof target !== 'object') return;
+
+        // Action verbs first.
+        if (target.action) {
+            switch (target.action) {
+                case 'journey.open':
+                    if (APP.journey && typeof APP.journey.open === 'function') {
+                        APP.journey.open();
+                    } else if (typeof APP.startNewDeployment === 'function') {
+                        APP.startNewDeployment();
+                    }
+                    return;
+                case 'theme.toggle':
+                    if (typeof APP.toggleTheme === 'function') APP.toggleTheme();
+                    return;
+                case 'operator.switch':
+                    if (target.id) {
+                        fetch('/api/operators/switch', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: target.id }),
+                        }).then(() => window.location.reload()).catch(() => {});
+                    }
+                    return;
+                case 'operator.add': {
+                    const btn = document.getElementById('operator-menu-add');
+                    if (btn) btn.click();
+                    return;
+                }
+                case 'operator.manage':
+                    if (APP.operatorManagement
+                        && typeof APP.operatorManagement.open === 'function') {
+                        APP.operatorManagement.open();
+                    } else {
+                        const btn = document.getElementById('operator-menu-manage');
+                        if (btn) btn.click();
+                    }
+                    return;
+                case 'architecture.open':
+                    if (typeof APP.openArchitectureModal === 'function') {
+                        APP.openArchitectureModal();
+                    }
+                    return;
+                case 'version.open':
+                    if (typeof window.openVersionModal === 'function') {
+                        window.openVersionModal();
+                    }
+                    return;
+                case 'changelog.open':
+                    window.open('/changelog', '_blank', 'noopener');
+                    return;
+                case 'aws.check':
+                    APP.navigateTo('settings');
+                    setTimeout(() => this._scrollToAnchor('settings-prereqs'), 200);
+                    return;
+                case 'health.run':
+                    APP.navigateTo('deployments-tab', 'manage');
+                    if (typeof APP.toast === 'function') {
+                        APP.toast('Open Manage and click "Health check" on the project', 'info');
+                    }
+                    return;
+                case 'app.refresh':
+                    window.location.reload();
+                    return;
+                case 'deploy.apply':
+                case 'deploy.plan':
+                case 'deploy.destroy':
+                case 'deploy.purge':
+                case 'deploy.cancel':
+                case 'config.save':
+                    // These currently live as buttons on the relevant sub-pill.
+                    // Navigate the operator there; the page chrome surfaces the
+                    // matching action button. Keyboard-driven invocation can
+                    // graduate to direct dispatch in a follow-up.
+                    APP.navigateTo('deployments-tab',
+                        target.action === 'config.save' ? 'configure' :
+                        target.action === 'deploy.plan' ? 'deploy' :
+                        target.action === 'deploy.destroy' ? 'cleanup' :
+                        target.action === 'deploy.purge' ? 'cleanup' :
+                        target.action === 'deploy.cancel' ? 'deploy' : 'deploy');
+                    return;
+                case 'elastic.update': {
+                    const btn = document.getElementById('btn-update-elastic-rules');
+                    APP.navigateTo('dashboard');
+                    setTimeout(() => {
+                        const b = document.getElementById('btn-update-elastic-rules');
+                        if (b && typeof b.click === 'function') b.click();
+                    }, 200);
+                    return;
+                }
+                default:
+                    console.warn('palette: unknown action', target.action);
+                    return;
+            }
+        }
+
+        // Navigation targets: page + optional subpill + optional anchor.
+        if (target.page) {
+            APP.navigateTo(target.page, target.subpill || null);
+            if (target.anchor) {
+                setTimeout(() => this._scrollToAnchor(target.anchor), 200);
+            }
+            return;
+        }
+    },
+
+    _scrollToAnchor(anchorId) {
+        const el = document.getElementById(anchorId);
+        if (el && typeof el.scrollIntoView === 'function') {
+            el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }
+    },
+};
+
+// Wire on DOMContentLoaded; idempotent if called later. The palette is
+// passive until the operator hits ⌘K or clicks the trigger, so we don't
+// load the index proactively (saves one round-trip on every page load).
+if (typeof window !== 'undefined') {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            try { APP.palette.init(); } catch (e) {
+                console.warn('APP.palette.init failed:', e);
+            }
+        });
+    } else {
+        try { APP.palette.init(); } catch (e) {
+            console.warn('APP.palette.init failed:', e);
+        }
+    }
+}
+
+// ============================================================================
+// v3 BOLT-ON LIVE (Agent D) — Deployments → Bolt-ons sub-pill controller.
+//
+// Wires the live UI to /api/bolton/* (Agent B+C backend, surface reconciled
+// here). Mirrors webapp/frontend/preview/page-bolton-target.html with REAL
+// data. Mounts on _runSubPillInit('deployments-tab', 'bolt-ons').
+//
+// Surface:
+//   APP.bolton.init()            — first-time wiring + initial host list load
+//   APP.bolton.loadHosts(lab)    — refresh host dropdown
+//   APP.bolton.selectHost(lab,h) — fetch facts + catalog, render rows
+//   APP.bolton.applyFilter(s)    — re-render rows per active chip selections
+//   APP.bolton.install(v, h)     — dispatch + open progress overlay
+//   APP.bolton.uninstall(v, h)   — same
+//   APP.bolton.patch(v, h)       — same
+//   APP.bolton.patchRevert(v, h) — same
+//   APP.bolton.invokeAgent(j)    — dispatch agent intervention on a stuck job
+//
+// Audit attribution flows through the existing g.operator middleware on the
+// route layer — every dispatch action lands in audit.log under the operator
+// id from the dashboard_operator cookie.
+// ============================================================================
+APP.bolton = APP.bolton || {
+    state: {
+        lab: null,
+        host: null,
+        hosts: [],
+        facts: null,
+        catalog: null,           // last /catalog response
+        rows: [],                // full row list (with state + category + coverage)
+        filters: { category: 'all', state: 'all', coverage: 'all' },
+        activeJob: null,
+    },
+    _initialized: false,
+
+    /** First-time wiring. Idempotent — safe to call on every sub-pill switch. */
+    init() {
+        const root = document.querySelector('[data-bolton-root]');
+        if (!root) return;
+        if (!this._initialized) {
+            this._initialized = true;
+            this._wireSelector();
+            this._wireFilters();
+            this._wireRefresh();
+            this._wireSectionToggles();
+        }
+        // Resolve active lab — fall back to currentDeploymentProject.
+        const lab = this._activeLab();
+        if (lab && lab !== this.state.lab) {
+            this.state.lab = lab;
+            this.loadHosts(lab);
+        } else if (this.state.lab) {
+            this.loadHosts(this.state.lab);
+        }
+    },
+
+    /** Resolve the active lab id from APP state. */
+    _activeLab() {
+        try {
+            if (typeof window.currentDeploymentProject === 'string' && window.currentDeploymentProject) {
+                return window.currentDeploymentProject;
+            }
+            if (APP.activeDeployment && typeof APP.activeDeployment.get === 'function') {
+                const v = APP.activeDeployment.get();
+                if (v) return v;
+            }
+        } catch (_) { /* ignore */ }
+        return 'default';
+    },
+
+    _wireSelector() {
+        const sel = document.getElementById('bolton-host-select');
+        if (!sel || sel._boltonWired) return;
+        sel._boltonWired = true;
+        sel.addEventListener('change', () => {
+            const host = sel.value;
+            if (!host) return;
+            this.selectHost(this.state.lab, host);
+        });
+    },
+
+    _wireFilters() {
+        document.querySelectorAll('#bolton-filters .bt-chip').forEach((chip) => {
+            if (chip._boltonWired) return;
+            chip._boltonWired = true;
+            chip.addEventListener('click', () => {
+                const group = chip.dataset.group;
+                const value = chip.dataset.value;
+                if (!group) return;
+                // Update active class within the same group.
+                document.querySelectorAll(`#bolton-filters .bt-chip[data-group="${group}"]`).forEach(c => {
+                    c.classList.toggle('is-active', c === chip);
+                });
+                this.state.filters[group] = value;
+                this.applyFilter(this.state.filters);
+            });
+        });
+    },
+
+    _wireRefresh() {
+        const btn = document.getElementById('bolton-refresh-facts');
+        if (!btn || btn._boltonWired) return;
+        btn._boltonWired = true;
+        btn.addEventListener('click', () => {
+            if (!this.state.lab || !this.state.host) return;
+            btn.disabled = true;
+            btn.textContent = 'Refreshing…';
+            fetch(`/api/bolton/labs/${encodeURIComponent(this.state.lab)}/hosts/${encodeURIComponent(this.state.host)}/facts/refresh`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ deep_probe: false }),
+            }).then(r => r.json()).then(() => {
+                this.selectHost(this.state.lab, this.state.host);
+            }).catch((e) => {
+                console.warn('[bolton] facts/refresh failed:', e);
+            }).finally(() => {
+                btn.disabled = false;
+                btn.textContent = 'Refresh facts';
+            });
+        });
+    },
+
+    _wireSectionToggles() {
+        document.querySelectorAll('#bolton-sections .bt-section__header').forEach((hdr) => {
+            if (hdr._boltonWired) return;
+            hdr._boltonWired = true;
+            hdr.addEventListener('click', () => {
+                const section = hdr.closest('.bt-section');
+                if (!section) return;
+                const open = section.dataset.open === 'true';
+                section.dataset.open = open ? 'false' : 'true';
+                hdr.setAttribute('aria-expanded', open ? 'false' : 'true');
+            });
+        });
+    },
+
+    /** Populate the host selector for `lab` from /api/bolton/labs/<lab>/hosts. */
+    loadHosts(lab) {
+        if (!lab) return;
+        const sel = document.getElementById('bolton-host-select');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">Loading hosts…</option>';
+        fetch(`/api/bolton/labs/${encodeURIComponent(lab)}/hosts`)
+            .then(r => r.json())
+            .then(body => {
+                if (!body || body.success === false) throw new Error('hosts API returned !success');
+                const hosts = body.hosts || [];
+                this.state.hosts = hosts;
+                if (!hosts.length) {
+                    sel.innerHTML = '<option value="">— no hosts in this lab —</option>';
+                    return;
+                }
+                sel.innerHTML = '<option value="">— select a host —</option>' +
+                    hosts.map(h => {
+                        const name = h.name || h.host_id || '?';
+                        const role = h.role ? ` · ${h.role}` : '';
+                        return `<option value="${name}">${name}${role}</option>`;
+                    }).join('');
+            })
+            .catch(err => {
+                console.warn('[bolton] loadHosts failed:', err);
+                sel.innerHTML = '<option value="">— failed to load hosts —</option>';
+            });
+    },
+
+    /** Fetch host facts + catalog and render. */
+    selectHost(lab, host) {
+        if (!lab || !host) return;
+        this.state.lab = lab;
+        this.state.host = host;
+        const placeholder = document.getElementById('bolton-empty-state');
+        if (placeholder) placeholder.hidden = true;
+
+        const factsP = fetch(`/api/bolton/labs/${encodeURIComponent(lab)}/hosts/${encodeURIComponent(host)}/facts`)
+            .then(r => r.ok ? r.json() : { success: false });
+        const catalogP = fetch(`/api/bolton/labs/${encodeURIComponent(lab)}/hosts/${encodeURIComponent(host)}/catalog`)
+            .then(r => r.ok ? r.json() : { success: false });
+
+        Promise.all([factsP, catalogP]).then(([facts, catalog]) => {
+            this.state.facts = facts || null;
+            this.state.catalog = catalog || null;
+            this._renderHero(facts);
+            this._renderSummary(catalog);
+            this._renderCategoryChips(catalog);
+            this.state.rows = this._buildRows(catalog);
+            this.applyFilter(this.state.filters);
+            ['bolton-hero', 'bolton-summary', 'bolton-filters', 'bolton-sections'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.hidden = false;
+            });
+        }).catch(err => {
+            console.warn('[bolton] selectHost failed:', err);
+        });
+    },
+
+    _renderHero(facts) {
+        if (!facts) return;
+        const kicker = document.getElementById('bolton-hero-kicker');
+        const title = document.getElementById('bolton-hero-title');
+        const sub = document.getElementById('bolton-hero-sub');
+        if (kicker) kicker.textContent = (facts.host || facts.host_id || '').toUpperCase();
+        const osLabel = `${(facts.os_family || '').replace(/\b\w/g, c => c.toUpperCase())} ${facts.os_version || ''}`.trim();
+        const roleLabel = (facts.role || '').replace(/_/g, ' ');
+        if (title) title.textContent = `${osLabel}${roleLabel ? ' · ' + roleLabel : ''}`;
+        if (sub) {
+            const collected = facts.gathered_at ? new Date(facts.gathered_at).toLocaleString() : '—';
+            const stale = facts.stale ? ' · stale cache' : '';
+            sub.textContent = `Facts gathered ${collected}${stale}`;
+        }
+    },
+
+    _renderSummary(catalog) {
+        if (!catalog) return;
+        const counts = catalog.counts_by_state || {};
+        const installedTotal = (counts.ALREADY_INSTALLED || 0);
+        const patchedTotal = (counts.PATCHED || 0);
+        const availableTotal = (counts.INSTALLABLE || 0);
+        const noCoverage = (this.state.rows || []).filter(r => r.coverage === 'no-rule').length;
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = String(val); };
+        set('bolton-stat-installed', installedTotal);
+        set('bolton-stat-patched', patchedTotal);
+        set('bolton-stat-no-coverage', noCoverage);
+        set('bolton-stat-available', availableTotal);
+    },
+
+    _renderCategoryChips(catalog) {
+        // Rebuild the category chip row from the unique categories in the catalog.
+        if (!catalog || !Array.isArray(catalog.vulns)) return;
+        const wrap = document.querySelector('#bolton-filters [data-chip-group="category"]');
+        if (!wrap) return;
+        const cats = new Set();
+        catalog.vulns.forEach(v => { if (v.category) cats.add(v.category); });
+        const sorted = [...cats].sort();
+        // Preserve the All chip; reset the rest.
+        wrap.innerHTML = '<button class="bt-chip is-active" data-group="category" data-value="all" type="button">All</button>';
+        sorted.forEach(c => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bt-chip';
+            b.dataset.group = 'category';
+            b.dataset.value = c;
+            b.textContent = c;
+            wrap.appendChild(b);
+        });
+        // Re-wire chips that were dynamically added.
+        this._wireFilters();
+    },
+
+    _buildRows(catalog) {
+        const vulns = (catalog && catalog.vulns) || [];
+        return vulns.map(v => ({
+            id: v.id,
+            name: v.name,
+            category: v.category,
+            state: v.state || 'INSTALLABLE',
+            coverage: (v.coverage_status || 'no-rule').toLowerCase().replace(/_/g, '-'),
+            reason: v.reason,
+            blocking: !!v.blocking,
+            mitre: v.mitre_technique,
+            rollback_supported: !!v.rollback_supported,
+            estimated_time_seconds: v.estimated_time_seconds,
+        }));
+    },
+
+    applyFilter(f) {
+        const rows = this.state.rows || [];
+        const visible = rows.filter(r => {
+            if (f.category && f.category !== 'all' && r.category !== f.category) return false;
+            if (f.state && f.state !== 'all' && r.state !== f.state) return false;
+            if (f.coverage && f.coverage !== 'all' && r.coverage !== f.coverage) return false;
+            return true;
+        });
+        this._renderSections(visible);
+        const count = document.getElementById('bolton-active-count');
+        if (count) count.textContent = `${visible.length} of ${rows.length} bolt-ons shown`;
+    },
+
+    _sectionFor(row) {
+        const s = (row.state || '').toUpperCase();
+        if (s === 'ALREADY_INSTALLED') return 'installed';
+        if (s === 'INSTALLABLE')       return 'available';
+        if (s === 'PATCHED')           return 'patched';
+        if (s === 'CONFLICTS_WITH_INSTALLED') return 'conflicts';
+        if (s.startsWith('INCOMPATIBLE') || s === 'MISSING_PREREQ' || s === 'MISSING_SOFTWARE') return 'incompatible';
+        return 'available';
+    },
+
+    _coveragePillClass(cov) {
+        if (cov === 'covered') return 'spec-pill--success';
+        if (cov === 'partial' || cov === 'rule-stale' || cov === 'stale') return 'spec-pill--warn';
+        if (cov === 'no-rule') return 'spec-pill--no-detect';
+        return 'spec-pill--warn';
+    },
+
+    _renderSections(rows) {
+        const buckets = {
+            installed: [], available: [], incompatible: [], conflicts: [],
+            'already-elsewhere': [], patched: [],
+        };
+        rows.forEach(r => { buckets[this._sectionFor(r)].push(r); });
+        const escapeHtml = (s) => String(s || '').replace(/[&<>\"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[c]);
+        Object.entries(buckets).forEach(([section, list]) => {
+            const target = document.querySelector(`#bolton-sections [data-rows="${section}"]`);
+            if (!target) return;
+            const countEl = document.querySelector(`#bolton-sections [data-count="${section}"]`);
+            if (countEl) countEl.textContent = String(list.length);
+            if (!list.length) {
+                target.innerHTML = `<p style="padding:12px 14px;color:var(--text-secondary);font-size:12.5px;margin:0">No bolt-ons in this section for the current filters.</p>`;
+                return;
+            }
+            target.innerHTML = list.map(r => {
+                const covPill = `<span class="spec-pill ${this._coveragePillClass(r.coverage)}" style="font-size:9.5px">${escapeHtml(r.coverage)}</span>`;
+                const mitre = r.mitre ? `<span class="spec-pill spec-pill--ttp">${escapeHtml(r.mitre)}</span>` : '';
+                const cat = r.category ? `<span class="spec-pill spec-pill--cat">${escapeHtml(r.category)}</span>` : '';
+                const actions = this._actionsForRow(r);
+                const hint = r.reason
+                    ? escapeHtml(r.reason)
+                    : (r.estimated_time_seconds ? `Est. install time: ~${r.estimated_time_seconds}s` : '');
+                return `
+                <div class="spec-row bt-row" data-state="${escapeHtml(r.state)}" data-cat="${escapeHtml(r.category || '')}" data-cov="${escapeHtml(r.coverage)}" data-vuln-id="${escapeHtml(r.id)}">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">${cat}${mitre}${covPill}</div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">${escapeHtml(r.name || r.id)}</div>
+                            <div class="bt-row__hint">${hint}</div>
+                        </div>
+                        <div class="bt-row__actions">${actions}</div>
+                    </div>
+                </div>`;
+            }).join('');
+            // Wire action buttons.
+            target.querySelectorAll('[data-bolton-action]').forEach(btn => {
+                if (btn._boltonWired) return;
+                btn._boltonWired = true;
+                btn.addEventListener('click', () => {
+                    const action = btn.dataset.boltonAction;
+                    const vid = btn.dataset.vulnId;
+                    if (!action || !vid) return;
+                    APP.bolton[action] && APP.bolton[action](vid, APP.bolton.state.host);
+                });
+            });
+        });
+    },
+
+    _actionsForRow(r) {
+        const id = r.id;
+        const btn = (lbl, act, cls = '') => `<button class="spec-edit-btn ${cls}" type="button" data-bolton-action="${act}" data-vuln-id="${id}">${lbl}</button>`;
+        const s = (r.state || '').toUpperCase();
+        if (s === 'ALREADY_INSTALLED') {
+            return [
+                btn('Patch', 'patch', 'spec-edit-btn--save'),
+                btn('Uninstall', 'uninstall'),
+            ].join('');
+        }
+        if (s === 'PATCHED') {
+            const out = [];
+            if (r.rollback_supported) out.push(btn('Patch revert', 'patchRevert', 'spec-edit-btn--save'));
+            out.push(btn('Uninstall', 'uninstall'));
+            return out.join('');
+        }
+        if (s === 'INSTALLABLE') {
+            return btn('Install', 'install', 'spec-edit-btn--save');
+        }
+        if (s === 'CONFLICTS_WITH_INSTALLED') {
+            return `<span class="bt-row__why" title="${(r.reason || '').replace(/"/g, '&quot;')}">View conflict</span>`;
+        }
+        // INCOMPATIBLE_* / MISSING_*
+        return `<span class="bt-row__why" title="${(r.reason || '').replace(/"/g, '&quot;')}">Why?</span>`;
+    },
+
+    /** Dispatch helpers — all four operations share an envelope. */
+    _dispatchOp(op, vulnId, host, body) {
+        const lab = this.state.lab;
+        if (!lab || !host || !vulnId) return;
+        const url = `/api/bolton/labs/${encodeURIComponent(lab)}/hosts/${encodeURIComponent(host)}/${op}/${encodeURIComponent(vulnId)}`;
+        this._openProgress(op, vulnId, host);
+        fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {}),
+        }).then(r => r.json()).then(payload => {
+            if (!payload || payload.success === false) {
+                this._setProgressStatus(payload && payload.error || 'dispatch failed');
+                return;
+            }
+            this.state.activeJob = payload.job_id;
+            this._pollJob(payload.job_id);
+        }).catch(err => {
+            this._setProgressStatus(String(err));
+        });
+    },
+
+    install(vulnId, host)      { this._dispatchOp('install',       vulnId, host, { run_probe: true }); },
+    uninstall(vulnId, host)    { this._dispatchOp('uninstall',     vulnId, host, {}); },
+    patch(vulnId, host)        { this._dispatchOp('patch',         vulnId, host, { run_probe: false }); },
+    patchRevert(vulnId, host)  { this._dispatchOp('patch-revert',  vulnId, host, {}); },
+
+    invokeAgent(jobId) {
+        if (!jobId) return;
+        fetch(`/api/bolton/jobs/${encodeURIComponent(jobId)}/agent-intervene`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        }).then(r => r.json()).then(payload => {
+            this._setProgressStatus(`Agent invocation queued (${payload && payload.status})`);
+        }).catch(err => {
+            this._setProgressStatus(String(err));
+        });
+    },
+
+    /** Open the progress overlay using Agent C's APP.overlay if available;
+     * fall back to a minimal inline progress panel when it's not. */
+    _openProgress(op, vulnId, host) {
+        const title = `${op[0].toUpperCase() + op.slice(1)} · ${vulnId}`;
+        const body = `<div id="bolton-progress-body">
+            <p style="margin:0 0 12px;color:var(--text-secondary);font-size:13px">
+                Dispatching <strong>${op}</strong> for <code>${vulnId}</code> on host <strong>${host}</strong>…
+            </p>
+            <div class="bi-log" id="bolton-progress-log" role="log" aria-live="polite"></div>
+        </div>`;
+        if (APP.overlay && typeof APP.overlay.open === 'function') {
+            // Agent C signature: open(id, content, opts)
+            APP.overlay.open('bolton-progress', body, { title, eyebrow: 'Bolt-on operation' });
+            return;
+        }
+        // Fallback: append a lightweight scrim takeover to the document body.
+        let host_el = document.getElementById('bolton-progress-fallback');
+        if (!host_el) {
+            host_el = document.createElement('div');
+            host_el.id = 'bolton-progress-fallback';
+            host_el.innerHTML = `
+                <div class="scrim-takeover" data-open="true"></div>
+                <div class="takeover-card bi-card" data-open="true" role="dialog" aria-modal="true">
+                    <div class="bi-card__head">
+                        <div class="bi-card__head-row">
+                            <div>
+                                <div class="bi-card__eyebrow">Bolt-on operation</div>
+                                <h3 class="bi-card__title" id="bolton-progress-title">${title}</h3>
+                            </div>
+                            <button class="bi-card__close" type="button" id="bolton-progress-close" aria-label="Close">✕</button>
+                        </div>
+                    </div>
+                    <div class="bi-card__body">${body}</div>
+                </div>`;
+            document.body.appendChild(host_el);
+            const close = document.getElementById('bolton-progress-close');
+            if (close) close.addEventListener('click', () => host_el.remove());
+        } else {
+            const t = document.getElementById('bolton-progress-title');
+            if (t) t.textContent = title;
+            const bb = document.getElementById('bolton-progress-body');
+            if (bb) bb.outerHTML = body;
+        }
+    },
+
+    _setProgressStatus(msg) {
+        const log = document.getElementById('bolton-progress-log');
+        if (!log) return;
+        const line = document.createElement('div');
+        line.className = 'bi-log__line';
+        line.textContent = msg;
+        log.appendChild(line);
+    },
+
+    _pollJob(jobId, attempts = 0) {
+        if (!jobId || attempts > 60) return;
+        fetch(`/api/bolton/jobs/${encodeURIComponent(jobId)}`)
+            .then(r => r.json())
+            .then(payload => {
+                if (!payload || payload.success === false) {
+                    this._setProgressStatus(payload && payload.error || 'job query failed');
+                    return;
+                }
+                const status = String(payload.status || '').toUpperCase();
+                this._setProgressStatus(`[${status}] ${payload.log_tail ? payload.log_tail.slice(-200) : ''}`);
+                if (['SUCCEEDED', 'FAILED', 'STUCK', 'AS_PATCHED_BUT_VULN'].includes(status)) {
+                    if (this.state.host && this.state.lab) {
+                        this.selectHost(this.state.lab, this.state.host);
+                    }
+                    return;
+                }
+                setTimeout(() => this._pollJob(jobId, attempts + 1), 1000);
+            })
+            .catch(() => setTimeout(() => this._pollJob(jobId, attempts + 1), 2000));
+    },
+};
+
+if (typeof window !== 'undefined') {
+    window.APP = window.APP || APP;
+}
+
+// === end v3 PALETTE (Agent B) =============================================
+
+// ============================================================================
+// v3 OVERLAY STACK (Agent C, 2026-05-18) — Dashboard-widget-as-OS overlays
+// ============================================================================
+//
+// APP.overlay is the dashboard-overlay machinery. Dashboard widgets open as
+// stacked, scrim-backed takeovers WITHOUT leaving the page (per the project
+// scaffold memory: "Widget clicks on the Dashboard → overlays (not
+// navigation)"). The overlay stack is separate from APP.modal (which keeps
+// owning singleton modals like architecture / version / session-logs) and
+// from APP.journey (Phase 2b's New Deployment takeover, also unchanged).
+//
+// Layering rules:
+//   - First open: dashboard content blurs + dims (body[data-overlay-depth="1"]).
+//   - Subsequent opens stack with +10 z-index each, increasing blur.
+//   - After 3 layers deep, the topmost overlay surfaces a prominent
+//     "Promote to full page" CTA (the z-index salad becomes unpleasant).
+//   - Escape closes one layer at a time; scrim click closes the topmost.
+//
+// API surface:
+//   APP.overlay.open(id, content, {title, eyebrow, promoteHref, wide,
+//                                  promoteLabel}) → handle (with .update())
+//   APP.overlay.close(id)        — close a specific overlay by id
+//   APP.overlay.closeTop()       — close the topmost overlay
+//   APP.overlay.closeAll()       — unwind the whole stack
+//   APP.overlay.isOpen(id)       — bool: is this overlay on the stack?
+//   APP.overlay.promote(id)      — close + navigate via APP.shell
+//
+// Dashboard widget content renderers live below as renderOverlay_<kind>()
+// helpers. They return DocumentFragment / HTMLElement / HTML string and
+// pull from the existing API endpoints (no new backend code).
+// ============================================================================
+
+(function () {
+    'use strict';
+
+    if (!window.APP) window.APP = {};
+
+    // Z-index baseline. Phase 2b's --z-takeover is 200 (for journey + modal).
+    // APP.overlay sits ABOVE the journey when both are open. Baseline 1000
+    // puts us comfortably above palette (Agent B, ~900) + existing modals.
+    const Z_BASE = 1000;
+    const Z_STEP = 10;
+    const PROMOTE_THRESHOLD = 3;   // after 3 layers, surface promote CTA prominently
+
+    // --- DOM helpers -------------------------------------------------------
+
+    function _root() {
+        let root = document.getElementById('app-overlay-root');
+        if (!root) {
+            // Defensive create — the body-level mount slot should always be
+            // present (it lives in index.html) but in test harnesses that
+            // dynamically replace the body we re-create it.
+            root = document.createElement('div');
+            root.id = 'app-overlay-root';
+            document.body.appendChild(root);
+        }
+        return root;
+    }
+
+    function _setBodyDepth(n) {
+        if (n <= 0) {
+            document.body.removeAttribute('data-overlay-depth');
+        } else {
+            document.body.setAttribute('data-overlay-depth', String(n));
+        }
+    }
+
+    function _focusableIn(el) {
+        if (!el) return null;
+        return el.querySelector(
+            'button:not([disabled]), [href], input:not([disabled]), ' +
+            'select:not([disabled]), textarea:not([disabled]), ' +
+            '[tabindex]:not([tabindex="-1"])'
+        );
+    }
+
+    // --- Overlay stack -----------------------------------------------------
+
+    const APP_overlay = {
+        _stack: [],   // [{id, element, scrim, card, previousFocus, options}]
+
+        open(id, content, opts) {
+            opts = opts || {};
+            if (this.isOpen(id)) {
+                const existing = this._stack.find(o => o.id === id);
+                if (existing && existing.body) _renderContent(existing.body, content);
+                return _handle(this, existing);
+            }
+
+            const depth = this._stack.length + 1;
+            const zIndex = Z_BASE + (depth - 1) * Z_STEP;
+
+            const overlayEl = document.createElement('div');
+            overlayEl.className = 'app-overlay';
+            overlayEl.setAttribute('data-overlay-id', id);
+            overlayEl.setAttribute('data-overlay-depth', String(depth));
+            overlayEl.style.zIndex = String(zIndex);
+
+            const scrim = document.createElement('div');
+            scrim.className = 'app-overlay__scrim';
+            scrim.setAttribute('data-overlay-scrim', '');
+            scrim.style.zIndex = String(zIndex);
+
+            const card = document.createElement('div');
+            card.className = 'app-overlay__card' + (opts.wide ? ' app-overlay__card--wide' : '');
+            card.setAttribute('role', 'dialog');
+            card.setAttribute('aria-modal', 'true');
+            card.setAttribute('aria-labelledby', `overlay-title-${_safeIdSuffix(id)}`);
+            card.style.zIndex = String(zIndex + 1);
+
+            // Header.
+            const header = document.createElement('header');
+            header.className = 'app-overlay__header';
+            const headLeft = document.createElement('div');
+            headLeft.className = 'app-overlay__header-text';
+            if (opts.eyebrow) {
+                const eyebrow = document.createElement('span');
+                eyebrow.className = 'app-overlay__eyebrow';
+                eyebrow.textContent = opts.eyebrow;
+                headLeft.appendChild(eyebrow);
+            }
+            const title = document.createElement('h2');
+            title.id = `overlay-title-${_safeIdSuffix(id)}`;
+            title.className = 'app-overlay__title';
+            title.textContent = opts.title || id;
+            headLeft.appendChild(title);
+            header.appendChild(headLeft);
+
+            const headRight = document.createElement('div');
+            headRight.className = 'app-overlay__header-actions';
+            if (opts.promoteHref) {
+                const promoteBtn = document.createElement('button');
+                promoteBtn.type = 'button';
+                promoteBtn.className = 'app-overlay__promote';
+                promoteBtn.setAttribute('data-v3-overlay-promote', '');
+                promoteBtn.textContent = opts.promoteLabel || 'Open in full page →';
+                promoteBtn.addEventListener('click', () => { APP_overlay.promote(id); });
+                if (depth >= PROMOTE_THRESHOLD) {
+                    promoteBtn.classList.add('app-overlay__promote--prominent');
+                    promoteBtn.title = 'Stack is getting deep — full-page recommended.';
+                }
+                headRight.appendChild(promoteBtn);
+            }
+            const closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
+            closeBtn.className = 'app-overlay__close';
+            closeBtn.setAttribute('aria-label', 'Close overlay');
+            closeBtn.innerHTML = '&times;';
+            closeBtn.addEventListener('click', () => APP_overlay.close(id));
+            headRight.appendChild(closeBtn);
+            header.appendChild(headRight);
+
+            const body = document.createElement('div');
+            body.className = 'app-overlay__body';
+            _renderContent(body, content);
+
+            card.appendChild(header);
+            card.appendChild(body);
+            overlayEl.appendChild(scrim);
+            overlayEl.appendChild(card);
+
+            _root().appendChild(overlayEl);
+
+            const entry = {
+                id, element: overlayEl, scrim, card, body, header,
+                options: opts, previousFocus: document.activeElement,
+            };
+            this._stack.push(entry);
+            _setBodyDepth(this._stack.length);
+
+            if (depth >= PROMOTE_THRESHOLD && opts.promoteHref) {
+                console.warn(`[APP.overlay] Stack is ${depth} deep for "${id}" — surfacing promote CTA prominently. Consider full-page navigation.`);
+            }
+
+            scrim.addEventListener('click', () => {
+                if (APP_overlay._stack.length > 0 &&
+                    APP_overlay._stack[APP_overlay._stack.length - 1].id === id) {
+                    APP_overlay.close(id);
+                }
+            });
+
+            requestAnimationFrame(() => { overlayEl.classList.add('is-open'); });
+
+            setTimeout(() => {
+                const focusable = _focusableIn(body) || closeBtn;
+                if (focusable) try { focusable.focus(); } catch (_) { /* ignore */ }
+            }, 50);
+
+            return _handle(this, entry);
+        },
+
+        close(id) {
+            const idx = this._stack.findIndex(o => o.id === id);
+            if (idx === -1) return;
+            const entry = this._stack[idx];
+            if (entry.options && typeof entry.options.onClose === 'function') {
+                try { entry.options.onClose(entry); } catch (e) { console.warn('overlay onClose threw:', e); }
+            }
+            entry.element.classList.remove('is-open');
+            entry.element.classList.add('is-closing');
+            this._stack.splice(idx, 1);
+            _setBodyDepth(this._stack.length);
+
+            setTimeout(() => {
+                if (entry.element && entry.element.parentNode) {
+                    entry.element.parentNode.removeChild(entry.element);
+                }
+            }, 220);
+
+            if (this._stack.length > 0) {
+                const top = this._stack[this._stack.length - 1];
+                const f = _focusableIn(top.body);
+                if (f) try { f.focus(); } catch (_) { /* ignore */ }
+            } else if (entry.previousFocus && typeof entry.previousFocus.focus === 'function') {
+                try { entry.previousFocus.focus(); } catch (_) { /* ignore */ }
+            }
+        },
+
+        closeTop() {
+            if (this._stack.length === 0) return;
+            const top = this._stack[this._stack.length - 1];
+            this.close(top.id);
+        },
+
+        closeAll() {
+            const ids = this._stack.slice().reverse().map(o => o.id);
+            ids.forEach(id => this.close(id));
+        },
+
+        isOpen(id) {
+            return this._stack.some(o => o.id === id);
+        },
+
+        promote(id) {
+            const entry = this._stack.find(o => o.id === id);
+            if (!entry) return;
+            const href = entry.options && entry.options.promoteHref;
+            this.close(id);
+            if (!href) return;
+            // promoteHref is one of:
+            //   'beacons'                    → APP.navigateTo('beacons')
+            //   {parent: 'X', subPill: 'Y'}  → APP.navigateTo(parent, subPill)
+            //   '/some-url' or '#anchor'     → location.href = ...
+            if (typeof href === 'object' && href.parent) {
+                if (APP.navigateTo) APP.navigateTo(href.parent, href.subPill || undefined);
+            } else if (typeof href === 'string' && href.indexOf('://') === -1 && href.indexOf('/') === -1 && href.charAt(0) !== '#') {
+                if (APP.navigateTo) APP.navigateTo(href);
+            } else if (typeof href === 'string') {
+                location.href = href;
+            }
+        },
+    };
+
+    APP.overlay = APP_overlay;
+
+    function _renderContent(host, content) {
+        while (host.firstChild) host.removeChild(host.firstChild);
+        if (content == null) return;
+        if (typeof content === 'string') {
+            host.innerHTML = content;
+        } else if (content instanceof Node) {
+            host.appendChild(content);
+        } else if (typeof content === 'object' && typeof content.toString === 'function') {
+            host.innerHTML = String(content);
+        }
+    }
+
+    function _safeIdSuffix(id) {
+        return String(id).replace(/[^a-z0-9_-]/gi, '-');
+    }
+
+    function _handle(overlay, entry) {
+        return {
+            id: entry.id,
+            update(newContent) {
+                if (entry.body) _renderContent(entry.body, newContent);
+            },
+            close() { overlay.close(entry.id); },
+        };
+    }
+
+    // --- Global Escape handler — pops one layer at a time -----------------
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape') return;
+        if (APP_overlay._stack.length === 0) return;
+        const top = APP_overlay._stack[APP_overlay._stack.length - 1];
+        const dirtyForm = top.body && top.body.querySelector('form[data-overlay-dirty="true"]');
+        if (dirtyForm) {
+            if (!window.confirm('Discard unsaved changes?')) return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        APP_overlay.closeTop();
+    }, true);
+
+    // ====================================================================
+    // === Dashboard widget content renderers + click conversion ==========
+    // ====================================================================
+
+    const _esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
+
+    function _emptyHost(message) {
+        const wrap = document.createElement('div');
+        wrap.className = 'app-overlay__empty';
+        wrap.innerHTML = `<p class="t-muted" style="margin: 0;">${_esc(message)}</p>`;
+        return wrap;
+    }
+
+    function _loadingHost(message) {
+        const wrap = document.createElement('div');
+        wrap.className = 'app-overlay__loading';
+        wrap.innerHTML = `<p class="t-muted" style="margin: 0;">${_esc(message || 'Loading…')}</p>`;
+        return wrap;
+    }
+
+    // ── 1. Active Beacons overlay ──────────────────────────────────────
+    async function renderOverlay_Beacons() {
+        const host = document.createElement('div');
+        host.appendChild(_loadingHost('Loading beacons…'));
+        try {
+            let beacons = [];
+            if (typeof BEACON !== 'undefined' && Array.isArray(BEACON.cachedBeacons) && BEACON.cachedBeacons.length > 0) {
+                beacons = BEACON.cachedBeacons.slice();
+            } else {
+                try {
+                    const res = await fetch('/api/beacon');
+                    if (res.ok) {
+                        const data = await res.json();
+                        beacons = Array.isArray(data) ? data : (data.beacons || data.data || []);
+                    }
+                } catch (e) { /* fall through to empty */ }
+            }
+            while (host.firstChild) host.removeChild(host.firstChild);
+            if (!beacons || beacons.length === 0) {
+                host.appendChild(_emptyHost('No active beacons. They appear here as soon as a target calls back.'));
+                return host;
+            }
+            const list = document.createElement('dl');
+            list.className = 'spec-list app-overlay__beacons-list';
+            list.innerHTML = beacons.map(b => {
+                const bid = b.id || b.beacon_id || b.uid || '';
+                const hostName = b.computer || b.hostname || b.host || '—';
+                const user = b.user || b.username || '—';
+                const proc = b.process || b.proc || b.pname || '—';
+                const last = b.last || b.last_checkin || b.lastSeen || '';
+                const owner = b.driven_by || b.operator || b.owner || '';
+                let ownerHtml = '';
+                if (owner && APP.operator && Array.isArray(APP.operator.all)) {
+                    const op = APP.operator.all.find(o => o.id === owner || o.display === owner);
+                    const color = (op && op.color) || '#7A849E';
+                    ownerHtml = `<span class="operator-dot operator-dot--sm" style="background: ${_esc(color)}" aria-hidden="true"></span><span class="t-muted" style="margin-left: 4px; font-size: 11px;">${_esc(owner)}</span>`;
+                }
+                return `
+                    <div class="spec-row" data-readonly="true" data-v3-beacon-row="${_esc(bid)}" role="button" tabindex="0">
+                        <div class="spec-row__head">
+                            <span class="spec-row__key">${_esc(hostName)}</span>
+                            <span class="spec-row__value">
+                                ${_esc(user)} · ${_esc(proc)}
+                                ${ownerHtml ? '<span style="margin-left: 12px;">' + ownerHtml + '</span>' : ''}
+                            </span>
+                            <span class="spec-row__hint">
+                                <span class="spec-pill spec-pill--live"><span class="spec-pill__dot"></span>${_esc(last || 'live')}</span>
+                            </span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            host.appendChild(list);
+
+            list.addEventListener('click', (e) => {
+                const row = e.target.closest('[data-v3-beacon-row]');
+                if (!row) return;
+                const bid = row.getAttribute('data-v3-beacon-row');
+                APP.overlay.open(
+                    'beacon-detail:' + bid,
+                    _renderBeaconDetailContent(bid, beacons.find(b => (b.id || b.beacon_id || b.uid) === bid)),
+                    {
+                        eyebrow: 'Beacon',
+                        title: bid || 'Beacon detail',
+                        promoteHref: { parent: 'operations-tab', subPill: 'beacons' },
+                        promoteLabel: 'Open in Beacons →',
+                    }
+                );
+            });
+            list.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                const row = e.target.closest('[data-v3-beacon-row]');
+                if (!row) return;
+                e.preventDefault();
+                row.click();
+            });
+            return host;
+        } catch (e) {
+            console.warn('renderOverlay_Beacons failed:', e);
+            while (host.firstChild) host.removeChild(host.firstChild);
+            host.appendChild(_emptyHost('Unable to load beacons.'));
+            return host;
+        }
+    }
+
+    function _renderBeaconDetailContent(bid, beacon) {
+        const wrap = document.createElement('div');
+        if (!beacon) {
+            wrap.innerHTML = `<p class="t-muted">No detail available for beacon ${_esc(bid)}.</p>`;
+            return wrap;
+        }
+        const rows = [
+            ['Host', beacon.computer || beacon.hostname || beacon.host || '—'],
+            ['User', beacon.user || beacon.username || '—'],
+            ['Process', beacon.process || beacon.proc || beacon.pname || '—'],
+            ['PID', beacon.pid || '—'],
+            ['Architecture', beacon.arch || beacon.architecture || '—'],
+            ['Internal IP', beacon.internal || beacon.internal_ip || beacon.ip || '—'],
+            ['External IP', beacon.external || beacon.external_ip || '—'],
+            ['Last Seen', beacon.last || beacon.last_checkin || beacon.lastSeen || '—'],
+            ['Sleep', beacon.sleep != null ? String(beacon.sleep) + 's' : '—'],
+            ['Driven by', beacon.driven_by || beacon.operator || beacon.owner || '—'],
+        ];
+        wrap.innerHTML = `<dl class="spec-list">${rows.map(([k, v]) => `
+            <div class="spec-row" data-readonly="true">
+                <div class="spec-row__head">
+                    <span class="spec-row__key">${_esc(k)}</span>
+                    <span class="spec-row__value">${_esc(v)}</span>
+                </div>
+            </div>
+        `).join('')}</dl>`;
+        return wrap;
+    }
+
+    // ── 2. Recent Activity overlay (full audit log) ───────────────────
+    async function renderOverlay_Activity() {
+        const host = document.createElement('div');
+        host.appendChild(_loadingHost('Loading audit log…'));
+        try {
+            const res = await fetch('/api/audit?limit=200');
+            const data = await res.json();
+            const entries = (data && data.entries) || [];
+            while (host.firstChild) host.removeChild(host.firstChild);
+
+            const filterBar = document.createElement('div');
+            filterBar.className = 'app-overlay__filter-bar';
+            filterBar.innerHTML = `
+                <input type="search"
+                       class="app-overlay__filter-search"
+                       placeholder="Filter by operator, action, or target…"
+                       data-v3-audit-search
+                       aria-label="Filter audit log">
+                <button type="button" class="app-overlay__filter-export" data-v3-audit-export>Export CSV</button>
+            `;
+            host.appendChild(filterBar);
+
+            if (entries.length === 0) {
+                host.appendChild(_emptyHost('No activity in the audit log yet.'));
+                return host;
+            }
+
+            const list = document.createElement('ul');
+            list.className = 'spec-list app-overlay__activity-list';
+            list.setAttribute('data-v3-audit-list', '');
+            list.innerHTML = entries.map(e => (typeof _renderActivityRow === 'function')
+                ? _renderActivityRow(e)
+                : _fallbackActivityRow(e)).join('');
+            host.appendChild(list);
+
+            const search = filterBar.querySelector('[data-v3-audit-search]');
+            search.addEventListener('input', () => {
+                const q = search.value.toLowerCase();
+                Array.from(list.children).forEach(li => {
+                    const text = li.textContent.toLowerCase();
+                    li.style.display = text.indexOf(q) === -1 ? 'none' : '';
+                });
+            });
+            const exportBtn = filterBar.querySelector('[data-v3-audit-export]');
+            exportBtn.addEventListener('click', () => _exportAuditCsv(entries));
+
+            return host;
+        } catch (e) {
+            console.warn('renderOverlay_Activity failed:', e);
+            while (host.firstChild) host.removeChild(host.firstChild);
+            host.appendChild(_emptyHost('Unable to load audit log.'));
+            return host;
+        }
+    }
+
+    function _fallbackActivityRow(e) {
+        return `<li class="spec-row" data-readonly="true">
+            <div class="spec-row__head">
+                <span class="spec-row__key">${_esc(e.op || '?')}</span>
+                <span class="spec-row__value">${_esc(e.action || '')} ${_esc(e.project || e.target || '')}</span>
+                <span class="spec-row__hint">${_esc(e.ts || '')}</span>
+            </div>
+        </li>`;
+    }
+
+    function _exportAuditCsv(entries) {
+        const header = ['ts', 'op', 'action', 'project', 'target'];
+        const lines = [header.join(',')];
+        entries.forEach(e => {
+            lines.push(header.map(k => {
+                const v = String(e[k] == null ? '' : e[k]).replace(/"/g, '""');
+                return /[,"\n]/.test(v) ? `"${v}"` : v;
+            }).join(','));
+        });
+        const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `audit-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    // ── 3. Per-deployment Manage overlay ──────────────────────────────
+    async function renderOverlay_Deployment(name) {
+        const host = document.createElement('div');
+        host.appendChild(_loadingHost('Loading deployment…'));
+        try {
+            const res = await fetch(`/api/deploy/status?project=${encodeURIComponent(name)}`);
+            const data = await res.json();
+            const status = (data && data.status) || {};
+            while (host.firstChild) host.removeChild(host.firstChild);
+
+            const rows = [
+                ['Project', name],
+                ['Deployment Type', status.deployment_type || '—'],
+                ['Status', status.status || status.state || '—'],
+                ['Region', status.region || '—'],
+                ['Instances', status.instance_count != null ? String(status.instance_count) : '—'],
+                ['Created', status.created_at || status.created || '—'],
+                ['Last touched by', status.last_modified_by || status.owner || status.operator || '—'],
+                ['Last touched', status.last_modified_at || status.modified_at || '—'],
+            ];
+            const list = document.createElement('dl');
+            list.className = 'spec-list';
+            list.innerHTML = rows.map(([k, v]) => `
+                <div class="spec-row" data-readonly="true">
+                    <div class="spec-row__head">
+                        <span class="spec-row__key">${_esc(k)}</span>
+                        <span class="spec-row__value">${_esc(v)}</span>
+                    </div>
+                </div>
+            `).join('');
+            host.appendChild(list);
+
+            const actions = document.createElement('div');
+            actions.className = 'app-overlay__footer-actions';
+            actions.innerHTML = `
+                <button type="button" class="btn btn-secondary btn-sm" data-v3-set-active="${_esc(name)}">Set as active</button>
+                <button type="button" class="btn btn-primary btn-sm" data-v3-open-manage="${_esc(name)}">Open Manage page →</button>
+            `;
+            host.appendChild(actions);
+
+            actions.addEventListener('click', (e) => {
+                const setBtn = e.target.closest('[data-v3-set-active]');
+                const openBtn = e.target.closest('[data-v3-open-manage]');
+                if (setBtn && APP.activeDeployment) {
+                    APP.activeDeployment.set(setBtn.getAttribute('data-v3-set-active'));
+                    if (APP.toast) APP.toast('Active deployment switched', 'info');
+                }
+                if (openBtn) {
+                    APP.overlay.close('deployment:' + openBtn.getAttribute('data-v3-open-manage'));
+                    if (APP.activeDeployment) APP.activeDeployment.set(openBtn.getAttribute('data-v3-open-manage'));
+                    if (APP.navigateTo) APP.navigateTo('deployments-tab', 'manage');
+                }
+            });
+
+            return host;
+        } catch (e) {
+            console.warn('renderOverlay_Deployment failed:', e);
+            while (host.firstChild) host.removeChild(host.firstChild);
+            host.appendChild(_emptyHost('Unable to load deployment metadata.'));
+            return host;
+        }
+    }
+
+    // ── 4. Cost Tracker overlay ───────────────────────────────────────
+    async function renderOverlay_Cost() {
+        const host = document.createElement('div');
+        host.appendChild(_loadingHost('Loading cost data…'));
+        try {
+            const [summaryRes, projRes, settingsRes] = await Promise.all([
+                fetch('/api/costs/summary').catch(() => null),
+                fetch('/api/costs/projects').catch(() => null),
+                fetch('/api/costs/settings').catch(() => null),
+            ]);
+            const summary = (summaryRes && summaryRes.ok) ? await summaryRes.json() : {};
+            const projects = (projRes && projRes.ok) ? await projRes.json() : { projects: [] };
+            const settings = (settingsRes && settingsRes.ok) ? await settingsRes.json() : {};
+
+            while (host.firstChild) host.removeChild(host.firstChild);
+
+            const hero = document.createElement('div');
+            hero.className = 'app-overlay__cost-hero';
+            const total = (summary && (summary.monthly_total || summary.total)) || 0;
+            const budget = (settings && settings.monthly_budget) || 0;
+            hero.innerHTML = `
+                <div class="app-overlay__cost-hero-num">$${_esc(Math.round(total))}<span class="app-overlay__cost-hero-unit">/mo</span></div>
+                <div class="app-overlay__cost-hero-sub">${budget ? 'Budget: $' + _esc(budget) + '/mo' : 'No budget set'}</div>
+            `;
+            host.appendChild(hero);
+
+            const projects_list = (projects && projects.projects) || [];
+            if (projects_list.length > 0) {
+                const list = document.createElement('dl');
+                list.className = 'spec-list';
+                list.innerHTML = projects_list.map(p => `
+                    <div class="spec-row" data-readonly="true">
+                        <div class="spec-row__head">
+                            <span class="spec-row__key">${_esc(p.project || p.name || '—')}</span>
+                            <span class="spec-row__value">${_esc(p.instance_count || 0)} instances</span>
+                            <span class="spec-row__hint">$${_esc(Math.round(p.monthly_cost || p.cost || 0))}/mo</span>
+                        </div>
+                    </div>
+                `).join('');
+                host.appendChild(list);
+            } else {
+                host.appendChild(_emptyHost('No per-project cost data yet.'));
+            }
+
+            const footer = document.createElement('div');
+            footer.className = 'app-overlay__footer-actions';
+            footer.innerHTML = `
+                <label class="t-muted" style="font-size: 11.5px;">Monthly budget
+                    <input type="number" min="0" step="10" value="${_esc(budget || 0)}" data-v3-cost-budget style="width: 100px; margin-left: 8px; padding: 4px 8px;">
+                </label>
+                <button type="button" class="btn btn-primary btn-sm" data-v3-cost-save>Save budget</button>
+            `;
+            host.appendChild(footer);
+
+            footer.addEventListener('click', async (e) => {
+                if (!e.target.closest('[data-v3-cost-save]')) return;
+                const input = footer.querySelector('[data-v3-cost-budget]');
+                const value = parseFloat(input.value);
+                try {
+                    await fetch('/api/costs/settings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ monthly_budget: value }),
+                    });
+                    if (APP.toast) APP.toast('Budget saved', 'success');
+                } catch (err) {
+                    if (APP.toast) APP.toast('Failed to save budget', 'error');
+                }
+            });
+
+            return host;
+        } catch (e) {
+            console.warn('renderOverlay_Cost failed:', e);
+            while (host.firstChild) host.removeChild(host.firstChild);
+            host.appendChild(_emptyHost('Unable to load cost data.'));
+            return host;
+        }
+    }
+
+    // ── 5. Failed Deployments overlay ─────────────────────────────────
+    async function renderOverlay_Failed() {
+        const host = document.createElement('div');
+        host.appendChild(_loadingHost('Loading failed deployments…'));
+        try {
+            const res = await fetch('/api/deploy/active');
+            const data = await res.json();
+            const failed = ((data && data.deployments) || []).filter(d => d.status === 'error' || d.status === 'failed');
+            while (host.firstChild) host.removeChild(host.firstChild);
+            if (failed.length === 0) {
+                host.appendChild(_emptyHost('No failed deployments.'));
+                return host;
+            }
+            const list = document.createElement('dl');
+            list.className = 'spec-list';
+            list.innerHTML = failed.map(d => {
+                const name = d._filename || d.project_name || 'unknown';
+                return `
+                    <div class="spec-row" data-readonly="true">
+                        <div class="spec-row__head">
+                            <span class="spec-row__key">${_esc(name)}</span>
+                            <span class="spec-row__value">${_esc(d.deployment_type || '—')}</span>
+                            <span class="spec-row__hint">
+                                <button type="button" class="btn btn-secondary btn-sm" data-v3-retry="${_esc(name)}">Retry</button>
+                                <button type="button" class="btn btn-danger btn-sm" data-v3-destroy="${_esc(name)}">Destroy</button>
+                            </span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            host.appendChild(list);
+
+            list.addEventListener('click', (e) => {
+                const retry = e.target.closest('[data-v3-retry]');
+                const destroy = e.target.closest('[data-v3-destroy]');
+                if (retry) {
+                    const name = retry.getAttribute('data-v3-retry');
+                    APP.overlay.close('failed-deployments');
+                    if (APP.activeDeployment) APP.activeDeployment.set(name);
+                    if (APP.navigateTo) APP.navigateTo('deployments-tab', 'deploy');
+                }
+                if (destroy) {
+                    const name = destroy.getAttribute('data-v3-destroy');
+                    APP.overlay.close('failed-deployments');
+                    if (APP.activeDeployment) APP.activeDeployment.set(name);
+                    if (APP.navigateTo) APP.navigateTo('deployments-tab', 'cleanup');
+                }
+            });
+            return host;
+        } catch (e) {
+            console.warn('renderOverlay_Failed failed:', e);
+            while (host.firstChild) host.removeChild(host.firstChild);
+            host.appendChild(_emptyHost('Unable to load deployments.'));
+            return host;
+        }
+    }
+
+    // ── 6. AWS Prereqs checker overlay ────────────────────────────────
+    async function renderOverlay_Prereqs() {
+        const host = document.createElement('div');
+        host.appendChild(_loadingHost('Running prerequisite checks…'));
+        try {
+            const [credsRes, sshRes, permsRes] = await Promise.all([
+                fetch('/api/aws/credentials').catch(() => null),
+                fetch('/api/aws/ssh-key').catch(() => null),
+                fetch('/api/aws/permissions').catch(() => null),
+            ]);
+            const creds = (credsRes && credsRes.ok) ? await credsRes.json() : { success: false };
+            const ssh = (sshRes && sshRes.ok) ? await sshRes.json() : { success: false };
+            const perms = (permsRes && permsRes.ok) ? await permsRes.json() : { success: false };
+
+            while (host.firstChild) host.removeChild(host.firstChild);
+
+            function _pill(ok) {
+                return ok
+                    ? `<span class="spec-pill spec-pill--live"><span class="spec-pill__dot"></span>OK</span>`
+                    : `<span class="spec-pill spec-pill--error"><span class="spec-pill__dot"></span>FAIL</span>`;
+            }
+            const rows = [
+                ['AWS Credentials', creds.success === true || creds.ok === true, creds.identity || creds.error || ''],
+                ['SSH Key', ssh.success === true || ssh.ok === true, ssh.path || ssh.error || ''],
+                ['IAM Permissions', perms.success === true || perms.ok === true, perms.message || perms.error || ''],
+            ];
+            const list = document.createElement('dl');
+            list.className = 'spec-list';
+            list.innerHTML = rows.map(([k, ok, detail]) => `
+                <div class="spec-row" data-readonly="true">
+                    <div class="spec-row__head">
+                        <span class="spec-row__key">${_esc(k)}</span>
+                        <span class="spec-row__value">${_esc(detail)}</span>
+                        <span class="spec-row__hint">${_pill(ok)}</span>
+                    </div>
+                </div>
+            `).join('');
+            host.appendChild(list);
+
+            const allOk = rows.every(r => r[1]);
+            if (allOk) {
+                try { localStorage.setItem('prereqs-verified-at', String(Date.now())); } catch (_) { /* ignore */ }
+                if (typeof _refreshPrereqsBanner === 'function') _refreshPrereqsBanner();
+            }
+
+            const footer = document.createElement('div');
+            footer.className = 'app-overlay__footer-actions';
+            footer.innerHTML = `<button type="button" class="btn btn-secondary btn-sm" data-v3-prereqs-rerun>Re-run checks</button>`;
+            host.appendChild(footer);
+
+            footer.addEventListener('click', async (e) => {
+                if (!e.target.closest('[data-v3-prereqs-rerun]')) return;
+                const handle = APP.overlay._stack.find(o => o.id === 'prereqs');
+                if (handle) _renderContent(handle.body, _loadingHost('Re-running prereq checks…'));
+                const next = await renderOverlay_Prereqs();
+                if (handle) _renderContent(handle.body, next);
+            });
+
+            return host;
+        } catch (e) {
+            console.warn('renderOverlay_Prereqs failed:', e);
+            while (host.firstChild) host.removeChild(host.firstChild);
+            host.appendChild(_emptyHost('Unable to run prerequisite checks.'));
+            return host;
+        }
+    }
+
+    // ── 8. Elastic Detection Rules browser overlay ───────────────────
+    function renderOverlay_Elastic() {
+        const host = document.createElement('div');
+        if (typeof ELASTIC_RULES === 'undefined' || !ELASTIC_RULES) {
+            host.appendChild(_emptyHost('Elastic rules not loaded. Run "Update Rules" to fetch them.'));
+            return host;
+        }
+
+        const allRules = [];
+        const commands = ELASTIC_RULES.commands || {};
+        Object.keys(commands).forEach(cmd => {
+            (commands[cmd] || []).forEach(rule => {
+                allRules.push({ ...rule, command: cmd });
+            });
+        });
+        if (allRules.length === 0) {
+            host.appendChild(_emptyHost('No rules in the index.'));
+            return host;
+        }
+
+        const filter = document.createElement('div');
+        filter.className = 'app-overlay__filter-bar';
+        filter.innerHTML = `
+            <input type="search"
+                   class="app-overlay__filter-search"
+                   placeholder="Filter ${allRules.length} rules…"
+                   data-v3-rule-search
+                   aria-label="Filter detection rules">
+        `;
+        host.appendChild(filter);
+
+        const list = document.createElement('dl');
+        list.className = 'spec-list app-overlay__rules-list';
+        list.innerHTML = allRules.slice(0, 100).map(r => `
+            <div class="spec-row" data-readonly="true" data-v3-rule-search-text="${_esc((r.name + ' ' + (r.command || '') + ' ' + (r.mitre_technique || '') + ' ' + (r.mitre_technique_name || '')).toLowerCase())}">
+                <div class="spec-row__head">
+                    <span class="spec-row__key">${_esc(r.name || 'unnamed')}</span>
+                    <span class="spec-row__value">
+                        <span class="t-muted" style="font-size: 11px;">${_esc(r.command || '')}</span>
+                        ${r.mitre_technique ? ' · <code>' + _esc(r.mitre_technique) + '</code>' : ''}
+                    </span>
+                    <span class="spec-row__hint">
+                        <span class="spec-pill spec-pill--${r.severity === 'critical' ? 'error' : (r.severity === 'high' ? 'error' : 'draft')}"><span class="spec-pill__dot"></span>${_esc(r.severity || '?')}</span>
+                    </span>
+                </div>
+            </div>
+        `).join('');
+        host.appendChild(list);
+
+        const search = filter.querySelector('[data-v3-rule-search]');
+        search.addEventListener('input', () => {
+            const q = search.value.toLowerCase();
+            Array.from(list.children).forEach(li => {
+                const text = li.getAttribute('data-v3-rule-search-text') || '';
+                li.style.display = text.indexOf(q) === -1 ? 'none' : '';
+            });
+        });
+
+        if (allRules.length > 100) {
+            const more = document.createElement('p');
+            more.className = 't-muted';
+            more.style.cssText = 'margin: 12px 0 0; font-size: 11px;';
+            more.textContent = `Showing first 100 of ${allRules.length}. Filter to narrow down.`;
+            host.appendChild(more);
+        }
+        return host;
+    }
+
+    // ── Public openers — used by the click delegation below + callers ──
+    APP.overlay.openBeacons = function () {
+        const handle = APP.overlay.open('beacons', _loadingHost('Loading beacons…'), {
+            eyebrow: 'Operations',
+            title: 'Active Beacons',
+            promoteHref: { parent: 'operations-tab', subPill: 'beacons' },
+            promoteLabel: 'Open in Beacons →',
+            wide: true,
+        });
+        renderOverlay_Beacons().then(node => handle.update(node));
+        return handle;
+    };
+    APP.overlay.openActivity = function () {
+        const handle = APP.overlay.open('activity', _loadingHost('Loading audit log…'), {
+            eyebrow: 'Audit',
+            title: 'Recent Activity',
+            wide: true,
+        });
+        renderOverlay_Activity().then(node => handle.update(node));
+        return handle;
+    };
+    APP.overlay.openDeployment = function (name) {
+        const handle = APP.overlay.open('deployment:' + name, _loadingHost('Loading…'), {
+            eyebrow: 'Deployment',
+            title: name,
+            promoteHref: { parent: 'deployments-tab', subPill: 'manage' },
+            promoteLabel: 'Open in Manage →',
+        });
+        renderOverlay_Deployment(name).then(node => handle.update(node));
+        return handle;
+    };
+    APP.overlay.openCost = function () {
+        const handle = APP.overlay.open('cost', _loadingHost('Loading cost data…'), {
+            eyebrow: 'Cost',
+            title: 'Cost Tracker',
+            promoteHref: 'settings',
+            promoteLabel: 'Open in Settings →',
+            wide: true,
+        });
+        renderOverlay_Cost().then(node => handle.update(node));
+        return handle;
+    };
+    APP.overlay.openFailed = function () {
+        const handle = APP.overlay.open('failed-deployments', _loadingHost('Loading…'), {
+            eyebrow: 'Deployments',
+            title: 'Failed Deployments',
+            promoteHref: { parent: 'deployments-tab', subPill: 'manage' },
+            promoteLabel: 'Open in Manage →',
+        });
+        renderOverlay_Failed().then(node => handle.update(node));
+        return handle;
+    };
+    APP.overlay.openPrereqs = function () {
+        const handle = APP.overlay.open('prereqs', _loadingHost('Running prereqs…'), {
+            eyebrow: 'Setup',
+            title: 'AWS & SSH Prerequisites',
+            promoteHref: 'settings',
+            promoteLabel: 'Open in Settings →',
+        });
+        renderOverlay_Prereqs().then(node => handle.update(node));
+        return handle;
+    };
+    APP.overlay.openElastic = function () {
+        // No promote target until Agent D wires Settings → Detection rules.
+        const handle = APP.overlay.open('elastic', renderOverlay_Elastic(), {
+            eyebrow: 'SIEM',
+            title: 'Elastic Detection Rules',
+            wide: true,
+        });
+        return handle;
+    };
+
+    // --- Delegated click handler — widget clicks → overlay opens -------
+    function _wireDashboard() {
+        const dash = document.querySelector('[data-page="dashboard"]');
+        if (!dash || dash._v3OverlayWired) return;
+        dash._v3OverlayWired = true;
+
+        dash.addEventListener('click', (e) => {
+            const depCard = e.target.closest('[data-v3-deployment-card]');
+            if (depCard) {
+                e.preventDefault();
+                APP.overlay.openDeployment(depCard.getAttribute('data-v3-deployment-card'));
+                return;
+            }
+            const link = e.target.closest('[data-v3-widget-link]');
+            if (link) {
+                e.preventDefault();
+                e.stopPropagation();
+                _openByKind(link.getAttribute('data-v3-widget-link'));
+                return;
+            }
+            const widget = e.target.closest('[data-v3-widget]');
+            if (!widget) return;
+            // Architecture keeps its own onclick (APP.modal) so we skip here.
+            const kind = widget.getAttribute('data-v3-widget');
+            if (kind === 'architecture') return;
+            e.preventDefault();
+            _openByKind(kind);
+        });
+
+        dash.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const widget = e.target.closest('[data-v3-widget]');
+            if (!widget) return;
+            if (widget.getAttribute('data-v3-widget') === 'architecture') return;
+            e.preventDefault();
+            _openByKind(widget.getAttribute('data-v3-widget'));
+        });
+    }
+
+    function _openByKind(kind) {
+        switch (kind) {
+            case 'beacons':     APP.overlay.openBeacons(); break;
+            case 'activity':    APP.overlay.openActivity(); break;
+            case 'deployments': APP.overlay.openFailed(); break;
+            case 'cost':        APP.overlay.openCost(); break;
+            case 'failed':      APP.overlay.openFailed(); break;
+            case 'prereqs':     APP.overlay.openPrereqs(); break;
+            case 'elastic':     APP.overlay.openElastic(); break;
+            default: console.warn('[APP.overlay] unknown widget kind:', kind);
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _wireDashboard);
+    } else {
+        _wireDashboard();
+    }
+})();
+// === end v3 OVERLAY STACK (Agent C) ====================================

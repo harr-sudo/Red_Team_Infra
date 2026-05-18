@@ -205,14 +205,13 @@ test.describe('v3 shell — rail navigation', () => {
         // After click, the group expands.
         await expect(children).toHaveClass(/is-open/, { timeout: 5000 });
 
-        // All 4 current sub-pills are present (Bolt-ons is agent D's slot, NOT
-        // present in this foundation commit).
+        // All 5 sub-pills are present after Agent D's bolt-ons mount.
         const subItems = deployGroup.locator('.app-rail__child');
-        await expect(subItems).toHaveCount(4);
+        await expect(subItems).toHaveCount(5);
         const subLabels = await subItems.evaluateAll((els) =>
             els.map((el) => el.textContent?.trim())
         );
-        expect(subLabels).toEqual(['Configure', 'Deploy', 'Manage', 'Cleanup']);
+        expect(subLabels).toEqual(['Configure', 'Deploy', 'Manage', 'Cleanup', 'Bolt-ons']);
     });
 
     test('active state moves between rail items as you click them', async ({ page }) => {

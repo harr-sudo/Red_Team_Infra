@@ -402,3 +402,110 @@ def evaluate_catalog_for_host(
             descriptor, facts, installed_boltons_in_lab
         )
     return results
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Route-facing wrapper (Agent D reconcile)
+# ──────────────────────────────────────────────────────────────────────
+
+class FactsMissing(Exception):
+    """Raised by ``host_catalog`` when there are no cached facts.
+
+    The route surfaces this as a 409 with a hint to POST to
+    ``/facts/refresh`` first.
+    """
+
+
+def _row_for_vuln(descriptor: Any, result: CompatibilityResult) -> dict[str, Any]:
+    """Serialize one (descriptor, compat-result) pair for the catalog row."""
+    from webapp.backend.services.bolton_catalog_service import (
+        _descriptor_to_dict,
+        _summarise,
+    )
+    summary = _summarise(descriptor)
+    raw = _descriptor_to_dict(descriptor)
+    patch = raw.get("patch") or {}
+    return {
+        **summary,
+        "state": result.state.value,
+        "reason": result.reason,
+        "suggested_action": result.suggested_action,
+        "blocking": result.blocking,
+        "rollback_supported": (patch or {}).get("rollback_supported", False),
+        "estimated_time_seconds": ((raw.get("install") or {}) or {}).get(
+            "estimated_time_seconds"
+        ),
+    }
+
+
+def host_catalog(
+    lab: str,
+    host: str,
+    category: str | None = None,
+    states: list[str] | None = None,
+    search: str | None = None,
+) -> dict[str, Any]:
+    """Return the full catalog annotated with per-vuln compatibility state.
+
+    Route-facing wrapper. Loads the catalog via ``bolton_catalog_service``,
+    pulls host facts via ``bolton_facts_service``, and applies the
+    optional ``category`` / ``states`` / ``search`` filters.
+    """
+    # Lazy imports — services may be substituted with mocks in route tests.
+    from webapp.backend.services import (
+        bolton_catalog_service,
+        bolton_facts_service,
+    )
+
+    # Probe for facts (gather if cold — see facts_service.get_facts for
+    # the unknown-host KeyError path).
+    try:
+        facts = bolton_facts_service.gather_facts(lab, host)
+    except KeyError as e:
+        raise KeyError(str(e)) from e
+    if facts is None:
+        raise FactsMissing(f"no facts cached for {host} in {lab}")
+
+    catalog = bolton_catalog_service._load()
+    installed_map = bolton_facts_service.build_installed_boltons_map(lab)
+    results = evaluate_catalog_for_host(catalog, facts, installed_map)
+
+    needle = (search or "").strip().lower()
+    wanted_states = {s.upper() for s in (states or [])} if states else None
+
+    rows: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    for vuln_id, descriptor in catalog.items():
+        result = results[vuln_id]
+        state_label = result.state.name  # e.g. INSTALLABLE
+        counts[state_label] = counts.get(state_label, 0) + 1
+        if category:
+            from webapp.backend.services.bolton_catalog_service import _descriptor_to_dict
+            if _descriptor_to_dict(descriptor).get("category") != category:
+                continue
+        if wanted_states and state_label not in wanted_states:
+            continue
+        if needle:
+            from webapp.backend.services.bolton_catalog_service import _descriptor_to_dict
+            raw = _descriptor_to_dict(descriptor)
+            hay = " ".join([
+                str(raw.get("id") or ""),
+                str(raw.get("name") or ""),
+                str(raw.get("description") or ""),
+            ]).lower()
+            if needle not in hay:
+                continue
+        rows.append(_row_for_vuln(descriptor, result))
+
+    return {
+        "host_id": host,
+        "host_facts_summary": {
+            "os": f"{facts.os_family} {facts.os_version}".strip(),
+            "role": facts.role,
+            "installed_count": len(facts.installed_boltons),
+            "stale": not facts.is_fresh(),
+            "collected_at": facts.gathered_at.isoformat(),
+        },
+        "counts_by_state": counts,
+        "vulns": rows,
+    }

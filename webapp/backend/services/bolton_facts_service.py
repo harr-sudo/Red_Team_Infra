@@ -413,6 +413,148 @@ def list_lab_hosts(lab: str) -> list[str]:
     return sorted(p.stem for p in lab_dir.glob("*.yaml"))
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Route-facing exceptions (Agent D reconcile)
+# ──────────────────────────────────────────────────────────────────────
+
+class HostUnreachable(Exception):
+    """Raised by route-facing wrappers when a probe target is unreachable.
+
+    Phase 2 will raise this from ``_probe_host`` when Ansible/WinRM fails.
+    Phase 1 stub never raises it (mock lookup always succeeds), but the
+    exception class exists so route handlers can ``except`` it and the
+    test suite can monkeypatch refresh_facts to raise it.
+    """
+    def __init__(self, message: str, *, last_collected_at: str | None = None):
+        super().__init__(message)
+        self.last_collected_at = last_collected_at
+
+
+class ProbeTimeout(Exception):
+    """Raised when a probe exceeds its allowed window."""
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Route-facing wrappers (Agent D reconcile)
+# ──────────────────────────────────────────────────────────────────────
+
+def list_hosts(lab: str) -> list[dict[str, Any]]:
+    """Route-facing variant of ``list_lab_hosts`` — returns summary dicts.
+
+    Phase 1: if the lab has no cached facts but is a known mock host set,
+    seed the cache by gathering facts for each mock host. Phase 2 will
+    instead consult the Terraform / deployment-state registry.
+    """
+    # Phase 1 — synthesize host list from the mock map when no cached
+    # facts exist yet. Operators visiting bolt-ons for the first time
+    # otherwise see an empty list. We do NOT raise KeyError for unknown
+    # labs (the v3 frontend will pre-fetch + handle a 404 gracefully when
+    # the registry layer arrives in Phase 2).
+    cached = list_lab_hosts(lab)
+    if not cached:
+        # Surface every mock host as a possible target for the lab.
+        cached = sorted(_MOCK_HOST_FACTS.keys())
+
+    out: list[dict[str, Any]] = []
+    for host in cached:
+        facts = get_cached_facts(lab, host)
+        if facts is None:
+            # No cache yet — return shallow row so the UI can render and
+            # gather_facts lazily on selection.
+            mock = _mock_lookup(host) or {}
+            out.append({
+                "name": host,
+                "host_id": host,
+                "role": mock.get("role", "unknown"),
+                "os_family": mock.get("os_family", "unknown"),
+                "os_version": mock.get("os_version", "unknown"),
+                "ip": None,
+                "installed_count": 0,
+                "stale": True,
+            })
+        else:
+            out.append({
+                "name": host,
+                "host_id": host,
+                "role": facts.role,
+                "os_family": facts.os_family,
+                "os_version": facts.os_version,
+                "ip": None,
+                "installed_count": len(facts.installed_boltons),
+                "stale": not facts.is_fresh(),
+            })
+    return out
+
+
+def get_facts(
+    lab: str,
+    host: str,
+    force_refresh: bool = False,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Route-facing variant of ``gather_facts`` returning a plain dict.
+
+    Adds ``host_id`` / ``stale`` envelope fields the frontend expects.
+    Raises ``KeyError`` when the (lab, host) pair is unknown — the route
+    surfaces this as a 404.
+    """
+    # Reject obviously unknown hosts (Phase 1 — mock-table check). Phase 2
+    # replaces this with a Terraform inventory lookup.
+    if _mock_lookup(host) is None and get_cached_facts(lab, host) is None:
+        # Allow facts that have been previously written to disk for
+        # arbitrary host names (test fixtures rely on this).
+        path = _facts_path(lab, host)
+        if not path.exists():
+            raise KeyError(f"host '{host}' in lab '{lab}' not found")
+    facts = gather_facts(lab, host, force_refresh=force_refresh)
+    payload = facts.model_dump()
+    payload["host_id"] = host
+    payload["stale"] = not facts.is_fresh()
+    if not include_raw:
+        # Caller doesn't need the verbose probe stdout (none in Phase 1).
+        payload.pop("raw_probe_output", None)
+    return payload
+
+
+def refresh_facts(
+    lab: str,
+    host: str,
+    deep_probe: bool = False,
+) -> dict[str, Any]:
+    """Force re-probe + return fresh facts. ``deep_probe`` is a Phase 2 hook."""
+    if _mock_lookup(host) is None and get_cached_facts(lab, host) is None:
+        path = _facts_path(lab, host)
+        if not path.exists():
+            raise KeyError(f"host '{host}' in lab '{lab}' not found")
+    facts = gather_facts(lab, host, force_refresh=True)
+    payload = facts.model_dump()
+    payload["host_id"] = host
+    payload["stale"] = False
+    payload["deep_probe"] = deep_probe
+    return payload
+
+
+def get_installed(lab: str, host: str) -> list[dict[str, Any]]:
+    """Return ``installed_boltons`` for a host as install-record dicts."""
+    facts = get_cached_facts(lab, host)
+    if facts is None:
+        # Try a fresh gather so the route doesn't 404 just because the
+        # cache is cold. Phase 2 will skip this in favor of a dedicated
+        # install-registry index.
+        if _mock_lookup(host) is None:
+            path = _facts_path(lab, host)
+            if not path.exists():
+                raise KeyError(f"host '{host}' in lab '{lab}' not found")
+        facts = gather_facts(lab, host)
+    return [
+        {
+            "id": bolton_id,
+            "installed_at": facts.gathered_at.isoformat(),
+        }
+        for bolton_id in facts.installed_boltons
+    ]
+
+
 def build_installed_boltons_map(lab: str) -> dict[str, list[str]]:
     """Return ``{host: [installed_bolton_ids]}`` for every cached host.
 

@@ -412,7 +412,8 @@ def dispatch_job(
             ):
                 raise CompatibilityRefusedError(
                     f"Refused {action.value} of {bolton_id} on {host}: "
-                    f"{result.state.value} — {result.reason}"
+                    f"{result.state.value} — {result.reason}",
+                    state=result.state.name,
                 )
 
     job = Job(
@@ -518,6 +519,84 @@ def wait_for_job(job_id: str, timeout: float = 10.0, poll: float = 0.05) -> Job 
 
 class CompatibilityRefusedError(Exception):
     """Raised by ``dispatch_job`` when the install-time backstop refuses."""
+
+    def __init__(self, message: str, *, state: str | None = None):
+        super().__init__(message)
+        self.state = state
+
+
+# Route layer (Agent D reconcile) catches the shorter alias.
+CompatibilityRefused = CompatibilityRefusedError
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Route-facing wrapper (Agent D reconcile)
+# ──────────────────────────────────────────────────────────────────────
+
+def dispatch(
+    op: str,
+    lab: str,
+    host: str,
+    vuln_id: str,
+    role_vars: dict[str, Any] | None = None,
+    run_probe: bool = False,
+    confirm_no_detection: bool = False,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    """Route-facing entry point. Maps the string ``op`` to ``JobAction``,
+    looks up the descriptor for the compat backstop, and returns the
+    response shape the routes expect.
+
+    Raises:
+        KeyError: unknown ``op`` (mapped to 404 by the route)
+        CompatibilityRefused: backstop refused (409)
+    """
+    try:
+        action = JobAction(op.lower())
+    except ValueError:
+        raise KeyError(f"unknown op '{op}'") from None
+
+    # Try to load the descriptor; skip backstop if unavailable.
+    descriptor = None
+    try:
+        from webapp.backend.services import bolton_catalog_service
+        descriptor = bolton_catalog_service.get_descriptor(vuln_id)
+    except Exception:
+        descriptor = None
+
+    try:
+        job = dispatch_job(
+            action=action,
+            bolton_id=vuln_id,
+            lab=lab,
+            host=host,
+            operator=actor or "unknown",
+            descriptor=descriptor,
+        )
+    except CompatibilityRefusedError as e:
+        raise CompatibilityRefused(str(e), state=getattr(e, "state", None)) from e
+
+    estimated = None
+    if descriptor is not None:
+        try:
+            install = descriptor.install
+            estimated = getattr(install, "estimated_time_seconds", None)
+        except AttributeError:
+            try:
+                estimated = (descriptor or {}).get("install", {}).get(
+                    "estimated_time_seconds"
+                )
+            except Exception:
+                estimated = None
+
+    return {
+        "job_id": job.id,
+        "estimated_time_seconds": estimated,
+        "message": "queued",
+        "run_probe": run_probe,
+        "confirm_no_detection": confirm_no_detection,
+        "role_vars": role_vars or {},
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────
