@@ -58,7 +58,13 @@ async function probeSection(page, sectionId) {
 test.describe.parallel('deployment-type cascade regression guard', () => {
     for (const [deploymentType, expected] of Object.entries(BASELINE)) {
         test(`cascade matches baseline: ${deploymentType}`, async ({ page }) => {
-            await page.goto('/');
+            // D3.1 — ?legacyTabs=1 keeps the legacy Configuration / Deploy /
+            // Deployment Manager nav buttons visible during the merge refactor.
+            // Until D3.2 re-parents the Configuration subtree under the new
+            // Deployments tab, the snapshot guard still targets the legacy
+            // tab. This query param is removed at D3.6 along with the legacy
+            // buttons themselves.
+            await page.goto('/?legacyTabs=1');
             // Navigate to the Configuration tab where the
             // deployment-type <select> lives.
             await page.locator('button.tab-btn[data-target="configuration"]').click();

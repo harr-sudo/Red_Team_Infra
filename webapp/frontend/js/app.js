@@ -154,7 +154,10 @@ const APP = {
     currentSubPill: null,
     // D2 — 'aws-check' removed from the live pages list; the alias entry in
     // NAVIGATE_ALIASES redirects legacy callers to {parent: 'settings', anchor: …}.
-    pages: ['dashboard', 'configuration', 'deployment', 'deployments', 'tools', 'architecture', 'beacon', 'terminal', 'settings'],
+    // D3.1 — 'deployments-tab' is the new merged Deployments parent (Configure /
+    // Deploy / Manage sub-pills). Currently a scaffold; sub-panes re-parented in
+    // D3.2-D3.4. The 3 legacy entries stay until D3.6 removes them.
+    pages: ['dashboard', 'deployments-tab', 'configuration', 'deployment', 'deployments', 'tools', 'architecture', 'beacon', 'terminal', 'settings'],
     // P1 #7.6 — cached /api/version response so the modal doesn't re-fetch
     versionInfo: null,
     
@@ -163,6 +166,20 @@ const APP = {
      */
     init() {
         console.log('🚀 Initializing Red Team Infrastructure Manager...');
+
+        // D3.1 — Feature flag for the merged Deployments tab transition.
+        // During the refactor, ?legacyTabs=1 keeps the old 3 buttons visible
+        // (Configuration / Deploy / Deployment Manager) so the user can A/B
+        // compare with the new merged Deployments tab. Default: hide legacy.
+        // At D3.6 the flag check + legacy buttons get deleted entirely.
+        APP.legacyTabsVisible = (function () {
+            const params = new URLSearchParams(window.location.search);
+            return params.has('legacyTabs');
+        })();
+        if (!APP.legacyTabsVisible) {
+            document.querySelectorAll('.tab-btn[data-target="configuration"], .tab-btn[data-target="deployment"], .tab-btn[data-target="deployments"]')
+                .forEach(btn => btn.setAttribute('data-legacy', 'true'));
+        }
 
         // Apply saved theme
         this.initTheme();
@@ -457,6 +474,14 @@ const APP = {
                 const anchorEl = document.getElementById(target.anchor);
                 if (anchorEl) anchorEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, 50);
+        }
+
+        // D3.1 — If navigating to the merged Deployments tab with a sub-pill
+        // (either explicitly via {parent, subPill} or via URL hash like
+        // #deployments-tab/deploy), activate the matching pane. D3.6 will
+        // also activate sub-pills when navigating via legacy alias names.
+        if (target.subPill && pageName === 'deployments-tab') {
+            APP.setActiveSubPill(pageName, target.subPill);
         }
     },
     
@@ -1844,6 +1869,58 @@ APP.activeDeployment = (function () {
         }
     };
 })();
+
+// D3.1 — Sub-pill switcher for the merged Deployments tab.
+// On pill click: toggle .is-active class on all pills, toggle hidden
+// on the corresponding panes. D3.5 will add per-sub-pill lifecycle
+// hooks (enter/leave) so polling/state cleanup mirrors today's tab-
+// level lifecycle (see §20.6 + §26.4 item 2).
+APP.setActiveSubPill = function (parentTabName, subPillName) {
+    const tabPage = document.querySelector(`.tab-page[data-page="${parentTabName}"]`);
+    if (!tabPage) return;
+    const pills = tabPage.querySelectorAll('.subpill-nav__pill');
+    const panes = tabPage.querySelectorAll('.subpill-pane');
+    pills.forEach(p => {
+        const isActive = p.dataset.subpill === subPillName;
+        p.classList.toggle('is-active', isActive);
+        p.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+    panes.forEach(pane => {
+        const isMatch = pane.dataset.subpillPane === subPillName;
+        if (isMatch) {
+            pane.removeAttribute('hidden');
+        } else {
+            pane.setAttribute('hidden', '');
+        }
+    });
+    APP.currentSubPill = subPillName;
+    sessionStorage.setItem('currentPage', JSON.stringify({ parent: parentTabName, subPill: subPillName }));
+};
+
+// Wire pill buttons. Listener attached at DOMContentLoaded so the .subpill-nav__pill
+// DOM is guaranteed present (the scaffold lives in index.html, not injected by JS).
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.subpill-nav__pill').forEach(pill => {
+        pill.addEventListener('click', () => {
+            const tabPage = pill.closest('.tab-page');
+            const parentTab = tabPage ? tabPage.dataset.page : null;
+            if (parentTab) APP.setActiveSubPill(parentTab, pill.dataset.subpill);
+        });
+        pill.addEventListener('keydown', (e) => {
+            // Arrow keys for keyboard navigation between pills
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                e.preventDefault();
+                const pills = Array.from(pill.parentElement.querySelectorAll('.subpill-nav__pill'));
+                const idx = pills.indexOf(pill);
+                const next = e.key === 'ArrowRight' ? pills[idx + 1] : pills[idx - 1];
+                if (next) {
+                    next.click();
+                    next.focus();
+                }
+            }
+        });
+    });
+});
 
 // In-memory cache of the deployment list — re-fetched on next open if stale.
 let _globalHeaderDeployments = [];

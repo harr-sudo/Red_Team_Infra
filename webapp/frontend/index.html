@@ -80,6 +80,10 @@
         <!-- Navigation Tabs -->
         <nav class="tabs" id="tab-navigation">
             <button class="tab-btn active" data-target="dashboard">Dashboard</button>
+            <!-- D3.1 — NEW merged Deployments tab (Configure / Deploy / Manage sub-pills).
+                 The 3 legacy buttons below stay in DOM during the refactor but are hidden
+                 by default; ?legacyTabs=1 reveals them for A/B comparison. Removed at D3.6. -->
+            <button class="tab-btn" data-target="deployments-tab">Deployments</button>
             <button class="tab-btn" data-target="configuration">Configuration</button>
             <button class="tab-btn" data-target="deployment">Deploy</button>
             <button class="tab-btn" data-target="deployments">Deployment Manager</button>
@@ -128,6 +132,52 @@
                     <p class="t-muted" style="margin-top: 8px; font-size: 0.88em;">
                         Pulls latest Elastic SIEM detection rules from GitHub and regenerates the OPSEC command mappings.
                     </p>
+                </div>
+            </div>
+
+            <!-- D3 — Deployments merged tab (Configure / Deploy / Manage sub-pills).
+                 D3.1: scaffold only. The 3 sub-views are re-parented from
+                 data-page="configuration" / "deployment" / "deployments" in D3.2-D3.4.
+                 Per Decision #6: ?legacyTabs=1 query param keeps the old 3 nav buttons
+                 accessible during the refactor; default behavior shows only the new
+                 merged tab. -->
+            <div class="tab-page" data-page="deployments-tab" style="display: none;">
+                <div class="subpill-nav" role="tablist" aria-label="Deployments sub-views">
+                    <button class="subpill-nav__pill is-active"
+                            role="tab"
+                            data-subpill="configure"
+                            aria-selected="true"
+                            id="subpill-configure">Configure</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
+                            data-subpill="deploy"
+                            aria-selected="false"
+                            id="subpill-deploy">Deploy</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
+                            data-subpill="manage"
+                            aria-selected="false"
+                            id="subpill-manage">Manage</button>
+                </div>
+                <div class="subpill-content" role="tabpanel">
+                    <div class="subpill-pane" data-subpill-pane="configure" id="subpill-pane-configure">
+                        <!-- D3.2: Configuration tab content re-parents here -->
+                        <p style="color: var(--text-muted); padding: 20px;">
+                            Configure sub-pane (placeholder &mdash; re-parented in D3.2).
+                        </p>
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="deploy" id="subpill-pane-deploy" hidden>
+                        <!-- D3.3: Deploy tab content re-parents here -->
+                        <p style="color: var(--text-muted); padding: 20px;">
+                            Deploy sub-pane (placeholder &mdash; re-parented in D3.3).
+                        </p>
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="manage" id="subpill-pane-manage" hidden>
+                        <!-- D3.4: Deployment Manager content re-parents here -->
+                        <p style="color: var(--text-muted); padding: 20px;">
+                            Manage sub-pane (placeholder &mdash; re-parented in D3.4).
+                        </p>
+                    </div>
                 </div>
             </div>
 

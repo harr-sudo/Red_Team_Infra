@@ -4075,3 +4075,67 @@ body { padding-top: 64px; }
     .global-header__chip-label { display: none; }
     .global-header__operator-prefix { display: none; }
 }
+
+/* D3.1 — Sub-pill navigation (Deployments tab Configure/Deploy/Manage).
+   V3 design language: 280ms cubic-bezier transitions, brand-light
+   underline accent on active. Palette tokens only. Anti-emoji. */
+.subpill-nav {
+    display: flex;
+    gap: 8px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 0;
+    background: var(--bg-container);
+    position: sticky;
+    top: 64px; /* below the global header */
+    z-index: 50;
+}
+.subpill-nav__pill {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 16px;
+    cursor: pointer;
+    border-radius: 4px;
+    position: relative;
+    transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                background-color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.subpill-nav__pill:hover {
+    color: var(--text-primary);
+    background: var(--bg-card-hover);
+}
+.subpill-nav__pill.is-active {
+    color: var(--text-primary);
+    background: var(--bg-input);
+}
+.subpill-nav__pill.is-active::after {
+    content: '';
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: -12px;
+    height: 2px;
+    background: var(--brand-light);
+    border-radius: 1px;
+}
+.subpill-nav__pill:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+.subpill-content {
+    /* sub-panes get their existing padding from re-parented content;
+       no padding here */
+}
+.subpill-pane[hidden] {
+    display: none;
+}
+
+/* D3.1 — Hide legacy nav buttons unless ?legacyTabs=1 in URL.
+   Removed entirely at D3.6 along with the old tab-page wrappers. */
+.tab-btn[data-legacy="true"] {
+    display: none;
+}
