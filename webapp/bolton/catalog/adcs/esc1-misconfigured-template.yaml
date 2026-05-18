@@ -1,0 +1,223 @@
+# Bolt-on: ADCS ESC1 — Enrollee Supplies Subject
+# -----------------------------------------------
+# Creates an AD CS certificate template that allows enrollee-supplied subject
+# (msPKI-Certificate-Name-Flag bit 0x1) with Client Authentication EKU
+# and Domain Users enrollment rights. Any low-priv user can request a cert
+# as Administrator (UPN).
+#
+# Patch clears the ENROLLEE_SUPPLIES_SUBJECT bit and adds PEND_ALL_REQUESTS
+# (msPKI-Enrollment-Flag bit 0x2 — Manager Approval).
+#
+# Elastic detection coverage today is thin (no published rule that catches
+# template misconfiguration directly), so this descriptor uses no-rule and
+# points at a fallback template that Phase 4 will materialize.
+
+id: bolton.adcs.esc1-misconfigured-template
+slug: esc1-misconfigured-template
+name: "ADCS ESC1 — Enrollee Supplies Subject"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-18
+
+category: adcs
+subcategory: esc1
+tags:
+  - adcs
+  - certificate-template
+  - privilege-escalation
+description: >
+  Publishes a certificate template named "ESC1-Vulnerable" on the lab CA with
+  the ENROLLEE_SUPPLIES_SUBJECT flag set, Client Authentication EKU, and
+  Domain Users enrollment + autoenroll permissions. Any authenticated user
+  can request a certificate with an arbitrary subjectAltName UPN — including
+  Administrator — and then PKINIT-authenticate as that principal. This is
+  the canonical Certified Pre-Owned ESC1 misconfiguration.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1649/"
+  - "https://specterops.io/wp-content/uploads/sites/3/2022/06/Certified_Pre-Owned.pdf"
+  - "https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/manage-certificate-templates"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1649
+    name: "Steal or Forge Authentication Certificates"
+  notes: "ESC1 is the prototypical T1649 path on Active Directory Certificate Services."
+
+detection:
+  # No published Elastic rule directly fires on template flag misconfiguration.
+  # Operators in this state must rely on certutil delta diffs, BloodHound,
+  # or hand-rolled detections. Phase 4 will seed a fallback rule template.
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/adcs-template-enroll.j2.yml"
+  signal_sources:
+    - "Windows Event 4886 (Certificate Services received a certificate request)"
+    - "Windows Event 4887 (Certificate Services approved a certificate request)"
+    - "Directory Service Changes — modification of CN=Certificate Templates,CN=Public Key Services"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - ca_host
+  required_services:
+    - adcs
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # template is published to the forest config NC
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 90
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Duplicate the User template and mark it ESC1-vulnerable."
+      role_vars:
+        script: |
+          $sourceTpl = "User"
+          $newTpl    = "ESC1-Vulnerable"
+          $configNc  = (Get-ADRootDSE).configurationNamingContext
+          $tplPath   = "CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+
+          # Clone the User template
+          $source = Get-ADObject -Identity "CN=$sourceTpl,$tplPath" -Properties *
+          $attrs = @{
+            'displayName'                     = $newTpl
+            'flags'                           = $source.flags
+            'msPKI-Certificate-Application-Policy' = '1.3.6.1.5.5.7.3.2'   # Client Auth
+            'msPKI-Certificate-Name-Flag'     = 1                          # ENROLLEE_SUPPLIES_SUBJECT
+            'msPKI-Enrollment-Flag'           = 0                          # no Manager Approval
+            'msPKI-RA-Signature'              = 0                          # no auth signatures required
+            'pKIDefaultKeySpec'               = 1
+            'pKIExpirationPeriod'             = $source.pKIExpirationPeriod
+            'pKIKeyUsage'                     = $source.pKIKeyUsage
+          }
+          New-ADObject -Name $newTpl -Type pKICertificateTemplate `
+                       -Path $tplPath -OtherAttributes $attrs
+
+          # Allow Domain Users to enroll
+          $acl = Get-Acl "AD:CN=$newTpl,$tplPath"
+          $sid = (Get-ADGroup "Domain Users").SID
+          $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid, 'ExtendedRight', 'Allow', [Guid]'0e10c968-78fb-11d2-90d4-00c04f79dc55')
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:CN=$newTpl,$tplPath" -AclObject $acl
+
+          # Publish to the issuing CA
+          $ca = (Get-CertificationAuthority).Name
+          Add-CATemplate -Name $newTpl -Force -Confirm:$false -CertificationAuthority $ca
+  verify:
+    probe: |
+      $tpl = Get-ADObject -SearchBase "CN=Certificate Templates,CN=Public Key Services,CN=Services,$((Get-ADRootDSE).configurationNamingContext)" `
+        -Filter "name -eq 'ESC1-Vulnerable'" -Properties msPKI-Certificate-Name-Flag
+      if ($tpl -and ($tpl.'msPKI-Certificate-Name-Flag' -band 0x1) -eq 0x1) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Unpublish the template from the issuing CA and delete the AD object."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Remove from CA + delete the template object."
+      role_vars:
+        script: |
+          $ca = (Get-CertificationAuthority).Name
+          Remove-CATemplate -Name "ESC1-Vulnerable" -Force -Confirm:$false -CertificationAuthority $ca
+          $configNc = (Get-ADRootDSE).configurationNamingContext
+          $dn = "CN=ESC1-Vulnerable,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+          Remove-ADObject -Identity $dn -Confirm:$false
+  verify:
+    probe: |
+      $configNc = (Get-ADRootDSE).configurationNamingContext
+      Get-ADObject -SearchBase "CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc" `
+        -Filter "name -eq 'ESC1-Vulnerable'" | Measure-Object | Select-Object -ExpandProperty Count
+    timeout_seconds: 30
+    expect_stdout_contains: "0"
+
+patch:
+  description: >
+    Harden the template in place — clear ENROLLEE_SUPPLIES_SUBJECT bit
+    (msPKI-Certificate-Name-Flag &= ~0x1) and require Manager Approval
+    (msPKI-Enrollment-Flag |= 0x2). Existing certs already issued from the
+    template REMAIN VALID until expiry; revocation is a separate operator
+    decision and not included here.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/manage-certificate-templates"
+    - "https://specterops.io/wp-content/uploads/sites/3/2022/06/Certified_Pre-Owned.pdf"
+  complexity: low
+  side_effects:
+    - "msPKI-Certificate-Name-Flag bit 0x1 (ENROLLEE_SUPPLIES_SUBJECT) cleared"
+    - "msPKI-Enrollment-Flag bit 0x2 (PEND_ALL_REQUESTS / Manager Approval) set"
+    - "EKUs unchanged (Client Authentication only)"
+    - "Existing certificates already issued remain valid until expiry"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Flip the template flags to safe values."
+      role_vars:
+        script: |
+          $configNc = (Get-ADRootDSE).configurationNamingContext
+          $dn = "CN=ESC1-Vulnerable,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+          $tpl = Get-ADObject -Identity $dn -Properties msPKI-Certificate-Name-Flag, msPKI-Enrollment-Flag
+          $newName = $tpl.'msPKI-Certificate-Name-Flag' -band (-bnot 0x1)
+          $newEnr  = $tpl.'msPKI-Enrollment-Flag' -bor 0x2
+          Set-ADObject -Identity $dn -Replace @{
+            'msPKI-Certificate-Name-Flag' = $newName
+            'msPKI-Enrollment-Flag'       = $newEnr
+          }
+  verify:
+    probe: |
+      $configNc = (Get-ADRootDSE).configurationNamingContext
+      $dn = "CN=ESC1-Vulnerable,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+      $tpl = Get-ADObject -Identity $dn -Properties msPKI-Certificate-Name-Flag, msPKI-Enrollment-Flag
+      $ess_cleared = ($tpl.'msPKI-Certificate-Name-Flag' -band 0x1) -eq 0
+      $mgr_set     = ($tpl.'msPKI-Enrollment-Flag' -band 0x2) -ne 0
+      if ($ess_cleared -and $mgr_set) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/adcs_esc1_certipy_check.sh"
+
+patch_revert:
+  description: "Re-set ENROLLEE_SUPPLIES_SUBJECT and clear PEND_ALL_REQUESTS — template ESC1-vulnerable again."
+  estimated_time_seconds: 20
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Restore the bad flags."
+      role_vars:
+        script: |
+          $configNc = (Get-ADRootDSE).configurationNamingContext
+          $dn = "CN=ESC1-Vulnerable,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+          Set-ADObject -Identity $dn -Replace @{
+            'msPKI-Certificate-Name-Flag' = 1
+            'msPKI-Enrollment-Flag'       = 0
+          }
+  verify:
+    probe: |
+      $configNc = (Get-ADRootDSE).configurationNamingContext
+      $dn = "CN=ESC1-Vulnerable,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+      $tpl = Get-ADObject -Identity $dn -Properties msPKI-Certificate-Name-Flag
+      if (($tpl.'msPKI-Certificate-Name-Flag' -band 0x1) -eq 0x1) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Template is ESC1-vulnerable again. Certipy can issue admin certs on demand."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: quiet
+
+status: stable

@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TASTE Demo — Bolt-on Host View (Per-Host Installed)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           TASTE DEMO — Bolt-on per-host view (Phase 1 / Agent D)
+           Host hero + 4 stat tiles + installed-bolt-ons spec-list
+           with per-row Patch / Uninstall / Details actions, plus a
+           secondary catalog filter at the bottom. Demonstrates
+           INSTALLED, PATCHED, AS_PATCHED_BUT_VULN row states.
+           Composes Phase 2b primitives.
+           Dials: 5/6/5.
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            font-size: var(--font-size-base);
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP ──────────────────────────────────────── */
+        .preview-strip {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .preview-strip__text strong {
+            display: inline-block;
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+        .preview-strip__toggle {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .preview-strip__toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── LEFT RAIL (shared chrome) ─────────────────────────────── */
+        :root {
+            --demo-rail-w: 220px;
+            --demo-rail-top: 47px;
+        }
+        main { margin-left: var(--demo-rail-w); }
+        .demo-rail {
+            position: fixed;
+            top: var(--demo-rail-top);
+            left: 0; bottom: 0;
+            width: var(--demo-rail-w);
+            background: var(--bg-section);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 16px 12px 12px;
+            gap: 2px;
+            z-index: 90;
+            overflow-y: auto;
+        }
+        .demo-rail__brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 8px 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 10px;
+        }
+        .demo-rail__brand-mark {
+            width: 22px; height: 22px;
+            border: 1.5px solid var(--brand-light);
+            border-radius: 5px;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .demo-rail__brand-mark::after {
+            content: ""; position: absolute; inset: 5px;
+            background: var(--brand-light); border-radius: 2px;
+        }
+        .demo-rail__brand-text { display: flex; flex-direction: column; }
+        .demo-rail__brand-eyebrow {
+            font-family: var(--font-family-mono); font-size: 10.5px;
+            font-weight: 700; color: var(--text-primary);
+            letter-spacing: 0.14em; text-transform: uppercase;
+        }
+        .demo-rail__brand-sub {
+            font-family: var(--font-family-mono); font-size: 9.5px;
+            font-weight: 500; color: var(--text-secondary);
+            letter-spacing: 0.12em; text-transform: uppercase; margin-top: 2px;
+        }
+        .demo-rail__group-label {
+            font-family: var(--font-family-mono); font-size: 9.5px;
+            font-weight: 600; color: var(--text-secondary);
+            letter-spacing: 0.14em; text-transform: uppercase;
+            padding: 10px 10px 6px;
+        }
+        .demo-rail__item {
+            appearance: none; background: transparent; border: 0;
+            position: relative; display: flex; align-items: center;
+            gap: 10px; padding: 9px 12px;
+            color: var(--text-secondary);
+            font-family: inherit; font-size: 13px; font-weight: 500;
+            border-radius: 6px; cursor: pointer;
+            text-align: left; width: 100%;
+        }
+        .demo-rail__item:hover {
+            background: var(--bg-card-hover); color: var(--text-primary);
+        }
+        .demo-rail__item.is-active {
+            background: var(--bg-card-hover); color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__item.is-active::before {
+            content: ""; position: absolute;
+            left: -12px; top: 8px; bottom: 8px;
+            width: 2px; border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__icon { width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; }
+        .demo-rail__icon svg { display: block; }
+        .demo-rail__label { flex: 1; white-space: nowrap; }
+        .demo-rail__caret {
+            width: 6px; height: 6px;
+            border-right: 1.4px solid currentColor;
+            border-bottom: 1.4px solid currentColor;
+            transform: rotate(-45deg); opacity: 0.55;
+        }
+        .demo-rail__item.is-expanded .demo-rail__caret { transform: rotate(45deg); }
+        .demo-rail__children {
+            display: grid; grid-template-rows: 0fr;
+            transition: grid-template-rows 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__children > div { overflow: hidden; }
+        .demo-rail__children.is-open { grid-template-rows: 1fr; }
+        .demo-rail__child {
+            appearance: none; background: transparent; border: 0;
+            display: flex; align-items: center; gap: 8px;
+            margin: 2px 0; padding: 7px 12px 7px 36px;
+            font-family: inherit; font-size: 12.5px; font-weight: 500;
+            color: var(--text-secondary); border-radius: 5px;
+            cursor: pointer; width: 100%; text-align: left;
+            position: relative;
+        }
+        .demo-rail__child:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+        .demo-rail__child.is-active {
+            background: var(--bg-card-hover); color: var(--text-primary); font-weight: 600;
+        }
+        .demo-rail__child.is-active::before {
+            content: ""; position: absolute; left: 16px; top: 8px; bottom: 8px;
+            width: 2px; border-radius: 0 2px 2px 0; background: var(--brand-light);
+        }
+        .demo-rail__child-pill-new {
+            display: inline-block; margin-left: 6px;
+            padding: 1px 6px; background: var(--brand-light);
+            color: var(--text-inverse); border-radius: 999px;
+            font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase;
+            font-weight: 700;
+        }
+        .demo-rail__footer {
+            margin-top: auto; padding-top: 12px;
+            border-top: 1px solid var(--border-subtle);
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        .demo-rail__op {
+            appearance: none; display: inline-flex; align-items: center;
+            gap: 8px; padding: 6px 10px; border-radius: 5px;
+            background: var(--bg-card); border: 1px solid var(--border-subtle);
+            font-family: var(--font-family-mono); font-size: 12px;
+            color: var(--text-primary); cursor: pointer;
+        }
+        .demo-rail__op-name { font-weight: 600; flex: 1; text-align: left; }
+        .demo-rail__op-chev {
+            width: 5px; height: 5px;
+            border-right: 1.5px solid var(--text-secondary);
+            border-bottom: 1.5px solid var(--text-secondary);
+            transform: translateY(-2px) rotate(45deg);
+            display: inline-block;
+        }
+        .demo-rail__theme {
+            appearance: none; background: var(--bg-card);
+            border: 1px solid var(--border); color: var(--text-secondary);
+            font-family: var(--font-family-mono); font-size: 10.5px;
+            font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+            padding: 5px 9px; border-radius: 5px; cursor: pointer;
+        }
+
+        /* ── PAGE SHELL ────────────────────────────────────────────── */
+        .bh-shell {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 32px 32px 64px;
+            animation: bh-fade-in 320ms var(--motion-easing-standard) both;
+        }
+
+        /* ── HOST HERO ─────────────────────────────────────────────── */
+        .bh-hero {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            gap: 18px;
+            margin-bottom: 22px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .bh-hero__icon {
+            width: 52px; height: 52px;
+            border-radius: 10px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .bh-hero__body { min-width: 0; }
+        .bh-hero__kicker {
+            font-family: var(--font-family-mono);
+            font-size: 10px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .bh-hero__title {
+            margin: 0;
+            font-family: var(--font-family-mono);
+            font-size: 22px;
+            font-weight: var(--font-weight-bold);
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            line-height: 1.15;
+        }
+        .bh-hero__sub {
+            margin: 4px 0 0;
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+        }
+        .bh-hero__sub strong { color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+        .bh-hero__actions { display: flex; gap: 10px; align-items: center; }
+        .bh-hero__refreshed {
+            font-family: var(--font-family-mono);
+            font-size: 10px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        /* ── STAT TILES (composition match cleanup) ────────────────── */
+        .bh-summary {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-bottom: 28px;
+        }
+        .bh-summary__tile {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+            padding: 18px 16px 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 6px;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .bh-summary__tile:hover { border-color: var(--border-light); }
+        .bh-summary__num {
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-2xl);
+            font-weight: var(--font-weight-bold);
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+            line-height: 1.05;
+            letter-spacing: -0.015em;
+        }
+        .bh-summary__num--danger { color: var(--danger-text); }
+        .bh-summary__num--warn { color: var(--warning-text); }
+        .bh-summary__num--ok { color: var(--success-text); }
+        .bh-summary__label {
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-xs);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+
+        /* ── SECTION HEADER ─────────────────────────────────────────── */
+        .bh-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            margin-bottom: 22px;
+        }
+        .bh-section__header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 14px 18px 12px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .bh-section__title {
+            margin: 0;
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-xs);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .bh-section__count {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* ── ROW (extends .spec-row) ───────────────────────────────── */
+        .bh-row .spec-row__head {
+            grid-template-columns: 200px 1fr auto;
+            align-items: center;
+            cursor: default;
+            padding: 14px 18px 14px 16px;
+        }
+        .bh-row:hover .spec-row__head { transform: none; background: var(--bg-card-hover); }
+        .bh-row:hover .spec-row__head::before { opacity: 0.6; }
+        .bh-row__lead {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            min-width: 0;
+        }
+        .bh-row__eyebrow {
+            display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+        }
+        .bh-row__title {
+            font-size: 13.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+            margin: 0;
+            line-height: 1.3;
+        }
+        .bh-row__attribution {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+        .bh-row__hint {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .bh-row__actions {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            flex-wrap: nowrap;
+            opacity: 0.65;
+            transition: opacity var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .bh-row:hover .bh-row__actions,
+        .bh-row:focus-within .bh-row__actions {
+            opacity: 1;
+        }
+        .bh-row .spec-edit-btn {
+            font-size: 11px;
+            padding: 5px 11px;
+        }
+
+        /* PATCHED row — green left rail (already on .spec-row::before) — accent with subtle bg tint */
+        .bh-row[data-state="PATCHED"] .spec-row__head {
+            background: color-mix(in srgb, var(--success-bg) 28%, transparent);
+        }
+        .bh-row[data-state="PATCHED"] .spec-row__head::before {
+            background: var(--success);
+            opacity: 1;
+            transform: scaleY(1);
+        }
+
+        /* AS_PATCHED_BUT_VULN — danger tint */
+        .bh-row[data-state="AS_PATCHED_BUT_VULN"] .spec-row__head {
+            background: color-mix(in srgb, var(--danger-bg) 38%, transparent);
+        }
+        .bh-row[data-state="AS_PATCHED_BUT_VULN"] .spec-row__head::before {
+            background: var(--danger);
+            opacity: 1;
+            transform: scaleY(1);
+        }
+
+        /* ── BOTTOM SECTION: bulk action bar ───────────────────────── */
+        .bh-bulk {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 12px 18px;
+            background: var(--bg-section);
+            border-top: 1px solid var(--border-subtle);
+            font-size: 12.5px;
+        }
+        .bh-bulk__text { color: var(--text-secondary); }
+        .bh-bulk__actions { display: flex; gap: 8px; }
+
+        /* ── Compatibility / coverage pill variants (re-used) ─────── */
+        .spec-pill--cat {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border-color: var(--border-subtle);
+        }
+        .spec-pill--ttp {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border-color: var(--border-subtle);
+            cursor: help;
+        }
+        .spec-pill--success {
+            background: var(--success-bg);
+            color: var(--success-text);
+            border-color: var(--success-border);
+        }
+        .spec-pill--warn {
+            background: var(--warning-bg);
+            color: var(--warning-text);
+            border-color: var(--warning-border);
+        }
+        .spec-pill--danger {
+            background: var(--danger-bg);
+            color: var(--danger-text);
+            border-color: var(--danger-border);
+        }
+        .spec-pill--muted {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border-color: var(--border-subtle);
+        }
+
+        /* ── MITRE TOOLTIP POPOVER ─────────────────────────────────── */
+        .bh-popover {
+            position: fixed;
+            max-width: 360px;
+            padding: 14px 16px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: 0 12px 32px rgba(0,0,0,0.32);
+            font-size: 12.5px;
+            color: var(--text-primary);
+            z-index: 200;
+            opacity: 0;
+            transform: translateY(-4px);
+            pointer-events: none;
+            transition: opacity 220ms, transform 220ms;
+        }
+        .bh-popover[data-show="true"] { opacity: 1; transform: translateY(0); pointer-events: auto; }
+        .bh-popover__title {
+            font-family: var(--font-family-mono);
+            font-size: 11.5px;
+            font-weight: var(--font-weight-bold);
+            color: var(--text-primary);
+            margin: 0 0 6px;
+            letter-spacing: 0.04em;
+        }
+        .bh-popover__body { color: var(--text-secondary); font-size: 12px; line-height: 1.5; margin-bottom: 10px; }
+        .bh-popover__link {
+            display: block;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--brand-light);
+            margin-bottom: 3px;
+        }
+
+        /* ── TOAST ─────────────────────────────────────────────────── */
+        .bh-toast {
+            position: fixed;
+            top: 18px; right: 18px;
+            padding: 10px 14px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 12.5px;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-6px);
+            transition: opacity 240ms, transform 240ms;
+            z-index: 1000;
+        }
+        .bh-toast[data-show="true"] { opacity: 1; transform: translateY(0); }
+
+        /* ── Confirm takeover ──────────────────────────────────────── */
+        .bh-takeover-card { max-width: 540px; padding: 24px 26px; }
+        .bh-takeover-card h3 { margin: 0 0 6px; font-size: 16px; font-weight: var(--font-weight-semibold); color: var(--text-primary); }
+        .bh-takeover-card__eyebrow {
+            font-family: var(--font-family-mono); font-size: 9.5px;
+            font-weight: var(--font-weight-semibold); color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps); text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .bh-takeover-card p { margin: 8px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+        .bh-takeover-card__foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+
+        /* ── Catalog filter section ────────────────────────────────── */
+        .bh-catalog .spec-row__head {
+            grid-template-columns: 200px 1fr auto;
+            align-items: center;
+            cursor: default;
+            padding: 12px 18px 12px 16px;
+        }
+        .bh-catalog .spec-row__head::before { background: var(--brand-light); }
+        .bh-catalog .spec-row:hover .spec-row__head { transform: none; }
+
+        @keyframes bh-fade-in {
+            from { opacity: 0; transform: translateY(2px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @media (max-width: 880px) {
+            :root { --demo-rail-w: 64px; }
+            .demo-rail__label, .demo-rail__caret, .demo-rail__group-label,
+            .demo-rail__brand-text, .demo-rail__children { display: none; }
+            .bh-summary { grid-template-columns: repeat(2, 1fr); }
+            .bh-row .spec-row__head {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto auto auto;
+            }
+            .bh-row__actions { justify-content: flex-end; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .bh-shell, .bh-row__actions { animation: none; transition: none; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Icon defs -->
+    <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="icon-server" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="2" width="10" height="3.5" rx="0.5"/>
+                <rect x="2" y="6.5" width="10" height="3.5" rx="0.5"/>
+                <circle cx="4" cy="3.75" r="0.4" fill="currentColor"/>
+                <circle cx="4" cy="8.25" r="0.4" fill="currentColor"/>
+            </symbol>
+            <symbol id="icon-refresh" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11.5 3.5 A4.5 4.5 0 1 0 12 8"/>
+                <path d="M11.5 1.5 V4 H9"/>
+            </symbol>
+            <symbol id="icon-check" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 7.5 L5.5 11 L12 3.5"/>
+            </symbol>
+            <symbol id="icon-warn" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 2 L12.5 11.5 H1.5 Z"/>
+                <path d="M7 6 V8.5"/>
+                <circle cx="7" cy="10" r="0.3" fill="currentColor"/>
+            </symbol>
+            <symbol id="icon-shield" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 1.5 L12 3 V7 Q12 10.5 7 12.5 Q2 10.5 2 7 V3 Z"/>
+            </symbol>
+            <symbol id="icon-bolt" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 1 L3 8 H7 L6 13 L11 6 H7 Z"/>
+            </symbol>
+        </defs>
+    </svg>
+
+    <header class="preview-strip">
+        <span class="preview-strip__text">
+            <strong>Bolt-on host view demo</strong>
+            Per host, see what's installed, what's patchable, what's missing detection coverage — the operator's command center for one machine's vulnerability state.
+        </span>
+        <button class="preview-strip__toggle" type="button"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+            Toggle theme
+        </button>
+    </header>
+
+    <!-- Left rail -->
+    <nav class="demo-rail" aria-label="App navigation (demo)">
+        <div class="demo-rail__brand">
+            <span class="demo-rail__brand-mark" aria-hidden="true"></span>
+            <span class="demo-rail__brand-text">
+                <span class="demo-rail__brand-eyebrow">RED TEAM INFRA</span>
+                <span class="demo-rail__brand-sub">v3 · demo</span>
+            </span>
+        </div>
+        <span class="demo-rail__group-label">Workspace</span>
+
+        <button class="demo-rail__item" type="button">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="8.5" y="1.5" width="6" height="3" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="8.5" y="5.5" width="6" height="9" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="1.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+            </svg></span>
+            <span class="demo-rail__label">Dashboard</span>
+        </button>
+
+        <button class="demo-rail__item is-active is-expanded" type="button" data-demo-parent="deployments" aria-expanded="true">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="1.5" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="1.5" y="10" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <circle cx="4" cy="3.75" r="0.7" fill="currentColor"/>
+                <circle cx="4" cy="12.25" r="0.7" fill="currentColor"/>
+            </svg></span>
+            <span class="demo-rail__label">Deployments</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="demo-rail__children is-open" data-children-of="deployments">
+            <div>
+                <button class="demo-rail__child" type="button">Configure</button>
+                <button class="demo-rail__child" type="button">Deploy</button>
+                <button class="demo-rail__child" type="button">Manage</button>
+                <button class="demo-rail__child is-active" type="button">
+                    Vulnerabilities<span class="demo-rail__child-pill-new">NEW</span>
+                </button>
+                <button class="demo-rail__child" type="button">Cleanup</button>
+            </div>
+        </div>
+
+        <button class="demo-rail__item" type="button">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
+            </svg></span>
+            <span class="demo-rail__label">Operations</span>
+        </button>
+
+        <button class="demo-rail__item" type="button">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.3"/>
+            </svg></span>
+            <span class="demo-rail__label">Settings</span>
+        </button>
+
+        <div class="demo-rail__footer">
+            <button class="demo-rail__op" type="button">
+                <span class="operator-dot" style="background: #a31621;" aria-hidden="true"></span>
+                <span class="demo-rail__op-name">harriss</span>
+                <span class="demo-rail__op-chev" aria-hidden="true"></span>
+            </button>
+            <div style="display:flex;justify-content:flex-end">
+                <button class="demo-rail__theme" type="button"
+                        onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">Theme</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="bh-toast" id="bh-toast" role="status" aria-live="polite"></div>
+    <div class="bh-popover" id="bh-popover" role="tooltip" onmouseleave="bhHidePopover()"></div>
+
+    <main class="bh-shell">
+
+        <!-- Host hero -->
+        <section class="bh-hero" aria-label="Host overview">
+            <span class="bh-hero__icon" aria-hidden="true">
+                <svg class="icon icon--lg" aria-hidden="true"><use href="#icon-server"/></svg>
+            </span>
+            <div class="bh-hero__body">
+                <div class="bh-hero__kicker">HOST · DOMAIN CONTROLLER</div>
+                <h1 class="bh-hero__title">dc01.domain1.local</h1>
+                <p class="bh-hero__sub">
+                    <strong>Windows Server 2022 Datacenter</strong> · 20348.2700
+                    · <strong>domain_controller</strong> · forest 2016 · PDC emulator
+                    · <span class="spec-pill spec-pill--success" style="vertical-align:middle"><span class="spec-pill__dot"></span> alive</span>
+                </p>
+            </div>
+            <div class="bh-hero__actions">
+                <span class="bh-hero__refreshed" id="bh-refreshed">facts · 4m ago</span>
+                <button class="spec-edit-btn" type="button" onclick="bhRefresh(this)">
+                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                    Refresh
+                </button>
+            </div>
+        </section>
+
+        <!-- Stat tiles -->
+        <div class="bh-summary" role="group" aria-label="Per-host bolt-on stats">
+            <div class="bh-summary__tile">
+                <span class="bh-summary__num">5</span>
+                <span class="bh-summary__label">Installed</span>
+            </div>
+            <div class="bh-summary__tile">
+                <span class="bh-summary__num bh-summary__num--ok">1</span>
+                <span class="bh-summary__label">Patched</span>
+            </div>
+            <div class="bh-summary__tile">
+                <span class="bh-summary__num bh-summary__num--danger">1</span>
+                <span class="bh-summary__label">Detection failed</span>
+            </div>
+            <div class="bh-summary__tile">
+                <span class="bh-summary__num bh-summary__num--warn">12</span>
+                <span class="bh-summary__label">Compatible to install</span>
+            </div>
+        </div>
+
+        <!-- Installed bolt-ons section -->
+        <section class="bh-section" aria-label="Installed bolt-on vulnerabilities">
+            <header class="bh-section__header">
+                <h2 class="bh-section__title">Installed bolt-on vulnerabilities</h2>
+                <span class="bh-section__count">7 installed</span>
+            </header>
+            <div class="spec-list" role="list">
+
+                <!-- Row 1: Kerberoasting — INSTALLED + covered -->
+                <div class="spec-row bh-row" data-state="INSTALLED" data-vuln-id="bolton.identity.kerberoastable-svc">
+                    <div class="spec-row__head">
+                        <div class="bh-row__lead">
+                            <div class="bh-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Identity</span>
+                                <span class="spec-pill spec-pill--ttp"
+                                      onmouseover="bhShowPopover(event, 'T1558.003 · Kerberoasting', 'Adversaries who have a valid Kerberos ticket-granting ticket (TGT) may request one or more Kerberos ticket-granting service (TGS) service tickets for any SPN.', ['attack.mitre.org/techniques/T1558/003/', 'Rule: 1d276579…b1e2c4 (full · high)'])">T1558.003</span>
+                            </div>
+                        </div>
+                        <div class="bh-row__lead">
+                            <div class="bh-row__title">Kerberoastable Service Account</div>
+                            <div class="bh-row__attribution">
+                                <span class="operator-dot operator-dot--sm" style="background: #a31621;" aria-hidden="true"></span>
+                                installed by harriss · 2h ago
+                                <span class="bh-row__hint">·
+                                    <span class="spec-pill spec-pill--success" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> detection: verified</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="bh-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bhOpenConfirm('patch','Kerberoastable Service Account')">Patch</button>
+                            <button class="spec-edit-btn" type="button" onclick="bhOpenConfirm('uninstall','Kerberoastable Service Account')">Uninstall</button>
+                            <a class="spec-edit-btn" href="#" onclick="event.preventDefault();bhToast('Detail panel would open');return false">Details</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: AdminSDHolder ACE — INSTALLED + covered -->
+                <div class="spec-row bh-row" data-state="INSTALLED" data-vuln-id="bolton.acl.adminsdholder">
+                    <div class="spec-row__head">
+                        <div class="bh-row__lead">
+                            <div class="bh-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">ACL</span>
+                                <span class="spec-pill spec-pill--ttp"
+                                      onmouseover="bhShowPopover(event, 'T1098 · Account Manipulation', 'Adversaries may manipulate accounts to maintain access — modifying credentials, permission groups or AD object ACLs.', ['attack.mitre.org/techniques/T1098/', 'Rule: 2c7a4f88…91e0a3 (full · high)'])">T1098</span>
+                            </div>
+                        </div>
+                        <div class="bh-row__lead">
+                            <div class="bh-row__title">AdminSDHolder Backdoor ACE</div>
+                            <div class="bh-row__attribution">
+                                <span class="operator-dot operator-dot--sm" style="background: #a31621;" aria-hidden="true"></span>
+                                installed by harriss · 3h ago
+                                <span class="bh-row__hint">·
+                                    <span class="spec-pill spec-pill--success" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> detection: verified</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="bh-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bhOpenConfirm('patch','AdminSDHolder Backdoor ACE')">Patch</button>
+                            <button class="spec-edit-btn" type="button" onclick="bhOpenConfirm('uninstall','AdminSDHolder Backdoor ACE')">Uninstall</button>
+                            <a class="spec-edit-btn" href="#" onclick="event.preventDefault();bhToast('Detail panel would open');return false">Details</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 3: LLMNR/NBT-NS — INSTALLED + partial -->
+                <div class="spec-row bh-row" data-state="INSTALLED" data-vuln-id="bolton.protocol.llmnr-nbtns">
+                    <div class="spec-row__head">
+                        <div class="bh-row__lead">
+                            <div class="bh-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Protocol</span>
+                                <span class="spec-pill spec-pill--ttp"
+                                      onmouseover="bhShowPopover(event, 'T1557.001 · LLMNR/NBT-NS Poisoning', 'Adversaries may spoof name-resolution requests on a local network to redirect victims and collect challenge-responses.', ['attack.mitre.org/techniques/T1557/001/', 'Rule: a8d2bce9…65f01c (partial · medium)'])">T1557.001</span>
+                            </div>
+                        </div>
+                        <div class="bh-row__lead">
+                            <div class="bh-row__title">LLMNR / NBT-NS Poisoning (domain-wide)</div>
+                            <div class="bh-row__attribution">
+                                <span class="operator-dot operator-dot--sm" style="background: #3b82f6;" aria-hidden="true"></span>
+                                installed by alice · 4h ago
+                                <span class="bh-row__hint">·
+                                    <span class="spec-pill spec-pill--warn" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> detection: partial</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="bh-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bhOpenConfirm('patch','LLMNR / NBT-NS Poisoning')">Patch</button>
+                            <button class="spec-edit-btn" type="button" onclick="bhOpenConfirm('uninstall','LLMNR / NBT-NS Poisoning')">Uninstall</button>
+                            <a class="spec-edit-btn" href="#" onclick="event.preventDefault();bhToast('Detail panel would open');return false">Details</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 4: GPP cpassword — INSTALLED + no-rule -->
+                <div class="spec-row bh-row" data-state="INSTALLED" data-vuln-id="bolton.gpo.gpp-cpassword">
+                    <div class="spec-row__head">
+                        <div class="bh-row__lead">
+                            <div class="bh-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">GPO</span>
+                                <span class="spec-pill spec-pill--ttp"
+                                      onmouseover="bhShowPopover(event, 'T1552.006 · Group Policy Preferences', 'Adversaries may search for unsecured credentials in Group Policy Preferences (GPP) — the cpassword attribute is reversibly encrypted with a published static AES key.', ['attack.mitre.org/techniques/T1552/006/', 'No Elastic rule — generate from template?'])">T1552.006</span>
+                            </div>
+                        </div>
+                        <div class="bh-row__lead">
+                            <div class="bh-row__title">GPP cpassword in SYSVOL</div>
+                            <div class="bh-row__attribution">
+                                <span class="operator-dot operator-dot--sm" style="background: #a31621;" aria-hidden="true"></span>
+                                installed by harriss · 6h ago
+                                <span class="bh-row__hint">·
+                                    <span class="spec-pill spec-pill--danger" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> no detection</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="bh-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bhOpenConfirm('patch','GPP cpassword in SYSVOL')">Patch</button>
+                            <button class="spec-edit-btn" type="button" onclick="bhOpenConfirm('uninstall','GPP cpassword in SYSVOL')">Uninstall</button>
+                            <a class="spec-edit-btn" href="#" onclick="event.preventDefault();bhToast('Detail panel would open');return false">Details</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 5: PrintNightmare — PATCHED (Patch revert state) -->
+                <div class="spec-row bh-row" data-state="PATCHED" data-vuln-id="bolton.cve.printnightmare">
+                    <div class="spec-row__head">
+                        <div class="bh-row__lead">
+                            <div class="bh-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">CVE</span>
+                                <span class="spec-pill spec-pill--ttp"
+                                      onmouseover="bhShowPopover(event, 'T1068 · Exploitation for Privilege Escalation', 'CVE-2021-34527 PrintNightmare allows adversaries to load malicious drivers via the Print Spooler service to elevate privileges.', ['attack.mitre.org/techniques/T1068/', 'msrc.microsoft.com/.../CVE-2021-34527', 'Rule: 5cc6efb3…b3a1c2d (full · high)'])">T1068</span>
+                            </div>
+                        </div>
+                        <div class="bh-row__lead">
+                            <div class="bh-row__title">PrintNightmare — CVE-2021-34527</div>
+                            <div class="bh-row__attribution">
+                                <span class="operator-dot operator-dot--sm" style="background: #3b82f6;" aria-hidden="true"></span>
+                                installed by alice 1d ago · <strong style="color:var(--success-text)">PATCHED 1h ago by harriss</strong>
+                                <span class="bh-row__hint">·
+                                    <span class="spec-pill spec-pill--success" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg> exploit blocked</span>
+                                    <span class="spec-pill spec-pill--success" style="font-size:9.5px;margin-left:6px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> detection: fired</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="bh-row__actions">
+                            <button class="spec-edit-btn" type="button" onclick="bhOpenConfirm('patch_revert','PrintNightmare')">Patch revert</button>
+                            <button class="spec-edit-btn" type="button" onclick="bhOpenConfirm('uninstall','PrintNightmare')">Uninstall</button>
+                            <a class="spec-edit-btn" href="#" onclick="event.preventDefault();bhToast('Detail panel would open');return false">Details</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 6: ESC1 — AS_PATCHED_BUT_VULN (red surface) -->
+                <div class="spec-row bh-row" data-state="AS_PATCHED_BUT_VULN" data-vuln-id="bolton.adcs.esc1">
+                    <div class="spec-row__head">
+                        <div class="bh-row__lead">
+                            <div class="bh-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">ADCS</span>
+                                <span class="spec-pill spec-pill--ttp"
+                                      onmouseover="bhShowPopover(event, 'T1649 · Steal or Forge Authentication Certificates', 'ESC1 — certificate template with ENROLLEE_SUPPLIES_SUBJECT + Client Auth EKU. Patch hardens template in-place.', ['attack.mitre.org/techniques/T1649/', 'specterops.io/.../Certified_Pre-Owned.pdf', 'Rule: 7b91ace4…d52f8a (full · high)'])">T1649</span>
+                            </div>
+                        </div>
+                        <div class="bh-row__lead">
+                            <div class="bh-row__title">ADCS ESC1 — Enrollee Supplies Subject</div>
+                            <div class="bh-row__attribution">
+                                <span class="operator-dot operator-dot--sm" style="background: #a31621;" aria-hidden="true"></span>
+                                patched by harriss 12m ago — <strong style="color:var(--danger-text)">EXPLOIT PROBE SUCCEEDED · still vulnerable</strong>
+                            </div>
+                            <div class="bh-row__hint" style="margin-top:4px">
+                                AS_PATCHED_BUT_VULN — verify_patch passed but certipy esc1 still issued admin cert. Agent intervention required.
+                            </div>
+                        </div>
+                        <div class="bh-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bhToast('Invoke Agent — would build context bundle and open agent panel')">Invoke Agent</button>
+                            <button class="spec-edit-btn" type="button" onclick="bhOpenConfirm('patch_revert','ADCS ESC1')">Revert</button>
+                            <a class="spec-edit-btn" href="#" onclick="event.preventDefault();bhToast('Detail panel would open');return false">Details</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 7: Unconstrained Delegation — INSTALLED + stale -->
+                <div class="spec-row bh-row" data-state="INSTALLED" data-vuln-id="bolton.delegation.unconstrained">
+                    <div class="spec-row__head">
+                        <div class="bh-row__lead">
+                            <div class="bh-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Delegation</span>
+                                <span class="spec-pill spec-pill--ttp"
+                                      onmouseover="bhShowPopover(event, 'T1558.001 · Golden Ticket', 'TRUSTED_FOR_DELEGATION on a member host — attacker captures every forwarded TGT and can build long-lived tickets.', ['attack.mitre.org/techniques/T1558/001/', 'Rule: 4d2a17ee…83cb91 (full · medium · stale 117d)'])">T1558.001</span>
+                            </div>
+                        </div>
+                        <div class="bh-row__lead">
+                            <div class="bh-row__title">Unconstrained Delegation on srv02</div>
+                            <div class="bh-row__attribution">
+                                <span class="operator-dot operator-dot--sm" style="background: #16a34a;" aria-hidden="true"></span>
+                                installed by mahmoud · 2d ago
+                                <span class="bh-row__hint">·
+                                    <span class="spec-pill spec-pill--warn" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> rule stale 117d</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="bh-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bhOpenConfirm('patch','Unconstrained Delegation on srv02')">Patch</button>
+                            <button class="spec-edit-btn" type="button" onclick="bhOpenConfirm('uninstall','Unconstrained Delegation on srv02')">Uninstall</button>
+                            <a class="spec-edit-btn" href="#" onclick="event.preventDefault();bhToast('Detail panel would open');return false">Details</a>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+            <div class="bh-bulk">
+                <span class="bh-bulk__text">Operate on all installed bolt-ons on this host</span>
+                <div class="bh-bulk__actions">
+                    <button class="spec-edit-btn" type="button" onclick="bhToast('Bulk select mode — checkboxes appear per row')">Bulk select</button>
+                    <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bhToast('Graduate to secured — patches every installed bolt-on with a patch block')">Graduate to secured</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Catalog filter section -->
+        <section class="bh-section bh-catalog" aria-label="Installable on this host">
+            <header class="bh-section__header">
+                <h2 class="bh-section__title">Still installable on this host</h2>
+                <span class="bh-section__count">12 INSTALLABLE · 0 conflicts</span>
+            </header>
+            <div class="spec-list" role="list">
+                <div class="spec-row">
+                    <div class="spec-row__head">
+                        <div class="spec-row__key">Identity · T1558.004</div>
+                        <div class="spec-row__value">AS-REP Roastable User · ~20s</div>
+                        <div class="spec-row__hint" style="margin-right:8px"><span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> covered</span></div>
+                        <button class="spec-row__action" type="button" title="Install" aria-label="Install AS-REP Roastable User" onclick="bhToast('Open install confirmation')">
+                            <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-bolt"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="spec-row">
+                    <div class="spec-row__head">
+                        <div class="spec-row__key">ACL · T1003.006</div>
+                        <div class="spec-row__value">DCSync ACL on Low-Priv User · ~25s</div>
+                        <div class="spec-row__hint" style="margin-right:8px"><span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> covered</span></div>
+                        <button class="spec-row__action" type="button" title="Install" onclick="bhToast('Open install confirmation')">
+                            <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-bolt"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="spec-row">
+                    <div class="spec-row__head">
+                        <div class="spec-row__key">Protocol · T1557.001</div>
+                        <div class="spec-row__value">SMB Signing Not Required · ~15s</div>
+                        <div class="spec-row__hint" style="margin-right:8px"><span class="spec-pill spec-pill--danger"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> no detection</span></div>
+                        <button class="spec-row__action" type="button" title="Install" onclick="bhToast('Open install confirmation')">
+                            <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-bolt"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="spec-row">
+                    <div class="spec-row__head">
+                        <div class="spec-row__key">Protocol · T1187</div>
+                        <div class="spec-row__value">PetitPotam MS-EFSRPC Coercion · ~1m</div>
+                        <div class="spec-row__hint" style="margin-right:8px"><span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> stale 142d</span></div>
+                        <button class="spec-row__action" type="button" title="Install" onclick="bhToast('Open install confirmation')">
+                            <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-bolt"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="spec-row">
+                    <div class="spec-row__head">
+                        <div class="spec-row__key">Identity · T1110</div>
+                        <div class="spec-row__value">Weak Domain Password Policy · ~10s</div>
+                        <div class="spec-row__hint" style="margin-right:8px"><span class="spec-pill spec-pill--danger"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> conflict</span></div>
+                        <button class="spec-row__action" type="button" disabled title="Conflicts with strong-pwpol-baseline">
+                            <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="spec-row">
+                    <div class="spec-row__head">
+                        <div class="spec-row__key">View full catalog</div>
+                        <div class="spec-row__value" style="color:var(--text-secondary);font-style:italic">+ 7 more compatible bolt-ons on this host</div>
+                        <a class="spec-edit-btn" href="/preview/page-bolton-catalog.html">Open catalog →</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Confirm takeover -->
+    <div class="scrim-takeover" id="bh-takeover" onclick="bhCloseConfirm()"></div>
+    <div class="takeover-card bh-takeover-card" id="bh-takeover-card" role="dialog" aria-modal="true">
+        <span class="bh-takeover-card__eyebrow" id="bh-confirm-eyebrow">Confirm action</span>
+        <h3 id="bh-confirm-title">Confirm</h3>
+        <p id="bh-confirm-body">Confirm body text.</p>
+        <div class="bh-takeover-card__foot">
+            <button class="spec-edit-btn" type="button" onclick="bhCloseConfirm()">Cancel</button>
+            <button class="spec-edit-btn spec-edit-btn--save" id="bh-confirm-go" type="button">Confirm</button>
+        </div>
+    </div>
+
+    <script>
+        // Toast
+        let bhToastTimer = null;
+        function bhToast(msg) {
+            const t = document.getElementById('bh-toast');
+            t.textContent = msg;
+            t.setAttribute('data-show', 'true');
+            window.clearTimeout(bhToastTimer);
+            bhToastTimer = window.setTimeout(() => t.setAttribute('data-show', 'false'), 2600);
+        }
+
+        // Refresh
+        function bhRefresh(btn) {
+            btn.disabled = true;
+            const orig = btn.innerHTML;
+            btn.innerHTML = '<svg class="icon icon--sm" aria-hidden="true" style="animation:bh-spin 900ms linear infinite"><use href="#icon-refresh"/></svg> Refreshing…';
+            window.setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = orig;
+                document.getElementById('bh-refreshed').textContent = 'facts · just now';
+                bhToast('Host facts refreshed in 11s — bolt-on state up to date');
+            }, 1200);
+        }
+
+        // MITRE popover
+        function bhShowPopover(ev, title, body, links) {
+            const pop = document.getElementById('bh-popover');
+            const linksHtml = (links || []).map(l => '<span class="bh-popover__link">' + l + '</span>').join('');
+            pop.innerHTML =
+                '<div class="bh-popover__title">' + title + '</div>' +
+                '<div class="bh-popover__body">' + body + '</div>' +
+                linksHtml;
+            // Position next to the cursor
+            const rect = ev.target.getBoundingClientRect();
+            pop.style.left = Math.min(window.innerWidth - 380, rect.right + 8) + 'px';
+            pop.style.top = (rect.top + window.scrollY) + 'px';
+            pop.setAttribute('data-show', 'true');
+        }
+        function bhHidePopover() {
+            document.getElementById('bh-popover').setAttribute('data-show', 'false');
+        }
+        // Hide on click anywhere not on a pill
+        document.addEventListener('click', (ev) => {
+            if (!ev.target.closest('.bh-popover') && !ev.target.classList.contains('spec-pill--ttp')) {
+                bhHidePopover();
+            }
+        });
+
+        // Confirm modal
+        function bhOpenConfirm(op, name) {
+            const eyebrow = document.getElementById('bh-confirm-eyebrow');
+            const title = document.getElementById('bh-confirm-title');
+            const body = document.getElementById('bh-confirm-body');
+            const go = document.getElementById('bh-confirm-go');
+            if (op === 'patch') {
+                eyebrow.textContent = 'Vendor patch · dc01.domain1.local';
+                title.textContent = 'Patch ' + name;
+                body.textContent = 'Apply the real-world vendor remediation. After the patch run, framework will trigger a synthetic exploit probe and verify the matching Elastic detection rule fires.';
+                go.textContent = 'Patch ▸';
+            } else if (op === 'patch_revert') {
+                eyebrow.textContent = 'Patch revert · dc01.domain1.local';
+                title.textContent = 'Revert patch for ' + name;
+                body.textContent = 'Re-expose the underlying vulnerability for repeat exercise. Detection rule remains active and will fire on the next exploit attempt.';
+                go.textContent = 'Revert ▸';
+            } else {
+                eyebrow.textContent = 'Uninstall · dc01.domain1.local';
+                title.textContent = 'Uninstall ' + name;
+                body.textContent = 'Removes the bolt-on lab artifacts. Does NOT patch the underlying vulnerability — it deletes the install state. Re-installable at any time.';
+                go.textContent = 'Uninstall ▸';
+            }
+            go.onclick = () => {
+                bhToast(op + ' job queued — would open the progress modal');
+                bhCloseConfirm();
+            };
+            document.getElementById('bh-takeover').setAttribute('data-open', 'true');
+            document.getElementById('bh-takeover-card').setAttribute('data-open', 'true');
+        }
+        function bhCloseConfirm() {
+            document.getElementById('bh-takeover').setAttribute('data-open', 'false');
+            document.getElementById('bh-takeover-card').setAttribute('data-open', 'false');
+        }
+        document.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Escape') { bhCloseConfirm(); bhHidePopover(); }
+        });
+    </script>
+    <style>
+        @keyframes bh-spin {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+    </style>
+</body>
+</html>

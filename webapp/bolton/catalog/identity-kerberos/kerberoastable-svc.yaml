@@ -1,0 +1,209 @@
+# Bolt-on: Kerberoastable Service Account
+# ----------------------------------------
+# Creates an AD user account with a registered SPN and a weak password,
+# enabling Kerberoasting (T1558.003). Patch rotates the password to a
+# 32-char random value and clears RC4 from msDS-SupportedEncryptionTypes,
+# leaving the account in place but no longer crackable in reasonable time.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/windows/credential_access_kerberoasting_unusual_process.toml
+#   Research/elastic-detection-rules/rules/windows/credential_access_spn_attribute_modified.toml
+#   Research/elastic-detection-rules/rules/windows/persistence_user_account_creation.toml
+
+id: bolton.identity-kerberos.kerberoastable-svc
+slug: kerberoastable-svc
+name: "Kerberoastable Service Account"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-18
+
+category: identity-kerberos
+subcategory: kerberoasting
+tags:
+  - kerberos
+  - service-account
+  - credential-access
+description: >
+  Creates an Active Directory user account with a Service Principal Name and
+  a deliberately weak (dictionary-crackable) password. The account is then
+  Kerberoastable per ATT&CK T1558.003 — an authenticated low-privilege user
+  can request a TGS encrypted with the service account's password hash and
+  crack it offline with hashcat.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1558/003/"
+  - "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/component-updates/setting-an-spn-on-a-user-account"
+  - "https://www.thehacker.recipes/ad/movement/kerberos/kerberoast"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1558
+    name: "Steal or Forge Kerberos Tickets"
+  subtechnique:
+    id: T1558.003
+    name: "Kerberoasting"
+  notes: "Classic Kerberoasting setup — SPN + weak password on a user account."
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "897dc6b5-b39f-432a-8d75-d3730d50c782"
+      rule_name: "Kerberoasting, Unusual Process Behavior"
+      rule_filename: "windows/credential_access_kerberoasting_unusual_process.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Catches the TGS request side from an unusual host process."
+    - rule_uuid: "0b2f3da5-b5ec-47d1-908b-6ebb74814289"
+      rule_name: "Service Principal Name (SPN) Attribute Modified"
+      rule_filename: "windows/credential_access_spn_attribute_modified.toml"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Catches the SPN-write side of the install, not the roast itself."
+    - rule_uuid: "1aa9181a-492b-4c01-8b16-fa0735786b2b"
+      rule_name: "User Account Creation"
+      rule_filename: "windows/persistence_user_account_creation.toml"
+      coverage: indirect
+      confidence: low
+      last_validated: 2026-04-15
+      notes: "Generic 4720 — fires on any new account, low signal."
+  signal_sources:
+    - "Windows Event 4720 (User account created)"
+    - "Windows Event 4738 (User account changed)"
+    - "Windows Event 5136 (Directory Service object modified — SPN write)"
+    - "Windows Event 4769 (Kerberos service ticket requested, encryption type 0x17/0x18)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+  required_services: []
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # creates an AD user — visible domain-wide
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_domain_user
+      description: "Create the service account with a weak password."
+      role_vars:
+        name: "svc_kerb_lab"
+        password: "Summer2025!"
+        password_never_expires: true
+        state: present
+        groups:
+          - "Domain Users"
+    - ansible_role: microsoft.ad.user
+      description: "Register an SPN on the new account so it is Kerberoastable."
+      role_vars:
+        identity: "svc_kerb_lab"
+        spn:
+          add:
+            - "HTTP/kerb-target.{{ domain_fqdn }}"
+  verify:
+    probe: |
+      Get-ADUser -Identity 'svc_kerb_lab' -Properties ServicePrincipalName |
+        Select-Object -ExpandProperty ServicePrincipalName
+    timeout_seconds: 30
+    expect_stdout_contains: "HTTP/kerb-target"
+
+uninstall:
+  description: "Remove the service account; SPN is removed implicitly."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: community.windows.win_domain_user
+      description: "Delete the bolt-on account."
+      role_vars:
+        name: "svc_kerb_lab"
+        state: absent
+  verify:
+    probe: |
+      Get-ADUser -Filter "sAMAccountName -eq 'svc_kerb_lab'" |
+        Measure-Object | Select-Object -ExpandProperty Count
+    timeout_seconds: 20
+    expect_stdout_contains: "0"
+
+patch:
+  description: >
+    Rotate the account password to a 32-character random string and disable
+    RC4 by setting msDS-SupportedEncryptionTypes = 0x18 (AES128+AES256 only).
+    The account remains so that the lab service workload still authenticates,
+    but the TGS becomes uncrackable in practical time.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/troubleshoot/windows-server/windows-security/decrypting-the-selection-of-supported-kerberos-encryption-types"
+    - "https://attack.mitre.org/mitigations/M1041/"
+  complexity: low
+  side_effects:
+    - "Account password rotated to 32-char cryptographically random string"
+    - "msDS-SupportedEncryptionTypes set to 0x18 (AES128+AES256 only; RC4 cleared)"
+    - "Any service running under this account WILL fail until its credential store is updated"
+    - "Rotated password written to AWS Secrets Manager at 'bolton/<lab>/svc_kerb_lab-rotated'"
+  rollback_supported: true
+  steps:
+    - ansible_role: microsoft.ad.user
+      description: "Rotate password and enforce AES-only encryption types."
+      role_vars:
+        identity: "svc_kerb_lab"
+        password: "{{ lookup('community.general.random_string', length=32, special=true) }}"
+        update_password: always
+        attributes:
+          set:
+            msDS-SupportedEncryptionTypes: 0x18
+    - script: "scripts/bolton/store_rotated_password.sh"
+      engine: bash
+      description: "Persist the new password to AWS Secrets Manager."
+      args:
+        secret_name: "bolton/{{ lab_name }}/svc_kerb_lab-rotated"
+  verify:
+    probe: |
+      $u = Get-ADUser -Identity 'svc_kerb_lab' -Properties msDS-SupportedEncryptionTypes, PasswordLastSet
+      $aes_only = ($u.'msDS-SupportedEncryptionTypes' -band 0x4) -eq 0
+      $recent   = $u.PasswordLastSet -gt (Get-Date).AddMinutes(-5)
+      if ($aes_only -and $recent) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/kerberoast_check.sh"
+
+patch_revert:
+  description: "Re-set the original weak password and restore RC4 support so the account is roastable again."
+  estimated_time_seconds: 20
+  steps:
+    - ansible_role: microsoft.ad.user
+      description: "Reset to the lab's known weak password and re-enable RC4."
+      role_vars:
+        identity: "svc_kerb_lab"
+        password: "Summer2025!"
+        update_password: always
+        attributes:
+          set:
+            msDS-SupportedEncryptionTypes: 0x1C  # RC4 + AES128 + AES256
+  verify:
+    probe: |
+      $u = Get-ADUser -Identity 'svc_kerb_lab' -Properties msDS-SupportedEncryptionTypes
+      if (($u.'msDS-SupportedEncryptionTypes' -band 0x4) -eq 0x4) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Account is kerberoastable again. Crack time back to <1 hour with rockyou.txt."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: quiet
+
+status: stable

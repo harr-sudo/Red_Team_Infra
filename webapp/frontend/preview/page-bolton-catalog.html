@@ -1,0 +1,1402 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TASTE Demo — Bolt-on Catalog (Vulnerabilities)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           TASTE DEMO — Bolt-on Catalog (Phase 1 / Agent D)
+           Three-column vulnerability card grid + host context strip +
+           filter chip rail. Demonstrates all 8 compatibility states +
+           all 4 detection coverage states. Composes Phase 2b
+           primitives (.spec-pill, .spec-list, .spec-row, .seg-control,
+           .scrim-takeover, .takeover-card).
+           Dials: 5/6/5.
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: var(--font-size-base);
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP ──────────────────────────────────────── */
+        .preview-strip {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .preview-strip__text strong {
+            display: inline-block;
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+        .preview-strip__toggle {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .preview-strip__toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── DEMO LEFT-RAIL (copied from page-cleanup) ─────────────── */
+        :root {
+            --demo-rail-w: 220px;
+            --demo-rail-top: 47px;
+        }
+        main { margin-left: var(--demo-rail-w); }
+        .demo-rail {
+            position: fixed;
+            top: var(--demo-rail-top);
+            left: 0;
+            bottom: 0;
+            width: var(--demo-rail-w);
+            background: var(--bg-section);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 16px 12px 12px;
+            gap: 2px;
+            z-index: 90;
+            overflow-y: auto;
+            font-family: var(--font-family-base);
+        }
+        .demo-rail__brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 8px 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 10px;
+        }
+        .demo-rail__brand-mark {
+            width: 22px; height: 22px;
+            border: 1.5px solid var(--brand-light);
+            border-radius: 5px;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .demo-rail__brand-mark::after {
+            content: "";
+            position: absolute;
+            inset: 5px;
+            background: var(--brand-light);
+            border-radius: 2px;
+        }
+        .demo-rail__brand-text {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.2;
+            min-width: 0;
+        }
+        .demo-rail__brand-eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .demo-rail__brand-sub {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+        .demo-rail__group-label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 10px 10px 6px;
+        }
+        .demo-rail__item {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 12px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            text-align: left;
+            width: 100%;
+        }
+        .demo-rail__item:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .demo-rail__item.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__item.is-active::before {
+            content: "";
+            position: absolute;
+            left: -12px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__icon { width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; color: currentColor; }
+        .demo-rail__icon svg { display: block; }
+        .demo-rail__label { flex: 1; white-space: nowrap; }
+        .demo-rail__caret {
+            width: 6px; height: 6px;
+            border-right: 1.4px solid currentColor;
+            border-bottom: 1.4px solid currentColor;
+            transform: rotate(-45deg);
+            opacity: 0.55;
+        }
+        .demo-rail__item.is-expanded .demo-rail__caret { transform: rotate(45deg); }
+        .demo-rail__children {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__children > div { overflow: hidden; }
+        .demo-rail__children.is-open { grid-template-rows: 1fr; }
+        .demo-rail__child {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 2px 0;
+            padding: 7px 12px 7px 36px;
+            font-family: inherit;
+            font-size: 12.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            text-align: left;
+            position: relative;
+        }
+        .demo-rail__child:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .demo-rail__child.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__child.is-active::before {
+            content: "";
+            position: absolute;
+            left: 16px;
+            top: 8px; bottom: 8px;
+            width: 2px;
+            border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__child-pill-new {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 1px 6px;
+            background: var(--brand-light);
+            color: var(--text-inverse);
+            border-radius: 999px;
+            font-size: 8.5px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            vertical-align: middle;
+            font-weight: 700;
+        }
+        .demo-rail__footer {
+            margin-top: auto;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .demo-rail__op {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            border-radius: 5px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            font-family: var(--font-family-mono);
+            font-size: 12px;
+            color: var(--text-primary);
+            cursor: pointer;
+        }
+        .demo-rail__op-name { font-weight: 600; flex: 1; text-align: left; }
+        .demo-rail__op-chev {
+            width: 5px; height: 5px;
+            border-right: 1.5px solid var(--text-secondary);
+            border-bottom: 1.5px solid var(--text-secondary);
+            transform: translateY(-2px) rotate(45deg);
+            display: inline-block;
+        }
+        .demo-rail__theme {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 5px 9px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        /* ── PAGE SHELL ────────────────────────────────────────────── */
+        .bc-shell {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 32px 32px 64px;
+            animation: bc-fade-in 320ms var(--motion-easing-standard) both;
+        }
+
+        /* ── HOST CONTEXT STRIP ────────────────────────────────────── */
+        .bc-host {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 18px 22px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            margin-bottom: 24px;
+        }
+        .bc-host__left { display: flex; gap: 16px; align-items: center; min-width: 0; }
+        .bc-host__icon {
+            width: 38px; height: 38px;
+            border-radius: 8px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-primary);
+            flex-shrink: 0;
+        }
+        .bc-host__meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .bc-host__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .bc-host__name {
+            font-family: var(--font-family-mono);
+            font-size: 14.5px;
+            font-weight: var(--font-weight-bold);
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+        }
+        .bc-host__sub {
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+        }
+        .bc-host__sub strong { color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+        .bc-host__actions { display: inline-flex; gap: 10px; }
+
+        /* ── EYEBROW ──────────────────────────────────────────────── */
+        .bc-eyebrow {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 24px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 20px;
+        }
+        .bc-eyebrow__text { flex: 1; min-width: 0; }
+        .bc-eyebrow__label {
+            display: inline-block;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .bc-eyebrow__title {
+            font-size: 22px;
+            font-weight: var(--font-weight-bold);
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            margin: 0 0 6px;
+            line-height: 1.2;
+        }
+        .bc-eyebrow__description {
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+            margin: 0;
+            line-height: 1.55;
+            max-width: 680px;
+        }
+
+        /* ── FILTER CHIP BAR ───────────────────────────────────────── */
+        .bc-filters {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 22px;
+        }
+        .bc-filters__row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        .bc-filters__rowlabel {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            min-width: 84px;
+        }
+        .bc-chip {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 11px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            border-radius: var(--radius-full);
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            font-weight: var(--font-weight-semibold);
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard),
+                        color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .bc-chip:hover {
+            border-color: var(--border-light);
+            color: var(--text-primary);
+        }
+        .bc-chip.is-active {
+            background: var(--bg-card-hover);
+            border-color: var(--brand-light);
+            color: var(--text-primary);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+        .bc-chip__count {
+            font-variant-numeric: tabular-nums;
+            color: var(--text-secondary);
+            font-weight: var(--font-weight-medium);
+            margin-left: 2px;
+        }
+        .bc-chip.is-active .bc-chip__count { color: var(--text-primary); }
+
+        /* ── CATALOG GRID ──────────────────────────────────────────── */
+        .bc-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+            gap: 14px;
+        }
+        .bc-card {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 16px 16px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            position: relative;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard),
+                        transform var(--motion-duration-base) var(--motion-easing-standard),
+                        opacity var(--motion-duration-base) var(--motion-easing-standard);
+            cursor: pointer;
+        }
+        .bc-card:hover { border-color: var(--border-light); transform: translateY(-1px); }
+        .bc-card[data-compat^="INCOMPATIBLE"] { opacity: 0.45; }
+        .bc-card[data-compat^="INCOMPATIBLE"]:hover { opacity: 0.6; }
+        .bc-card[data-compat="MISSING_PREREQ"] { border-left: 3px solid var(--warning); padding-left: 13px; }
+        .bc-card[data-compat="MISSING_SOFTWARE"] { border-left: 3px solid var(--warning); padding-left: 13px; }
+        .bc-card[data-compat="CONFLICTS_WITH_INSTALLED"] { border: 1px solid var(--danger-border); }
+        .bc-card[data-compat="ALREADY_INSTALLED"] { border-left: 3px solid var(--success); padding-left: 13px; }
+        .bc-card[data-compat="PATCHED"] { background: var(--bg-input); }
+
+        .bc-card__eyebrow {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .bc-card__title {
+            margin: 0;
+            font-size: 14.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+            line-height: 1.3;
+            letter-spacing: -0.005em;
+        }
+        .bc-card__desc {
+            margin: 0;
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+        .bc-card__pills {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 2px;
+        }
+        .bc-card__time {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin-left: auto;
+            white-space: nowrap;
+        }
+        .bc-card__cta {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 4px;
+        }
+        .bc-card__cta .spec-edit-btn { font-size: 11px; padding: 6px 12px; }
+        .bc-card__why {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            background: transparent;
+            border: 0;
+            cursor: pointer;
+            padding: 0;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+        .bc-card__why:hover { color: var(--text-primary); }
+
+        /* ── PILL VARIANTS (compose .spec-pill) ────────────────────── */
+        .spec-pill--cat {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border-color: var(--border-subtle);
+        }
+        .spec-pill--ttp {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border-color: var(--border-subtle);
+        }
+        /* Compatibility pills */
+        .spec-pill--success {
+            background: var(--success-bg);
+            color: var(--success-text);
+            border-color: var(--success-border);
+        }
+        .spec-pill--warn {
+            background: var(--warning-bg);
+            color: var(--warning-text);
+            border-color: var(--warning-border);
+        }
+        .spec-pill--danger {
+            background: var(--danger-bg);
+            color: var(--danger-text);
+            border-color: var(--danger-border);
+        }
+        .spec-pill--muted {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border-color: var(--border-subtle);
+        }
+        /* Detection coverage: the no-rule red pill should grab the eye */
+        .spec-pill--no-detect {
+            background: var(--danger-bg);
+            color: var(--danger-text);
+            border-color: var(--danger-border);
+            padding: 3px 10px;
+            font-size: 10px;
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent);
+        }
+
+        /* ── INLINE DETAIL PANEL (expandable) ──────────────────────── */
+        .bc-card__detail {
+            display: none;
+            margin-top: 8px;
+            padding-top: 10px;
+            border-top: 1px dashed var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.55;
+        }
+        .bc-card[data-detail-open="true"] .bc-card__detail { display: block; }
+        .bc-card__detail-row {
+            display: grid;
+            grid-template-columns: 92px 1fr;
+            gap: 10px;
+            padding: 3px 0;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+        }
+        .bc-card__detail-key {
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            font-weight: var(--font-weight-semibold);
+        }
+        .bc-card__detail-val { color: var(--text-primary); }
+
+        /* ── TOAST ─────────────────────────────────────────────────── */
+        .bc-toast {
+            position: fixed;
+            top: 18px;
+            right: 18px;
+            padding: 10px 14px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 12.5px;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-6px);
+            transition: opacity 240ms, transform 240ms;
+            z-index: 1000;
+        }
+        .bc-toast[data-show="true"] { opacity: 1; transform: translateY(0); }
+
+        /* ── CONFIRM TAKEOVER (lightweight install confirm) ────────── */
+        .bc-takeover-card {
+            max-width: 540px;
+            padding: 24px 26px;
+        }
+        .bc-takeover-card h3 {
+            margin: 0 0 6px;
+            font-size: 16px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+        }
+        .bc-takeover-card__eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .bc-takeover-card__list {
+            margin: 14px 0 16px;
+            padding: 0;
+            list-style: none;
+            font-size: 12.5px;
+        }
+        .bc-takeover-card__list li {
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border-subtle);
+            display: grid;
+            grid-template-columns: 110px 1fr;
+            gap: 14px;
+        }
+        .bc-takeover-card__list li:last-child { border-bottom: 0; }
+        .bc-takeover-card__list-key {
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            font-weight: var(--font-weight-semibold);
+        }
+        .bc-takeover-card__list-val { color: var(--text-primary); font-size: 12.5px; }
+        .bc-takeover-card__foot {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 18px;
+        }
+        .bc-takeover-card__link {
+            display: block;
+            margin-top: 12px;
+            text-align: right;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--brand-light);
+            text-decoration: none;
+        }
+        .bc-takeover-card__link:hover { text-decoration: underline; }
+
+        @keyframes bc-fade-in {
+            from { opacity: 0; transform: translateY(2px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @media (max-width: 880px) {
+            :root { --demo-rail-w: 64px; }
+            .demo-rail__label, .demo-rail__caret, .demo-rail__group-label,
+            .demo-rail__brand-text, .demo-rail__children, .demo-rail__footer .demo-rail__op-name,
+            .demo-rail__footer .demo-rail__op-chev { display: none; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .bc-card, .bc-card:hover, .bc-chip { transition: none; transform: none; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Inline icon defs (preview is self-contained; index.html's icon-defs are not in scope here) -->
+    <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="icon-server" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="2" width="10" height="3.5" rx="0.5"/>
+                <rect x="2" y="6.5" width="10" height="3.5" rx="0.5"/>
+                <circle cx="4" cy="3.75" r="0.4" fill="currentColor"/>
+                <circle cx="4" cy="8.25" r="0.4" fill="currentColor"/>
+            </symbol>
+            <symbol id="icon-refresh" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11.5 3.5 A4.5 4.5 0 1 0 12 8"/>
+                <path d="M11.5 1.5 V4 H9"/>
+            </symbol>
+            <symbol id="icon-check" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 7.5 L5.5 11 L12 3.5"/>
+            </symbol>
+            <symbol id="icon-warn" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 2 L12.5 11.5 H1.5 Z"/>
+                <path d="M7 6 V8.5"/>
+                <circle cx="7" cy="10" r="0.3" fill="currentColor"/>
+            </symbol>
+            <symbol id="icon-x" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 3 L11 11 M11 3 L3 11"/>
+            </symbol>
+            <symbol id="icon-chevron-right" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 3 L9 7 L5 11"/>
+            </symbol>
+            <symbol id="icon-info" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="7" cy="7" r="5"/>
+                <path d="M7 6 V10"/>
+                <circle cx="7" cy="4.2" r="0.3" fill="currentColor"/>
+            </symbol>
+            <symbol id="icon-clock" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="7" cy="7" r="5"/>
+                <path d="M7 4 V7 L9 9"/>
+            </symbol>
+            <symbol id="icon-shield" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 1.5 L12 3 V7 Q12 10.5 7 12.5 Q2 10.5 2 7 V3 Z"/>
+            </symbol>
+        </defs>
+    </svg>
+
+    <header class="preview-strip">
+        <span class="preview-strip__text">
+            <strong>Bolt-on catalog demo</strong>
+            The bolt-on catalog is the operator's vulnerability shopping mall — categorized cards filterable by compatibility, with MITRE TTP + detection coverage stamped on every entry.
+        </span>
+        <button class="preview-strip__toggle" type="button"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+            Toggle theme
+        </button>
+    </header>
+
+    <!-- Left rail -->
+    <nav class="demo-rail" aria-label="App navigation (demo)">
+        <div class="demo-rail__brand">
+            <span class="demo-rail__brand-mark" aria-hidden="true"></span>
+            <span class="demo-rail__brand-text">
+                <span class="demo-rail__brand-eyebrow">RED TEAM INFRA</span>
+                <span class="demo-rail__brand-sub">v3 · demo</span>
+            </span>
+        </div>
+
+        <span class="demo-rail__group-label">Workspace</span>
+
+        <button class="demo-rail__item" type="button">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="8.5" y="1.5" width="6" height="3" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="8.5" y="5.5" width="6" height="9" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="1.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+            </svg></span>
+            <span class="demo-rail__label">Dashboard</span>
+        </button>
+
+        <button class="demo-rail__item is-active is-expanded" type="button" data-demo-parent="deployments" aria-expanded="true">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="1.5" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="1.5" y="10" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <circle cx="4" cy="3.75" r="0.7" fill="currentColor"/>
+                <circle cx="4" cy="12.25" r="0.7" fill="currentColor"/>
+            </svg></span>
+            <span class="demo-rail__label">Deployments</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="demo-rail__children is-open" data-children-of="deployments">
+            <div>
+                <button class="demo-rail__child" type="button">Configure</button>
+                <button class="demo-rail__child" type="button">Deploy</button>
+                <button class="demo-rail__child" type="button">Manage</button>
+                <button class="demo-rail__child is-active" type="button">
+                    Vulnerabilities<span class="demo-rail__child-pill-new">NEW</span>
+                </button>
+                <button class="demo-rail__child" type="button">Cleanup</button>
+            </div>
+        </div>
+
+        <button class="demo-rail__item" type="button">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
+                <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg></span>
+            <span class="demo-rail__label">Operations</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+
+        <button class="demo-rail__item" type="button">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.3"/>
+            </svg></span>
+            <span class="demo-rail__label">Settings</span>
+        </button>
+
+        <div class="demo-rail__footer">
+            <button class="demo-rail__op" type="button">
+                <span class="operator-dot" style="background: #a31621;" aria-hidden="true"></span>
+                <span class="demo-rail__op-name">harriss</span>
+                <span class="demo-rail__op-chev" aria-hidden="true"></span>
+            </button>
+            <div style="display:flex;justify-content:flex-end">
+                <button class="demo-rail__theme" type="button"
+                        onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">Theme</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="bc-toast" id="bc-toast" role="status" aria-live="polite"></div>
+
+    <main class="bc-shell">
+        <!-- Host context strip -->
+        <section class="bc-host" aria-label="Selected target host">
+            <div class="bc-host__left">
+                <span class="bc-host__icon" aria-hidden="true">
+                    <svg class="icon icon--lg" aria-hidden="true"><use href="#icon-server"/></svg>
+                </span>
+                <div class="bc-host__meta">
+                    <span class="bc-host__label">Selected target</span>
+                    <span class="bc-host__name">dc01.domain1.local</span>
+                    <span class="bc-host__sub">
+                        <strong>Windows Server 2022</strong> · <strong>domain_controller</strong>
+                        · forest 2016 · <strong>3 installed bolt-ons</strong>
+                        · facts <span style="color:var(--text-primary)">4m ago</span>
+                    </span>
+                </div>
+            </div>
+            <div class="bc-host__actions">
+                <button class="spec-edit-btn" type="button" onclick="bcRefresh(this)">
+                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                    Refresh facts
+                </button>
+                <button class="spec-edit-btn" type="button" onclick="bcToast('Open host selector — would open a dropdown listing all 5 hosts')">
+                    Change target
+                </button>
+            </div>
+        </section>
+
+        <!-- Eyebrow -->
+        <div class="bc-eyebrow">
+            <div class="bc-eyebrow__text">
+                <span class="bc-eyebrow__label">VULNERABILITY CATALOG</span>
+                <h1 class="bc-eyebrow__title">Bolt-on browser</h1>
+                <p class="bc-eyebrow__description">
+                    18 vulnerabilities across 10 categories. Each card is annotated against
+                    <span style="color:var(--text-primary)">dc01.domain1.local</span> with a compatibility state
+                    and Elastic detection coverage. Drag onto a host or click Install to begin.
+                </p>
+            </div>
+        </div>
+
+        <!-- Filter chip rails -->
+        <div class="bc-filters">
+            <div class="bc-filters__row">
+                <span class="bc-filters__rowlabel">Category</span>
+                <button class="bc-chip is-active" data-cat="all">All<span class="bc-chip__count">18</span></button>
+                <button class="bc-chip" data-cat="identity">Identity<span class="bc-chip__count">5</span></button>
+                <button class="bc-chip" data-cat="adcs">ADCS<span class="bc-chip__count">3</span></button>
+                <button class="bc-chip" data-cat="protocol">Protocol<span class="bc-chip__count">2</span></button>
+                <button class="bc-chip" data-cat="cve">CVE<span class="bc-chip__count">3</span></button>
+                <button class="bc-chip" data-cat="acl">ACL<span class="bc-chip__count">2</span></button>
+                <button class="bc-chip" data-cat="gpo">GPO<span class="bc-chip__count">1</span></button>
+                <button class="bc-chip" data-cat="delegation">Delegation<span class="bc-chip__count">1</span></button>
+                <button class="bc-chip" data-cat="relay">Relay<span class="bc-chip__count">1</span></button>
+            </div>
+            <div class="bc-filters__row">
+                <span class="bc-filters__rowlabel">Compatibility</span>
+                <button class="bc-chip is-active" data-state="all">All states<span class="bc-chip__count">18</span></button>
+                <button class="bc-chip" data-state="INSTALLABLE">Installable<span class="bc-chip__count">5</span></button>
+                <button class="bc-chip" data-state="ALREADY_INSTALLED">Installed<span class="bc-chip__count">3</span></button>
+                <button class="bc-chip" data-state="MISSING_PREREQ">Missing prereq<span class="bc-chip__count">2</span></button>
+                <button class="bc-chip" data-state="MISSING_SOFTWARE">Missing software<span class="bc-chip__count">1</span></button>
+                <button class="bc-chip" data-state="CONFLICTS_WITH_INSTALLED">Conflicts<span class="bc-chip__count">1</span></button>
+                <button class="bc-chip" data-state="INCOMPATIBLE_OS">Incompat OS<span class="bc-chip__count">1</span></button>
+                <button class="bc-chip" data-state="INCOMPATIBLE_ROLE">Incompat role<span class="bc-chip__count">3</span></button>
+                <button class="bc-chip" data-state="PATCHED">Patched<span class="bc-chip__count">2</span></button>
+            </div>
+            <div class="bc-filters__row">
+                <span class="bc-filters__rowlabel">Detection</span>
+                <button class="bc-chip is-active" data-cov="all">All coverage<span class="bc-chip__count">18</span></button>
+                <button class="bc-chip" data-cov="covered">Covered<span class="bc-chip__count">9</span></button>
+                <button class="bc-chip" data-cov="partial">Partial<span class="bc-chip__count">4</span></button>
+                <button class="bc-chip" data-cov="no-rule">No rule<span class="bc-chip__count">3</span></button>
+                <button class="bc-chip" data-cov="stale">Stale<span class="bc-chip__count">2</span></button>
+            </div>
+        </div>
+
+        <!-- Catalog grid -->
+        <div class="bc-grid" id="bc-grid">
+
+            <!-- ── 1. Kerberoasting — ALREADY_INSTALLED + covered ───────── -->
+            <article class="bc-card" data-cat="identity" data-state="ALREADY_INSTALLED" data-cov="covered"
+                     data-compat="ALREADY_INSTALLED" data-vuln-id="bolton.identity.kerberoastable-svc"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">Identity</span>
+                    <span class="spec-pill spec-pill--ttp">T1558.003</span>
+                    <span class="bc-card__time">~30s install</span>
+                </div>
+                <h3 class="bc-card__title">Kerberoastable Service Account</h3>
+                <p class="bc-card__desc">Service account with a registered SPN and a weak password — TGS extracted from a low-priv user can be cracked offline.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg> Installed</span>
+                    <span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Detection: covered</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn" type="button" onclick="bcToast('Re-verify probe queued')">Verify</button>
+                    <button class="spec-edit-btn" type="button" onclick="bcToast('Uninstall confirm modal would open')">Uninstall</button>
+                </div>
+                <div class="bc-card__detail">
+                    <div class="bc-card__detail-row"><span class="bc-card__detail-key">Installed</span><span class="bc-card__detail-val">2h ago by harriss</span></div>
+                    <div class="bc-card__detail-row"><span class="bc-card__detail-key">Probe</span><span class="bc-card__detail-val">impacket-GetUserSPNs — last verified 1h ago</span></div>
+                    <div class="bc-card__detail-row"><span class="bc-card__detail-key">Elastic</span><span class="bc-card__detail-val">1d276579…b1e2c4 (full · high)</span></div>
+                </div>
+            </article>
+
+            <!-- ── 2. AS-REP Roast — INSTALLABLE + covered ─────────────── -->
+            <article class="bc-card" data-cat="identity" data-state="INSTALLABLE" data-cov="covered"
+                     data-compat="INSTALLABLE" data-vuln-id="bolton.identity.asrep-roast"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">Identity</span>
+                    <span class="spec-pill spec-pill--ttp">T1558.004</span>
+                    <span class="bc-card__time">~20s install</span>
+                </div>
+                <h3 class="bc-card__title">AS-REP Roastable User</h3>
+                <p class="bc-card__desc">User account with DONT_REQ_PREAUTH flag set — AS-REP hash crackable offline without prior credentials.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill"><span class="spec-pill__dot"></span> Installable</span>
+                    <span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Detection: covered</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bcOpenInstall('AS-REP Roastable User','T1558.004')">Install</button>
+                </div>
+                <div class="bc-card__detail">
+                    <div class="bc-card__detail-row"><span class="bc-card__detail-key">Engine</span><span class="bc-card__detail-val">ansible / win-rm</span></div>
+                    <div class="bc-card__detail-row"><span class="bc-card__detail-key">Elastic</span><span class="bc-card__detail-val">e8b3a7f1…cd12fe (full · high)</span></div>
+                </div>
+            </article>
+
+            <!-- ── 3. ADCS ESC1 — INCOMPATIBLE_ROLE + covered ──────────── -->
+            <article class="bc-card" data-cat="adcs" data-state="INCOMPATIBLE_ROLE" data-cov="covered"
+                     data-compat="INCOMPATIBLE_ROLE" data-vuln-id="bolton.adcs.esc1"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">ADCS</span>
+                    <span class="spec-pill spec-pill--ttp">T1649</span>
+                    <span class="bc-card__time">~90s install</span>
+                </div>
+                <h3 class="bc-card__title">ADCS ESC1 — Enrollee Supplies Subject</h3>
+                <p class="bc-card__desc">Certificate template with ENROLLEE_SUPPLIES_SUBJECT + Client Auth EKU — any user can issue admin certs.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-x"/></svg> Needs CA-host</span>
+                    <span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Detection: covered</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn" type="button" disabled title="This host is role 'dc'; requires 'ca-host'">Install</button>
+                    <button class="bc-card__why" type="button" onclick="bcToast('Why incompatible: Requires role ca-host. Compatible hosts in this lab: ca01.domain1.local')">Why?</button>
+                </div>
+                <div class="bc-card__detail">
+                    <div class="bc-card__detail-row"><span class="bc-card__detail-key">Reason</span><span class="bc-card__detail-val">Requires role 'ca-host'; dc01 is 'dc'</span></div>
+                    <div class="bc-card__detail-row"><span class="bc-card__detail-key">Compatible</span><span class="bc-card__detail-val">ca01.domain1.local</span></div>
+                </div>
+            </article>
+
+            <!-- ── 4. PrintNightmare — PATCHED + partial ───────────────── -->
+            <article class="bc-card" data-cat="cve" data-state="PATCHED" data-cov="partial"
+                     data-compat="PATCHED" data-vuln-id="bolton.cve.printnightmare"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">CVE</span>
+                    <span class="spec-pill spec-pill--ttp">T1068</span>
+                    <span class="bc-card__time">~4m install</span>
+                </div>
+                <h3 class="bc-card__title">PrintNightmare — CVE-2021-34527</h3>
+                <p class="bc-card__desc">Print Spooler RCE via malicious driver load. KB5005033 already installed on this host.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--muted"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Patched (KB5005033)</span>
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> Detection: partial</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn" type="button" style="font-style:italic" onclick="bcToast('Install anyway flow — verify probe will report exploit fails')">Install anyway</button>
+                    <button class="bc-card__why" type="button" onclick="bcToast('View alternatives → other CVE bolt-ons not patched on this host')">View alternatives</button>
+                </div>
+                <div class="bc-card__detail">
+                    <div class="bc-card__detail-row"><span class="bc-card__detail-key">Patched</span><span class="bc-card__detail-val">KB5005033 · Sep 2021</span></div>
+                    <div class="bc-card__detail-row"><span class="bc-card__detail-key">Elastic</span><span class="bc-card__detail-val">5cc6efb3… (full), 9a0d8e7c… (partial)</span></div>
+                </div>
+            </article>
+
+            <!-- ── 5. ZeroLogon — INCOMPATIBLE_OS + covered ────────────── -->
+            <article class="bc-card" data-cat="cve" data-state="INCOMPATIBLE_OS" data-cov="covered"
+                     data-compat="INCOMPATIBLE_OS" data-vuln-id="bolton.cve.zerologon"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">CVE</span>
+                    <span class="spec-pill spec-pill--ttp">T1068</span>
+                    <span class="bc-card__time">~6m install</span>
+                </div>
+                <h3 class="bc-card__title">ZeroLogon — CVE-2020-1472</h3>
+                <p class="bc-card__desc">Netlogon elevation via empty IV in AES-CFB8. Requires unpatched Windows Server 2008–2019.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-x"/></svg> Wrong OS</span>
+                    <span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Detection: covered</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn" type="button" disabled title="Requires Windows Server 2008-2019; this host is Server 2022">Install</button>
+                    <button class="bc-card__why" type="button" onclick="bcToast('Why incompatible: Requires Server 2008-2019; dc01 is Server 2022 (already mitigated)')">Why?</button>
+                </div>
+            </article>
+
+            <!-- ── 6. LLMNR/NBT-NS — INSTALLABLE + partial ─────────────── -->
+            <article class="bc-card" data-cat="protocol" data-state="INSTALLABLE" data-cov="partial"
+                     data-compat="INSTALLABLE" data-vuln-id="bolton.protocol.llmnr-nbtns"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">Protocol</span>
+                    <span class="spec-pill spec-pill--ttp">T1557.001</span>
+                    <span class="bc-card__time">~90s install</span>
+                </div>
+                <h3 class="bc-card__title">LLMNR / NBT-NS Poisoning</h3>
+                <p class="bc-card__desc">Re-enables multicast name resolution domain-wide; Responder will harvest NTLMv2 hashes on every broadcast miss.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill"><span class="spec-pill__dot"></span> Installable</span>
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> Detection: partial</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bcOpenInstall('LLMNR / NBT-NS Poisoning','T1557.001')">Install</button>
+                </div>
+            </article>
+
+            <!-- ── 7. GPP cpassword — INSTALLABLE + no-rule (RED) ──────── -->
+            <article class="bc-card" data-cat="gpo" data-state="INSTALLABLE" data-cov="no-rule"
+                     data-compat="INSTALLABLE" data-vuln-id="bolton.gpo.gpp-cpassword"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">GPO</span>
+                    <span class="spec-pill spec-pill--ttp">T1552.006</span>
+                    <span class="bc-card__time">~45s install</span>
+                </div>
+                <h3 class="bc-card__title">GPP cpassword in SYSVOL</h3>
+                <p class="bc-card__desc">Legacy Group Policy Preferences XML with reversibly-encrypted cpassword attribute readable by any domain user.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill"><span class="spec-pill__dot"></span> Installable</span>
+                    <span class="spec-pill spec-pill--no-detect"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> No detection</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bcOpenInstall('GPP cpassword in SYSVOL','T1552.006')">Install</button>
+                    <button class="bc-card__why" type="button" onclick="bcToast('No Elastic rule covers this. Generate detection rule from template?')">Generate rule</button>
+                </div>
+            </article>
+
+            <!-- ── 8. DCSync rights — MISSING_PREREQ + covered ─────────── -->
+            <article class="bc-card" data-cat="acl" data-state="MISSING_PREREQ" data-cov="covered"
+                     data-compat="MISSING_PREREQ" data-vuln-id="bolton.acl.dcsync-rights"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">ACL</span>
+                    <span class="spec-pill spec-pill--ttp">T1003.006</span>
+                    <span class="bc-card__time">~25s install</span>
+                </div>
+                <h3 class="bc-card__title">DCSync ACL on Low-Priv User</h3>
+                <p class="bc-card__desc">Grants Replicating Directory Changes + Replicating Directory Changes All to a non-admin user — DCSync from any workstation.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> Needs: weak-password-policy</span>
+                    <span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Detection: covered</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn" type="button" disabled>Install</button>
+                    <button class="bc-card__why" type="button" onclick="bcToast('Prereq: bolton.identity.weak-password-policy must be installed first')">Install prereq first</button>
+                </div>
+            </article>
+
+            <!-- ── 9. AdminSDHolder — INSTALLABLE + covered ────────────── -->
+            <article class="bc-card" data-cat="acl" data-state="INSTALLABLE" data-cov="covered"
+                     data-compat="INSTALLABLE" data-vuln-id="bolton.acl.adminsdholder"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">ACL</span>
+                    <span class="spec-pill spec-pill--ttp">T1098</span>
+                    <span class="bc-card__time">~30s install</span>
+                </div>
+                <h3 class="bc-card__title">AdminSDHolder Backdoor ACE</h3>
+                <p class="bc-card__desc">Adds GenericAll for a low-priv user on AdminSDHolder; SDProp re-applies it to every protected group hourly.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill"><span class="spec-pill__dot"></span> Installable</span>
+                    <span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Detection: covered</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bcOpenInstall('AdminSDHolder Backdoor ACE','T1098')">Install</button>
+                </div>
+            </article>
+
+            <!-- ── 10. Unconstrained Delegation — ALREADY_INSTALLED + stale -->
+            <article class="bc-card" data-cat="delegation" data-state="ALREADY_INSTALLED" data-cov="stale"
+                     data-compat="ALREADY_INSTALLED" data-vuln-id="bolton.delegation.unconstrained"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">Delegation</span>
+                    <span class="spec-pill spec-pill--ttp">T1558.001</span>
+                    <span class="bc-card__time">~45s install</span>
+                </div>
+                <h3 class="bc-card__title">Unconstrained Delegation on Member</h3>
+                <p class="bc-card__desc">Sets TRUSTED_FOR_DELEGATION on srv02 — captures every TGT forwarded to that host.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg> Installed</span>
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-clock"/></svg> Rule unvalidated 117d</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn" type="button" onclick="bcToast('Re-verify probe queued')">Verify</button>
+                    <button class="spec-edit-btn" type="button" onclick="bcToast('Uninstall confirm modal would open')">Uninstall</button>
+                </div>
+            </article>
+
+            <!-- ── 11. ADCS ESC8 NTLM Relay — MISSING_SOFTWARE + covered ─ -->
+            <article class="bc-card" data-cat="adcs" data-state="MISSING_SOFTWARE" data-cov="covered"
+                     data-compat="MISSING_SOFTWARE" data-vuln-id="bolton.adcs.esc8"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">ADCS</span>
+                    <span class="spec-pill spec-pill--ttp">T1187</span>
+                    <span class="bc-card__time">~3m install</span>
+                </div>
+                <h3 class="bc-card__title">ADCS ESC8 — HTTP Web Enrollment</h3>
+                <p class="bc-card__desc">Web Enrollment endpoint accepts NTLM auth; relay PetitPotam-coerced DC creds into a machine cert.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> Needs: ADCS</span>
+                    <span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Detection: covered</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn" type="button" disabled>Install</button>
+                    <button class="bc-card__why" type="button" onclick="bcToast('Install ADCS first → bolton.adcs.install-adcs')">Install ADCS first</button>
+                </div>
+            </article>
+
+            <!-- ── 12. Weak Password Policy — CONFLICTS_WITH_INSTALLED ──── -->
+            <article class="bc-card" data-cat="identity" data-state="CONFLICTS_WITH_INSTALLED" data-cov="no-rule"
+                     data-compat="CONFLICTS_WITH_INSTALLED" data-vuln-id="bolton.identity.weak-password-policy"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">Identity</span>
+                    <span class="spec-pill spec-pill--ttp">T1110</span>
+                    <span class="bc-card__time">~10s install</span>
+                </div>
+                <h3 class="bc-card__title">Weak Domain Password Policy</h3>
+                <p class="bc-card__desc">Drops minPwdLength to 4, disables complexity, sets lockout to 0 — feeds Kerberoasting + AS-REP cracking.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--danger"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> Conflicts: strong-pwpol</span>
+                    <span class="spec-pill spec-pill--no-detect"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> No detection</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn spec-edit-btn--save" type="button" disabled style="opacity:0.5">Resolve conflict</button>
+                    <button class="bc-card__why" type="button" onclick="bcToast('Conflicts with bolton.identity.strong-pwpol-baseline — uninstall to proceed')">Why?</button>
+                </div>
+            </article>
+
+            <!-- ── 13. ADCS install (meta) — INSTALLABLE + covered ─────── -->
+            <article class="bc-card" data-cat="adcs" data-state="INCOMPATIBLE_ROLE" data-cov="partial"
+                     data-compat="INCOMPATIBLE_ROLE" data-vuln-id="bolton.adcs.install-adcs"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">ADCS</span>
+                    <span class="spec-pill spec-pill--ttp">T1505</span>
+                    <span class="bc-card__time">~4m install</span>
+                </div>
+                <h3 class="bc-card__title">Install Enterprise ADCS Role</h3>
+                <p class="bc-card__desc">Meta bolt-on: installs ADCS + creates Enterprise CA. Prereq for every ESC1–ESC16 bolt-on.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-x"/></svg> Needs CA-host</span>
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> Detection: partial</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn" type="button" disabled>Install</button>
+                    <button class="bc-card__why" type="button" onclick="bcToast('Run on ca01 — switch target')">Switch to ca01</button>
+                </div>
+            </article>
+
+            <!-- ── 14. SMB Signing disabled — INSTALLABLE + no-rule ────── -->
+            <article class="bc-card" data-cat="protocol" data-state="INSTALLABLE" data-cov="no-rule"
+                     data-compat="INSTALLABLE" data-vuln-id="bolton.protocol.smb-signing-off"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">Protocol</span>
+                    <span class="spec-pill spec-pill--ttp">T1557.001</span>
+                    <span class="bc-card__time">~15s install</span>
+                </div>
+                <h3 class="bc-card__title">SMB Signing Not Required</h3>
+                <p class="bc-card__desc">Clears RequireSecuritySignature on the LanmanServer params — enables SMB-to-SMB and SMB-to-LDAP relay.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill"><span class="spec-pill__dot"></span> Installable</span>
+                    <span class="spec-pill spec-pill--no-detect"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> No detection</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bcOpenInstall('SMB Signing Not Required','T1557.001')">Install</button>
+                </div>
+            </article>
+
+            <!-- ── 15. NTLM Relay to LDAP — INCOMPATIBLE_ROLE + covered ── -->
+            <article class="bc-card" data-cat="relay" data-state="INCOMPATIBLE_ROLE" data-cov="covered"
+                     data-compat="INCOMPATIBLE_ROLE" data-vuln-id="bolton.relay.ntlm-to-ldap"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">Relay</span>
+                    <span class="spec-pill spec-pill--ttp">T1557.001</span>
+                    <span class="bc-card__time">~2m install</span>
+                </div>
+                <h3 class="bc-card__title">NTLM Relay to LDAP (no signing)</h3>
+                <p class="bc-card__desc">Configures ntlmrelayx scenario host with PetitPotam coerce target. Requires Linux-member role.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-x"/></svg> Needs linux-member</span>
+                    <span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Detection: covered</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn" type="button" disabled>Install</button>
+                    <button class="bc-card__why" type="button" onclick="bcToast('No linux-member host in this lab — provision one first')">Provision linux-member</button>
+                </div>
+            </article>
+
+            <!-- ── 16. PetitPotam Coercion — INSTALLABLE + stale ────────── -->
+            <article class="bc-card" data-cat="protocol" data-state="INSTALLABLE" data-cov="stale"
+                     data-compat="INSTALLABLE" data-vuln-id="bolton.protocol.petitpotam"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">Protocol</span>
+                    <span class="spec-pill spec-pill--ttp">T1187</span>
+                    <span class="bc-card__time">~1m install</span>
+                </div>
+                <h3 class="bc-card__title">PetitPotam MS-EFSRPC Coercion</h3>
+                <p class="bc-card__desc">Disables NTLM auth fallback patches so PetitPotam can coerce DC machine account authentication.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill"><span class="spec-pill__dot"></span> Installable</span>
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-clock"/></svg> Rule unvalidated 142d</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bcOpenInstall('PetitPotam MS-EFSRPC Coercion','T1187')">Install</button>
+                </div>
+            </article>
+
+            <!-- ── 17. LAPS Misconfig — INCOMPATIBLE_ROLE + partial ────── -->
+            <article class="bc-card" data-cat="identity" data-state="INCOMPATIBLE_ROLE" data-cov="partial"
+                     data-compat="INCOMPATIBLE_ROLE" data-vuln-id="bolton.identity.laps-readable"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">Identity</span>
+                    <span class="spec-pill spec-pill--ttp">T1552.001</span>
+                    <span class="bc-card__time">~35s install</span>
+                </div>
+                <h3 class="bc-card__title">LAPS Password World-Readable</h3>
+                <p class="bc-card__desc">Sets Read All Properties on ms-Mcs-AdmPwd for Authenticated Users — every domain user dumps every local admin password.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-x"/></svg> Needs member</span>
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> Detection: partial</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn" type="button" disabled>Install</button>
+                    <button class="bc-card__why" type="button" onclick="bcToast('Requires role member; compatible hosts: srv01, srv02, ws01')">Why?</button>
+                </div>
+            </article>
+
+            <!-- ── 18. SQL Trusted Links — ALREADY_INSTALLED + covered ─── -->
+            <article class="bc-card" data-cat="identity" data-state="ALREADY_INSTALLED" data-cov="partial"
+                     data-compat="ALREADY_INSTALLED" data-vuln-id="bolton.identity.sql-trusted-links"
+                     onclick="bcToggleDetail(this)">
+                <div class="bc-card__eyebrow">
+                    <span class="spec-pill spec-pill--cat">Identity</span>
+                    <span class="spec-pill spec-pill--ttp">T1078.002</span>
+                    <span class="bc-card__time">~45s install</span>
+                </div>
+                <h3 class="bc-card__title">MSSQL Trusted Links Chain</h3>
+                <p class="bc-card__desc">Chains linked servers across srv01 → srv02 → dc01 with sysadmin impersonation — lateral via xp_cmdshell.</p>
+                <div class="bc-card__pills">
+                    <span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg> Installed</span>
+                    <span class="spec-pill spec-pill--warn"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> Detection: partial</span>
+                </div>
+                <div class="bc-card__cta" onclick="event.stopPropagation()">
+                    <button class="spec-edit-btn" type="button" onclick="bcToast('Re-verify probe queued')">Verify</button>
+                    <button class="spec-edit-btn" type="button" onclick="bcToast('Uninstall confirm modal would open')">Uninstall</button>
+                </div>
+            </article>
+
+        </div>
+    </main>
+
+    <!-- Confirm install takeover (lightweight) -->
+    <div class="scrim-takeover" id="bc-takeover" onclick="bcCloseInstall()"></div>
+    <div class="takeover-card bc-takeover-card" id="bc-takeover-card" role="dialog" aria-modal="true">
+        <span class="bc-takeover-card__eyebrow">Confirm install · dc01.domain1.local</span>
+        <h3 id="bc-takeover-title">Install bolt-on</h3>
+        <p style="color:var(--text-secondary);font-size:13px;margin:6px 0 0">
+            Detection coverage is verified before install. Side-effects below.
+        </p>
+        <ul class="bc-takeover-card__list">
+            <li><span class="bc-takeover-card__list-key">MITRE</span><span class="bc-takeover-card__list-val" id="bc-takeover-ttp">T0000.000</span></li>
+            <li><span class="bc-takeover-card__list-key">Detection</span><span class="bc-takeover-card__list-val"><span class="spec-pill spec-pill--success"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Covered · 1 Elastic rule</span></span></li>
+            <li><span class="bc-takeover-card__list-key">Side effects</span><span class="bc-takeover-card__list-val">No reboot · No global GPO · One AD object</span></li>
+            <li><span class="bc-takeover-card__list-key">Targets</span><span class="bc-takeover-card__list-val">dc01.domain1.local</span></li>
+            <li><span class="bc-takeover-card__list-key">Verify</span><span class="bc-takeover-card__list-val">Synthetic probe + Elastic alert check (5m window)</span></li>
+        </ul>
+        <a class="bc-takeover-card__link" href="/preview/page-bolton-install.html">Open full install flow →</a>
+        <div class="bc-takeover-card__foot">
+            <button class="spec-edit-btn" type="button" onclick="bcCloseInstall()">Cancel</button>
+            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="bcToast('Install queued — would open progress modal'); bcCloseInstall()">Confirm install</button>
+        </div>
+    </div>
+
+    <script>
+        // ── Filter logic — three independent dimensions, AND'd ───────────
+        function applyFilters() {
+            const cat = document.querySelector('.bc-chip.is-active[data-cat]')?.dataset.cat || 'all';
+            const state = document.querySelector('.bc-chip.is-active[data-state]')?.dataset.state || 'all';
+            const cov = document.querySelector('.bc-chip.is-active[data-cov]')?.dataset.cov || 'all';
+            document.querySelectorAll('.bc-card').forEach(card => {
+                const cMatch = cat === 'all' || card.dataset.cat === cat;
+                const sMatch = state === 'all' || card.dataset.state === state;
+                const vMatch = cov === 'all' || card.dataset.cov === cov;
+                card.style.display = (cMatch && sMatch && vMatch) ? '' : 'none';
+            });
+        }
+        document.querySelectorAll('.bc-chip').forEach(chip => {
+            chip.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                // Find the group (category, state, or coverage) — toggle within the group
+                const group = chip.dataset.cat !== undefined ? 'cat'
+                            : chip.dataset.state !== undefined ? 'state'
+                            : 'cov';
+                document.querySelectorAll('.bc-chip[data-' + group + ']').forEach(c => c.classList.remove('is-active'));
+                chip.classList.add('is-active');
+                applyFilters();
+            });
+        });
+
+        // ── Card detail toggle (inline expand) ───────────────────────────
+        function bcToggleDetail(card) {
+            const open = card.getAttribute('data-detail-open') === 'true';
+            card.setAttribute('data-detail-open', open ? 'false' : 'true');
+        }
+
+        // ── Toast helper ─────────────────────────────────────────────────
+        let toastTimer = null;
+        function bcToast(msg) {
+            const t = document.getElementById('bc-toast');
+            t.textContent = msg;
+            t.setAttribute('data-show', 'true');
+            window.clearTimeout(toastTimer);
+            toastTimer = window.setTimeout(() => t.setAttribute('data-show', 'false'), 2600);
+        }
+
+        // ── Refresh button spinner stub ──────────────────────────────────
+        function bcRefresh(btn) {
+            const t = btn.textContent.trim();
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="icon icon--sm" aria-hidden="true" style="animation:bc-spin 900ms linear infinite"><use href="#icon-refresh"/></svg> Refreshing…';
+            window.setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<svg class="icon icon--sm" aria-hidden="true"><use href="#icon-refresh"/></svg> Refresh facts';
+                bcToast('Host facts refreshed — 18/18 cards re-evaluated in 84ms');
+            }, 1200);
+        }
+
+        // ── Confirm install takeover ─────────────────────────────────────
+        function bcOpenInstall(name, ttp) {
+            document.getElementById('bc-takeover-title').textContent = 'Install ' + name;
+            document.getElementById('bc-takeover-ttp').textContent = ttp;
+            document.getElementById('bc-takeover').setAttribute('data-open', 'true');
+            document.getElementById('bc-takeover-card').setAttribute('data-open', 'true');
+        }
+        function bcCloseInstall() {
+            document.getElementById('bc-takeover').setAttribute('data-open', 'false');
+            document.getElementById('bc-takeover-card').setAttribute('data-open', 'false');
+        }
+        document.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Escape') bcCloseInstall();
+        });
+    </script>
+    <style>
+        @keyframes bc-spin {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+    </style>
+</body>
+</html>

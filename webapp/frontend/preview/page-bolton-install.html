@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TASTE Demo — Bolt-on Install (Confirm + Progress + Agent)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           TASTE DEMO — Bolt-on install takeover (Phase 1 / Agent D)
+           Scrim takeover + three sequential states selected via
+           .seg-control: confirm, progress, agent. Streaming log,
+           live status pill, agent intervention panel. Re-uses Phase 2b
+           .scrim-takeover + .takeover-card + .seg-control + .spec-list.
+           Dials: 5/6/5.
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            font-size: var(--font-size-base);
+            line-height: 1.55;
+            overflow: hidden;
+        }
+
+        /* ── HYPOTHESIS STRIP ──────────────────────────────────────── */
+        .preview-strip {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            position: relative;
+            z-index: 250;
+        }
+        .preview-strip__text strong {
+            display: inline-block;
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+        .preview-strip__toggle {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .preview-strip__toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── DIMMED DASHBOARD MOCK ─────────────────────────────────── */
+        .bi-dashboard-mock {
+            position: fixed;
+            top: 47px;
+            left: 0; right: 0; bottom: 0;
+            padding: 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            filter: blur(6px) saturate(0.7);
+            opacity: 0.42;
+            overflow: hidden;
+            pointer-events: none;
+        }
+        .bi-dashboard-mock__card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 18px 20px;
+            height: 88px;
+        }
+        .bi-dashboard-mock__grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 18px;
+        }
+        .bi-dashboard-mock__big {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 18px 20px;
+            height: 220px;
+        }
+
+        /* ── TAKEOVER CARD OVERRIDES ───────────────────────────────── */
+        .bi-card {
+            max-width: 720px;
+            padding: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            max-height: calc(100vh - 96px);
+        }
+        .bi-card__head {
+            padding: 18px 24px 12px;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: var(--bg-card);
+        }
+        .bi-card__head-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .bi-card__eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .bi-card__title {
+            margin: 0;
+            font-size: 16px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+        }
+        .bi-card__close {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            width: 28px; height: 28px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: var(--radius-xs);
+        }
+        .bi-card__close:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+
+        .bi-card__body {
+            padding: 18px 24px 18px;
+            overflow-y: auto;
+            flex: 1;
+            min-height: 0;
+        }
+        .bi-card__foot {
+            padding: 14px 24px;
+            border-top: 1px solid var(--border-subtle);
+            background: var(--bg-section);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 14px;
+            flex-shrink: 0;
+        }
+        .bi-card__foot-actions { display: flex; gap: 8px; }
+        .bi-card__foot-time {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        /* ── Spec list info ─────────────────────────────────────────── */
+        .bi-spec {
+            display: grid;
+            grid-template-columns: 130px 1fr;
+            row-gap: 0;
+            font-size: 13px;
+        }
+        .bi-spec__key {
+            padding: 8px 0;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .bi-spec__val {
+            padding: 8px 0;
+            color: var(--text-primary);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 13px;
+        }
+        .bi-spec__row:last-child .bi-spec__key,
+        .bi-spec__row:last-child .bi-spec__val { border-bottom: 0; }
+
+        /* ── SIDE EFFECTS CALLOUT ───────────────────────────────────── */
+        .bi-callout {
+            margin: 14px 0;
+            padding: 12px 14px;
+            background: var(--warning-bg);
+            border: 1px solid var(--warning-border);
+            border-radius: var(--radius);
+            font-size: 12.5px;
+            color: var(--warning-text);
+            line-height: 1.55;
+        }
+        .bi-callout__title {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-bold);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin: 0 0 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .bi-callout ul { margin: 6px 0 0 18px; padding: 0; }
+        .bi-callout li { margin: 2px 0; }
+
+        /* ── PROGRESS STATE: status pill + log streaming ───────────── */
+        .bi-progress-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        .bi-status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-radius: var(--radius-full);
+            font-family: var(--font-family-mono);
+            font-size: 11.5px;
+            font-weight: var(--font-weight-bold);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+        .bi-status-pill[data-state="QUEUED"] {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+        }
+        .bi-status-pill[data-state="RUNNING"] {
+            background: color-mix(in srgb, var(--brand-light) 18%, var(--bg-card));
+            color: var(--text-primary);
+            border: 1px solid var(--brand-light);
+        }
+        .bi-status-pill[data-state="RUNNING"] .bi-status-dot {
+            background: var(--brand-light);
+            animation: bi-pulse 1.4s ease-in-out infinite;
+        }
+        .bi-status-pill[data-state="SUCCEEDED"] {
+            background: var(--success-bg);
+            color: var(--success-text);
+            border: 1px solid var(--success-border);
+        }
+        .bi-status-pill[data-state="SUCCEEDED"] .bi-status-dot { background: var(--success); }
+        .bi-status-pill[data-state="FAILED"] {
+            background: var(--danger-bg);
+            color: var(--danger-text);
+            border: 1px solid var(--danger-border);
+        }
+        .bi-status-pill[data-state="FAILED"] .bi-status-dot { background: var(--danger); }
+        .bi-status-pill[data-state="STUCK"] {
+            background: var(--warning-bg);
+            color: var(--warning-text);
+            border: 1px solid var(--warning-border);
+        }
+        .bi-status-pill[data-state="STUCK"] .bi-status-dot {
+            background: var(--warning);
+            animation: bi-pulse 1.4s ease-in-out infinite;
+        }
+        .bi-status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+        }
+        .bi-eta {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Terminal-safe log block — kept dark in BOTH themes */
+        .bi-log {
+            background: var(--bg-terminal);
+            color: var(--text-terminal);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 12px 14px;
+            font-family: var(--font-family-mono);
+            font-size: 11.5px;
+            line-height: 1.6;
+            height: 280px;
+            overflow-y: auto;
+            white-space: pre;
+            position: relative;
+        }
+        .bi-log__line {
+            opacity: 0;
+            animation: bi-line-in 220ms var(--motion-easing-standard) forwards;
+        }
+        .bi-log__line--ok    { color: var(--terminal-success); }
+        .bi-log__line--info  { color: var(--terminal-info); }
+        .bi-log__line--warn  { color: var(--terminal-warning); }
+        .bi-log__line--err   { color: var(--terminal-danger); }
+        .bi-log__line--dim   { color: var(--terminal-muted); }
+
+        @keyframes bi-line-in {
+            from { opacity: 0; transform: translateX(-2px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes bi-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+            50%      { box-shadow: 0 0 0 4px transparent; opacity: 0.6; }
+        }
+
+        /* Error block (fail scenario) */
+        .bi-error {
+            margin-top: 12px;
+            padding: 12px 14px;
+            background: var(--danger-bg);
+            border: 1px solid var(--danger-border);
+            border-radius: var(--radius);
+            color: var(--danger-text);
+            font-size: 12.5px;
+            line-height: 1.55;
+        }
+        .bi-error__title {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-bold);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin: 0 0 4px;
+        }
+        .bi-error__code {
+            font-family: var(--font-family-mono);
+            font-size: 11.5px;
+            color: var(--danger-text);
+            background: color-mix(in srgb, var(--danger) 12%, var(--bg-terminal));
+            padding: 4px 7px;
+            border-radius: var(--radius-xs);
+            display: inline-block;
+            margin-top: 4px;
+        }
+        .bi-error__cta {
+            margin-top: 10px;
+            display: flex;
+            gap: 8px;
+        }
+
+        /* Agent panel */
+        .bi-agent {
+            margin-top: 14px;
+            padding: 16px;
+            background: color-mix(in srgb, var(--brand-light) 8%, var(--bg-card));
+            border: 1px solid var(--brand-light);
+            border-radius: var(--radius);
+            animation: bi-slide-in 320ms var(--motion-easing-standard);
+        }
+        .bi-agent__title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            font-weight: var(--font-weight-bold);
+            color: var(--brand-light);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            margin: 0 0 10px;
+        }
+        .bi-agent__title-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--brand-light);
+            animation: bi-pulse 1.4s ease-in-out infinite;
+        }
+        .bi-agent__section {
+            margin: 10px 0;
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+        .bi-agent__section strong { color: var(--text-primary); }
+        .bi-agent__section-label {
+            display: block;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-bold);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+        .bi-agent__cmd {
+            font-family: var(--font-family-mono);
+            font-size: 11.5px;
+            background: var(--bg-terminal);
+            color: var(--terminal-info);
+            padding: 6px 9px;
+            border-radius: var(--radius-xs);
+            display: block;
+            margin: 4px 0;
+        }
+        .bi-agent__foot {
+            display: flex;
+            gap: 8px;
+            margin-top: 14px;
+            justify-content: flex-end;
+        }
+        @keyframes bi-slide-in {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Seg-control inside takeover head */
+        .bi-segctrl {
+            padding: 0 24px 14px;
+            background: var(--bg-card);
+            display: flex;
+            justify-content: center;
+        }
+
+        /* State scenes */
+        .bi-scene { display: none; }
+        .bi-scene.is-active { display: block; }
+
+        @media (max-width: 720px) {
+            .bi-spec { grid-template-columns: 1fr; }
+            .bi-spec__key { padding-bottom: 0; border-bottom: 0; }
+            .bi-spec__val { padding-top: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .bi-log__line, .bi-agent, .bi-status-pill { animation: none; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Icon defs -->
+    <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="icon-x" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 3 L11 11 M11 3 L3 11"/>
+            </symbol>
+            <symbol id="icon-warn" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 2 L12.5 11.5 H1.5 Z"/>
+                <path d="M7 6 V8.5"/>
+                <circle cx="7" cy="10" r="0.3" fill="currentColor"/>
+            </symbol>
+            <symbol id="icon-shield" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 1.5 L12 3 V7 Q12 10.5 7 12.5 Q2 10.5 2 7 V3 Z"/>
+            </symbol>
+            <symbol id="icon-check" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 7.5 L5.5 11 L12 3.5"/>
+            </symbol>
+            <symbol id="icon-sparkle" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 1 V5 M7 9 V13 M1 7 H5 M9 7 H13"/>
+            </symbol>
+        </defs>
+    </svg>
+
+    <header class="preview-strip">
+        <span class="preview-strip__text">
+            <strong>Bolt-on install demo</strong>
+            Install confirmation surfaces compatibility, detection coverage, and what will change — then a live-streaming progress view that exposes the agentic fallback if scripts fail.
+        </span>
+        <button class="preview-strip__toggle" type="button"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+            Toggle theme
+        </button>
+    </header>
+
+    <!-- Dimmed dashboard mock behind -->
+    <div class="bi-dashboard-mock" aria-hidden="true">
+        <div class="bi-dashboard-mock__card"></div>
+        <div class="bi-dashboard-mock__grid">
+            <div class="bi-dashboard-mock__big"></div>
+            <div class="bi-dashboard-mock__big"></div>
+            <div class="bi-dashboard-mock__big"></div>
+        </div>
+        <div class="bi-dashboard-mock__card"></div>
+    </div>
+
+    <!-- Takeover (always open in this demo) -->
+    <div class="scrim-takeover" data-open="true"></div>
+    <div class="takeover-card bi-card" data-open="true" role="dialog" aria-modal="true" aria-labelledby="bi-title">
+
+        <div class="bi-card__head">
+            <div class="bi-card__head-row">
+                <div>
+                    <div class="bi-card__eyebrow">Install bolt-on · dc01.domain1.local</div>
+                    <h2 class="bi-card__title" id="bi-title">ADCS ESC1 — Enrollee Supplies Subject</h2>
+                </div>
+                <button class="bi-card__close" type="button" onclick="biToast('Close — would return to catalog')" aria-label="Close">
+                    <svg class="icon" aria-hidden="true"><use href="#icon-x"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <div class="bi-segctrl" role="tablist" aria-label="Scenario selector">
+            <div class="seg-control">
+                <button class="seg-control__option is-active" type="button" data-scene="confirm" role="tab" aria-selected="true">Confirm</button>
+                <button class="seg-control__option" type="button" data-scene="progress" role="tab">Progress</button>
+                <button class="seg-control__option" type="button" data-scene="fail" role="tab">Fail</button>
+                <button class="seg-control__option" type="button" data-scene="agent" role="tab">Agent</button>
+            </div>
+        </div>
+
+        <div class="bi-card__body">
+
+            <!-- SCENE 1: CONFIRM ────────────────────────────────────── -->
+            <div class="bi-scene is-active" data-scene="confirm">
+                <p style="margin:0 0 14px;color:var(--text-secondary);font-size:13px">
+                    Operator confirms install. Side effects are surfaced; detection coverage is verified before queuing.
+                </p>
+
+                <div class="bi-spec">
+                    <div class="bi-spec__row" style="display:contents">
+                        <div class="bi-spec__key">MITRE</div>
+                        <div class="bi-spec__val">
+                            <span class="spec-pill spec-pill--ttp" style="background:var(--bg-input);color:var(--text-primary);border-color:var(--border-subtle)">T1649</span>
+                            Steal or Forge Authentication Certificates
+                        </div>
+                    </div>
+                    <div class="bi-spec__row" style="display:contents">
+                        <div class="bi-spec__key">Detection</div>
+                        <div class="bi-spec__val">
+                            <span class="spec-pill" style="background:var(--success-bg);color:var(--success-text);border-color:var(--success-border)">
+                                <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg>
+                                Covered · 1 Elastic rule · full / high
+                            </span>
+                        </div>
+                    </div>
+                    <div class="bi-spec__row" style="display:contents">
+                        <div class="bi-spec__key">Targets</div>
+                        <div class="bi-spec__val">ca01.domain1.local <span style="color:var(--text-secondary)">(primary)</span> + 1 dependency on dc01</div>
+                    </div>
+                    <div class="bi-spec__row" style="display:contents">
+                        <div class="bi-spec__key">Dependencies</div>
+                        <div class="bi-spec__val">bolton.adcs.install-adcs <span style="color:var(--text-secondary)">(already installed · ✓)</span></div>
+                    </div>
+                    <div class="bi-spec__row" style="display:contents">
+                        <div class="bi-spec__key">Install time</div>
+                        <div class="bi-spec__val">~90 seconds · + 5m for synthetic probe + Elastic alert window</div>
+                    </div>
+                    <div class="bi-spec__row" style="display:contents">
+                        <div class="bi-spec__key">Engine</div>
+                        <div class="bi-spec__val" style="font-family:var(--font-family-mono);font-size:12px">ansible-playbook · bolton_adcs_esc1 · 4 tasks</div>
+                    </div>
+                </div>
+
+                <div class="bi-callout">
+                    <p class="bi-callout__title"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> Side effects on ca01.domain1.local</p>
+                    <ul>
+                        <li>Creates AD object: <code style="color:var(--text-primary)">CN=ESC1-Vulnerable,CN=Certificate Templates,CN=Public Key Services,…</code></li>
+                        <li>Sets <code>msPKI-Certificate-Name-Flag = 0x1</code> (ENROLLEE_SUPPLIES_SUBJECT)</li>
+                        <li>Adds template to CA issuance list — restart of CA service is NOT required</li>
+                        <li>Network-visible: enrolment requests appear in CA audit log</li>
+                        <li>Global: no — change scoped to one template object</li>
+                    </ul>
+                </div>
+
+                <p style="margin:10px 0 0;color:var(--text-secondary);font-size:12.5px;display:flex;align-items:center;gap:8px">
+                    <input type="checkbox" id="bi-run-probe" checked style="accent-color:var(--brand-light)">
+                    <label for="bi-run-probe">Run synthetic <code style="font-family:var(--font-family-mono);font-size:11px">certipy esc1</code> from attack box after install · verify rule 7b91ace4… fires within 5m</label>
+                </p>
+            </div>
+
+            <!-- SCENE 2: PROGRESS — SUCCEEDED ──────────────────────── -->
+            <div class="bi-scene" data-scene="progress">
+                <div class="bi-progress-head">
+                    <div>
+                        <span class="bi-status-pill" data-state="RUNNING" id="bi-status-success">
+                            <span class="bi-status-dot"></span> RUNNING
+                        </span>
+                    </div>
+                    <span class="bi-eta" id="bi-eta-success">eta · 47s remaining</span>
+                </div>
+
+                <div class="bi-log" id="bi-log-success" role="log" aria-live="polite">
+                    <span class="bi-log__line bi-log__line--dim" style="animation-delay:0ms">$ ansible-playbook -i /opt/goad/inventory.yml roles/bolton_adcs_esc1/tasks/main.yml -e @vars.yml</span>
+                    <span class="bi-log__line bi-log__line--dim" style="animation-delay:200ms">
+PLAY [bolton_adcs_esc1 · install] **********************************************</span>
+                    <span class="bi-log__line" style="animation-delay:800ms">
+TASK [Gathering Facts] *********************************************************</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:1500ms">ok: [ca01.domain1.local]</span>
+                    <span class="bi-log__line" style="animation-delay:2100ms">
+TASK [bolton_adcs_esc1 : check ADCS role present] ******************************</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:2800ms">ok: [ca01.domain1.local] => {"changed": false, "msg": "ADCS-Cert-Authority found"}</span>
+                    <span class="bi-log__line" style="animation-delay:3400ms">
+TASK [bolton_adcs_esc1 : duplicate WebServer template into ESC1-Vulnerable] ****</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:4200ms">changed: [ca01.domain1.local]</span>
+                    <span class="bi-log__line" style="animation-delay:4800ms">
+TASK [bolton_adcs_esc1 : set msPKI-Certificate-Name-Flag = 0x1] ****************</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:5500ms">changed: [ca01.domain1.local] => {"msPKI-Certificate-Name-Flag": 1}</span>
+                    <span class="bi-log__line" style="animation-delay:6200ms">
+TASK [bolton_adcs_esc1 : grant Authenticated Users enroll right] ***************</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:6900ms">changed: [ca01.domain1.local]</span>
+                    <span class="bi-log__line" style="animation-delay:7600ms">
+TASK [bolton_adcs_esc1 : add template to CA issuance list] *********************</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:8400ms">changed: [ca01.domain1.local]</span>
+                    <span class="bi-log__line" style="animation-delay:9000ms">
+TASK [bolton_adcs_esc1 : verification probe] ***********************************</span>
+                    <span class="bi-log__line bi-log__line--info" style="animation-delay:9700ms">running: certutil -CATemplates | findstr ESC1-Vulnerable</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:10500ms">ok: [ca01.domain1.local] => {"verified": true}</span>
+                    <span class="bi-log__line" style="animation-delay:11200ms">
+PLAY RECAP *********************************************************************</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:11800ms">ca01.domain1.local : ok=8 changed=5 unreachable=0 failed=0</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:12400ms">
+[bolton] install SUCCEEDED in 88s — probe queued</span>
+                </div>
+            </div>
+
+            <!-- SCENE 3: FAILED ────────────────────────────────────── -->
+            <div class="bi-scene" data-scene="fail">
+                <div class="bi-progress-head">
+                    <div>
+                        <span class="bi-status-pill" data-state="FAILED">
+                            <span class="bi-status-dot"></span> FAILED
+                        </span>
+                    </div>
+                    <span class="bi-eta">job · j_e7a1bc · 32s elapsed</span>
+                </div>
+
+                <div class="bi-log" role="log" aria-live="polite">
+                    <span class="bi-log__line bi-log__line--dim" style="animation-delay:0ms">$ ansible-playbook -i /opt/goad/inventory.yml roles/bolton_adcs_esc1/tasks/main.yml -e @vars.yml</span>
+                    <span class="bi-log__line bi-log__line--dim" style="animation-delay:200ms">
+PLAY [bolton_adcs_esc1 · install] **********************************************</span>
+                    <span class="bi-log__line" style="animation-delay:600ms">
+TASK [Gathering Facts] *********************************************************</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:1200ms">ok: [ca01.domain1.local]</span>
+                    <span class="bi-log__line" style="animation-delay:1700ms">
+TASK [bolton_adcs_esc1 : check ADCS role present] ******************************</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:2400ms">ok: [ca01.domain1.local]</span>
+                    <span class="bi-log__line" style="animation-delay:2900ms">
+TASK [bolton_adcs_esc1 : duplicate WebServer template into ESC1-Vulnerable] ****</span>
+                    <span class="bi-log__line bi-log__line--ok" style="animation-delay:3600ms">changed: [ca01.domain1.local]</span>
+                    <span class="bi-log__line" style="animation-delay:4100ms">
+TASK [bolton_adcs_esc1 : set msPKI-Certificate-Name-Flag = 0x1] ****************</span>
+                    <span class="bi-log__line bi-log__line--err" style="animation-delay:4700ms">fatal: [ca01.domain1.local]: FAILED! => {</span>
+                    <span class="bi-log__line bi-log__line--err" style="animation-delay:4900ms">  "changed": false,</span>
+                    <span class="bi-log__line bi-log__line--err" style="animation-delay:5100ms">  "msg": "Set-ADObject : Insufficient access rights to perform the operation",</span>
+                    <span class="bi-log__line bi-log__line--err" style="animation-delay:5300ms">  "exception": "System.UnauthorizedAccessException at System.DirectoryServices.Protocols.LdapConnection.ConstructResponse",</span>
+                    <span class="bi-log__line bi-log__line--err" style="animation-delay:5500ms">  "rc": 80070005</span>
+                    <span class="bi-log__line bi-log__line--err" style="animation-delay:5700ms">}</span>
+                    <span class="bi-log__line" style="animation-delay:6200ms">
+PLAY RECAP *********************************************************************</span>
+                    <span class="bi-log__line bi-log__line--err" style="animation-delay:6800ms">ca01.domain1.local : ok=4 changed=1 unreachable=0 failed=1</span>
+                </div>
+
+                <div class="bi-error">
+                    <p class="bi-error__title"><svg class="icon icon--sm" aria-hidden="true" style="vertical-align:-1px"><use href="#icon-warn"/></svg> Install failed — task #4 of 8</p>
+                    <p style="margin:0">Setting <code style="font-family:var(--font-family-mono)">msPKI-Certificate-Name-Flag</code> on the duplicated template returned <strong>0x80070005 — Access Denied</strong>. The Ansible user appears to lack write permission on the Public Key Services container.</p>
+                    <span class="bi-error__code">rc=80070005 · System.UnauthorizedAccessException</span>
+                    <div class="bi-error__cta">
+                        <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="biSegSelect('agent')">
+                            <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-sparkle"/></svg>
+                            Invoke Agent
+                        </button>
+                        <button class="spec-edit-btn" type="button" onclick="biToast('Retry — would re-run with the same inputs')">Retry</button>
+                        <button class="spec-edit-btn" type="button" onclick="biToast('Mark failed — would close job and audit')">Mark failed</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SCENE 4: AGENT INTERVENTION ─────────────────────────── -->
+            <div class="bi-scene" data-scene="agent">
+                <div class="bi-progress-head">
+                    <div>
+                        <span class="bi-status-pill" data-state="STUCK">
+                            <span class="bi-status-dot"></span> STUCK · AGENT
+                        </span>
+                    </div>
+                    <span class="bi-eta">agent run · 6s · 1/4 budget used</span>
+                </div>
+
+                <div class="bi-log" style="height:140px" role="log" aria-live="polite">
+                    <span class="bi-log__line bi-log__line--err" style="animation-delay:0ms">fatal: [ca01.domain1.local]: FAILED! "Insufficient access rights" rc=0x80070005</span>
+                    <span class="bi-log__line bi-log__line--dim" style="animation-delay:300ms">PLAY RECAP ca01.domain1.local : ok=4 changed=1 unreachable=0 failed=1</span>
+                    <span class="bi-log__line bi-log__line--info" style="animation-delay:600ms">[agent] context bundle built (8.2 KB · 4 facts · 2 prior installs · 1 stuck job)</span>
+                    <span class="bi-log__line bi-log__line--info" style="animation-delay:900ms">[agent] anthropic.claude-opus-4-7 · prompt cache hit (28.4k → 1.1k tokens)</span>
+                </div>
+
+                <div class="bi-agent">
+                    <h3 class="bi-agent__title">
+                        <span class="bi-agent__title-dot"></span>
+                        Agent intervention · stuck job
+                    </h3>
+
+                    <div class="bi-agent__section">
+                        <span class="bi-agent__section-label">Context summary</span>
+                        Job <strong>j_e7a1bc</strong> failed at task 4/8 with <code style="font-family:var(--font-family-mono);font-size:11px">0x80070005</code> writing
+                        <code style="font-family:var(--font-family-mono);font-size:11px">msPKI-Certificate-Name-Flag</code> on
+                        <strong>ca01.domain1.local</strong>. Operator <strong>harriss</strong>. Lab <strong>combined-adhoc-light</strong>.
+                        Probed once 12m ago — same failure.
+                    </div>
+
+                    <div class="bi-agent__section">
+                        <span class="bi-agent__section-label">Diagnosis</span>
+                        The Ansible service account (<code style="font-family:var(--font-family-mono);font-size:11px">ansible@DOMAIN1</code>)
+                        is in the local Administrators group on ca01 but does <strong>not</strong> have <em>Write</em> on the
+                        <em>Public Key Services</em> container in the Configuration partition. Template duplication writes a stub object
+                        whose ACL inherits from the container — Set-ADObject on attribute flags requires explicit Cert Publishers / Enterprise Admins membership.
+                    </div>
+
+                    <div class="bi-agent__section">
+                        <span class="bi-agent__section-label">Proposed retry</span>
+                        Add <code style="font-family:var(--font-family-mono);font-size:11px">ansible@DOMAIN1</code> to <strong>Enterprise Admins</strong>
+                        (group; read-only diagnostic <code style="font-family:var(--font-family-mono);font-size:11px">Get-ADGroupMember "Enterprise Admins"</code>
+                        already run — currently 1 member). Re-run task 4 only. Inputs unchanged.
+                    </div>
+
+                    <span class="bi-agent__cmd">
+$ Add-ADGroupMember -Identity "Enterprise Admins" -Members ansible@domain1.local
+$ ansible-playbook --start-at-task "set msPKI-Certificate-Name-Flag = 0x1" ...
+                    </span>
+
+                    <div class="bi-agent__foot">
+                        <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="biToast('Approve retry — agent dispatched with whitelist tool retry_install')">Approve retry</button>
+                        <button class="spec-edit-btn" type="button" onclick="biToast('Reject — agent prompted for alternative')">Reject</button>
+                        <button class="spec-edit-btn" type="button" onclick="biToast('Mark failed — operator manual takeover')">Mark failed</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="bi-card__foot">
+            <span class="bi-card__foot-time" id="bi-foot-time">scene · confirm</span>
+            <div class="bi-card__foot-actions" id="bi-foot-actions">
+                <button class="spec-edit-btn" type="button" onclick="biToast('Cancel — would close confirm and return to catalog')">Cancel</button>
+                <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="biSegSelect('progress')">Confirm install ▸</button>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Toast -->
+    <div class="bh-toast" id="bi-toast" role="status" aria-live="polite" style="position:fixed;top:18px;right:18px;padding:10px 14px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12.5px;box-shadow:0 6px 18px rgba(0,0,0,0.25);opacity:0;pointer-events:none;transform:translateY(-6px);transition:opacity 240ms,transform 240ms;z-index:1000"></div>
+
+    <script>
+        // ── Seg-control scene selector ───────────────────────────────────
+        const segOptions = document.querySelectorAll('.seg-control__option');
+        const scenes = document.querySelectorAll('.bi-scene');
+        function biSegSelect(sceneName) {
+            segOptions.forEach(opt => {
+                const match = opt.dataset.scene === sceneName;
+                opt.classList.toggle('is-active', match);
+                opt.setAttribute('aria-selected', match ? 'true' : 'false');
+            });
+            scenes.forEach(s => s.classList.toggle('is-active', s.dataset.scene === sceneName));
+            // Update foot
+            const foot = document.getElementById('bi-foot-time');
+            const actions = document.getElementById('bi-foot-actions');
+            foot.textContent = 'scene · ' + sceneName;
+            if (sceneName === 'confirm') {
+                actions.innerHTML =
+                    '<button class="spec-edit-btn" type="button" onclick="biToast(\'Cancel — would close confirm\')">Cancel</button>' +
+                    '<button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="biSegSelect(\'progress\')">Confirm install ▸</button>';
+            } else if (sceneName === 'progress') {
+                // Re-trigger the log animation by cloning the log container
+                animateLog();
+                actions.innerHTML =
+                    '<button class="spec-edit-btn" type="button" onclick="biToast(\'Pause job — would set RUNNING → PAUSED\')">Pause</button>' +
+                    '<button class="spec-edit-btn" type="button" onclick="biSetSuccess()">Mark complete (demo)</button>';
+            } else if (sceneName === 'fail') {
+                actions.innerHTML =
+                    '<button class="spec-edit-btn" type="button" onclick="biToast(\'Cancel job\')">Cancel</button>' +
+                    '<button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="biSegSelect(\'agent\')">Invoke Agent</button>';
+            } else if (sceneName === 'agent') {
+                actions.innerHTML =
+                    '<button class="spec-edit-btn" type="button" onclick="biToast(\'Reject agent suggestion\')">Reject</button>' +
+                    '<button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="biToast(\'Approve retry — agent dispatched\')">Approve retry</button>';
+            }
+        }
+        segOptions.forEach(opt => opt.addEventListener('click', () => biSegSelect(opt.dataset.scene)));
+
+        // ── Tick log lines visibility (animations are CSS-keyed) ──────────
+        function animateLog() {
+            const log = document.getElementById('bi-log-success');
+            if (!log) return;
+            log.querySelectorAll('.bi-log__line').forEach(l => {
+                l.style.animation = 'none';
+                // force reflow
+                void l.offsetWidth;
+                l.style.animation = '';
+            });
+            // Auto-scroll as new lines appear
+            const interval = window.setInterval(() => {
+                log.scrollTop = log.scrollHeight;
+            }, 300);
+            window.setTimeout(() => window.clearInterval(interval), 13500);
+            // ETA countdown
+            let secs = 47;
+            const eta = document.getElementById('bi-eta-success');
+            const etaTimer = window.setInterval(() => {
+                secs -= 4;
+                if (secs <= 0) {
+                    window.clearInterval(etaTimer);
+                    eta.textContent = 'completed in 88s';
+                    biSetSuccess();
+                    return;
+                }
+                eta.textContent = 'eta · ' + secs + 's remaining';
+            }, 1000);
+        }
+        function biSetSuccess() {
+            const pill = document.getElementById('bi-status-success');
+            if (pill) {
+                pill.setAttribute('data-state', 'SUCCEEDED');
+                pill.innerHTML = '<span class="bi-status-dot"></span> SUCCEEDED';
+            }
+        }
+
+        // ── Toast ─────────────────────────────────────────────────────────
+        let biToastTimer = null;
+        function biToast(msg) {
+            const t = document.getElementById('bi-toast');
+            t.textContent = msg;
+            t.style.opacity = '1';
+            t.style.transform = 'translateY(0)';
+            window.clearTimeout(biToastTimer);
+            biToastTimer = window.setTimeout(() => {
+                t.style.opacity = '0';
+                t.style.transform = 'translateY(-6px)';
+            }, 2600);
+        }
+
+        document.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Escape') biToast('Close — Esc would dismiss the takeover');
+        });
+    </script>
+</body>
+</html>

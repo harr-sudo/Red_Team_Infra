@@ -24,6 +24,7 @@ from flask_cors import CORS
 from webapp.backend.routes import config, deploy, aws_check, health, goad, architecture, tools, profiles, costs, setup_check, beacon, terminal
 from webapp.backend.routes import operators as operators_routes
 from webapp.backend.routes import audit as audit_routes
+from webapp.backend.routes import bolton as bolton_routes
 from webapp.backend.middleware import identity
 from webapp.backend.services import operator_service
 
@@ -123,6 +124,7 @@ app.register_blueprint(terminal.bp)
 app.register_blueprint(identity.bp)
 app.register_blueprint(operators_routes.bp)
 app.register_blueprint(audit_routes.bp)
+app.register_blueprint(bolton_routes.bp)  # Vulnerable-lab bolt-on feature
 
 # Initialize WebSocket support for terminal
 terminal.init_sock(app)

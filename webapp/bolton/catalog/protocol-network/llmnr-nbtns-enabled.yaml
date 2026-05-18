@@ -1,0 +1,237 @@
+# Bolt-on: LLMNR / NBT-NS Poisoning Surface
+# ------------------------------------------
+# Install creates a GPO that re-enables LLMNR + NBT-NS broadcast resolution
+# on the lab domain (sets EnableMulticast = 1 and NetBT NodeType = B-node)
+# so Responder.py captures hashes on the next misspelled host lookup.
+#
+# Patch creates the canonical "Disable-LLMNR-NBTNS" GPO + a DNS suffix
+# search list to suppress single-label fallback.
+#
+# MITRE T1557.001 — Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning.
+#
+# Elastic rule UUIDs are real: kerberos_coerce_dns + dollar_account_relay
+# fire on Responder downstream artifacts. Direct LLMNR-poisoning detection
+# is heuristic; coverage_status = partial.
+
+id: bolton.protocol-network.llmnr-nbtns-enabled
+slug: llmnr-nbtns-enabled
+name: "LLMNR / NBT-NS Poisoning Surface"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-18
+
+category: protocol-network
+subcategory: llmnr
+tags:
+  - llmnr
+  - nbt-ns
+  - responder
+  - adversary-in-the-middle
+description: >
+  Re-enables LLMNR (UDP 5355) and NBT-NS (UDP 137) broadcast name resolution
+  across the lab via a domain GPO. Attackers running Responder on any
+  broadcast-reachable host will then capture NetNTLMv2 hashes from any
+  workstation that mistypes a hostname or fails DNS resolution and falls
+  back to multicast. This is the prototypical T1557.001 setup that every
+  internal pentest report cites in its first 20 pages.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1557/001/"
+  - "https://learn.microsoft.com/en-us/troubleshoot/windows-client/networking/disable-llmnr-debug-network-issues"
+  - "https://github.com/lgandx/Responder"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1557
+    name: "Adversary-in-the-Middle"
+  subtechnique:
+    id: T1557.001
+    name: "LLMNR/NBT-NS Poisoning and SMB Relay"
+
+detection:
+  # Direct LLMNR poisoning is hard to detect from endpoint logs alone — the
+  # signal is on the wire. Closest published rules in detection-rules cover
+  # the *downstream* Kerberos/NTLM-coerce patterns that often pair with
+  # Responder + NTLM relay attacks. Treat as `partial`.
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "99ac5005-8a9e-4625-a0af-5f7bb447204b"
+      rule_name: "Suspicious DNS Query for Kerberos Coercion"
+      rule_filename: "windows/credential_access_kerberos_coerce_dns.toml"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Catches the DNS pre-step pattern; doesn't fire on pure LLMNR fallback."
+    - rule_uuid: "0b2f3da5-b5ec-47d1-908b-6ebb74814289"
+      rule_name: "Service Principal Name (SPN) Attribute Modified"
+      rule_filename: "windows/credential_access_spn_attribute_modified.toml"
+      coverage: indirect
+      confidence: low
+      last_validated: 2026-04-15
+      notes: "Indirect — fires when Responder is paired with NTLM relay + SPN tampering."
+  signal_sources:
+    - "Network sensor — UDP 5355 (LLMNR) and UDP 137 (NBT-NS) broadcasts"
+    - "Sysmon Event 22 (DNS query) — fallback after NXDOMAIN"
+    - "Windows Event 4624 logon type 3 — sudden NTLMv2 hash submissions from new sources"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+  required_services: []
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # GPO mutates domain-wide policy
+  network_visible: true
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 75
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Create the GPO that re-enables LLMNR + sets NBT NodeType to B-node."
+      role_vars:
+        script: |
+          $gpoName = "Bolton-Enable-LLMNR-NBTNS"
+          $domain  = (Get-ADDomain).DistinguishedName
+          $gpo = Get-GPO -Name $gpoName -ErrorAction SilentlyContinue
+          if (-not $gpo) { $gpo = New-GPO -Name $gpoName -Comment "Bolt-on: re-enable LLMNR + NBT-NS" }
+          Set-GPRegistryValue -Name $gpoName `
+            -Key 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' `
+            -ValueName 'EnableMulticast' -Type DWord -Value 1
+          Set-GPRegistryValue -Name $gpoName `
+            -Key 'HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters' `
+            -ValueName 'NodeType' -Type DWord -Value 1   # B-node (broadcast only)
+          New-GPLink -Name $gpoName -Target $domain -LinkEnabled Yes -ErrorAction SilentlyContinue
+    - ansible_role: community.windows.win_powershell
+      description: "Force gpupdate on the local DC so changes are immediate."
+      role_vars:
+        script: "gpupdate /force"
+  verify:
+    probe: |
+      $gpo = Get-GPO -Name "Bolton-Enable-LLMNR-NBTNS" -ErrorAction SilentlyContinue
+      $val = Get-GPRegistryValue -Name "Bolton-Enable-LLMNR-NBTNS" `
+              -Key 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' `
+              -ValueName 'EnableMulticast' -ErrorAction SilentlyContinue
+      if ($gpo -and $val.Value -eq 1) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Unlink and delete the bolt-on GPO; gpupdate to apply revert."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Remove the GPO link + delete the GPO."
+      role_vars:
+        script: |
+          $gpoName = "Bolton-Enable-LLMNR-NBTNS"
+          $domain  = (Get-ADDomain).DistinguishedName
+          $gpo = Get-GPO -Name $gpoName -ErrorAction SilentlyContinue
+          if ($gpo) {
+            Remove-GPLink -Name $gpoName -Target $domain -ErrorAction SilentlyContinue
+            Remove-GPO -Name $gpoName -Confirm:$false
+          }
+          gpupdate /force
+  verify:
+    probe: |
+      Get-GPO -Name "Bolton-Enable-LLMNR-NBTNS" -ErrorAction SilentlyContinue |
+        Measure-Object | Select-Object -ExpandProperty Count
+    timeout_seconds: 60
+    expect_stdout_contains: "0"
+
+patch:
+  description: >
+    Deploy the canonical "Disable LLMNR + NBT-NS" GPO at the domain root.
+    Sets EnableMulticast = 0, NetBT NodeType = 2 (P-node, WINS only), and
+    populates the DNS suffix search list with the lab domain to suppress
+    single-label fallback resolution.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/troubleshoot/windows-client/networking/disable-llmnr-debug-network-issues"
+    - "https://attack.mitre.org/mitigations/M1037/"
+  complexity: medium
+  side_effects:
+    - "Creates GPO 'Bolton-Disable-LLMNR-NBTNS' linked at domain root"
+    - "Sets EnableMulticast = 0 (machine-wide via policy)"
+    - "Sets NetBT NodeType = 2 (P-node, WINS only)"
+    - "Populates DNS suffix search list with the lab domain to suppress fallback"
+    - "Pre-Windows 10 / Server 2012 clients may need a manual interface restart after gpupdate"
+    - "Misconfigured clients relying on NetBIOS for domain join may fail — investigate before applying broadly"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Create + link the hardening GPO."
+      role_vars:
+        script: |
+          $gpoName = "Bolton-Disable-LLMNR-NBTNS"
+          $domain  = (Get-ADDomain).DistinguishedName
+          $domDns  = (Get-ADDomain).DNSRoot
+          $gpo = Get-GPO -Name $gpoName -ErrorAction SilentlyContinue
+          if (-not $gpo) { $gpo = New-GPO -Name $gpoName -Comment "Bolt-on patch: disable LLMNR + NBT-NS" }
+          Set-GPRegistryValue -Name $gpoName `
+            -Key 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' `
+            -ValueName 'EnableMulticast' -Type DWord -Value 0
+          Set-GPRegistryValue -Name $gpoName `
+            -Key 'HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters' `
+            -ValueName 'NodeType' -Type DWord -Value 2   # P-node (WINS only)
+          Set-GPRegistryValue -Name $gpoName `
+            -Key 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' `
+            -ValueName 'SearchList' -Type String -Value $domDns
+          New-GPLink -Name $gpoName -Target $domain -LinkEnabled Yes -ErrorAction SilentlyContinue
+          gpupdate /force
+  verify:
+    probe: |
+      $gpo = Get-GPO -Name "Bolton-Disable-LLMNR-NBTNS" -ErrorAction SilentlyContinue
+      $llmnr = Get-GPRegistryValue -Name "Bolton-Disable-LLMNR-NBTNS" `
+                -Key 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' `
+                -ValueName 'EnableMulticast' -ErrorAction SilentlyContinue
+      $nbt   = Get-GPRegistryValue -Name "Bolton-Disable-LLMNR-NBTNS" `
+                -Key 'HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters' `
+                -ValueName 'NodeType' -ErrorAction SilentlyContinue
+      if ($gpo -and $llmnr.Value -eq 0 -and $nbt.Value -eq 2) { exit 0 } else { exit 1 }
+    timeout_seconds: 90
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/responder_listen_count.sh"
+
+patch_revert:
+  description: "Unlink + delete the disable GPO so LLMNR/NBT-NS broadcasts resume."
+  estimated_time_seconds: 45
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Remove the hardening GPO and force gpupdate."
+      role_vars:
+        script: |
+          $gpoName = "Bolton-Disable-LLMNR-NBTNS"
+          $domain  = (Get-ADDomain).DistinguishedName
+          $gpo = Get-GPO -Name $gpoName -ErrorAction SilentlyContinue
+          if ($gpo) {
+            Remove-GPLink -Name $gpoName -Target $domain -ErrorAction SilentlyContinue
+            Remove-GPO -Name $gpoName -Confirm:$false
+          }
+          gpupdate /force
+  verify:
+    probe: |
+      Get-GPO -Name "Bolton-Disable-LLMNR-NBTNS" -ErrorAction SilentlyContinue |
+        Measure-Object | Select-Object -ExpandProperty Count
+    timeout_seconds: 60
+    expect_stdout_contains: "0"
+  warning: "Responder will harvest NetNTLMv2 hashes again on the next broadcast cycle."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: loud
+
+status: stable

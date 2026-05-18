@@ -106,3 +106,6 @@ test-results/
 .vitest-cache/
 docs/cobalt-strike-api/spec.json
 
+# Bolt-on runtime state (job artifacts, host facts cache)
+webapp/state/
+
