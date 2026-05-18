@@ -1236,6 +1236,69 @@ The three refinements compose cleanly. Recommended implementation order:
 |---|---|---|---|
 | OQ-A | WebSocket invalidation for concurrent operators? | Compatibility | Defer to v2; v1 uses 5-min TTL + install-time backstop |
 | OQ-B | Domain-scope lock for cross-host patches (GPO/AD writes)? | Patch | Recommend AD-stored lock object (survives Flask restart, visible to other tools); needs prototyping |
-| OQ-C | Elastic Kibana availability in engagement deployments? | TTP/Elastic | Ship optional Elastic bolt-on lab component; degraded `probe-only` mode otherwise |
-| OQ-D | (master §12) Production guardrail — hard block or soft warning on prod-tagged labs? | Original | Hard runtime block by resolver — type-the-lab-name confirmation only for explicit override |
+| OQ-C | Elastic Kibana availability in engagement deployments? | TTP/Elastic | **RESOLVED 2026-05-18 — user confirmed: ship the optional Elastic-stack bolt-on lab component.** See §14.6 below for the component design. Degraded `probe-only` mode remains as a fallback when the component isn't installed (or for cost-sensitive engagements where the operator doesn't want the Elastic infra spun up). |
+| OQ-D | (master §12) Production guardrail — hard block or soft warning on prod-tagged labs? | Original | **RESOLVED 2026-05-18 — user confirmed: dropped entirely.** All labs are architecturally isolated by the AWS infrastructure — separate VPCs per project, project-tagged resources, no shared blast radius. There is no "production" concept in this system; everything is operator-owned training/engagement infrastructure. Destructive actions still surface a normal confirmation modal (consistent with the operator-management Delete pattern) but the special "type the lab name to override" gate is unnecessary. |
 | OQ-E | (master §12) Detection coverage parity at descriptor authoring time? | Original ↔ TTP/Elastic | TTP refinement resolves: descriptors REQUIRED to declare MITRE; detection rules linkable post-hoc; `no-rule` is a visible but non-blocking state |
+
+### 14.6 Elastic-stack bolt-on lab component (resolves OQ-C)
+
+User decision 2026-05-18: ship an optional Elastic stack as a **lab infrastructure component** that operators can bolt onto any GOAD or C2 lab. This makes the TTP/Elastic refinement's post-install rule-firing verification fully operational rather than degraded-mode.
+
+**Distinct from vulnerability bolt-ons.** This is a new descriptor *class* — `infrastructure` — used for installing detection/observability infrastructure into a lab, not for installing vulnerabilities. Same descriptor schema, same install/uninstall machinery, same Ansible engine — different `category: infrastructure` tag and slightly different UI surface.
+
+**Component shape:**
+
+- One new descriptor: `webapp/bolton/catalog/infrastructure/elastic-detection-stack.yaml`
+- Targets: Linux server in the lab's management subnet (or a dedicated EC2 instance — see "Hosting topology" below)
+- Installs:
+  - Elasticsearch (single-node) — log + alert storage
+  - Kibana — UI + detection rule management
+  - Fleet Server — agent management
+  - Default detection rule pack — imported from the existing `Research/elastic-detection-rules/rules/*.toml` corpus, plus any starter rules generated from bolt-on `fallback_rule_template`s
+- Optional secondary bolt-ons that wire each lab host into the stack:
+  - `infrastructure/winlogbeat-shipper.yaml` — for Windows hosts (DCs, members, workstations)
+  - `infrastructure/filebeat-shipper.yaml` — for Linux/Unix hosts (jumpbox, redirectors, GOAD member servers running Linux)
+  - `infrastructure/sysmon.yaml` — Sysmon with the SwiftOnSecurity config for richer Windows endpoint telemetry
+- Each shipper bolt-on `depends_on: infrastructure/elastic-detection-stack` so the resolver auto-installs the stack first if any shipper is selected.
+
+**Hosting topology** — two options the descriptor supports:
+
+| Option | Where it runs | Cost impact | When to pick |
+|---|---|---|---|
+| **Inline** | Spun up as a small EC2 instance within the lab's management subnet (t3.large or similar) | +~$60/mo while running | Default — keeps the stack lifecycle tied to the lab, gets destroyed when lab is destroyed |
+| **Shared** | Bolted onto the existing dashboard server (which already has spare capacity) | $0 additional | Cost-sensitive engagements where the dashboard server can handle it, or for very small labs |
+
+Operator picks via the install confirmation modal. Cost chip in the catalog card reflects this.
+
+**Lifecycle integration:**
+
+- `infrastructure/elastic-detection-stack` is listed in the catalog under a new "Lab Infrastructure" category (NOT in the regular 10 vulnerability categories).
+- When installed, the Cleanup tab's "Installed bolt-on vulnerabilities" section gains a sibling: **"Installed lab infrastructure"** — same row treatment but the per-row actions are Uninstall + Configure (Patch doesn't apply to infrastructure).
+- Audit log records the install/uninstall as `bolton.infra.install` etc. — distinct action namespace.
+
+**Probe / verification integration:**
+
+The TTP/Elastic refinement's `POST /api/bolton/vulns/<id>/probe` endpoint already supports `degraded` mode (probe runs but no alert correlation). When the Elastic component is installed, the probe endpoint upgrades to full mode:
+
+1. Run the synthetic exploit probe on the target host
+2. Wait the configurable window (default 5 min)
+3. Query the lab's Kibana alerts API for any rule firing where `rule_uuid` matches the descriptor's declared rules AND `host.name` matches the target
+4. Return `{fired: true|false, rule_uuid, alert_id, timestamp}` or `{fired: false, degraded: true}` if no Elastic instance is reachable
+
+The Kibana endpoint is discovered via a new `infrastructure/elastic-detection-stack` host fact — the bolt-on registers its endpoint when installed, the probe service queries it.
+
+**Update to Phase numbering** (master plan §11):
+
+This adds a new sub-phase to **Phase 5 (agentic fallback integration)**, since both depend on the install machinery:
+
+- **Phase 5a** — agentic fallback (already planned)
+- **Phase 5b** — Elastic-stack bolt-on infrastructure component (~3-4d)
+- **Phase 5c** — Beats shipper bolt-ons + probe endpoint upgrade to full mode (~2-3d)
+
+Total dev-time impact: +5-7 days to Phase 5. The detection probe loop value is significantly higher with this component shipped — the lab becomes a real purple-team training surface, not just a red-team playground.
+
+**Open follow-on questions** (deferred until implementation begins):
+
+- Should we maintain the rule pack in-tree, or pull fresh from `Research/elastic-detection-rules/` (which is already monthly-updated by the existing integration)? Lean: pull fresh.
+- Multi-lab Elastic — should one inline Elastic instance be reusable across multiple labs in the same VPC? Likely no — keep one-stack-per-lab for blast-radius isolation, matching the user's "all labs are isolated" architectural principle.
+- License — Elastic Basic is free for this use, but the rule corpus is licensed Elastic-2.0; document that operators can fork/modify rules but uploading them to commercial Elastic offerings requires checking the license.
