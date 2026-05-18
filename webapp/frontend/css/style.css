@@ -4082,7 +4082,10 @@ body { padding-top: 64px; }
 .subpill-nav {
     display: flex;
     gap: 8px;
-    padding: 12px 20px;
+    /* D3.9 — Tighter V3 rhythm: 8px vertical (was 12px) so the row reads
+       as a single dense strip rather than a banded section. Horizontal
+       28px aligns with the global header's gutter. */
+    padding: 8px 28px;
     border-bottom: 1px solid var(--border-subtle);
     margin-bottom: 0;
     background: var(--bg-container);
@@ -4113,11 +4116,15 @@ body { padding-top: 64px; }
     background: var(--bg-input);
 }
 .subpill-nav__pill.is-active::after {
+    /* D3.9 — Underline now sits INSIDE the active pill's bottom edge
+       (was bottom: -12px, which floated the line beneath the navbar's
+       border-bottom and visually disconnected it). V3 pattern: the
+       accent hugs the active element, not the container. */
     content: '';
     position: absolute;
-    left: 16px;
-    right: 16px;
-    bottom: -12px;
+    left: 12px;
+    right: 12px;
+    bottom: 0;
     height: 2px;
     background: var(--brand-light);
     border-radius: 1px;
@@ -4132,6 +4139,14 @@ body { padding-top: 64px; }
 }
 .subpill-pane[hidden] {
     display: none;
+}
+/* D3.9 — Pull the first child of each sub-pane closer to the sticky
+   sub-pill nav. The re-parented .page-title h2 carries a 20px margin-
+   bottom but its margin-top comes from browser defaults (~0.83em ≈
+   22px at 1.7em). Combined with .tab-page's 30px padding-top that
+   pushed the heading ~50px below the nav. Cap it at 12px. */
+.tab-page[data-page="deployments-tab"] .subpill-pane > :first-child {
+    margin-top: 12px;
 }
 
 /* ============================================================================
@@ -4169,6 +4184,8 @@ body { padding-top: 64px; }
 .tab-page[data-page="deployments-tab"] .subpill-pane h2.page-title {
     font-size: 1.5em;
     letter-spacing: -0.005em;
+    /* D3.9 — Tighten gap below the sticky sub-pill nav. */
+    margin-top: 8px;
 }
 .tab-page[data-page="deployments-tab"] .subpill-pane h3 {
     font-size: 1.05em;
@@ -4212,6 +4229,16 @@ body { padding-top: 64px; }
        resolves to olive on cream in light mode → ~2:1 contrast.) */
     color: var(--text-primary);
     font-weight: 600;
+}
+/* D3.9 — Broad V3 heading treatment for re-parented elements that
+   previously carried inline style="color: var(--gold)". Those inline
+   styles have now been swept (see index.html h2/h4 changes), so the
+   CSS cascade can drive the color without !important. Scoped to the
+   Deployments tab so nothing leaks. */
+.tab-page[data-page="deployments-tab"] h2,
+.tab-page[data-page="deployments-tab"] h3,
+.tab-page[data-page="deployments-tab"] h4 {
+    color: var(--text-primary);
 }
 
 /* ── 3. FORM INPUTS — V3 13px + --border-focus on focus ─────────────── */
