@@ -172,33 +172,54 @@
             transform: translateY(-1px);
         }
 
-        .gh-select {
+        /* ── CUSTOM COMBOBOX (replaces native <select>) ───────────────
+           Native <select> dropdowns render poorly on macOS (system fonts
+           clash with palette, popover ignores theme). This is a fully
+           custom WAI-ARIA combobox/listbox pattern with CSS chevron,
+           keyboard navigation, and proper palette tokens in both themes.
+           ──────────────────────────────────────────────────────────── */
+        .gh-combo {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            font-size: 13px;
+        }
+        .gh-combo-trigger {
             appearance: none;
             -webkit-appearance: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            min-width: 220px;
             background: var(--bg-input);
             color: var(--text-primary);
             border: 1px solid var(--border);
             border-radius: 4px;
             padding: 5px 28px 5px 10px;
             font-family: inherit;
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 600;
             cursor: pointer;
-            transition: border-color 160ms ease, background-color 160ms ease;
+            text-align: left;
             line-height: 1.3;
+            transition: border-color 160ms ease, background-color 160ms ease;
         }
-        .gh-select:hover {
+        .gh-combo-trigger:hover {
             border-color: var(--border-light);
             background: var(--bg-card-hover);
         }
-        .gh-select:focus {
+        .gh-combo-trigger:focus-visible {
             outline: none;
             border-color: var(--brand);
             box-shadow: 0 0 0 2px var(--bg-body),
                         0 0 0 3px var(--brand);
         }
-        .gh-select:focus-visible {
-            outline: none;
+        .gh-combo-value {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         /* CSS-drawn caret — chevron made from two borders */
@@ -212,10 +233,64 @@
             border-bottom: 1.5px solid var(--text-secondary);
             transform: translateY(-70%) rotate(45deg);
             pointer-events: none;
-            transition: border-color 160ms ease;
+            transition: border-color 160ms ease, transform 160ms ease;
         }
-        .gh-select-wrap:hover .gh-select-caret {
+        .gh-combo-trigger:hover ~ .gh-select-caret,
+        .gh-combo-trigger:focus-visible ~ .gh-select-caret {
             border-color: var(--text-primary);
+        }
+        .gh-combo[aria-expanded="true"] .gh-select-caret {
+            transform: translateY(-30%) rotate(-135deg);
+            border-color: var(--text-primary);
+        }
+
+        /* Listbox popover */
+        .gh-combo-listbox {
+            position: absolute;
+            top: calc(100% + 6px);
+            right: 0;
+            min-width: 100%;
+            margin: 0;
+            padding: 4px;
+            list-style: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28),
+                        0 1px 0 var(--border-subtle) inset;
+            z-index: 200;
+            max-height: 280px;
+            overflow-y: auto;
+            font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            font-size: 13px;
+        }
+        .gh-combo[aria-expanded="false"] .gh-combo-listbox,
+        .gh-combo:not([aria-expanded]) .gh-combo-listbox {
+            display: none;
+        }
+        .gh-combo-option {
+            display: block;
+            padding: 7px 12px 7px 10px;
+            color: var(--text-primary);
+            cursor: pointer;
+            border-left: 2px solid transparent;
+            border-radius: 2px;
+            white-space: nowrap;
+            user-select: none;
+            transition: background-color 100ms ease;
+        }
+        .gh-combo-option:hover,
+        .gh-combo-option.is-active {
+            background: var(--bg-card-hover);
+        }
+        .gh-combo-option[aria-selected="true"] {
+            border-left-color: var(--brand-light);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        [data-theme="light"] .gh-combo-listbox {
+            box-shadow: 0 6px 20px rgba(20, 20, 30, 0.12),
+                        0 1px 0 var(--border-subtle) inset;
         }
 
         /* ── COST CHIP ────────────────────────────────────────────────
@@ -417,16 +492,39 @@
 
         <!-- RIGHT: chip rail -->
         <div class="gh-rail">
-            <!-- Deployment selector -->
+            <!-- Deployment selector (custom combobox; native <select> renders
+                 poorly on macOS — fonts and theme don't apply in the popover) -->
             <div class="gh-chip gh-deploy">
-                <span class="gh-deploy-label">deployment</span>
+                <span class="gh-deploy-label" id="gh-deploy-label">deployment</span>
                 <span class="gh-select-wrap">
-                    <select class="gh-select" aria-label="Active deployment">
-                        <option>c2-adhoc-dev-harriss</option>
-                        <option>goad-light-lab01</option>
-                        <option>combined-full-engagement-acme</option>
-                    </select>
-                    <span class="gh-select-caret" aria-hidden="true"></span>
+                    <div class="gh-combo" id="gh-deploy-combo" aria-expanded="false">
+                        <button type="button"
+                                class="gh-combo-trigger"
+                                role="combobox"
+                                aria-haspopup="listbox"
+                                aria-expanded="false"
+                                aria-controls="gh-deploy-listbox"
+                                aria-labelledby="gh-deploy-label"
+                                id="gh-deploy-trigger">
+                            <span class="gh-combo-value" id="gh-deploy-value">c2_adhoc_dev_harriss_macbook_pro_01</span>
+                        </button>
+                        <span class="gh-select-caret" aria-hidden="true"></span>
+                        <ul class="gh-combo-listbox"
+                            role="listbox"
+                            id="gh-deploy-listbox"
+                            aria-labelledby="gh-deploy-label"
+                            tabindex="-1">
+                            <li class="gh-combo-option" role="option" id="gh-deploy-opt-0"
+                                aria-selected="true"
+                                data-value="c2_adhoc_dev_harriss_macbook_pro_01">c2_adhoc_dev_harriss_macbook_pro_01</li>
+                            <li class="gh-combo-option" role="option" id="gh-deploy-opt-1"
+                                aria-selected="false"
+                                data-value="goad_mini_dev_harriss_macbook_pro">goad_mini_dev_harriss_macbook_pro</li>
+                            <li class="gh-combo-option" role="option" id="gh-deploy-opt-2"
+                                aria-selected="false"
+                                data-value="(none)">(none)</li>
+                        </ul>
+                    </div>
                 </span>
             </div>
 
@@ -469,5 +567,103 @@
             Toggle theme
         </button>
     </main>
+
+    <script>
+        // ────────────────────────────────────────────────────────────
+        // Custom combobox / listbox controller — WAI-ARIA pattern.
+        // Replaces native <select> because macOS renders the system
+        // popover with the wrong font and ignores theme colors.
+        // ────────────────────────────────────────────────────────────
+        (function () {
+            const combo = document.getElementById('gh-deploy-combo');
+            if (!combo) return;
+            const trigger = document.getElementById('gh-deploy-trigger');
+            const listbox = document.getElementById('gh-deploy-listbox');
+            const valueEl = document.getElementById('gh-deploy-value');
+            const options = Array.from(listbox.querySelectorAll('[role="option"]'));
+            let activeIndex = options.findIndex(o => o.getAttribute('aria-selected') === 'true');
+            if (activeIndex < 0) activeIndex = 0;
+
+            function isOpen() {
+                return combo.getAttribute('aria-expanded') === 'true';
+            }
+            function setActive(index) {
+                if (index < 0) index = 0;
+                if (index >= options.length) index = options.length - 1;
+                options.forEach(o => o.classList.remove('is-active'));
+                options[index].classList.add('is-active');
+                trigger.setAttribute('aria-activedescendant', options[index].id);
+                options[index].scrollIntoView({ block: 'nearest' });
+                activeIndex = index;
+            }
+            function open() {
+                combo.setAttribute('aria-expanded', 'true');
+                trigger.setAttribute('aria-expanded', 'true');
+                setActive(activeIndex);
+            }
+            function close() {
+                combo.setAttribute('aria-expanded', 'false');
+                trigger.setAttribute('aria-expanded', 'false');
+                trigger.removeAttribute('aria-activedescendant');
+                options.forEach(o => o.classList.remove('is-active'));
+            }
+            function selectIndex(index) {
+                options.forEach((o, i) => {
+                    o.setAttribute('aria-selected', i === index ? 'true' : 'false');
+                });
+                valueEl.textContent = options[index].dataset.value;
+                activeIndex = index;
+                close();
+                trigger.focus();
+            }
+
+            trigger.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (isOpen()) close(); else open();
+            });
+            trigger.addEventListener('keydown', (e) => {
+                switch (e.key) {
+                    case 'Enter':
+                    case ' ':
+                        e.preventDefault();
+                        if (!isOpen()) { open(); break; }
+                        selectIndex(activeIndex);
+                        break;
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        if (!isOpen()) { open(); break; }
+                        setActive(activeIndex + 1);
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        if (!isOpen()) { open(); break; }
+                        setActive(activeIndex - 1);
+                        break;
+                    case 'Home':
+                        if (isOpen()) { e.preventDefault(); setActive(0); }
+                        break;
+                    case 'End':
+                        if (isOpen()) { e.preventDefault(); setActive(options.length - 1); }
+                        break;
+                    case 'Escape':
+                        if (isOpen()) { e.preventDefault(); close(); }
+                        break;
+                }
+            });
+            options.forEach((opt, i) => {
+                opt.addEventListener('mouseenter', () => setActive(i));
+                opt.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    selectIndex(i);
+                });
+            });
+            document.addEventListener('click', (e) => {
+                if (isOpen() && !combo.contains(e.target)) close();
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && isOpen()) close();
+            });
+        })();
+    </script>
 </body>
 </html>
