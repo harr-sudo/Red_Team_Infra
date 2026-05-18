@@ -90,9 +90,13 @@ const NAVIGATE_ALIASES = {
     // D3.2/3/4 — legacy flat names now resolve to sub-pills of the merged
     // 'deployments-tab'. Cross-link call sites (`APP.navigateTo('configuration')`
     // etc.) keep working: the alias activates the parent tab + the matching pill.
-    'configuration': { parent: 'deployments-tab', subPill: 'configure' },
-    'deployment':    { parent: 'deployments-tab', subPill: 'deploy' },
-    'deployments':   { parent: 'deployments-tab', subPill: 'manage' },
+    'configuration':   { parent: 'deployments-tab', subPill: 'configure' },
+    'deployment':      { parent: 'deployments-tab', subPill: 'deploy' },
+    'deployments':     { parent: 'deployments-tab', subPill: 'manage' },
+    // D3.6 — Identity entry for the merged Deployments tab so a direct
+    // nav-button click ({data-target="deployments-tab"}) resolves cleanly
+    // instead of falling back to dashboard via the null-target guard.
+    'deployments-tab': { parent: 'deployments-tab', subPill: null },
     // D4 future-mappings — currently passthrough
     'beacon':        { parent: 'beacon',        subPill: null },
     'terminal':      { parent: 'terminal',      subPill: null },
@@ -156,10 +160,11 @@ const APP = {
     currentSubPill: null,
     // D2 — 'aws-check' removed from the live pages list; the alias entry in
     // NAVIGATE_ALIASES redirects legacy callers to {parent: 'settings', anchor: …}.
-    // D3.1 — 'deployments-tab' is the new merged Deployments parent (Configure /
-    // Deploy / Manage sub-pills). Currently a scaffold; sub-panes re-parented in
-    // D3.2-D3.4. The 3 legacy entries stay until D3.6 removes them.
-    pages: ['dashboard', 'deployments-tab', 'configuration', 'deployment', 'deployments', 'tools', 'architecture', 'beacon', 'terminal', 'settings'],
+    // D3.6 — 'configuration' / 'deployment' / 'deployments' removed from the
+    // live pages list; the alias entries in NAVIGATE_ALIASES redirect legacy
+    // callers to {parent: 'deployments-tab', subPill: …}. The aliases stay
+    // forever as the supported "legacy name → new home" mapping.
+    pages: ['dashboard', 'deployments-tab', 'tools', 'architecture', 'beacon', 'terminal', 'settings'],
     // P1 #7.6 — cached /api/version response so the modal doesn't re-fetch
     versionInfo: null,
     
@@ -169,19 +174,11 @@ const APP = {
     init() {
         console.log('🚀 Initializing Red Team Infrastructure Manager...');
 
-        // D3.1 — Feature flag for the merged Deployments tab transition.
-        // During the refactor, ?legacyTabs=1 keeps the old 3 buttons visible
-        // (Configuration / Deploy / Deployment Manager) so the user can A/B
-        // compare with the new merged Deployments tab. Default: hide legacy.
-        // At D3.6 the flag check + legacy buttons get deleted entirely.
-        APP.legacyTabsVisible = (function () {
-            const params = new URLSearchParams(window.location.search);
-            return params.has('legacyTabs');
-        })();
-        if (!APP.legacyTabsVisible) {
-            document.querySelectorAll('.tab-btn[data-target="configuration"], .tab-btn[data-target="deployment"], .tab-btn[data-target="deployments"]')
-                .forEach(btn => btn.setAttribute('data-legacy', 'true'));
-        }
+        // D3.6 — The ?legacyTabs=1 feature flag and the 3 legacy nav buttons
+        // (Configuration / Deploy / Deployment Manager) were retired. The
+        // merged Deployments tab is now the only entry point; legacy
+        // APP.navigateTo('configuration' | 'deployment' | 'deployments')
+        // callers continue to work via NAVIGATE_ALIASES (top of this file).
 
         // Apply saved theme
         this.initTheme();
@@ -409,23 +406,18 @@ const APP = {
             TERMINAL.stopBackgroundRefresh();
         }
 
-        // Clear deployment polling when leaving the deployment page
-        if (this.currentPage === 'deployment' && pageName !== 'deployment') {
-            if (deploymentPollInterval) {
-                clearInterval(deploymentPollInterval);
-                deploymentPollInterval = null;
+        // D3.6 — When leaving the merged Deployments tab, run cleanup for
+        // whichever sub-pill is currently active. This kills the deployment-
+        // page polling + manage-page auto-refresh + destroy poll that used to
+        // be flat-tab-leave hooks before D3.4 re-parented them as sub-pills.
+        // D3.5 also runs this on sub-pill switch within the tab.
+        if (this.currentPage === 'deployments-tab' && pageName !== 'deployments-tab') {
+            if (this.currentSubPill) {
+                APP._runSubPillCleanup('deployments-tab', this.currentSubPill);
             }
         }
 
-        // Stop auto-refresh and destroy poll when leaving deployments page
-        if (this.currentPage === 'deployments' && pageName !== 'deployments') {
-            stopAutoRefresh();
-            if (window._destroyPollInterval) {
-                clearInterval(window._destroyPollInterval);
-                window._destroyPollInterval = null;
-            }
-        }
-        
+
         // Hide all pages
         const allPages = document.querySelectorAll('.tab-page');
         allPages.forEach(page => {
@@ -480,10 +472,15 @@ const APP = {
 
         // D3.1 — If navigating to the merged Deployments tab with a sub-pill
         // (either explicitly via {parent, subPill} or via URL hash like
-        // #deployments-tab/deploy), activate the matching pane. D3.6 will
-        // also activate sub-pills when navigating via legacy alias names.
+        // #deployments-tab/deploy), activate the matching pane. D3.6 also
+        // activates sub-pills when navigating via legacy alias names.
+        // D3.5 — If entering 'deployments-tab' without a sub-pill (e.g.,
+        // direct click on the Deployments nav button), default to
+        // 'configure' so init hooks fire and a pane is always visible.
         if (target.subPill && pageName === 'deployments-tab') {
             APP.setActiveSubPill(pageName, target.subPill);
+        } else if (pageName === 'deployments-tab' && !target.subPill && !APP.currentSubPill) {
+            APP.setActiveSubPill('deployments-tab', 'configure');
         }
     },
     
@@ -499,24 +496,10 @@ const APP = {
                 case 'dashboard':
                     loadDashboard();
                     break;
-                case 'configuration':
-                    loadConfig();
-                    break;
-                case 'deployment':
-                    // Reset plan state when navigating to deployment page
-                    isPlanRunning = false;
-                    resetDeployValidation();
-                    loadConfigSummary();
-                    checkDeploymentStatus();
-                    checkDomainConfig();
-                    checkCobaltStrikeFile();
-                    checkCSClientFile();
-                    checkSSHPublicKey();
-                    break;
-                case 'deployments':
-                    loadDeploymentsPage();
-                    startAutoRefresh();
-                    break;
+                // D3.6 — Legacy 'configuration' / 'deployment' / 'deployments'
+                // cases removed. Sub-pill init now lives in
+                // APP._runSubPillInit() (D3.5), invoked from the
+                // 'deployments-tab' case below.
                 case 'tools':
                     loadToolsPage();
                     break;
@@ -533,6 +516,13 @@ const APP = {
                     break;
                 case 'settings':
                     initSettingsPage();
+                    break;
+                case 'deployments-tab':
+                    // D3.5 — Sub-pill init runs via APP.setActiveSubPill (called
+                    // by navigateTo immediately after this). No direct init call
+                    // here — setActiveSubPill handles both the cleanup-of-prev
+                    // and init-of-new hooks. This case is intentionally a no-op
+                    // so we don't double-fire init functions.
                     break;
                 default:
                     console.log(`No specific loader for: ${pageName}`);
@@ -1874,12 +1864,22 @@ APP.activeDeployment = (function () {
 
 // D3.1 — Sub-pill switcher for the merged Deployments tab.
 // On pill click: toggle .is-active class on all pills, toggle hidden
-// on the corresponding panes. D3.5 will add per-sub-pill lifecycle
-// hooks (enter/leave) so polling/state cleanup mirrors today's tab-
-// level lifecycle (see §20.6 + §26.4 item 2).
+// on the corresponding panes.
+// D3.5 — Per-sub-pill lifecycle hooks (enter/leave) so polling/state
+// cleanup mirrors today's tab-level lifecycle (see §20.6 + §26.4 item 2).
+// Outgoing sub-pill gets its cleanup hook fired (kills pollers, closes
+// attached modals). Incoming sub-pill gets its init hook fired (mirrors
+// what loadPageContent used to do for the now-removed flat tab name).
 APP.setActiveSubPill = function (parentTabName, subPillName) {
     const tabPage = document.querySelector(`.tab-page[data-page="${parentTabName}"]`);
     if (!tabPage) return;
+
+    // D3.5 — Run cleanup hook for the previously-active sub-pill
+    const prevSubPill = APP.currentSubPill;
+    if (prevSubPill && prevSubPill !== subPillName) {
+        APP._runSubPillCleanup(parentTabName, prevSubPill);
+    }
+
     const pills = tabPage.querySelectorAll('.subpill-nav__pill');
     const panes = tabPage.querySelectorAll('.subpill-pane');
     pills.forEach(p => {
@@ -1897,6 +1897,99 @@ APP.setActiveSubPill = function (parentTabName, subPillName) {
     });
     APP.currentSubPill = subPillName;
     sessionStorage.setItem('currentPage', JSON.stringify({ parent: parentTabName, subPill: subPillName }));
+
+    // D3.5 — Run init hook for the newly-active sub-pill
+    APP._runSubPillInit(parentTabName, subPillName);
+};
+
+/**
+ * D3.5 — Cleanup hook for an outgoing sub-pill. Mirrors the per-tab
+ * tab-leave cleanup that used to live in navigateTo() before the 3
+ * legacy flat tabs were merged into 'deployments-tab'. Without this,
+ * switching sub-pills leaks pollers (deployment status, auto-refresh,
+ * destroy poll) and leaves modals visible above hidden content.
+ *
+ * D3.7 — Also closes attached modals (#session-logs-modal,
+ * #archived-logs-modal, #screenshot-overlay, #version-modal) that
+ * were appended to document.body and would otherwise stay visible
+ * after the sub-pill they belong to has been hidden.
+ */
+APP._runSubPillCleanup = function (parentTabName, subPillName) {
+    if (parentTabName !== 'deployments-tab') return;
+    APP._closeAttachedModals();  // D3.7 — close any stuck modals
+    if (subPillName === 'deploy') {
+        if (typeof deploymentPollInterval !== 'undefined' && deploymentPollInterval) {
+            clearInterval(deploymentPollInterval);
+            deploymentPollInterval = null;
+        }
+    } else if (subPillName === 'manage') {
+        if (typeof stopAutoRefresh === 'function') stopAutoRefresh();
+        if (window._destroyPollInterval) {
+            clearInterval(window._destroyPollInterval);
+            window._destroyPollInterval = null;
+        }
+    }
+    // 'configure' has no polling, no cleanup needed
+};
+
+/**
+ * D3.5 — Init hook for an incoming sub-pill. Mirrors the per-tab
+ * loadPageContent() switch cases that used to fire for the flat
+ * 'configuration' / 'deployment' / 'deployments' tabs before the
+ * merge. Each branch is feature-detected with typeof guards so
+ * hot-reload / partial-module loading doesn't crash.
+ */
+APP._runSubPillInit = function (parentTabName, subPillName) {
+    if (parentTabName !== 'deployments-tab') return;
+    if (subPillName === 'configure') {
+        if (typeof loadConfig === 'function') loadConfig();
+    } else if (subPillName === 'deploy') {
+        // Same 6 init functions that loadPageContent ran for the
+        // legacy 'deployment' flat tab.
+        if (typeof isPlanRunning !== 'undefined') isPlanRunning = false;
+        if (typeof resetDeployValidation === 'function') resetDeployValidation();
+        if (typeof loadConfigSummary === 'function') loadConfigSummary();
+        if (typeof checkDeploymentStatus === 'function') checkDeploymentStatus();
+        if (typeof checkDomainConfig === 'function') checkDomainConfig();
+        if (typeof checkCobaltStrikeFile === 'function') checkCobaltStrikeFile();
+        if (typeof checkCSClientFile === 'function') checkCSClientFile();
+        if (typeof checkSSHPublicKey === 'function') checkSSHPublicKey();
+    } else if (subPillName === 'manage') {
+        if (typeof loadDeploymentsPage === 'function') loadDeploymentsPage();
+        if (typeof startAutoRefresh === 'function') startAutoRefresh();
+    }
+};
+
+/**
+ * D3.7 — Close every modal that was appended to document.body rather
+ * than to its owning sub-pane subtree. Without this, opening a modal
+ * in (say) the Manage sub-pill and switching to Configure leaves the
+ * modal visible above hidden content (§26.4 item 1).
+ *
+ * Defensive: each modal's own close convention is honored where it
+ * exists. Modals built with `document.createElement(...).remove()`
+ * (session-logs, archived-logs, screenshot-overlay) are removed
+ * outright. The version-modal uses the `hidden` attribute pattern.
+ */
+APP._closeAttachedModals = function () {
+    const modalIds = ['session-logs-modal', 'archived-logs-modal',
+                      'screenshot-overlay', 'version-modal'];
+    modalIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            // version-modal lives in index.html and uses the hidden attribute.
+            if (el.classList.contains('version-modal')) {
+                el.setAttribute('hidden', '');
+                el.setAttribute('aria-hidden', 'true');
+            } else if (el.classList.contains('modal') || el.hasAttribute('hidden')) {
+                el.setAttribute('hidden', '');
+            } else {
+                // session-logs / archived-logs / dynamic overlays — remove
+                // from DOM (they're re-created on next open).
+                el.remove();
+            }
+        }
+    });
 };
 
 // D3.3 — Inline "Edit Config" collapse toggle. Lives next to the Configuration

@@ -58,16 +58,19 @@ async function probeSection(page, sectionId) {
 test.describe.parallel('deployment-type cascade regression guard', () => {
     for (const [deploymentType, expected] of Object.entries(BASELINE)) {
         test(`cascade matches baseline: ${deploymentType}`, async ({ page }) => {
-            // D3.1 — ?legacyTabs=1 keeps the legacy Configuration / Deploy /
-            // Deployment Manager nav buttons visible during the merge refactor.
-            // Until D3.2 re-parents the Configuration subtree under the new
-            // Deployments tab, the snapshot guard still targets the legacy
-            // tab. This query param is removed at D3.6 along with the legacy
-            // buttons themselves.
-            await page.goto('/?legacyTabs=1');
-            // Navigate to the Configuration tab where the
-            // deployment-type <select> lives.
-            await page.locator('button.tab-btn[data-target="configuration"]').click();
+            // D3.6 — The 3 legacy tab buttons (Configuration / Deploy /
+            // Deployment Manager) and the ?legacyTabs=1 feature flag were
+            // retired. Navigate via the merged Deployments tab; the Configure
+            // sub-pill is the default-on-entry pane (D3.5) and contains the
+            // same #deployment-type <select> that the cascade re-parented at
+            // D3.2. The element is globally identifiable by ID so we don't
+            // need to scope the selector to the sub-pane.
+            await page.goto('/');
+            await page.locator('button.tab-btn[data-target="deployments-tab"]').click();
+            // Configure sub-pill is the default-on-entry — verify the pane
+            // is active so the <select> below is actually visible.
+            await page.locator('.subpill-nav__pill[data-subpill="configure"].is-active')
+                .waitFor({ timeout: 5000 });
             await page.locator('#deployment-type').waitFor({ state: 'visible', timeout: 5000 });
             await page.selectOption('#deployment-type', deploymentType);
             // Same settle wait as capture — keeps probe semantics aligned.

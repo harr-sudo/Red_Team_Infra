@@ -80,13 +80,11 @@
         <!-- Navigation Tabs -->
         <nav class="tabs" id="tab-navigation">
             <button class="tab-btn active" data-target="dashboard">Dashboard</button>
-            <!-- D3.1 — NEW merged Deployments tab (Configure / Deploy / Manage sub-pills).
-                 The 3 legacy buttons below stay in DOM during the refactor but are hidden
-                 by default; ?legacyTabs=1 reveals them for A/B comparison. Removed at D3.6. -->
+            <!-- D3.1/D3.6 — Merged Deployments tab (Configure / Deploy / Manage sub-pills).
+                 D3.6 retired the 3 legacy buttons (Configuration / Deploy / Deployment
+                 Manager) and the ?legacyTabs=1 feature flag. Legacy navigateTo() callers
+                 are still routed here via NAVIGATE_ALIASES in app.js. -->
             <button class="tab-btn" data-target="deployments-tab">Deployments</button>
-            <button class="tab-btn" data-target="configuration">Configuration</button>
-            <button class="tab-btn" data-target="deployment">Deploy</button>
-            <button class="tab-btn" data-target="deployments">Deployment Manager</button>
             <button class="tab-btn" data-target="tools">Tools</button>
             <button class="tab-btn" data-target="architecture">Architecture</button>
             <button class="tab-btn" data-target="beacon">Beacon</button>

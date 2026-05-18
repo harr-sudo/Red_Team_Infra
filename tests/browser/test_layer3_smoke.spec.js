@@ -45,10 +45,11 @@ test('dashboard SPA loads and has expected nav buttons', async ({ page }) => {
     // nav row had 9 tabs. Cross-tab links to APP.navigateTo('aws-check')
     // still work via the NAVIGATE_ALIASES redirect (app.js).
     // D3.1 — New merged "Deployments" tab added (Configure/Deploy/Manage sub-
-    // pills scaffold). The 3 legacy buttons (Configuration / Deploy /
-    // Deployment Manager) stay in DOM but are hidden via [data-legacy="true"]
-    // CSS until ?legacyTabs=1 reveals them; locator counts both → 10. The
-    // legacy buttons + this delta are removed at D3.6.
+    // pills scaffold).
+    // D3.6 — The 3 legacy buttons (Configuration / Deploy / Deployment
+    // Manager) were removed from the DOM along with the ?legacyTabs=1
+    // feature flag. Remaining tabs: Dashboard / Deployments / Tools /
+    // Architecture / Beacon / Terminal / Settings = 7.
     const tabCount = await page.locator('button.tab-btn[data-target]').count();
-    expect(tabCount).toBe(10);
+    expect(tabCount).toBe(7);
 });

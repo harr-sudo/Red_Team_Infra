@@ -4133,9 +4133,3 @@ body { padding-top: 64px; }
 .subpill-pane[hidden] {
     display: none;
 }
-
-/* D3.1 — Hide legacy nav buttons unless ?legacyTabs=1 in URL.
-   Removed entirely at D3.6 along with the old tab-page wrappers. */
-.tab-btn[data-legacy="true"] {
-    display: none;
-}

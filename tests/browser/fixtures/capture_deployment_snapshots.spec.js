@@ -92,11 +92,12 @@ test.describe.serial('deployment-type snapshot capture', () => {
     for (const dt of DEPLOYMENT_TYPES) {
         test(`capture: ${dt}`, async ({ page }) => {
             await page.goto('/');
-            // The dashboard is the active tab by default; the
-            // deployment-type <select> lives inside the Configuration
-            // tab, which is hidden until clicked.
-            await page.locator('button.tab-btn[data-target="configuration"]').click();
-            // Wait for the dropdown to be ready (visible)
+            // D3.6 — The legacy Configuration tab was merged into the
+            // 'deployments-tab' / Configure sub-pill. Navigate via the new
+            // tab; #deployment-type is still globally identifiable by ID.
+            await page.locator('button.tab-btn[data-target="deployments-tab"]').click();
+            await page.locator('.subpill-nav__pill[data-subpill="configure"].is-active')
+                .waitFor({ timeout: 5000 });
             await page.locator('#deployment-type').waitFor({ state: 'visible', timeout: 5000 });
 
             // Select the deployment type and fire the change event so
