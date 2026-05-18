@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Deploy Journey J2 — Progressive Single Page</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           DEPLOY JOURNEY — J2 PROGRESSIVE SINGLE PAGE
+           Hypothesis: One growing card. Sections reveal as the prior
+           one is satisfied. No step counter; sense of progress comes
+           from the card growing. Backdrop dashboard dims + blurs.
+           Family: spec-list rhythm, mono caps eyebrows, hairline rules.
+           ============================================================ */
+
+        :root {
+            --temp-rail: var(--brand-light);
+            --temp-hairline: var(--border-subtle);
+            --temp-scrim: rgba(8, 9, 14, 0.55);
+            --temp-scrim-blur: 8px;
+        }
+        [data-theme="light"] {
+            --temp-scrim: rgba(140, 160, 100, 0.32);
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+            overflow-x: hidden;
+        }
+
+        /* ── HYPOTHESIS STRIP ──────────────────────────────────────── */
+        .preview-hypothesis {
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            position: relative;
+            z-index: 50;
+        }
+        .preview-hypothesis strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+
+        /* ── DASHBOARD BACKDROP MOCK ──────────────────────────────── */
+        .dash-mock {
+            position: fixed;
+            inset: 42px 0 0 0;
+            padding: 36px 48px;
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            gap: 24px;
+            pointer-events: none;
+            z-index: 1;
+            transition: filter 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .dash-mock.is-dimmed {
+            filter: blur(var(--temp-scrim-blur));
+            opacity: 0.28;
+        }
+        .dash-mock__rail-item {
+            height: 28px;
+            border-radius: 4px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            margin-bottom: 10px;
+        }
+        .dash-mock__header {
+            height: 44px;
+            border-radius: 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            margin-bottom: 16px;
+        }
+        .dash-mock__grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .dash-mock__card {
+            height: 140px;
+            border-radius: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+        }
+        .dash-mock__row {
+            height: 160px;
+            border-radius: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            margin-bottom: 16px;
+        }
+
+        /* ── SCRIM ──────────────────────────────────────────────────── */
+        .scrim {
+            position: fixed;
+            inset: 42px 0 0 0;
+            background: var(--temp-scrim);
+            backdrop-filter: blur(var(--temp-scrim-blur));
+            -webkit-backdrop-filter: blur(var(--temp-scrim-blur));
+            z-index: 10;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .scrim.is-open { opacity: 1; pointer-events: auto; }
+
+        /* ── JOURNEY SURFACE ────────────────────────────────────────── */
+        .journey {
+            position: fixed;
+            inset: 42px 0 0 0;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 56px 24px 64px;
+            z-index: 20;
+            overflow-y: auto;
+        }
+        .journey__frame {
+            width: 100%;
+            max-width: 760px;
+            display: flex;
+            flex-direction: column;
+            gap: 28px;
+        }
+
+        .j-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .j-header__eyebrow {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .j-header__close {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 5px 12px;
+            border-radius: 5px;
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .j-header__close:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        .j-hero {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .j-hero__caption {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .j-hero__title {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            margin: 0;
+            line-height: 1.25;
+        }
+        .j-hero__lede {
+            font-size: 13.5px;
+            color: var(--text-secondary);
+            line-height: 1.55;
+            margin: 0;
+        }
+
+        /* ── SECTIONS THAT REVEAL ───────────────────────────────────── */
+        .j-section {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding: 22px 0;
+            border-top: 1px solid var(--temp-hairline);
+            opacity: 0;
+            transform: translateY(-6px);
+            max-height: 0;
+            overflow: hidden;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        max-height 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .j-section.is-visible {
+            opacity: 1;
+            transform: translateY(0);
+            max-height: 1200px;
+        }
+        .j-section--first {
+            border-top: none;
+            padding-top: 0;
+            opacity: 1;
+            transform: translateY(0);
+            max-height: 1200px;
+        }
+
+        .j-section__head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .j-section__eyebrow {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .j-section__check {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            opacity: 0;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .j-section.is-complete .j-section__check { opacity: 1; }
+        .j-section__check-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+        }
+
+        /* Family selector — three radio cards */
+        .j-cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+        .j-card {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 14px;
+            border: 1px solid var(--temp-hairline);
+            border-radius: 8px;
+            background: var(--bg-body);
+            cursor: pointer;
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .j-card input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+        .j-card:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+            transform: translateY(-1px);
+        }
+        .j-card.is-checked {
+            border-color: var(--brand-light);
+            background: var(--bg-card-hover);
+        }
+        .j-card.is-checked::after {
+            content: "";
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+        }
+        .j-card__title {
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .j-card__desc {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            line-height: 1.45;
+        }
+
+        /* Type secondary dropdown — inline row with key on left */
+        .j-row {
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            align-items: center;
+            gap: 20px;
+            padding: 10px 0;
+        }
+        .j-row__key {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .j-row__value { min-width: 0; }
+
+        .j-input,
+        .j-select {
+            width: 100%;
+            appearance: none;
+            -webkit-appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 9px 12px;
+            border-radius: 6px;
+            font: inherit;
+            font-size: 13px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .j-input:focus,
+        .j-select:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+        }
+
+        /* Segmented control (environment) */
+        .j-seg {
+            display: inline-flex;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+            background: var(--bg-input);
+        }
+        .j-seg__btn {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            border-left: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 7px 14px;
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .j-seg__btn:first-child { border-left: 0; }
+        .j-seg__btn:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+        .j-seg__btn.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+
+        /* Toggle row */
+        .j-toggle {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 0;
+            border-top: 1px dashed var(--temp-hairline);
+        }
+        .j-toggle:first-of-type { border-top: none; }
+        .j-toggle__title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .j-toggle__desc {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            line-height: 1.45;
+            margin-top: 3px;
+        }
+        .j-toggle__switch {
+            appearance: none;
+            width: 36px;
+            height: 20px;
+            border-radius: 10px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            cursor: pointer;
+            position: relative;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .j-toggle__switch::after {
+            content: "";
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+            transition: transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .j-toggle__switch:checked {
+            background: color-mix(in srgb, var(--brand-light) 30%, var(--bg-input));
+            border-color: var(--brand-light);
+        }
+        .j-toggle__switch:checked::after {
+            transform: translateX(16px);
+            background: var(--brand-light);
+        }
+
+        .j-foot {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 18px;
+            border-top: 1px solid var(--temp-hairline);
+        }
+        .j-foot__crumb {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .j-btn {
+            appearance: none;
+            background: var(--brand-light);
+            border: 1px solid var(--brand-light);
+            color: var(--text-inverse);
+            padding: 9px 18px;
+            border-radius: 6px;
+            font: inherit;
+            font-size: 12.5px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .j-btn:hover {
+            background: var(--brand);
+            border-color: var(--brand);
+            transform: translateY(-1px);
+        }
+        .j-btn[disabled] {
+            opacity: 0.45;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .j-btn:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+
+        .dash-trigger {
+            position: fixed;
+            top: 56px;
+            right: 56px;
+            z-index: 5;
+            padding: 8px 14px;
+            background: var(--brand-light);
+            border: 1px solid var(--brand-light);
+            color: var(--text-inverse);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            letter-spacing: 0.06em;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .dash-trigger.is-visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .preview-theme-toggle {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            padding: 8px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            z-index: 100;
+        }
+        .preview-theme-toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="preview-hypothesis">
+        <strong>Journey J2</strong>
+        One growing card — sections appear as the prior decision is made; the dashboard behind dims and blurs.
+    </header>
+
+    <!-- Dashboard mock -->
+    <div class="dash-mock is-dimmed" id="dashMock">
+        <aside>
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+        </aside>
+        <main>
+            <div class="dash-mock__header"></div>
+            <div class="dash-mock__grid">
+                <div class="dash-mock__card"></div>
+                <div class="dash-mock__card"></div>
+                <div class="dash-mock__card"></div>
+            </div>
+            <div class="dash-mock__row"></div>
+            <div class="dash-mock__row"></div>
+        </main>
+    </div>
+
+    <button class="dash-trigger" id="dashTrigger" type="button">+ New Deployment</button>
+
+    <div class="scrim is-open" id="scrim"></div>
+
+    <main class="journey" id="journey">
+        <div class="journey__frame">
+            <div class="j-header">
+                <span class="j-header__eyebrow">New Deployment</span>
+                <button class="j-header__close" id="jClose" type="button">Cancel</button>
+            </div>
+
+            <section class="j-hero">
+                <span class="j-hero__caption">begin</span>
+                <h1 class="j-hero__title">Build a deployment</h1>
+                <p class="j-hero__lede">Pick a family below — each step reveals the next as you go. Defaults are safe and you can edit any value before the final review.</p>
+            </section>
+
+            <!-- Section 1: Type (always visible) -->
+            <section class="j-section j-section--first is-visible" id="sec1">
+                <div class="j-section__head">
+                    <span class="j-section__eyebrow">1 · Deployment type</span>
+                    <span class="j-section__check"><span class="j-section__check-dot"></span>Set</span>
+                </div>
+                <div class="j-cards" role="radiogroup" aria-label="Deployment family">
+                    <label class="j-card" data-family="c2">
+                        <input type="radio" name="family" value="c2">
+                        <span class="j-card__title">Red team C2</span>
+                        <span class="j-card__desc">Cobalt Strike, redirectors, bastion.</span>
+                    </label>
+                    <label class="j-card" data-family="goad">
+                        <input type="radio" name="family" value="goad">
+                        <span class="j-card__title">Training lab</span>
+                        <span class="j-card__desc">Vulnerable AD environments (GOAD).</span>
+                    </label>
+                    <label class="j-card" data-family="combined">
+                        <input type="radio" name="family" value="combined">
+                        <span class="j-card__title">Combined</span>
+                        <span class="j-card__desc">C2 + GOAD on peered VPCs.</span>
+                    </label>
+                </div>
+
+                <div class="j-row" id="typeRow" style="display: none;">
+                    <span class="j-row__key">Specific type</span>
+                    <span class="j-row__value">
+                        <select class="j-select" id="typeSelect"></select>
+                    </span>
+                </div>
+            </section>
+
+            <!-- Section 2: Identity -->
+            <section class="j-section" id="sec2">
+                <div class="j-section__head">
+                    <span class="j-section__eyebrow">2 · Identity</span>
+                    <span class="j-section__check"><span class="j-section__check-dot"></span>Set</span>
+                </div>
+                <div class="j-row">
+                    <span class="j-row__key">Project name</span>
+                    <span class="j-row__value">
+                        <input class="j-input" id="projectName" type="text" value="goad_mini_dev_harriss_macbook_pro" autocomplete="off" spellcheck="false">
+                    </span>
+                </div>
+                <div class="j-row">
+                    <span class="j-row__key">Environment</span>
+                    <span class="j-row__value">
+                        <div class="j-seg" role="tablist">
+                            <button class="j-seg__btn is-active" type="button" data-env="DEV">DEV</button>
+                            <button class="j-seg__btn" type="button" data-env="STAGING">Staging</button>
+                            <button class="j-seg__btn" type="button" data-env="PROD">Prod</button>
+                        </div>
+                    </span>
+                </div>
+            </section>
+
+            <!-- Section 3: Network -->
+            <section class="j-section" id="sec3">
+                <div class="j-section__head">
+                    <span class="j-section__eyebrow">3 · Network</span>
+                    <span class="j-section__check"><span class="j-section__check-dot"></span>Set</span>
+                </div>
+                <div class="j-row">
+                    <span class="j-row__key">AWS region</span>
+                    <span class="j-row__value">
+                        <select class="j-select" id="region">
+                            <option value="eu-central-1" selected>eu-central-1 — Frankfurt</option>
+                            <option value="eu-west-1">eu-west-1 — Ireland</option>
+                            <option value="eu-west-2">eu-west-2 — London</option>
+                            <option value="us-east-1">us-east-1 — N. Virginia</option>
+                            <option value="us-west-2">us-west-2 — Oregon</option>
+                        </select>
+                    </span>
+                </div>
+                <div class="j-row">
+                    <span class="j-row__key">Management CIDR</span>
+                    <span class="j-row__value">
+                        <input class="j-input" id="cidr" type="text" value="82.35.149.127/32" autocomplete="off" spellcheck="false">
+                    </span>
+                </div>
+            </section>
+
+            <!-- Section 4: Type-specific options -->
+            <section class="j-section" id="sec4">
+                <div class="j-section__head">
+                    <span class="j-section__eyebrow">4 · <span id="sec4Label">Options</span></span>
+                    <span class="j-section__check"><span class="j-section__check-dot"></span>Set</span>
+                </div>
+                <div id="sec4Body"></div>
+            </section>
+
+            <div class="j-foot">
+                <span class="j-foot__crumb" id="footCrumb">Pick a family to begin</span>
+                <button class="j-btn" id="jReview" type="button" disabled>Review →</button>
+            </div>
+        </div>
+    </main>
+
+    <button class="preview-theme-toggle" type="button"
+            onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+        Toggle theme
+    </button>
+
+    <script>
+    (function () {
+        'use strict';
+
+        const TYPES = {
+            c2: [
+                { id: 'c2-adhoc', title: 'C2 — Ad-hoc' },
+                { id: 'c2-purple', title: 'C2 — Purple' },
+                { id: 'c2-full', title: 'C2 — Full' }
+            ],
+            goad: [
+                { id: 'goad-mini', title: 'GOAD Mini' },
+                { id: 'goad-light', title: 'GOAD Light' },
+                { id: 'goad-sccm', title: 'GOAD SCCM' },
+                { id: 'goad-full', title: 'GOAD Full' },
+                { id: 'goad-nha', title: 'GOAD NHA' }
+            ],
+            combined: [
+                { id: 'combined-adhoc-mini', title: 'Adhoc + GOAD Mini' },
+                { id: 'combined-adhoc-light', title: 'Adhoc + GOAD Light' },
+                { id: 'combined-full-full', title: 'Full + GOAD Full' }
+            ]
+        };
+
+        const state = {
+            family: null,
+            type: null,
+            project: 'goad_mini_dev_harriss_macbook_pro',
+            env: 'DEV',
+            region: 'eu-central-1',
+            cidr: '82.35.149.127/32',
+            cdn: false,
+            fronting: false,
+            ipRange: '10.10.0.0/16'
+        };
+
+        const sec1 = document.getElementById('sec1');
+        const sec2 = document.getElementById('sec2');
+        const sec3 = document.getElementById('sec3');
+        const sec4 = document.getElementById('sec4');
+        const reviewBtn = document.getElementById('jReview');
+        const footCrumb = document.getElementById('footCrumb');
+
+        // Family pick
+        document.querySelectorAll('.j-card').forEach(card => {
+            card.addEventListener('click', () => {
+                document.querySelectorAll('.j-card').forEach(c => c.classList.remove('is-checked'));
+                card.classList.add('is-checked');
+                state.family = card.dataset.family;
+                card.querySelector('input').checked = true;
+                renderTypeSelect();
+                sec1.classList.add('is-complete');
+                document.getElementById('typeRow').style.display = 'grid';
+            });
+        });
+
+        function renderTypeSelect() {
+            const sel = document.getElementById('typeSelect');
+            const types = TYPES[state.family] || [];
+            sel.innerHTML = types.map(t => `<option value="${t.id}">${t.title}</option>`).join('');
+            state.type = types[0]?.id;
+            sel.addEventListener('change', () => state.type = sel.value, { once: true });
+
+            // Once a family is picked, reveal section 2
+            setTimeout(() => {
+                sec2.classList.add('is-visible');
+                footCrumb.textContent = 'Fill in identity →';
+                // Mark sec2 complete after a moment since it has defaults
+                setTimeout(() => {
+                    sec2.classList.add('is-complete');
+                    sec3.classList.add('is-visible');
+                    footCrumb.textContent = 'Fill in network →';
+                    setTimeout(() => {
+                        sec3.classList.add('is-complete');
+                        sec4.classList.add('is-visible');
+                        renderSec4();
+                        footCrumb.textContent = 'Set options →';
+                        setTimeout(() => {
+                            sec4.classList.add('is-complete');
+                            reviewBtn.disabled = false;
+                            footCrumb.textContent = 'Ready to review';
+                        }, 240);
+                    }, 240);
+                }, 240);
+            }, 200);
+        }
+
+        function renderSec4() {
+            const label = document.getElementById('sec4Label');
+            const body = document.getElementById('sec4Body');
+            if (state.family === 'c2' || state.family === 'combined') {
+                label.textContent = 'Domain fronting & CDN';
+                body.innerHTML = `
+                    <label class="j-toggle">
+                        <span>
+                            <span class="j-toggle__title">Domain fronting</span>
+                            <span class="j-toggle__desc">CloudFront CDN proxy hides redirector IPs behind CloudFront edge IPs. Caching off.</span>
+                        </span>
+                        <input class="j-toggle__switch" type="checkbox">
+                    </label>
+                    <label class="j-toggle">
+                        <span>
+                            <span class="j-toggle__title">CDN proxy</span>
+                            <span class="j-toggle__desc">Route 53 + CloudFront for HTTPS redirector traffic. ~$25/mo.</span>
+                        </span>
+                        <input class="j-toggle__switch" type="checkbox">
+                    </label>
+                `;
+            } else {
+                label.textContent = 'Lab IP ranges';
+                body.innerHTML = `
+                    <div class="j-row" style="border-top: none;">
+                        <span class="j-row__key">Lab IP range</span>
+                        <span class="j-row__value">
+                            <input class="j-input" type="text" value="${state.ipRange}" autocomplete="off" spellcheck="false">
+                        </span>
+                    </div>
+                `;
+            }
+        }
+
+        // Environment segmented
+        document.querySelectorAll('.j-seg__btn').forEach(b => {
+            b.addEventListener('click', () => {
+                document.querySelectorAll('.j-seg__btn').forEach(x => x.classList.remove('is-active'));
+                b.classList.add('is-active');
+                state.env = b.dataset.env;
+            });
+        });
+
+        document.getElementById('projectName').addEventListener('input', e => state.project = e.target.value);
+        document.getElementById('region').addEventListener('change', e => state.region = e.target.value);
+        document.getElementById('cidr').addEventListener('input', e => state.cidr = e.target.value);
+
+        // Review handoff (visual only — simulate transition to Composition A summary)
+        reviewBtn.addEventListener('click', () => {
+            reviewBtn.textContent = '→ Summary';
+            reviewBtn.disabled = true;
+            // Fade journey out and notional summary in — for preview, just dim the foot
+            document.getElementById('journey').style.opacity = '0.4';
+            document.getElementById('footCrumb').textContent = 'Handing off to Summary view (Composition A)…';
+        });
+
+        // Backdrop / open + close
+        const dashMock = document.getElementById('dashMock');
+        const scrim = document.getElementById('scrim');
+        const journey = document.getElementById('journey');
+        const dashTrigger = document.getElementById('dashTrigger');
+        const jClose = document.getElementById('jClose');
+
+        function closeJourney() {
+            dashMock.classList.remove('is-dimmed');
+            scrim.classList.remove('is-open');
+            journey.style.display = 'none';
+            dashTrigger.classList.add('is-visible');
+        }
+        function openJourney() {
+            dashMock.classList.add('is-dimmed');
+            scrim.classList.add('is-open');
+            journey.style.display = 'flex';
+            journey.style.opacity = '1';
+            dashTrigger.classList.remove('is-visible');
+            reviewBtn.textContent = 'Review →';
+        }
+        jClose.addEventListener('click', closeJourney);
+        dashTrigger.addEventListener('click', openJourney);
+    })();
+    </script>
+</body>
+</html>

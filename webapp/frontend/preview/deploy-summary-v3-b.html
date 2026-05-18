@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Deploy Summary — V3-Native Composition B (Hero + Ribbon)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           DEPLOY SUMMARY — V3-NATIVE COMPOSITION B
+           Hypothesis: make project identity the headline, then reduce
+           every technical detail to a single horizontal ribbon —
+           hairline-divided, full-width, no per-tile boxes.
+           Dials: 5/6/5 — calm professional.
+           ============================================================ */
+
+        :root {
+            --temp-ribbon-divider: var(--border);
+            --temp-ribbon-fill: transparent;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .preview-hypothesis {
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .preview-hypothesis strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+
+        .ds-shell {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 56px 36px 72px;
+        }
+
+        /* ── EYEBROW: just one mono caps strip + edit button ────────── */
+        .ds-eyebrow {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 36px;
+        }
+        .ds-eyebrow__label {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .ds-eyebrow__action {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 6px 14px;
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .ds-eyebrow__action:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            transform: translateY(-1px);
+        }
+        .ds-eyebrow__action:focus-visible {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+
+        /* ── HERO IDENTITY BLOCK ────────────────────────────────────── */
+        .ds-hero {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: end;
+            gap: 24px;
+            padding-bottom: 28px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 0;
+            animation: dsb-fade-in 320ms cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+        .ds-hero__left { min-width: 0; }
+        .ds-hero__caption {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            display: block;
+            margin-bottom: 10px;
+        }
+        .ds-hero__type {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            line-height: 1.15;
+            margin: 0 0 6px;
+        }
+        .ds-hero__name {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: -0.002em;
+            word-break: break-all;
+            line-height: 1.4;
+        }
+        .ds-hero__right {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 6px;
+            white-space: nowrap;
+        }
+        .ds-hero__status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 12px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .ds-hero__status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+            box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand-light) 60%, transparent);
+            animation: dsb-pulse 2600ms ease-out infinite;
+        }
+        @keyframes dsb-pulse {
+            0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand-light) 55%, transparent); }
+            70% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--brand-light) 0%, transparent); }
+            100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand-light) 0%, transparent); }
+        }
+        .ds-hero__cost {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 11.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+            font-variant-numeric: tabular-nums;
+        }
+        .ds-hero__cost strong {
+            color: var(--text-primary);
+            font-weight: 700;
+            font-size: 14px;
+            margin-right: 4px;
+        }
+
+        /* ── RIBBON: 5 vertical kv columns, hairline dividers ───────── */
+        .ds-ribbon {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            align-items: stretch;
+            padding: 26px 0;
+            border-bottom: 1px solid var(--border-subtle);
+            animation: dsb-fade-in 320ms cubic-bezier(0.4, 0, 0.2, 1) 120ms both;
+        }
+        @media (max-width: 880px) {
+            .ds-ribbon {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 0;
+            }
+            .ds-hero {
+                grid-template-columns: 1fr;
+            }
+            .ds-hero__right {
+                align-items: flex-start;
+            }
+        }
+
+        .ds-rib {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 8px 22px;
+            border-left: 1px solid var(--temp-ribbon-divider);
+            cursor: default;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+            animation: dsb-fade-in 280ms cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+        .ds-rib:nth-child(1) { border-left: none; padding-left: 0; animation-delay: 160ms; }
+        .ds-rib:nth-child(2) { animation-delay: 200ms; }
+        .ds-rib:nth-child(3) { animation-delay: 240ms; }
+        .ds-rib:nth-child(4) { animation-delay: 280ms; }
+        .ds-rib:nth-child(5) { animation-delay: 320ms; }
+
+        @media (max-width: 880px) {
+            .ds-rib { padding: 14px 18px; border-left: none; border-top: 1px solid var(--temp-ribbon-divider); }
+            .ds-rib:nth-child(1), .ds-rib:nth-child(2) { border-top: none; }
+            .ds-rib:nth-child(odd) { padding-left: 0; }
+        }
+
+        /* Hover lights the underline beneath the value */
+        .ds-rib::after {
+            content: "";
+            position: absolute;
+            left: 22px;
+            right: 22px;
+            bottom: 4px;
+            height: 1px;
+            background: var(--brand-light);
+            transform: scaleX(0);
+            transform-origin: left center;
+            opacity: 0;
+            transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ds-rib:nth-child(1)::after { left: 0; }
+        .ds-rib:hover::after {
+            transform: scaleX(1);
+            opacity: 1;
+        }
+
+        .ds-rib__key {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .ds-rib__glyph {
+            display: inline-flex;
+            color: var(--text-secondary);
+            transition: color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ds-rib:hover .ds-rib__glyph { color: var(--brand-light); }
+        .ds-rib__value {
+            font-size: 14px;
+            color: var(--text-primary);
+            font-weight: 600;
+            line-height: 1.3;
+            word-break: break-word;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.005em;
+        }
+        .ds-rib__value--mono {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 13px;
+            letter-spacing: 0;
+        }
+        .ds-rib__hint {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+
+        /* ── COST FOOTNOTE STRIP ────────────────────────────────────── */
+        .ds-foot {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            padding: 16px 0 0;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+        .ds-foot__right {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        @keyframes dsb-fade-in {
+            from { opacity: 0; transform: translateY(3px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .preview-theme-toggle {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            padding: 8px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            z-index: 100;
+            transition: background-color 200ms ease, border-color 200ms ease;
+        }
+        .preview-theme-toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .ds-hero, .ds-ribbon, .ds-rib {
+                animation: none;
+            }
+            .ds-rib, .ds-rib::after, .ds-eyebrow__action, .ds-rib__glyph {
+                transition: none;
+            }
+            .ds-hero__status-dot { animation: none; box-shadow: none; }
+            .ds-eyebrow__action:hover { transform: none; }
+        }
+    </style>
+</head>
+<body>
+    <header class="preview-hypothesis">
+        <strong>Composition B</strong>
+        Make project identity the headline; reduce every technical detail to a single hairline-divided ribbon — no per-tile boxes.
+    </header>
+
+    <main class="ds-shell">
+        <div class="ds-eyebrow">
+            <span class="ds-eyebrow__label">Configuration Summary</span>
+            <button class="ds-eyebrow__action" type="button">Edit config</button>
+        </div>
+
+        <section class="ds-hero" aria-label="Deployment identity">
+            <div class="ds-hero__left">
+                <span class="ds-hero__caption">Deployment Type</span>
+                <h2 class="ds-hero__type">GOAD Mini + Cobalt Strike</h2>
+                <span class="ds-hero__name">goad_mini_dev_harriss_macbook_pro</span>
+            </div>
+            <div class="ds-hero__right">
+                <span class="ds-hero__status">
+                    <span class="ds-hero__status-dot" aria-hidden="true"></span>
+                    Ready
+                </span>
+                <span class="ds-hero__cost"><strong>~$260</strong>/mo est.</span>
+            </div>
+        </section>
+
+        <section class="ds-ribbon" aria-label="Configuration values">
+            <div class="ds-rib">
+                <span class="ds-rib__key">
+                    <span class="ds-rib__glyph" aria-hidden="true">
+                        <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                            <rect x="1.5" y="1.5" width="11" height="11" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                            <path d="M5 7 L7 9 L10 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                        </svg>
+                    </span>
+                    Environment
+                </span>
+                <span class="ds-rib__value">DEV</span>
+                <span class="ds-rib__hint">isolated</span>
+            </div>
+
+            <div class="ds-rib">
+                <span class="ds-rib__key">
+                    <span class="ds-rib__glyph" aria-hidden="true">
+                        <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                            <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.2"/>
+                            <path d="M1.5 7 H12.5" stroke="currentColor" stroke-width="1.2"/>
+                            <path d="M7 1.5 C 9.5 4, 9.5 10, 7 12.5 C 4.5 10, 4.5 4, 7 1.5 Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+                        </svg>
+                    </span>
+                    Region
+                </span>
+                <span class="ds-rib__value ds-rib__value--mono">eu-central-1</span>
+                <span class="ds-rib__hint">Frankfurt</span>
+            </div>
+
+            <div class="ds-rib">
+                <span class="ds-rib__key">
+                    <span class="ds-rib__glyph" aria-hidden="true">
+                        <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                            <rect x="2.5" y="6" width="9" height="6.5" rx="1" stroke="currentColor" stroke-width="1.2"/>
+                            <path d="M4.5 6 V4.5 a2.5 2.5 0 0 1 5 0 V6" stroke="currentColor" stroke-width="1.2"/>
+                        </svg>
+                    </span>
+                    Mgmt CIDR
+                </span>
+                <span class="ds-rib__value ds-rib__value--mono">82.35.149.127/32</span>
+                <span class="ds-rib__hint">single host</span>
+            </div>
+
+            <div class="ds-rib">
+                <span class="ds-rib__key">
+                    <span class="ds-rib__glyph" aria-hidden="true">
+                        <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                            <circle cx="4" cy="10" r="2.5" stroke="currentColor" stroke-width="1.2"/>
+                            <path d="M5.7 8.3 L12 2 M10.5 3.5 L11.5 4.5 M8.5 5.5 L9.5 6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                        </svg>
+                    </span>
+                    SSH Keys
+                </span>
+                <span class="ds-rib__value">Auto-generated</span>
+                <span class="ds-rib__hint">ed25519</span>
+            </div>
+
+            <div class="ds-rib">
+                <span class="ds-rib__key">
+                    <span class="ds-rib__glyph" aria-hidden="true">
+                        <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                            <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.2"/>
+                            <path d="M7 4 V7 L9 8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                        </svg>
+                    </span>
+                    Est. Monthly
+                </span>
+                <span class="ds-rib__value ds-rib__value--mono">~$260/mo</span>
+                <span class="ds-rib__hint">7 instances</span>
+            </div>
+        </section>
+
+        <footer class="ds-foot">
+            <span>READY TO DEPLOY</span>
+            <span class="ds-foot__right">
+                <span>v2.4.0-preview</span>
+                <span>B/3</span>
+            </span>
+        </footer>
+    </main>
+
+    <button class="preview-theme-toggle" type="button"
+            onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+        Toggle theme
+    </button>
+</body>
+</html>
