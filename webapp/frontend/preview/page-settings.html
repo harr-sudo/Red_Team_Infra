@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TASTE Demo D1 — Settings page (V3-native)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           DEMO D1 — SETTINGS PAGE (V3-NATIVE)
+           Hypothesis: Settings is a TOC rail of 8 anchored sections —
+           eyebrow caps + title + description pattern across the board,
+           with spec-list adoption wherever the data is key/value.
+           ============================================================ */
+
+        :root {
+            --temp-page-max: 1080px;
+            --temp-rail-w: 200px;
+            --temp-section-gap: 40px;
+            --temp-hairline: var(--border-subtle);
+        }
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP (preview chrome) ──────────────────────── */
+        .ps-hypothesis {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 12px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .ps-hypothesis__text {
+            flex: 1;
+            min-width: 0;
+        }
+        .ps-hypothesis__text strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+        .ps-theme-toggle {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            padding: 5px 12px;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ps-theme-toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── PAGE FRAME ─────────────────────────────────────────────── */
+        .ps-shell {
+            max-width: var(--temp-page-max);
+            margin: 0 auto;
+            padding: 36px 32px 96px;
+        }
+
+        .ps-pagehead {
+            margin-bottom: 32px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .ps-pagehead__eyebrow {
+            display: block;
+            margin-bottom: 6px;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .ps-pagehead__title {
+            margin: 0 0 4px 0;
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+        }
+        .ps-pagehead__desc {
+            margin: 0;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* ── TWO-COLUMN LAYOUT ──────────────────────────────────────── */
+        .ps-layout {
+            display: grid;
+            grid-template-columns: var(--temp-rail-w) 1fr;
+            gap: 32px;
+            align-items: start;
+        }
+        @media (max-width: 900px) {
+            .ps-layout {
+                grid-template-columns: 1fr;
+                gap: 24px;
+            }
+        }
+
+        /* ── TOC RAIL ───────────────────────────────────────────────── */
+        .ps-toc {
+            position: sticky;
+            top: 64px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            padding: 14px 12px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+        }
+        @media (max-width: 900px) {
+            .ps-toc {
+                position: static;
+                flex-direction: row;
+                flex-wrap: wrap;
+                gap: 4px;
+            }
+        }
+        .ps-toc__eyebrow {
+            display: block;
+            margin: 2px 8px 10px 8px;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            /* Layer note: .ps-toc paints --bg-card. --text-secondary on
+               --bg-card passes AA in both themes; --text-muted is too dim. */
+            color: var(--text-secondary);
+        }
+        .ps-toc__item {
+            display: block;
+            padding: 8px 10px;
+            border-left: 2px solid transparent;
+            border-radius: 0 4px 4px 0;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            text-decoration: none;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ps-toc__item:hover {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border-left-color: var(--border-light);
+        }
+        .ps-toc__item.is-active {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border-left-color: var(--brand-light);
+            font-weight: 600;
+        }
+        .ps-toc__item:focus-visible {
+            outline: 2px solid var(--brand);
+            outline-offset: 2px;
+        }
+
+        /* ── MAIN CONTENT COLUMN ────────────────────────────────────── */
+        .ps-content {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: var(--temp-section-gap);
+        }
+
+        /* ── SECTION (V3 header + section-card body) ────────────────── */
+        .ps-section {
+            scroll-margin-top: 80px;
+        }
+        .ps-section__header {
+            margin: 0 0 14px 0;
+        }
+        .ps-section__eyebrow {
+            display: block;
+            margin-bottom: 6px;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            /* Layer note: .ps-section__header sits directly on --bg-body.
+               --text-secondary passes AA on --bg-body in both themes. */
+            color: var(--text-secondary);
+        }
+        .ps-section__title {
+            margin: 0 0 4px 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+        }
+        .ps-section__desc {
+            margin: 0;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* ── SECTION CARD ───────────────────────────────────────────── */
+        .ps-card {
+            padding: 22px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+        }
+        .ps-card--compact { padding: 14px 16px; }
+
+        .ps-card__row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 12px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .ps-card__row:last-child {
+            padding-bottom: 0;
+            margin-bottom: 0;
+            border-bottom: none;
+        }
+        .ps-card__rowkey {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .ps-card__rowval {
+            font-size: 13px;
+            color: var(--text-primary);
+            font-family: var(--font-family-mono);
+        }
+
+        /* ── SPEC-LIST INSET WRAPPER (composes Phase 2b spec-list) ──── */
+        .ps-spec-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 0 4px 12px 4px;
+            margin-bottom: 8px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .ps-spec-toolbar__status {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .ps-spec-toolbar__dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+        .ps-spec-toolbar__refresh {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            padding: 4px 12px;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ps-spec-toolbar__refresh:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* Local spec-list (mirrors Phase 2b .spec-list / .spec-row). */
+        .ps-spec-list {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            list-style: none;
+        }
+        .ps-spec-row {
+            position: relative;
+            display: grid;
+            grid-template-columns: 200px 1fr auto;
+            align-items: baseline;
+            gap: 20px;
+            padding: 12px 16px 12px 14px;
+            border-bottom: 1px solid var(--temp-hairline);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ps-spec-row:last-child { border-bottom: none; }
+        .ps-spec-row::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 10px;
+            bottom: 10px;
+            width: 2px;
+            border-radius: 2px;
+            background: var(--brand-light);
+            opacity: 0;
+            transform: scaleY(0.4);
+            transform-origin: center;
+            transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            pointer-events: none;
+        }
+        .ps-spec-row:hover {
+            background: var(--bg-card-hover);
+            transform: translateX(2px);
+        }
+        .ps-spec-row:hover::before {
+            opacity: 1;
+            transform: scaleY(1);
+        }
+        .ps-spec-row__key {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            /* Layer note: .ps-spec-row sits on .ps-card (--bg-card); on hover,
+               background flips to --bg-card-hover. --text-secondary passes
+               AA on both layers in both themes. */
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .ps-spec-row__value {
+            font-size: 13.5px;
+            color: var(--text-primary);
+            font-weight: 500;
+            min-width: 0;
+            word-break: break-word;
+        }
+        .ps-spec-row__value--mono {
+            font-family: var(--font-family-mono);
+            font-size: 13px;
+        }
+        .ps-spec-row__hint {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            /* Use --text-secondary, NOT --text-muted: hint sits inside row
+               which switches to --bg-card-hover on hover. --text-muted is
+               at the AA threshold and fails on hover surface in light mode. */
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+            white-space: nowrap;
+        }
+
+        /* Status pill */
+        .ps-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 9px;
+            border-radius: var(--radius-full);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        .ps-pill__dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+        .ps-pill--draft .ps-pill__dot { background: var(--text-muted); }
+
+        /* Cost row — heavier value treatment */
+        .ps-spec-row--cost .ps-spec-row__value {
+            font-family: var(--font-family-mono);
+            font-size: 17px;
+            font-weight: 700;
+            letter-spacing: -0.015em;
+        }
+
+        /* ── SEG CONTROL ────────────────────────────────────────────── */
+        .ps-seg {
+            display: inline-flex;
+            flex-wrap: wrap;
+            gap: 0;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            overflow: hidden;
+            background: var(--bg-input);
+        }
+        .ps-seg__opt {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            border-left: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 7px 16px;
+            font-family: var(--font-family-base);
+            font-size: 11.5px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ps-seg__opt:first-child { border-left: 0; }
+        .ps-seg__opt:hover:not([disabled]) {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .ps-seg__opt.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+        .ps-seg__opt:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--brand-light) 50%, transparent);
+        }
+
+        /* ── ROADMAP CARDS ──────────────────────────────────────────── */
+        .ps-roadmap-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+        }
+        .ps-roadmap-card {
+            padding: 16px;
+            background: var(--bg-section);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ps-roadmap-card:hover {
+            border-color: var(--border-light);
+            transform: translateY(-2px);
+        }
+        .ps-roadmap-card__eyebrow {
+            display: block;
+            margin-bottom: 6px;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            /* Layer note: roadmap card paints --bg-section. --text-secondary
+               passes AA on --bg-section in both themes. */
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .ps-roadmap-card__title {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .ps-roadmap-card__desc {
+            margin: 0;
+            font-size: 12.5px;
+            line-height: 1.5;
+            color: var(--text-secondary);
+        }
+        .ps-roadmap-card__priority {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 2px 8px;
+            border-radius: var(--radius-xs);
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            font-family: var(--font-family-mono);
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--text-primary);
+        }
+
+        /* ── STATUS DISPLAY (General section) ───────────────────────── */
+        .ps-status {
+            padding: 14px 18px;
+            background: var(--info-bg);
+            border: 1px solid var(--info-border);
+            border-radius: var(--radius);
+            color: var(--info-text);
+        }
+        .ps-status strong {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 13px;
+            color: var(--info-text);
+        }
+        .ps-status p {
+            margin: 4px 0 0 0;
+            font-size: 12.5px;
+            color: var(--info-text);
+        }
+
+        /* ── PREFS HELP ─────────────────────────────────────────────── */
+        .ps-prefs-help {
+            display: block;
+            margin-top: 12px;
+            font-size: 12px;
+            /* Layer note: sits inside .ps-card (--bg-card). --text-secondary
+               passes AA on --bg-card in both themes. */
+            color: var(--text-secondary);
+        }
+        .ps-prefs-label {
+            display: block;
+            margin-bottom: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .ps-spec-row, .ps-spec-row::before, .ps-roadmap-card,
+            .ps-seg__opt, .ps-toc__item, .ps-spec-toolbar__refresh,
+            .ps-theme-toggle {
+                transition: none;
+            }
+            .ps-spec-row:hover, .ps-roadmap-card:hover {
+                transform: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="ps-hypothesis">
+        <div class="ps-hypothesis__text">
+            <strong>Demo D1 — Settings</strong>
+            Settings is a TOC rail of 8 anchored sections — eyebrow caps + title + description pattern across the board, with spec-list adoption wherever the data is key/value.
+        </div>
+        <button class="ps-theme-toggle" type="button" id="theme-toggle">Toggle theme</button>
+    </header>
+
+    <main class="ps-shell">
+        <header class="ps-pagehead">
+            <span class="ps-pagehead__eyebrow">CONFIG · DASHBOARD</span>
+            <h1 class="ps-pagehead__title">Settings</h1>
+            <p class="ps-pagehead__desc">Application settings and preferences.</p>
+        </header>
+
+        <div class="ps-layout">
+            <aside class="ps-toc" role="navigation" aria-label="Settings sections">
+                <span class="ps-toc__eyebrow">SETTINGS · SECTIONS</span>
+                <a href="#ps-general" class="ps-toc__item is-active">General</a>
+                <a href="#ps-prereqs" class="ps-toc__item">AWS &amp; SSH Prerequisites</a>
+                <a href="#ps-domains" class="ps-toc__item">Domains &amp; DNS</a>
+                <a href="#ps-secrets" class="ps-toc__item">Secrets Manager</a>
+                <a href="#ps-services" class="ps-toc__item">Infrastructure Services</a>
+                <a href="#ps-cost" class="ps-toc__item">Cost Tracker</a>
+                <a href="#ps-prefs" class="ps-toc__item">Deployment Preferences</a>
+                <a href="#ps-roadmap" class="ps-toc__item">Roadmap</a>
+            </aside>
+
+            <div class="ps-content">
+
+                <!-- 1. GENERAL -->
+                <section id="ps-general" class="ps-section">
+                    <header class="ps-section__header">
+                        <span class="ps-section__eyebrow">CONFIG · GENERAL</span>
+                        <h2 class="ps-section__title">Application Information</h2>
+                        <p class="ps-section__desc">Build identity and dashboard release metadata.</p>
+                    </header>
+                    <div class="ps-status">
+                        <strong>Red Team Infrastructure Manager v2.4.0</strong>
+                        <p>Local management interface for deploying and managing red team infrastructure on AWS.</p>
+                        <p>Build a4f7e2c · 2026-05-17 · python 3.12 · terraform 1.9.4</p>
+                    </div>
+                </section>
+
+                <!-- 2. PREREQS -->
+                <section id="ps-prereqs" class="ps-section">
+                    <header class="ps-section__header">
+                        <span class="ps-section__eyebrow">CONFIG · WORKSTATION</span>
+                        <h2 class="ps-section__title">AWS &amp; SSH Prerequisites</h2>
+                        <p class="ps-section__desc">Verify the tools and credentials your workstation needs before deploying.</p>
+                    </header>
+                    <div class="ps-card">
+                        <div class="ps-card__row">
+                            <span class="ps-card__rowkey">System Dependencies</span>
+                            <span class="ps-card__rowval"><span class="ps-pill"><span class="ps-pill__dot"></span>OK</span></span>
+                        </div>
+                        <div class="ps-card__row">
+                            <span class="ps-card__rowkey">AWS Credentials</span>
+                            <span class="ps-card__rowval"><span class="ps-pill"><span class="ps-pill__dot"></span>VALID</span></span>
+                        </div>
+                        <div class="ps-card__row">
+                            <span class="ps-card__rowkey">AWS Permissions</span>
+                            <span class="ps-card__rowval"><span class="ps-pill"><span class="ps-pill__dot"></span>PASS</span></span>
+                        </div>
+                        <div class="ps-card__row">
+                            <span class="ps-card__rowkey">SSH Key Pair</span>
+                            <span class="ps-card__rowval"><span class="ps-pill"><span class="ps-pill__dot"></span>ED25519</span></span>
+                        </div>
+                        <div class="ps-card__row">
+                            <span class="ps-card__rowkey">GitHub CLI</span>
+                            <span class="ps-card__rowval"><span class="ps-pill"><span class="ps-pill__dot"></span>AUTH</span></span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 3. DOMAINS & DNS -->
+                <section id="ps-domains" class="ps-section">
+                    <header class="ps-section__header">
+                        <span class="ps-section__eyebrow">DNS · ROUTE 53</span>
+                        <h2 class="ps-section__title">Domains &amp; DNS</h2>
+                        <p class="ps-section__desc">Route 53 hosted zones in this account. Linked to deployments that reference them in <code>primary_domain_name</code>.</p>
+                    </header>
+                    <div class="ps-card">
+                        <div class="ps-spec-toolbar">
+                            <span class="ps-spec-toolbar__status">
+                                <span class="ps-spec-toolbar__dot"></span>3 zones · refreshed 4 min ago
+                            </span>
+                            <button class="ps-spec-toolbar__refresh" type="button">Refresh</button>
+                        </div>
+                        <ul class="ps-spec-list" aria-label="Route 53 hosted zones">
+                            <li class="ps-spec-row">
+                                <span class="ps-spec-row__key">attacker.lab</span>
+                                <span class="ps-spec-row__value ps-spec-row__value--mono">Z0A4F71D6E9B2C8X · public</span>
+                                <span class="ps-spec-row__hint">12 records</span>
+                            </li>
+                            <li class="ps-spec-row">
+                                <span class="ps-spec-row__key">redteam-ops.io</span>
+                                <span class="ps-spec-row__value ps-spec-row__value--mono">Z08217549B3F1E2DA · public</span>
+                                <span class="ps-spec-row__hint">7 records</span>
+                            </li>
+                            <li class="ps-spec-row">
+                                <span class="ps-spec-row__key">internal.lab</span>
+                                <span class="ps-spec-row__value ps-spec-row__value--mono">Z09812456E7B3F2A · private</span>
+                                <span class="ps-spec-row__hint">4 records</span>
+                            </li>
+                        </ul>
+                    </div>
+                </section>
+
+                <!-- 4. SECRETS -->
+                <section id="ps-secrets" class="ps-section">
+                    <header class="ps-section__header">
+                        <span class="ps-section__eyebrow">AWS · SECRETS MANAGER</span>
+                        <h2 class="ps-section__title">Secrets Manager</h2>
+                        <p class="ps-section__desc">Project secrets stored in AWS Secrets Manager. Shared across deployments; never in Terraform state.</p>
+                    </header>
+                    <div class="ps-card">
+                        <div class="ps-spec-toolbar">
+                            <span class="ps-spec-toolbar__status">
+                                <span class="ps-spec-toolbar__dot"></span>4 secrets · eu-central-1
+                            </span>
+                            <button class="ps-spec-toolbar__refresh" type="button">Refresh</button>
+                        </div>
+                        <ul class="ps-spec-list" aria-label="AWS secrets">
+                            <li class="ps-spec-row">
+                                <span class="ps-spec-row__key">rti/cs/team-server-pw</span>
+                                <span class="ps-spec-row__value ps-spec-row__value--mono">arn:...:secret-A4F7E2</span>
+                                <span class="ps-spec-row__hint">rotated 12d ago</span>
+                            </li>
+                            <li class="ps-spec-row">
+                                <span class="ps-spec-row__key">rti/bastion/admin-pw</span>
+                                <span class="ps-spec-row__value ps-spec-row__value--mono">arn:...:secret-9C3B1F</span>
+                                <span class="ps-spec-row__hint">rotated 8d ago</span>
+                            </li>
+                            <li class="ps-spec-row">
+                                <span class="ps-spec-row__key">rti/goad/ad-domain-pw</span>
+                                <span class="ps-spec-row__value ps-spec-row__value--mono">arn:...:secret-B7E2A8</span>
+                                <span class="ps-spec-row__hint">rotated 3d ago</span>
+                            </li>
+                            <li class="ps-spec-row">
+                                <span class="ps-spec-row__key">rti/route53/api-token</span>
+                                <span class="ps-spec-row__value ps-spec-row__value--mono">arn:...:secret-2D8F4A</span>
+                                <span class="ps-spec-row__hint">rotated 21d ago</span>
+                            </li>
+                        </ul>
+                    </div>
+                </section>
+
+                <!-- 5. INFRA SERVICES -->
+                <section id="ps-services" class="ps-section">
+                    <header class="ps-section__header">
+                        <span class="ps-section__eyebrow">PLATFORM · INFRA SERVICES</span>
+                        <h2 class="ps-section__title">Infrastructure Services</h2>
+                        <p class="ps-section__desc">Shared platform services (dashboard server, S3 state backend, etc.) — distinct from per-deployment infrastructure.</p>
+                    </header>
+                    <div class="ps-card">
+                        <div class="ps-spec-toolbar">
+                            <span class="ps-spec-toolbar__status">
+                                <span class="ps-spec-toolbar__dot"></span>1 service · online
+                            </span>
+                            <button class="ps-spec-toolbar__refresh" type="button">Refresh</button>
+                        </div>
+                        <ul class="ps-spec-list" aria-label="Infrastructure services">
+                            <li class="ps-spec-row">
+                                <span class="ps-spec-row__key">Dashboard Server</span>
+                                <span class="ps-spec-row__value ps-spec-row__value--mono">i-0a4f7e2c9b3d1f8a2</span>
+                                <span class="ps-spec-row__hint">t3.small · running</span>
+                            </li>
+                        </ul>
+                    </div>
+                </section>
+
+                <!-- 6. COST TRACKER -->
+                <section id="ps-cost" class="ps-section">
+                    <header class="ps-section__header">
+                        <span class="ps-section__eyebrow">CONFIG · SPEND</span>
+                        <h2 class="ps-section__title">Cost Tracker</h2>
+                        <p class="ps-section__desc">Live AWS Cost Explorer data for your tracked deployments.</p>
+                    </header>
+                    <div class="ps-card">
+                        <div class="ps-spec-toolbar">
+                            <span class="ps-spec-toolbar__status">
+                                <span class="ps-spec-toolbar__dot"></span>refreshed 2 min ago
+                            </span>
+                            <button class="ps-spec-toolbar__refresh" type="button">Refresh</button>
+                        </div>
+                        <ul class="ps-spec-list" aria-label="Cost summary">
+                            <li class="ps-spec-row ps-spec-row--cost">
+                                <span class="ps-spec-row__key">Total (MTD)</span>
+                                <span class="ps-spec-row__value">$147.82</span>
+                                <span class="ps-spec-row__hint">17 days</span>
+                            </li>
+                            <li class="ps-spec-row ps-spec-row--cost">
+                                <span class="ps-spec-row__key">Daily Avg</span>
+                                <span class="ps-spec-row__value">$8.69</span>
+                                <span class="ps-spec-row__hint">7-day moving</span>
+                            </li>
+                            <li class="ps-spec-row ps-spec-row--cost">
+                                <span class="ps-spec-row__key">Budget Remaining</span>
+                                <span class="ps-spec-row__value">$352.18</span>
+                                <span class="ps-spec-row__hint">$500 cap</span>
+                            </li>
+                            <li class="ps-spec-row ps-spec-row--cost">
+                                <span class="ps-spec-row__key">Est. Monthly</span>
+                                <span class="ps-spec-row__value">~$260</span>
+                                <span class="ps-spec-row__hint">at current rate</span>
+                            </li>
+                        </ul>
+                    </div>
+                </section>
+
+                <!-- 7. PREFERENCES -->
+                <section id="ps-prefs" class="ps-section">
+                    <header class="ps-section__header">
+                        <span class="ps-section__eyebrow">CONFIG · PREFERENCES</span>
+                        <h2 class="ps-section__title">Deployment Preferences</h2>
+                        <p class="ps-section__desc">Auto-refresh cadence for the Deployment Manager view.</p>
+                    </header>
+                    <div class="ps-card">
+                        <span class="ps-prefs-label">Auto-Refresh Interval</span>
+                        <div class="ps-seg" id="auto-refresh-seg" role="tablist" aria-label="Auto-refresh interval">
+                            <button type="button" class="ps-seg__opt" data-value="0" role="tab">Off</button>
+                            <button type="button" class="ps-seg__opt" data-value="10" role="tab">10s</button>
+                            <button type="button" class="ps-seg__opt is-active" data-value="30" role="tab" aria-selected="true">30s</button>
+                            <button type="button" class="ps-seg__opt" data-value="60" role="tab">60s</button>
+                            <button type="button" class="ps-seg__opt" data-value="120" role="tab">2m</button>
+                        </div>
+                        <small class="ps-prefs-help">Automatically refreshes resources and status on the Deployment Manager page.</small>
+                    </div>
+                </section>
+
+                <!-- 8. ROADMAP -->
+                <section id="ps-roadmap" class="ps-section">
+                    <header class="ps-section__header">
+                        <span class="ps-section__eyebrow">CONFIG · ROADMAP</span>
+                        <h2 class="ps-section__title">Roadmap</h2>
+                        <p class="ps-section__desc">Planned features and outstanding work items.</p>
+                    </header>
+                    <div class="ps-card">
+                        <div class="ps-roadmap-grid">
+                            <article class="ps-roadmap-card">
+                                <span class="ps-roadmap-card__eyebrow">BEACON · API</span>
+                                <h3 class="ps-roadmap-card__title">Payload Generation</h3>
+                                <p class="ps-roadmap-card__desc">Generate stageless/stager payloads from the web app without launching the CS client.</p>
+                                <span class="ps-roadmap-card__priority">P1 · HIGH</span>
+                            </article>
+                            <article class="ps-roadmap-card">
+                                <span class="ps-roadmap-card__eyebrow">UI · OPS</span>
+                                <h3 class="ps-roadmap-card__title">Credential Store</h3>
+                                <p class="ps-roadmap-card__desc">Single pane for all harvested credentials across active beacons; search by host.</p>
+                                <span class="ps-roadmap-card__priority">P2 · MID</span>
+                            </article>
+                            <article class="ps-roadmap-card">
+                                <span class="ps-roadmap-card__eyebrow">PLATFORM · SETUP</span>
+                                <h3 class="ps-roadmap-card__title">Host Setup Checker</h3>
+                                <p class="ps-roadmap-card__desc">Validate bootstrap scripts ran correctly on every EC2 instance; report on dashboard.</p>
+                                <span class="ps-roadmap-card__priority">P2 · MID</span>
+                            </article>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // --- Theme toggle -----------------------------------------------------
+        document.getElementById('theme-toggle').addEventListener('click', () => {
+            const html = document.documentElement;
+            const next = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+            html.setAttribute('data-theme', next);
+        });
+
+        // --- Smooth scroll + active section highlight -------------------------
+        const tocItems = Array.from(document.querySelectorAll('.ps-toc__item'));
+        const sections = tocItems
+            .map(a => document.querySelector(a.getAttribute('href')))
+            .filter(Boolean);
+
+        tocItems.forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.preventDefault();
+                const target = document.querySelector(item.getAttribute('href'));
+                if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+        });
+
+        // Scroll spy via IntersectionObserver
+        const setActive = (id) => {
+            tocItems.forEach(item => {
+                const isMatch = item.getAttribute('href') === '#' + id;
+                item.classList.toggle('is-active', isMatch);
+            });
+        };
+
+        const io = new IntersectionObserver((entries) => {
+            // Pick the entry closest to the top of the viewport that is intersecting
+            const visible = entries
+                .filter(e => e.isIntersecting)
+                .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+            if (visible.length > 0) {
+                setActive(visible[0].target.id);
+            }
+        }, {
+            rootMargin: '-100px 0px -55% 0px',
+            threshold: 0
+        });
+        sections.forEach(s => io.observe(s));
+
+        // Seg-control click handler
+        document.querySelectorAll('.ps-seg').forEach(seg => {
+            seg.addEventListener('click', (e) => {
+                const btn = e.target.closest('.ps-seg__opt');
+                if (!btn) return;
+                seg.querySelectorAll('.ps-seg__opt').forEach(o => {
+                    o.classList.remove('is-active');
+                    o.removeAttribute('aria-selected');
+                });
+                btn.classList.add('is-active');
+                btn.setAttribute('aria-selected', 'true');
+            });
+        });
+    </script>
+</body>
+</html>

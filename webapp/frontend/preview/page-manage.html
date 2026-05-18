@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TASTE Demo — Manage sub-pill</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           TASTE DEMO — Manage sub-pill (Set B / Demo 1)
+           Standalone composition. Hero header + spec-list summary +
+           action strip + resource detail table + scoped activity feed.
+           Dials: 5/6/5 — operator command center.
+           ============================================================ */
+
+        :root {
+            /* Preview-only tokens — do NOT add to palette.css. */
+            --temp-detail-row-rail: var(--brand-light);
+            --temp-detail-hairline: var(--border-subtle);
+        }
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: var(--font-size-base);
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP (preview chrome) ─────────────────────── */
+        .preview-strip {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .preview-strip__text strong {
+            display: inline-block;
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+        .preview-strip__toggle {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .preview-strip__toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── PAGE FRAME ─────────────────────────────────────────────── */
+        .pm-shell {
+            max-width: 920px;
+            margin: 0 auto;
+            padding: 40px 32px 64px;
+            animation: pm-fade-in 320ms var(--motion-easing-standard) both;
+        }
+
+        /* ── EYEBROW STRIP ─────────────────────────────────────────── */
+        .pm-eyebrow {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 22px;
+            flex-wrap: wrap;
+        }
+        .pm-eyebrow__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .pm-eyebrow__meta {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .pm-eyebrow__updated {
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+
+        /* ── HERO IDENTITY ─────────────────────────────────────────── */
+        .pm-hero {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 26px;
+        }
+        .pm-hero__caption {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .pm-hero__name {
+            font-family: var(--font-family-mono);
+            font-size: 22px;
+            font-weight: var(--font-weight-bold);
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            word-break: break-all;
+            line-height: 1.2;
+            margin: 0;
+        }
+        .pm-hero__type {
+            font-size: 14px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            margin: 0;
+        }
+        .pm-hero__type strong {
+            color: var(--text-primary);
+            font-weight: var(--font-weight-semibold);
+        }
+        .pm-hero__type .pm-hero__sep::before {
+            content: " · ";
+            color: var(--border-light);
+            margin: 0 4px;
+        }
+
+        /* ── ATTRIBUTION (last-touched-by) inside spec-row value ──── */
+        .pm-attr {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--font-family-mono);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+        }
+        .pm-attr__dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* ── ACTION STRIP (operator buttons) ───────────────────────── */
+        .pm-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 24px;
+            padding-top: 18px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .pm-action {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 8px 14px;
+            border-radius: var(--radius-xs);
+            font: inherit;
+            font-size: 12.5px;
+            font-weight: var(--font-weight-semibold);
+            letter-spacing: 0.01em;
+            cursor: pointer;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard),
+                        color var(--motion-duration-base) var(--motion-easing-standard),
+                        transform var(--motion-duration-base) var(--motion-easing-spring);
+        }
+        .pm-action:hover:not([disabled]) {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            transform: translateY(-1px);
+        }
+        .pm-action:focus-visible {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+        .pm-action .icon {
+            width: 13px;
+            height: 13px;
+            stroke-width: 1.4;
+            color: var(--text-secondary);
+            transition: color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .pm-action:hover:not([disabled]) .icon {
+            color: var(--text-primary);
+        }
+        .pm-action--danger {
+            border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+            color: var(--danger-text, var(--text-primary));
+        }
+        .pm-action--danger:hover:not([disabled]) {
+            background: color-mix(in srgb, var(--danger) 12%, transparent);
+            border-color: var(--danger);
+            color: var(--text-primary);
+        }
+        .pm-action--danger:hover:not([disabled]) .icon { color: var(--danger); }
+        .pm-action--danger:focus-visible {
+            border-color: var(--danger);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 28%, transparent);
+        }
+        .pm-action__icon[data-spinning="true"] {
+            animation: pm-spin 1.4s linear;
+        }
+
+        /* ── DESTROY CONFIRM STRIP ─────────────────────────────────── */
+        .pm-confirm {
+            display: none;
+            margin-top: 14px;
+            padding: 14px 16px;
+            border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--border));
+            border-radius: var(--radius-sm);
+            background: color-mix(in srgb, var(--danger) 7%, transparent);
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .pm-confirm[data-open="true"] { display: flex; }
+        .pm-confirm__text {
+            font-size: 12.5px;
+            color: var(--text-primary);
+            font-weight: var(--font-weight-medium);
+        }
+        .pm-confirm__text strong { color: var(--danger-text, var(--danger)); font-weight: var(--font-weight-bold); }
+        .pm-confirm__buttons {
+            display: inline-flex;
+            gap: 8px;
+        }
+
+        /* ── DETAIL SURFACE: resource table ─────────────────────────── */
+        .pm-detail {
+            margin-top: 36px;
+        }
+        .pm-detail__header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 10px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .pm-detail__title {
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-xs);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin: 0;
+        }
+        .pm-detail__count {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            font-variant-numeric: tabular-nums;
+        }
+        .pm-resource-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+        }
+        .pm-resource-table thead tr {
+            background: transparent;
+        }
+        .pm-resource-table th {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            text-align: left;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: transparent;
+        }
+        .pm-resource-table td {
+            padding: 10px 14px;
+            font-size: 12.5px;
+            color: var(--text-primary);
+            border-bottom: 1px solid var(--border-subtle);
+            background: transparent;
+            vertical-align: middle;
+        }
+        .pm-resource-table tbody tr:last-child td { border-bottom: none; }
+        .pm-resource-table tbody tr {
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .pm-resource-table tbody tr:hover {
+            background: var(--bg-card-hover);
+        }
+        .pm-resource-table td.pm-mono {
+            font-family: var(--font-family-mono);
+            font-size: 11.5px;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-secondary);
+        }
+        .pm-resource-table td.pm-name {
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+        }
+        .pm-resource-table td .pm-tiny-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 1px 7px;
+            border-radius: var(--radius-full);
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-bold);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+        }
+        .pm-resource-table td .pm-tiny-pill__dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--success);
+            flex-shrink: 0;
+        }
+
+        /* ── ACTIVITY FEED ─────────────────────────────────────────── */
+        .pm-activity {
+            margin-top: 32px;
+        }
+        .pm-activity__title {
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-xs);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin: 0 0 12px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .pm-activity__list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .pm-activity__row {
+            display: grid;
+            grid-template-columns: 90px 1fr auto;
+            align-items: baseline;
+            gap: 18px;
+            padding: 11px 4px;
+            border-bottom: 1px solid var(--temp-detail-hairline);
+        }
+        .pm-activity__row:last-child { border-bottom: none; }
+        .pm-activity__when {
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+        .pm-activity__what {
+            font-size: 12.5px;
+            color: var(--text-primary);
+            line-height: 1.45;
+        }
+        .pm-activity__op {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--font-family-mono);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+        }
+        .pm-activity__op-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .pm-activity__verb {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        /* ── ANIMATIONS ─────────────────────────────────────────────── */
+        @keyframes pm-fade-in {
+            from { opacity: 0; transform: translateY(2px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pm-spin {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .pm-shell, .pm-action, .pm-action__icon[data-spinning="true"],
+            .pm-resource-table tbody tr {
+                animation: none;
+                transition: none;
+            }
+            .pm-action:hover:not([disabled]) {
+                transform: none;
+            }
+        }
+
+        @media (max-width: 720px) {
+            .pm-eyebrow { flex-direction: column; align-items: flex-start; gap: 8px; }
+            .pm-actions { flex-direction: column; align-items: stretch; }
+            .pm-action { justify-content: center; }
+            .pm-activity__row { grid-template-columns: 1fr; gap: 4px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Inline icon library — same symbol-library pattern Phase 2b established. -->
+    <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="icon-refresh" viewBox="0 0 14 14"
+                    fill="none" stroke="currentColor" stroke-width="1.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11.5 3.5 A4.5 4.5 0 1 0 12 8"/>
+                <path d="M11.5 1.5 V4 H9"/>
+            </symbol>
+            <symbol id="icon-logs" viewBox="0 0 14 14"
+                    fill="none" stroke="currentColor" stroke-width="1.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2.5" y="1.5" width="9" height="11" rx="0.8"/>
+                <path d="M4.5 4.5 H9.5"/>
+                <path d="M4.5 6.5 H9.5"/>
+                <path d="M4.5 8.5 H7.5"/>
+            </symbol>
+            <symbol id="icon-health" viewBox="0 0 14 14"
+                    fill="none" stroke="currentColor" stroke-width="1.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1.5 7 H4 L5 4.5 L7 9.5 L8.5 7 L9.5 8 H12.5"/>
+            </symbol>
+            <symbol id="icon-trash" viewBox="0 0 14 14"
+                    fill="none" stroke="currentColor" stroke-width="1.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2.5 4 H11.5"/>
+                <path d="M3.5 4 L4 12 H10 L10.5 4"/>
+                <path d="M5.5 4 V2.5 H8.5 V4"/>
+                <path d="M6 6.5 V10 M8 6.5 V10"/>
+            </symbol>
+        </defs>
+    </svg>
+
+    <header class="preview-strip">
+        <span class="preview-strip__text">
+            <strong>Manage demo</strong>
+            Manage is the operator's command center for one deployment — TASTE hero, spec-list summary, action strip, and dense detail tables below for the operator who needs to dig.
+        </span>
+        <button class="preview-strip__toggle" type="button"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+            Toggle theme
+        </button>
+    </header>
+
+    <main class="pm-shell">
+        <!-- Eyebrow strip -->
+        <div class="pm-eyebrow">
+            <span class="pm-eyebrow__label">Deployment Manager</span>
+            <div class="pm-eyebrow__meta">
+                <span class="pm-eyebrow__updated">refreshed 14s ago</span>
+                <span class="spec-pill spec-pill--live" aria-live="polite">
+                    <span class="spec-pill__dot" aria-hidden="true"></span>
+                    LIVE
+                </span>
+            </div>
+        </div>
+
+        <!-- Hero identity -->
+        <section class="pm-hero" aria-label="Deployment identity">
+            <span class="pm-hero__caption">DEPLOYMENT</span>
+            <h1 class="pm-hero__name">goad_mini_dev_harriss_macbook_pro</h1>
+            <p class="pm-hero__type">
+                <strong>GOAD Mini + Cobalt Strike</strong>
+                <span class="pm-hero__sep">running healthy in eu-central-1</span>
+            </p>
+        </section>
+
+        <!-- Spec-list summary -->
+        <dl class="spec-list" aria-label="Deployment summary">
+            <div class="spec-row" data-readonly="true">
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">Region</dt>
+                    <dd class="spec-row__value spec-row__value--mono">eu-central-1</dd>
+                    <dd class="spec-row__hint">Frankfurt</dd>
+                    <span aria-hidden="true"></span>
+                </div>
+            </div>
+            <div class="spec-row" data-readonly="true">
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">Instances</dt>
+                    <dd class="spec-row__value spec-row__value--mono">7 running / 0 stopped</dd>
+                    <dd class="spec-row__hint">all healthy</dd>
+                    <span aria-hidden="true"></span>
+                </div>
+            </div>
+            <div class="spec-row" data-readonly="true">
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">Public IPs</dt>
+                    <dd class="spec-row__value spec-row__value--mono">3</dd>
+                    <dd class="spec-row__hint">one per redirector</dd>
+                    <span aria-hidden="true"></span>
+                </div>
+            </div>
+            <div class="spec-row" data-readonly="true">
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">Bastion</dt>
+                    <dd class="spec-row__value spec-row__value--mono">82.35.149.127:22</dd>
+                    <dd class="spec-row__hint">operator IP</dd>
+                    <span aria-hidden="true"></span>
+                </div>
+            </div>
+            <div class="spec-row" data-readonly="true">
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">Security Groups</dt>
+                    <dd class="spec-row__value spec-row__value--mono">5</dd>
+                    <dd class="spec-row__hint">all least-privilege</dd>
+                    <span aria-hidden="true"></span>
+                </div>
+            </div>
+            <div class="spec-row" data-readonly="true">
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">Estimated Monthly</dt>
+                    <dd class="spec-row__value spec-row__value--mono spec-row__value--strong">~$340/mo</dd>
+                    <dd class="spec-row__hint">7 instances + NAT</dd>
+                    <span aria-hidden="true"></span>
+                </div>
+            </div>
+            <div class="spec-row" data-readonly="true">
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">Last Touched By</dt>
+                    <dd class="spec-row__value">
+                        <span class="pm-attr">
+                            <span class="pm-attr__dot" style="background: #3b82f6;" aria-hidden="true"></span>
+                            alice
+                        </span>
+                    </dd>
+                    <dd class="spec-row__hint">2h ago</dd>
+                    <span aria-hidden="true"></span>
+                </div>
+            </div>
+            <div class="spec-row" data-readonly="true">
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">Created</dt>
+                    <dd class="spec-row__value spec-row__value--mono">2026-04-12</dd>
+                    <dd class="spec-row__hint">by harris</dd>
+                    <span aria-hidden="true"></span>
+                </div>
+            </div>
+        </dl>
+
+        <!-- Action strip -->
+        <div class="pm-actions" role="toolbar" aria-label="Deployment actions">
+            <button class="pm-action" type="button" id="pm-action-refresh" onclick="pmRefresh(this)">
+                <svg class="icon pm-action__icon" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                <span>Refresh</span>
+            </button>
+            <button class="pm-action" type="button">
+                <svg class="icon" aria-hidden="true"><use href="#icon-logs"/></svg>
+                <span>View Logs</span>
+            </button>
+            <button class="pm-action" type="button">
+                <svg class="icon" aria-hidden="true"><use href="#icon-health"/></svg>
+                <span>Health Check</span>
+            </button>
+            <button class="pm-action pm-action--danger" type="button" id="pm-action-destroy" onclick="pmDestroyStage1()">
+                <svg class="icon" aria-hidden="true"><use href="#icon-trash"/></svg>
+                <span>Destroy</span>
+            </button>
+        </div>
+
+        <!-- Two-stage destroy confirm strip -->
+        <div class="pm-confirm" id="pm-confirm" role="alertdialog" aria-labelledby="pm-confirm-text">
+            <span class="pm-confirm__text" id="pm-confirm-text">
+                <strong>This will destroy all 7 instances.</strong> Type the project name to confirm — or cancel.
+            </span>
+            <span class="pm-confirm__buttons">
+                <button class="spec-edit-btn" type="button" onclick="pmDestroyCancel()">Cancel</button>
+                <button class="spec-edit-btn spec-edit-btn--danger" type="button" onclick="pmDestroyStage2(this)">Yes, destroy</button>
+            </span>
+        </div>
+
+        <!-- Detail surface — resource table -->
+        <section class="pm-detail" aria-label="Deployed resources">
+            <div class="pm-detail__header">
+                <h2 class="pm-detail__title">Deployed Resources</h2>
+                <span class="pm-detail__count">7 instances · 3 EIPs · 5 SGs</span>
+            </div>
+            <table class="pm-resource-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Instance ID</th>
+                        <th>Private IP</th>
+                        <th>Public IP</th>
+                        <th>SG</th>
+                        <th>State</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="pm-name">cs-team-server-01</td>
+                        <td>t3.medium</td>
+                        <td class="pm-mono">i-0a4f8c7d2e1b9f3a4</td>
+                        <td class="pm-mono">10.0.10.42</td>
+                        <td class="pm-mono">—</td>
+                        <td class="pm-mono">sg-c2-team</td>
+                        <td><span class="pm-tiny-pill"><span class="pm-tiny-pill__dot"></span>RUN</span></td>
+                    </tr>
+                    <tr>
+                        <td class="pm-name">redirector-https-01</td>
+                        <td>t3.micro</td>
+                        <td class="pm-mono">i-0b5e9d8a3c2f7b1c5</td>
+                        <td class="pm-mono">10.0.1.81</td>
+                        <td class="pm-mono">3.74.118.92</td>
+                        <td class="pm-mono">sg-redir</td>
+                        <td><span class="pm-tiny-pill"><span class="pm-tiny-pill__dot"></span>RUN</span></td>
+                    </tr>
+                    <tr>
+                        <td class="pm-name">redirector-https-02</td>
+                        <td>t3.micro</td>
+                        <td class="pm-mono">i-0c6f0e9b4d3a8c2d6</td>
+                        <td class="pm-mono">10.0.2.142</td>
+                        <td class="pm-mono">18.195.44.207</td>
+                        <td class="pm-mono">sg-redir</td>
+                        <td><span class="pm-tiny-pill"><span class="pm-tiny-pill__dot"></span>RUN</span></td>
+                    </tr>
+                    <tr>
+                        <td class="pm-name">bastion-win</td>
+                        <td>t3.medium</td>
+                        <td class="pm-mono">i-0d71a0c5e4b9d3e7f</td>
+                        <td class="pm-mono">10.0.0.18</td>
+                        <td class="pm-mono">52.59.201.14</td>
+                        <td class="pm-mono">sg-bastion</td>
+                        <td><span class="pm-tiny-pill"><span class="pm-tiny-pill__dot"></span>RUN</span></td>
+                    </tr>
+                    <tr>
+                        <td class="pm-name">goad-dc01</td>
+                        <td>t3.medium</td>
+                        <td class="pm-mono">i-0e82b1d6f5c0e4f80</td>
+                        <td class="pm-mono">10.0.11.10</td>
+                        <td class="pm-mono">—</td>
+                        <td class="pm-mono">sg-goad-dc</td>
+                        <td><span class="pm-tiny-pill"><span class="pm-tiny-pill__dot"></span>RUN</span></td>
+                    </tr>
+                    <tr>
+                        <td class="pm-name">goad-srv02</td>
+                        <td>t3.small</td>
+                        <td class="pm-mono">i-0f93c2e7a6d1f5a91</td>
+                        <td class="pm-mono">10.0.11.22</td>
+                        <td class="pm-mono">—</td>
+                        <td class="pm-mono">sg-goad-srv</td>
+                        <td><span class="pm-tiny-pill"><span class="pm-tiny-pill__dot"></span>RUN</span></td>
+                    </tr>
+                    <tr>
+                        <td class="pm-name">goad-jumpbox</td>
+                        <td>t2.small</td>
+                        <td class="pm-mono">i-1a04d3f8b7e2a6ba2</td>
+                        <td class="pm-mono">10.0.0.55</td>
+                        <td class="pm-mono">3.123.88.41</td>
+                        <td class="pm-mono">sg-jumpbox</td>
+                        <td><span class="pm-tiny-pill"><span class="pm-tiny-pill__dot"></span>RUN</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Activity feed (project-scoped) -->
+        <section class="pm-activity" aria-label="Recent activity for this project">
+            <h2 class="pm-activity__title">Recent Activity for this Project</h2>
+            <ul class="pm-activity__list">
+                <li class="pm-activity__row">
+                    <span class="pm-activity__when">2h ago</span>
+                    <span class="pm-activity__what">
+                        <span class="pm-activity__op">
+                            <span class="pm-activity__op-dot" style="background: #3b82f6;" aria-hidden="true"></span>
+                            alice
+                        </span>
+                        ran health-check — all 7 instances healthy
+                    </span>
+                    <span class="pm-activity__verb">HEALTH</span>
+                </li>
+                <li class="pm-activity__row">
+                    <span class="pm-activity__when">5h ago</span>
+                    <span class="pm-activity__what">
+                        <span class="pm-activity__op">
+                            <span class="pm-activity__op-dot" style="background: #a31621;" aria-hidden="true"></span>
+                            harris
+                        </span>
+                        rotated SSH key for cs-team-server-01
+                    </span>
+                    <span class="pm-activity__verb">CONFIG</span>
+                </li>
+                <li class="pm-activity__row">
+                    <span class="pm-activity__when">yesterday</span>
+                    <span class="pm-activity__what">
+                        <span class="pm-activity__op">
+                            <span class="pm-activity__op-dot" style="background: #0d9488;" aria-hidden="true"></span>
+                            bob
+                        </span>
+                        provisioned GOAD AD lab — 22 minutes
+                    </span>
+                    <span class="pm-activity__verb">PROVISION</span>
+                </li>
+                <li class="pm-activity__row">
+                    <span class="pm-activity__when">2d ago</span>
+                    <span class="pm-activity__what">
+                        <span class="pm-activity__op">
+                            <span class="pm-activity__op-dot" style="background: #a31621;" aria-hidden="true"></span>
+                            harris
+                        </span>
+                        attached EIP 3.74.118.92 to redirector-https-01
+                    </span>
+                    <span class="pm-activity__verb">NETWORK</span>
+                </li>
+                <li class="pm-activity__row">
+                    <span class="pm-activity__when">2026-04-12</span>
+                    <span class="pm-activity__what">
+                        <span class="pm-activity__op">
+                            <span class="pm-activity__op-dot" style="background: #a31621;" aria-hidden="true"></span>
+                            harris
+                        </span>
+                        terraform apply — 7 resources created (initial deploy)
+                    </span>
+                    <span class="pm-activity__verb">CREATE</span>
+                </li>
+            </ul>
+        </section>
+    </main>
+
+    <script>
+        // ── Interactivity: refresh icon spin + two-stage destroy confirm ──
+
+        function pmRefresh(btn) {
+            const icon = btn.querySelector('.pm-action__icon');
+            if (!icon) return;
+            // Respect prefers-reduced-motion
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                return;
+            }
+            icon.setAttribute('data-spinning', 'true');
+            btn.disabled = true;
+            // CSS animation duration is 1.4s; resolve at 1.5s.
+            window.setTimeout(function () {
+                icon.removeAttribute('data-spinning');
+                btn.disabled = false;
+            }, 1500);
+        }
+
+        function pmDestroyStage1() {
+            const confirmStrip = document.getElementById('pm-confirm');
+            if (!confirmStrip) return;
+            confirmStrip.setAttribute('data-open', 'true');
+            // Scroll into view for visibility
+            confirmStrip.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        function pmDestroyStage2(btn) {
+            btn.textContent = 'Destroying...';
+            btn.disabled = true;
+            window.setTimeout(function () {
+                btn.textContent = 'Destroyed (demo)';
+            }, 1100);
+        }
+
+        function pmDestroyCancel() {
+            const confirmStrip = document.getElementById('pm-confirm');
+            if (!confirmStrip) return;
+            confirmStrip.setAttribute('data-open', 'false');
+        }
+    </script>
+</body>
+</html>

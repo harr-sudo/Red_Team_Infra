@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Operations · Payloads — TASTE Demo Set C</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           TASTE DEMO SET C — OPERATIONS · PAYLOADS
+           Hypothesis: Payloads is two columns — config form on the
+           left, parameter summary + artifacts list on the right —
+           both anchored by the spec-list rhythm.
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP ─────────────────────────────────────── */
+        .preview-hypothesis {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .preview-hypothesis__text strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: var(--letter-spacing-caps);
+        }
+        .preview-theme-toggle {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 6px 14px;
+            border-radius: var(--radius-xs);
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .preview-theme-toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── PAGE FRAME ────────────────────────────────────────────── */
+        .pp-shell {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 32px 32px 56px;
+        }
+        .pp-eyebrow {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 22px;
+        }
+        .pp-eyebrow__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .pp-eyebrow__meta {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+
+        /* ── TWO-COLUMN GRID ───────────────────────────────────────── */
+        .pp-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.1fr);
+            gap: 20px;
+            align-items: start;
+        }
+        @media (max-width: 960px) {
+            .pp-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ── FORM (LEFT) ───────────────────────────────────────────── */
+        .pp-form {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+        .pp-fieldset {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 16px 18px 18px;
+        }
+        .pp-fieldset__legend {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            display: block;
+        }
+        .pp-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+        .pp-field:last-child { margin-bottom: 0; }
+        .pp-field__label {
+            font-family: var(--font-family-mono);
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .pp-field__hint {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+        .pp-select, .pp-input {
+            width: 100%;
+            box-sizing: border-box;
+            appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 9px 12px;
+            border-radius: var(--radius-xs);
+            font-family: var(--font-family-mono);
+            font-size: 12.5px;
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pp-select:focus, .pp-input:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+        }
+        .pp-select {
+            background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                              linear-gradient(135deg, currentColor 50%, transparent 50%);
+            background-position: calc(100% - 16px) center, calc(100% - 11px) center;
+            background-size: 5px 5px, 5px 5px;
+            background-repeat: no-repeat;
+            padding-right: 28px;
+            color: var(--text-primary);
+        }
+
+        /* Segmented control sized to fit comfortably */
+        .pp-seg {
+            display: inline-flex;
+            flex-wrap: wrap;
+            gap: 0;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            overflow: hidden;
+            background: var(--bg-input);
+            width: 100%;
+        }
+        .pp-seg__option {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            border-left: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 8px 12px;
+            font-family: var(--font-family-base);
+            font-size: 11.5px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            flex: 1;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pp-seg__option:first-child { border-left: 0; }
+        .pp-seg__option:hover:not(.is-active) {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .pp-seg__option.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+        .pp-seg__option:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--brand-light) 50%, transparent);
+        }
+
+        /* Advanced collapsible */
+        .pp-advanced {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+        }
+        .pp-advanced__head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            padding: 14px 18px;
+            background: transparent;
+            border: 0;
+            color: var(--text-primary);
+            font-family: var(--font-family-mono);
+            font-size: 11.5px;
+            font-weight: 600;
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            cursor: pointer;
+            border-radius: var(--radius-sm);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pp-advanced__head:hover { background: var(--bg-card-hover); }
+        .pp-advanced__chevron {
+            transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+            color: var(--text-secondary);
+        }
+        .pp-advanced[data-open="true"] .pp-advanced__chevron {
+            transform: rotate(90deg);
+        }
+        .pp-advanced__body {
+            display: none;
+            padding: 0 18px 18px;
+        }
+        .pp-advanced[data-open="true"] .pp-advanced__body { display: block; }
+
+        .pp-toggle {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 0;
+            border-top: 1px solid var(--border-subtle);
+            cursor: pointer;
+        }
+        .pp-toggle:first-of-type { border-top: 0; }
+        .pp-toggle__check {
+            appearance: none;
+            width: 32px;
+            height: 18px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-full);
+            position: relative;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+            flex-shrink: 0;
+        }
+        .pp-toggle__check::after {
+            content: "";
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 12px;
+            height: 12px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+            transition: transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pp-toggle__check:checked {
+            background: color-mix(in srgb, var(--brand-light) 35%, var(--bg-input));
+            border-color: var(--brand-light);
+        }
+        .pp-toggle__check:checked::after {
+            transform: translateX(14px);
+            background: var(--brand-light);
+        }
+        .pp-toggle__check:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+        .pp-toggle__text {
+            flex: 1;
+            min-width: 0;
+        }
+        .pp-toggle__name {
+            color: var(--text-primary);
+            font-size: 12.5px;
+            font-weight: 600;
+        }
+        .pp-toggle__hint {
+            color: var(--text-secondary);
+            font-size: 11px;
+            font-family: var(--font-family-mono);
+            letter-spacing: 0.02em;
+        }
+
+        /* Generate button */
+        .pp-generate {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: 100%;
+            padding: 12px 18px;
+            background: var(--brand-light);
+            color: var(--text-inverse);
+            border: 1px solid var(--brand-light);
+            border-radius: var(--radius-xs);
+            font-family: var(--font-family-base);
+            font-size: 12.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .pp-generate:hover {
+            background: var(--brand);
+            border-color: var(--brand);
+            transform: translateY(-1px);
+        }
+        .pp-generate:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 36%, transparent);
+        }
+
+        /* ── PREVIEW (RIGHT) ───────────────────────────────────────── */
+        .pp-preview {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            position: sticky;
+            top: 8px;
+        }
+        @media (max-width: 960px) {
+            .pp-preview { position: static; }
+        }
+        .pp-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+        }
+        .pp-card__head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 16px 8px;
+        }
+        .pp-card__eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+
+        .pp-summary-list {
+            list-style: none;
+        }
+        .pp-summary-list .spec-row__head {
+            grid-template-columns: 150px 1fr auto;
+            padding: 11px 16px;
+            cursor: default;
+        }
+        .pp-summary-list .spec-row:hover .spec-row__head {
+            background: transparent;
+            transform: none;
+        }
+        .pp-summary-list .spec-row:hover .spec-row__head::before { opacity: 0; }
+
+        /* Artifacts */
+        .pp-artifacts-list {
+            list-style: none;
+        }
+        .pp-artifacts-list .spec-row__head {
+            grid-template-columns: 1fr auto auto;
+            gap: 14px;
+            padding: 11px 16px;
+            cursor: default;
+        }
+        .pp-artifacts-list .spec-row:hover .spec-row__head {
+            background: transparent;
+            transform: none;
+        }
+        .pp-artifacts-list .spec-row:hover .spec-row__head::before { opacity: 0; }
+        .pp-artifact__name {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+        .pp-artifact__file {
+            font-family: var(--font-family-mono);
+            color: var(--text-primary);
+            font-size: 13px;
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .pp-artifact__meta {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+        .pp-artifact__size {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+            align-self: center;
+        }
+        .pp-artifact__actions {
+            display: inline-flex;
+            gap: 6px;
+            align-self: center;
+        }
+        .pp-artifact__btn {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 5px 10px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            color: var(--text-primary);
+            font-family: var(--font-family-base);
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pp-artifact__btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--brand-light);
+        }
+        .pp-artifact__btn:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-light) 50%, transparent);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * { transition: none !important; animation: none !important; }
+        }
+    </style>
+</head>
+<body>
+    <svg id="icon-defs" width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="icon-chevron-right" viewBox="0 0 14 14">
+                <path d="M5 2.5 L9.5 7 L5 11.5"/>
+            </symbol>
+            <symbol id="icon-download" viewBox="0 0 14 14">
+                <path d="M7 1.5 L7 9"/>
+                <path d="M3.5 6 L7 9.5 L10.5 6"/>
+                <path d="M2 12 L12 12"/>
+            </symbol>
+            <symbol id="icon-eye" viewBox="0 0 14 14">
+                <path d="M1 7 C3 3.5 5 2.5 7 2.5 C9 2.5 11 3.5 13 7 C11 10.5 9 11.5 7 11.5 C5 11.5 3 10.5 1 7 Z"/>
+                <circle cx="7" cy="7" r="2"/>
+            </symbol>
+            <symbol id="icon-play" viewBox="0 0 14 14">
+                <path d="M3.5 2 L11 7 L3.5 12 Z"/>
+            </symbol>
+        </defs>
+    </svg>
+
+    <header class="preview-hypothesis">
+        <div class="preview-hypothesis__text">
+            <strong>Demo C·3</strong>
+            Payloads is two columns — config form on the left, parameter summary + artifacts list on the right — both anchored by the spec-list rhythm.
+        </div>
+        <button class="preview-theme-toggle" type="button"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+            Toggle theme
+        </button>
+    </header>
+
+    <main class="pp-shell">
+        <div class="pp-eyebrow">
+            <span class="pp-eyebrow__label">Operations · Payloads</span>
+            <span class="pp-eyebrow__meta" id="pp-eyebrow-meta">3 artifacts in workspace</span>
+        </div>
+
+        <div class="pp-grid">
+            <!-- LEFT: CONFIG FORM -->
+            <form class="pp-form" id="pp-form" autocomplete="off" onsubmit="event.preventDefault();">
+                <fieldset class="pp-fieldset">
+                    <legend class="pp-fieldset__legend">Listener</legend>
+                    <div class="pp-field">
+                        <label class="pp-field__label" for="pp-listener">Selected listener</label>
+                        <select class="pp-select" id="pp-listener" name="listener">
+                            <option value="https-main">https-main · 443</option>
+                            <option value="dns-fallback">dns-fallback · 53</option>
+                            <option value="https-backup">https-backup · 8443</option>
+                            <option value="smb-pivot">smb-pivot · named pipe</option>
+                        </select>
+                        <span class="pp-field__hint">Beacon traffic routes through this listener</span>
+                    </div>
+                </fieldset>
+
+                <fieldset class="pp-fieldset">
+                    <legend class="pp-fieldset__legend">Output</legend>
+
+                    <div class="pp-field">
+                        <label class="pp-field__label">Format</label>
+                        <div class="pp-seg" role="radiogroup" aria-label="Payload format" data-pp-group="format">
+                            <button type="button" class="pp-seg__option is-active" role="radio" aria-checked="true" data-value="exe">exe</button>
+                            <button type="button" class="pp-seg__option" role="radio" aria-checked="false" data-value="dll">dll</button>
+                            <button type="button" class="pp-seg__option" role="radio" aria-checked="false" data-value="shellcode">shellcode</button>
+                            <button type="button" class="pp-seg__option" role="radio" aria-checked="false" data-value="powershell">powershell</button>
+                            <button type="button" class="pp-seg__option" role="radio" aria-checked="false" data-value="python">python</button>
+                        </div>
+                    </div>
+
+                    <div class="pp-field">
+                        <label class="pp-field__label">Architecture</label>
+                        <div class="pp-seg" role="radiogroup" aria-label="Architecture" data-pp-group="arch">
+                            <button type="button" class="pp-seg__option is-active" role="radio" aria-checked="true" data-value="x64">x64</button>
+                            <button type="button" class="pp-seg__option" role="radio" aria-checked="false" data-value="x86">x86</button>
+                        </div>
+                    </div>
+
+                    <div class="pp-field">
+                        <label class="pp-field__label" for="pp-filename">Output filename</label>
+                        <input class="pp-input" id="pp-filename" name="filename" type="text" value="implant_2026_05_18.exe">
+                        <span class="pp-field__hint">Used as the artifact name in the workspace</span>
+                    </div>
+                </fieldset>
+
+                <div class="pp-advanced" id="pp-advanced" data-open="false">
+                    <button class="pp-advanced__head" type="button" aria-expanded="false"
+                            onclick="(function(b){const a=document.getElementById('pp-advanced');const open=a.getAttribute('data-open')==='true';a.setAttribute('data-open', String(!open));b.setAttribute('aria-expanded', String(!open));})(this)">
+                        Advanced
+                        <svg class="icon pp-advanced__chevron" aria-hidden="true"><use href="#icon-chevron-right"/></svg>
+                    </button>
+                    <div class="pp-advanced__body">
+                        <label class="pp-toggle">
+                            <input class="pp-toggle__check" type="checkbox" id="pp-advanced-inject" data-pp-flag="inject">
+                            <span class="pp-toggle__text">
+                                <span class="pp-toggle__name">Process injection</span><br>
+                                <span class="pp-toggle__hint">Inject into spawnto target (CreateRemoteThread)</span>
+                            </span>
+                        </label>
+                        <label class="pp-toggle">
+                            <input class="pp-toggle__check" type="checkbox" id="pp-advanced-bof" data-pp-flag="bof">
+                            <span class="pp-toggle__text">
+                                <span class="pp-toggle__name">BOF wrapper</span><br>
+                                <span class="pp-toggle__hint">Wrap as Beacon Object File (.o)</span>
+                            </span>
+                        </label>
+                        <label class="pp-toggle">
+                            <input class="pp-toggle__check" type="checkbox" id="pp-advanced-stageless" data-pp-flag="stageless" checked>
+                            <span class="pp-toggle__text">
+                                <span class="pp-toggle__name">Stageless</span><br>
+                                <span class="pp-toggle__hint">Bundle full beacon — no second-stage fetch</span>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+
+                <button class="pp-generate" type="submit">
+                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-play"/></svg>
+                    Generate payload
+                </button>
+            </form>
+
+            <!-- RIGHT: PARAMETER SUMMARY + ARTIFACTS -->
+            <section class="pp-preview" aria-label="Live preview">
+                <div class="pp-card">
+                    <div class="pp-card__head">
+                        <span class="pp-card__eyebrow">Parameters · Live</span>
+                        <span class="spec-pill spec-pill--draft">
+                            <span class="spec-pill__dot"></span>DRAFT
+                        </span>
+                    </div>
+                    <ol class="spec-list pp-summary-list" id="pp-summary-list" aria-label="Payload parameters">
+                        <!-- Rendered by JS -->
+                    </ol>
+                </div>
+
+                <div class="pp-card">
+                    <div class="pp-card__head">
+                        <span class="pp-card__eyebrow">Artifacts · 3 in workspace</span>
+                        <span class="pp-eyebrow__meta">last 24h</span>
+                    </div>
+                    <ol class="spec-list pp-artifacts-list" aria-label="Generated artifacts">
+                        <li class="spec-row">
+                            <div class="spec-row__head">
+                                <div class="pp-artifact__name">
+                                    <span class="pp-artifact__file">implant_2026_05_18.exe</span>
+                                    <span class="pp-artifact__meta">2026-05-18 14:08 UTC · https-main · stageless x64</span>
+                                </div>
+                                <span class="pp-artifact__size">412 KB</span>
+                                <span class="pp-artifact__actions">
+                                    <button type="button" class="pp-artifact__btn" title="Download">
+                                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-download"/></svg>
+                                        Download
+                                    </button>
+                                    <button type="button" class="pp-artifact__btn" title="View">
+                                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-eye"/></svg>
+                                        View
+                                    </button>
+                                </span>
+                            </div>
+                        </li>
+                        <li class="spec-row">
+                            <div class="spec-row__head">
+                                <div class="pp-artifact__name">
+                                    <span class="pp-artifact__file">recon_x64.shellcode.bin</span>
+                                    <span class="pp-artifact__meta">2026-05-18 12:14 UTC · dns-fallback · shellcode x64</span>
+                                </div>
+                                <span class="pp-artifact__size">98 KB</span>
+                                <span class="pp-artifact__actions">
+                                    <button type="button" class="pp-artifact__btn" title="Download">
+                                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-download"/></svg>
+                                        Download
+                                    </button>
+                                    <button type="button" class="pp-artifact__btn" title="View">
+                                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-eye"/></svg>
+                                        View
+                                    </button>
+                                </span>
+                            </div>
+                        </li>
+                        <li class="spec-row">
+                            <div class="spec-row__head">
+                                <div class="pp-artifact__name">
+                                    <span class="pp-artifact__file">dropper_x86.dll</span>
+                                    <span class="pp-artifact__meta">2026-05-17 21:42 UTC · https-backup · stageless x86</span>
+                                </div>
+                                <span class="pp-artifact__size">266 KB</span>
+                                <span class="pp-artifact__actions">
+                                    <button type="button" class="pp-artifact__btn" title="Download">
+                                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-download"/></svg>
+                                        Download
+                                    </button>
+                                    <button type="button" class="pp-artifact__btn" title="View">
+                                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-eye"/></svg>
+                                        View
+                                    </button>
+                                </span>
+                            </div>
+                        </li>
+                    </ol>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script>
+        // ── Form state ───────────────────────────────────────────────
+        const state = {
+            listener: 'https-main',
+            format: 'exe',
+            arch: 'x64',
+            filename: 'implant_2026_05_18.exe',
+            inject: false,
+            bof: false,
+            stageless: true
+        };
+
+        const LISTENER_LABELS = {
+            'https-main':    'https-main · 443',
+            'dns-fallback':  'dns-fallback · 53',
+            'https-backup':  'https-backup · 8443',
+            'smb-pivot':     'smb-pivot · named pipe'
+        };
+
+        function renderSummary() {
+            const list = document.getElementById('pp-summary-list');
+            const flags = [];
+            if (state.stageless) flags.push('stageless');
+            if (state.inject)    flags.push('inject');
+            if (state.bof)       flags.push('bof');
+            const flagsText = flags.length ? flags.join(' · ') : 'none';
+
+            list.innerHTML = `
+                ${row('Listener',    LISTENER_LABELS[state.listener] || state.listener)}
+                ${row('Format',      state.format)}
+                ${row('Architecture',state.arch)}
+                ${row('Filename',    state.filename)}
+                ${row('Advanced',    flagsText)}
+            `;
+        }
+
+        function row(key, value) {
+            return `
+                <li class="spec-row" data-readonly="true">
+                    <div class="spec-row__head">
+                        <dt class="spec-row__key">${escapeHtml(key)}</dt>
+                        <dd class="spec-row__value spec-row__value--mono">${escapeHtml(String(value))}</dd>
+                        <dd class="spec-row__hint"></dd>
+                    </div>
+                </li>
+            `;
+        }
+
+        // ── Wire up controls ─────────────────────────────────────────
+        document.getElementById('pp-listener').addEventListener('change', e => {
+            state.listener = e.target.value;
+            renderSummary();
+        });
+        document.getElementById('pp-filename').addEventListener('input', e => {
+            state.filename = e.target.value || '(empty)';
+            renderSummary();
+        });
+
+        document.querySelectorAll('[data-pp-group]').forEach(group => {
+            const key = group.dataset.ppGroup;
+            group.querySelectorAll('.pp-seg__option').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    group.querySelectorAll('.pp-seg__option').forEach(o => {
+                        o.classList.remove('is-active');
+                        o.setAttribute('aria-checked', 'false');
+                    });
+                    btn.classList.add('is-active');
+                    btn.setAttribute('aria-checked', 'true');
+                    state[key] = btn.dataset.value;
+                    renderSummary();
+                });
+            });
+        });
+
+        document.querySelectorAll('[data-pp-flag]').forEach(cb => {
+            cb.addEventListener('change', () => {
+                state[cb.dataset.ppFlag] = cb.checked;
+                renderSummary();
+            });
+        });
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        renderSummary();
+    </script>
+</body>
+</html>
