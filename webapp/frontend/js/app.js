@@ -188,14 +188,20 @@ const APP = {
             window.activeDeploymentProjects.add(savedProject);
         }
 
-        // Fetch operator identity for badge
+        // D1 — Fetch operator identity, populate global header + hidden mirror.
+        // The legacy #operator-badge element is now hidden but kept so topology.js
+        // (app.js:~20268) can read its textContent to label the operator node.
         fetch('/api/whoami').then(r => r.json()).then(data => {
-            const badge = document.getElementById('operator-badge');
-            if (badge && data.operator) {
-                badge.textContent = data.operator;
-                badge.style.display = '';
-            }
+            if (!data || !data.operator) return;
+            const ghName = document.getElementById('global-operator-name');
+            if (ghName) ghName.textContent = data.operator;
+            const legacyBadge = document.getElementById('operator-badge');
+            if (legacyBadge) legacyBadge.textContent = data.operator;
         }).catch(() => {});
+
+        // D1 — Initialize the new global header (deployment combobox, cost chip).
+        // Defer to next tick so other init paths (theme, nav) settle first.
+        setTimeout(() => initGlobalHeader(), 0);
 
         // Version footer (P1 #7.6) — populate footer + modal, wire handlers
         this.initVersionFooter();
@@ -274,7 +280,12 @@ const APP = {
     },
 
     /**
-     * Initialize theme from localStorage
+     * Initialize theme from localStorage.
+     *
+     * D1 — Wires the NEW global header theme toggle (#global-theme-toggle).
+     * Label shows the theme the toggle will switch TO (per V3 preview):
+     *   - In dark mode  → label reads "Light"
+     *   - In light mode → label reads "Dark"
      */
     initTheme() {
         const saved = localStorage.getItem('theme');
@@ -283,7 +294,7 @@ const APP = {
         }
         this.updateThemeIcon();
 
-        const toggleBtn = document.getElementById('theme-toggle');
+        const toggleBtn = document.getElementById('global-theme-toggle');
         if (toggleBtn) {
             toggleBtn.addEventListener('click', () => this.toggleTheme());
         }
@@ -307,13 +318,14 @@ const APP = {
     },
 
     /**
-     * Update the theme toggle icon
+     * Update the theme toggle label (V3 — text, not glyph).
+     * Label = the theme we will switch TO (dark mode shows "Light", vice versa).
      */
     updateThemeIcon() {
-        const icon = document.getElementById('theme-icon');
-        if (icon) {
+        const label = document.getElementById('global-theme-toggle-label');
+        if (label) {
             const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-            icon.innerHTML = isLight ? '&#9728;' : '&#9790;';
+            label.textContent = isLight ? 'Dark' : 'Light';
         }
     },
     
@@ -1769,6 +1781,413 @@ location = <YOUR_STAGER_URI_X64> {
         };
     }
 };
+
+// ============================================================================
+// D1 — GLOBAL HEADER (Plan §17 P1 #11 / §21.7 D1.1-D1.4)
+//
+// Hosts:
+//   - APP.activeDeployment   — global selected-deployment state (D1.2)
+//   - initGlobalHeader()     — boots the combobox + cost chip (D1.3 + D1.4)
+//   - _setupGlobalCombobox() — keyboard/ARIA-compliant custom listbox (D1.3)
+//   - _refreshGlobalCost()   — pulls /api/costs/summary for active deploy (D1.4)
+//
+// Per Decision #9: today there is a SINGLE global active-deployment selector.
+// D4 will add per-sub-pill overrides — existing per-tab dropdowns subscribe
+// in D4.1 via APP.activeDeployment.subscribe().
+// ============================================================================
+
+/**
+ * D1.2 — Global active-deployment state container.
+ *
+ * Subscribers are notified on .set() — used by Beacon, Terminal, Tools to
+ * react to deployment changes. Today (pre-D4) only the header reads from
+ * this; D4.1 will wire existing per-tab dropdowns to it.
+ *
+ * The current selection is persisted to localStorage (NOT sessionStorage —
+ * activeDeployment should outlive a single browser tab; the per-tab
+ * currentPage uses sessionStorage instead).
+ */
+APP.activeDeployment = (function () {
+    const STORAGE_KEY = 'activeDeployment';
+    let _current = null;
+    try {
+        _current = localStorage.getItem(STORAGE_KEY) || null;
+    } catch (e) { /* private-mode browsers — ignore */ }
+    const _subscribers = new Set();
+    return {
+        get current() { return _current; },
+        set(name) {
+            if (_current === name) return;
+            _current = name;
+            try {
+                if (name) localStorage.setItem(STORAGE_KEY, name);
+                else localStorage.removeItem(STORAGE_KEY);
+            } catch (e) { /* private-mode — ignore */ }
+            _subscribers.forEach(fn => {
+                try { fn(name); } catch (e) { console.error('activeDeployment subscriber error', e); }
+            });
+        },
+        subscribe(fn) {
+            _subscribers.add(fn);
+            // Call immediately so subscribers can initialize from current value
+            try { fn(_current); } catch (e) { console.error('activeDeployment init subscriber error', e); }
+            return () => _subscribers.delete(fn);  // disposer
+        }
+    };
+})();
+
+// In-memory cache of the deployment list — re-fetched on next open if stale.
+let _globalHeaderDeployments = [];
+
+/**
+ * D1.3 — Initialise the global header: combobox + cost chip + click handlers.
+ * Idempotent — safe to call multiple times (e.g. on hot-reload).
+ */
+function initGlobalHeader() {
+    const trigger = document.getElementById('global-deploy-trigger');
+    const listbox = document.getElementById('global-deploy-listbox');
+    if (!trigger || !listbox) return;  // header DOM not rendered
+
+    // Wire combobox keyboard + mouse + a11y once.
+    if (!trigger.dataset.ghWired) {
+        _setupGlobalCombobox(trigger, listbox);
+        trigger.dataset.ghWired = '1';
+    }
+
+    // Initial population of deployments.
+    _refreshGlobalDeployments();
+
+    // Wire cost chip → Settings → Cost Tracker.
+    const costChip = document.getElementById('global-cost-chip');
+    if (costChip && !costChip.dataset.ghWired) {
+        costChip.addEventListener('click', () => {
+            APP.navigateTo('settings');
+            // Defer scroll until the page is rendered.
+            setTimeout(() => {
+                const el = document.getElementById('cost-tracker-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 80);
+        });
+        costChip.style.cursor = 'pointer';
+        costChip.dataset.ghWired = '1';
+    }
+
+    // Brand-mark home link.
+    const brandMark = document.querySelector('.global-header__brand-mark');
+    if (brandMark && !brandMark.dataset.ghWired) {
+        brandMark.addEventListener('click', (e) => {
+            e.preventDefault();
+            APP.navigateTo('dashboard');
+        });
+        brandMark.dataset.ghWired = '1';
+    }
+
+    // Refresh cost whenever the active deployment changes.
+    APP.activeDeployment.subscribe(_refreshGlobalCost);
+}
+
+/**
+ * D1.3 — Fetch deployments from /api/deploy/active and populate the listbox.
+ *
+ * Endpoint returns a sorted list of state JSON objects whose project_name
+ * lives at state.project_name; status lives at state.status (always
+ * "success" because the endpoint filters for it).
+ *
+ * Empty state: show a single non-selectable "No active deployments" item
+ * that, when clicked, navigates to the Deploy tab.
+ */
+async function _refreshGlobalDeployments() {
+    const listbox = document.getElementById('global-deploy-listbox');
+    const valueEl = document.getElementById('global-deploy-value');
+    if (!listbox || !valueEl) return;
+
+    let deployments = [];
+    try {
+        const resp = await fetch('/api/deploy/active');
+        const json = await resp.json();
+        if (json && Array.isArray(json.deployments)) {
+            deployments = json.deployments;
+        }
+    } catch (e) {
+        // Endpoint unreachable — render empty state below.
+    }
+    _globalHeaderDeployments = deployments;
+
+    listbox.innerHTML = '';
+
+    if (deployments.length === 0) {
+        const empty = document.createElement('li');
+        empty.className = 'global-header__combobox-empty';
+        empty.setAttribute('role', 'option');
+        empty.setAttribute('aria-disabled', 'true');
+        empty.textContent = 'No active deployments — click to deploy';
+        empty.addEventListener('click', () => {
+            _closeGlobalListbox();
+            APP.navigateTo('deployment');
+        });
+        listbox.appendChild(empty);
+        valueEl.textContent = 'No deployment';
+        APP.activeDeployment.set(null);
+        return;
+    }
+
+    // Pick initial selection: persisted active OR first deployment.
+    let selected = APP.activeDeployment.current;
+    if (!selected || !deployments.find(d => d.project_name === selected)) {
+        selected = deployments[0].project_name;
+    }
+
+    deployments.forEach((d, idx) => {
+        const li = document.createElement('li');
+        li.className = 'global-header__combobox-option';
+        li.setAttribute('role', 'option');
+        li.id = `global-deploy-option-${idx}`;
+        li.dataset.value = d.project_name;
+        const isSelected = d.project_name === selected;
+        li.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'global-header__combobox-option-name';
+        nameSpan.textContent = d.project_name;
+        li.appendChild(nameSpan);
+
+        const status = (d.status || 'unknown').toLowerCase();
+        const badge = document.createElement('span');
+        badge.className = `global-header__combobox-option-status global-header__combobox-option-status--${status}`;
+        // Active in /api/deploy/active means status === 'success' — treat as running.
+        badge.textContent = status === 'success' ? 'running' : status;
+        li.appendChild(badge);
+
+        li.addEventListener('mouseenter', () => _setActiveOption(li));
+        li.addEventListener('click', (e) => {
+            e.preventDefault();
+            _selectGlobalOption(li);
+        });
+
+        listbox.appendChild(li);
+    });
+
+    valueEl.textContent = selected;
+    APP.activeDeployment.set(selected);
+}
+
+/**
+ * D1.3 — Wire combobox trigger keyboard + click handlers.
+ */
+function _setupGlobalCombobox(trigger, listbox) {
+    const openListbox = () => {
+        listbox.hidden = false;
+        // Force reflow so the transition starts from the hidden state.
+        // eslint-disable-next-line no-unused-expressions
+        listbox.offsetHeight;
+        listbox.setAttribute('data-open', 'true');
+        trigger.setAttribute('aria-expanded', 'true');
+        // Activate the currently-selected option.
+        const sel = listbox.querySelector('[aria-selected="true"]')
+                 || listbox.querySelector('[role="option"]');
+        if (sel) _setActiveOption(sel);
+        // Defer focus so the transition reads correctly.
+        requestAnimationFrame(() => {
+            const target = listbox.querySelector('.global-header__combobox-option--active')
+                        || listbox.querySelector('[role="option"]');
+            if (target) target.focus({ preventScroll: true });
+        });
+    };
+
+    const _closeFn = (returnFocus) => {
+        listbox.setAttribute('data-open', 'false');
+        trigger.setAttribute('aria-expanded', 'false');
+        // Allow transition to play out before hiding (200ms).
+        setTimeout(() => {
+            if (listbox.getAttribute('data-open') !== 'true') listbox.hidden = true;
+        }, 220);
+        listbox.querySelectorAll('.global-header__combobox-option--active').forEach(o => {
+            o.classList.remove('global-header__combobox-option--active');
+        });
+        if (returnFocus) trigger.focus();
+    };
+    // Expose for _refreshGlobalDeployments empty-state handler.
+    window._closeGlobalListbox = () => _closeFn(false);
+
+    trigger.addEventListener('click', (e) => {
+        e.preventDefault();
+        const isOpen = trigger.getAttribute('aria-expanded') === 'true';
+        isOpen ? _closeFn(false) : openListbox();
+    });
+
+    trigger.addEventListener('keydown', (e) => {
+        switch (e.key) {
+            case 'Enter':
+            case ' ':
+            case 'ArrowDown':
+                e.preventDefault();
+                openListbox();
+                break;
+            case 'ArrowUp': {
+                e.preventDefault();
+                openListbox();
+                const opts = listbox.querySelectorAll('[role="option"]');
+                if (opts.length) _setActiveOption(opts[opts.length - 1]);
+                break;
+            }
+        }
+    });
+
+    listbox.addEventListener('keydown', (e) => {
+        const opts = Array.from(listbox.querySelectorAll('[role="option"]:not([aria-disabled="true"])'));
+        if (opts.length === 0 && e.key !== 'Escape' && e.key !== 'Tab') return;
+        const currentIdx = opts.findIndex(o => o.classList.contains('global-header__combobox-option--active'));
+        switch (e.key) {
+            case 'ArrowDown':
+                e.preventDefault();
+                _setActiveOption(opts[(currentIdx + 1 + opts.length) % opts.length]);
+                break;
+            case 'ArrowUp':
+                e.preventDefault();
+                _setActiveOption(opts[(currentIdx - 1 + opts.length) % opts.length]);
+                break;
+            case 'Home':
+                e.preventDefault();
+                _setActiveOption(opts[0]);
+                break;
+            case 'End':
+                e.preventDefault();
+                _setActiveOption(opts[opts.length - 1]);
+                break;
+            case 'Enter':
+            case ' ': {
+                e.preventDefault();
+                const active = opts[currentIdx >= 0 ? currentIdx : 0];
+                if (active) _selectGlobalOption(active);
+                break;
+            }
+            case 'Escape':
+                e.preventDefault();
+                _closeFn(true);
+                break;
+            case 'Tab':
+                _closeFn(false);
+                break;
+        }
+    });
+
+    // Click-outside closes.
+    document.addEventListener('mousedown', (e) => {
+        if (trigger.getAttribute('aria-expanded') !== 'true') return;
+        if (trigger.contains(e.target) || listbox.contains(e.target)) return;
+        _closeFn(false);
+    });
+}
+
+/**
+ * D1.3 — Mark a single option as active (keyboard nav). Visual highlight
+ * only — aria-selected is reserved for the persistent selection.
+ */
+function _setActiveOption(target) {
+    if (!target) return;
+    const listbox = target.parentElement;
+    if (!listbox) return;
+    listbox.querySelectorAll('.global-header__combobox-option--active').forEach(o => {
+        o.classList.remove('global-header__combobox-option--active');
+    });
+    target.classList.add('global-header__combobox-option--active');
+    listbox.setAttribute('aria-activedescendant', target.id || '');
+    if (typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+/**
+ * D1.3 — Commit a listbox selection: update aria-selected, persist, notify
+ * subscribers, close listbox.
+ */
+function _selectGlobalOption(li) {
+    if (!li || li.getAttribute('aria-disabled') === 'true') return;
+    const listbox = li.parentElement;
+    const trigger = document.getElementById('global-deploy-trigger');
+    const valueEl = document.getElementById('global-deploy-value');
+    if (!listbox || !trigger || !valueEl) return;
+
+    listbox.querySelectorAll('[role="option"]').forEach(o => {
+        o.setAttribute('aria-selected', o === li ? 'true' : 'false');
+    });
+    const value = li.dataset.value || '';
+    valueEl.textContent = value;
+    APP.activeDeployment.set(value);
+
+    // Close listbox.
+    listbox.setAttribute('data-open', 'false');
+    trigger.setAttribute('aria-expanded', 'false');
+    setTimeout(() => {
+        if (listbox.getAttribute('data-open') !== 'true') listbox.hidden = true;
+    }, 220);
+    trigger.focus();
+}
+
+/**
+ * D1.4 — Pull cost summary for the active deployment and render the chip.
+ *
+ * Uses /api/costs/summary?project=NAME — response.estimated_costs.estimated_monthly
+ * is the field we render. 5-minute sessionStorage cache keyed by project name.
+ *
+ * Defensive: any failure → "—" + a title tooltip. Never throws.
+ */
+async function _refreshGlobalCost(projectName) {
+    const amount = document.getElementById('global-cost-amount');
+    const chip = document.getElementById('global-cost-chip');
+    if (!amount) return;
+
+    if (!projectName) {
+        amount.textContent = '—';
+        if (chip) chip.title = 'No active deployment selected';
+        return;
+    }
+
+    // Cache check.
+    const CACHE_TTL_MS = 5 * 60 * 1000;
+    const CACHE_KEY = `globalCost:${projectName}`;
+    try {
+        const raw = sessionStorage.getItem(CACHE_KEY);
+        if (raw) {
+            const entry = JSON.parse(raw);
+            if (entry && (Date.now() - entry.ts) < CACHE_TTL_MS) {
+                _renderCostAmount(entry.value);
+                if (chip) chip.title = `Monthly burn for ${projectName} (cached). Click to view Cost Tracker.`;
+                return;
+            }
+        }
+    } catch (e) { /* ignore cache errors */ }
+
+    try {
+        const resp = await fetch(`/api/costs/summary?project=${encodeURIComponent(projectName)}`);
+        const json = await resp.json();
+        const monthly = json && json.success
+            && json.estimated_costs && json.estimated_costs.available
+            ? json.estimated_costs.estimated_monthly
+            : null;
+        if (typeof monthly === 'number' && Number.isFinite(monthly)) {
+            _renderCostAmount(monthly);
+            if (chip) chip.title = `Monthly burn for ${projectName}. Click to view Cost Tracker.`;
+            try {
+                sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), value: monthly }));
+            } catch (e) { /* ignore quota errors */ }
+        } else {
+            amount.textContent = '—';
+            if (chip) chip.title = 'Cost data unavailable';
+        }
+    } catch (e) {
+        amount.textContent = '—';
+        if (chip) chip.title = 'Cost data unavailable';
+    }
+}
+
+function _renderCostAmount(monthly) {
+    const amount = document.getElementById('global-cost-amount');
+    if (!amount) return;
+    // Round to whole dollars for the chip — full precision lives in Cost Tracker.
+    const rounded = Math.round(monthly);
+    amount.textContent = `$${rounded}/mo`;
+}
 
 // ============================================================================
 // MALLEABLE C2 PROFILE PARSER
@@ -20265,7 +20684,11 @@ const TOPOLOGY = {
 
         // Operator node — the red team operator connecting via SSH tunnel
         const operatorId = nid();
-        const operatorName = document.getElementById('operator-badge')?.textContent || 'Operator';
+        // D1 — Prefer the new global header element; fall back to the hidden
+        // legacy mirror so existing topology behaviour is preserved.
+        const operatorName = document.getElementById('global-operator-name')?.textContent
+            || document.getElementById('operator-badge')?.textContent
+            || 'Operator';
         this.nodes.push({
             id: operatorId, type: 'operator',
             label: operatorName,

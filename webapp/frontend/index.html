@@ -8,6 +8,76 @@
 </head>
 <body>
     <div class="container">
+        <!--
+            D1 — Global header (Plan §17 P1 #11, §21.7 D1.1-D1.4, Decision #15).
+            Sticky 64px strip ABOVE the tab nav. V3 design language (dials 5/6/5).
+            Hosts: brand, deployment selector, monthly burn, operator badge, theme toggle.
+            The legacy #operator-badge + #theme-toggle DOM has been LIFTED into here;
+            #operator-badge is kept as a hidden mirror element for backwards-compat
+            with topology.js (which reads its textContent at app.js:20268).
+        -->
+        <header class="global-header" role="banner">
+            <div class="global-header__brand">
+                <a href="#dashboard" class="global-header__brand-mark" aria-label="Red Team Infrastructure home">
+                    <span class="global-header__brand-mark-inner"></span>
+                </a>
+                <div class="global-header__brand-text">
+                    <div class="global-header__brand-name">Red Team Infrastructure</div>
+                    <div class="global-header__brand-kicker">DASHBOARD &middot; LIVE</div>
+                </div>
+            </div>
+            <div class="global-header__rail">
+                <!-- Active deployment selector (custom combobox listbox) -->
+                <div class="global-header__chip global-header__deploy" id="global-deployment-chip">
+                    <span class="global-header__chip-label">DEPLOYMENT</span>
+                    <div class="global-header__combobox" id="global-deploy-combo">
+                        <button type="button"
+                                class="global-header__combobox-trigger"
+                                id="global-deploy-trigger"
+                                aria-haspopup="listbox"
+                                aria-expanded="false"
+                                aria-controls="global-deploy-listbox"
+                                aria-label="Select active deployment">
+                            <span class="global-header__combobox-value" id="global-deploy-value">Loading...</span>
+                            <span class="global-header__combobox-chevron" aria-hidden="true"></span>
+                        </button>
+                        <ul role="listbox"
+                            class="global-header__combobox-listbox"
+                            id="global-deploy-listbox"
+                            aria-label="Active deployment"
+                            tabindex="-1"
+                            hidden></ul>
+                    </div>
+                </div>
+                <!-- Cost indicator -->
+                <div class="global-header__chip global-header__cost" id="global-cost-chip"
+                     title="Monthly burn (estimated). Click to view Cost Tracker.">
+                    <div class="global-header__cost-value" id="global-cost-amount">&mdash;</div>
+                    <div class="global-header__cost-caption">MONTHLY BURN</div>
+                </div>
+                <!-- Operator badge (lifted from old location) -->
+                <div class="global-header__chip global-header__operator" id="global-operator-chip">
+                    <span class="global-header__operator-dot" aria-hidden="true"></span>
+                    <div class="global-header__operator-text">
+                        <span class="global-header__operator-prefix">op://</span><span class="global-header__operator-name" id="global-operator-name">&mdash;</span>
+                    </div>
+                </div>
+                <!-- Theme toggle (lifted from old location) -->
+                <button class="global-header__theme-toggle"
+                        id="global-theme-toggle"
+                        type="button"
+                        aria-label="Toggle theme">
+                    <span class="global-header__theme-toggle-label" id="global-theme-toggle-label">Light</span>
+                </button>
+            </div>
+        </header>
+        <!--
+            Hidden mirror of the operator name — topology.js (app.js:20268)
+            reads this textContent to label the operator node. Kept in sync
+            by the same fetch that populates #global-operator-name.
+        -->
+        <span id="operator-badge" hidden></span>
+
         <!-- Navigation Tabs -->
         <nav class="tabs" id="tab-navigation">
             <button class="tab-btn active" data-target="dashboard">Dashboard</button>
@@ -20,12 +90,6 @@
             <button class="tab-btn" data-target="beacon">Beacon</button>
             <button class="tab-btn" data-target="terminal">Terminal</button>
             <button class="tab-btn" data-target="settings">Settings</button>
-            <span style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
-                <span id="operator-badge" style="display: none; font-size: 0.75em; color: var(--text-muted); padding: 3px 8px; border: 1px solid var(--border-light); border-radius: 4px; white-space: nowrap;"></span>
-                <button class="theme-toggle" id="theme-toggle" title="Toggle dark/light mode" aria-label="Toggle theme">
-                    <span id="theme-icon">&#9790;</span>
-                </button>
-            </span>
         </nav>
 
         <!-- Tab Content Container -->
@@ -2081,7 +2145,7 @@ ns-143.awsdns-17.org
                     </div>
 
                     <!-- Cost Tracker Display -->
-                    <div class="section-card" style="margin-top: 24px;">
+                    <div class="section-card" id="cost-tracker-section" style="margin-top: 24px;">
                         <h3 style="margin: 0 0 15px 0;">Cost Tracker</h3>
 
                         <!-- Refresh button -->
