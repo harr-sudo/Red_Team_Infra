@@ -5629,3 +5629,136 @@ body { padding-top: 64px; }
 }
 /* === end M-Redesign Agent 3 ===================================== */
 
+/* === D8 Agent B — Deployments → Cleanup sub-pill === */
+.cleanup-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+.cleanup-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+.cleanup-summary__stat {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    text-align: center;
+}
+.cleanup-summary__num {
+    display: block;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+.cleanup-summary__label {
+    display: block;
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+    margin-top: 4px;
+}
+.cleanup-resource-group {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+}
+.cleanup-resource-group__title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 12px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.cleanup-resource-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 16px;
+    padding: 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.cleanup-resource-row:hover { border-color: var(--brand-light); }
+.cleanup-resource-row__name {
+    font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    word-break: break-all;
+}
+.cleanup-resource-row__meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: ui-monospace, monospace;
+}
+.cleanup-resource-row__actions {
+    display: flex;
+    gap: 6px;
+    align-self: center;
+}
+.cleanup-resource-row__action {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.cleanup-resource-row__action:hover { color: var(--text-primary); border-color: var(--brand-light); }
+.cleanup-resource-row__action--danger:hover { color: var(--danger-text); border-color: var(--danger-border); }
+@media (max-width: 720px) {
+    .cleanup-summary { grid-template-columns: repeat(2, 1fr); }
+}
+/* === end D8 Agent B ===================================== */
+
+/* === D8 Agent A — Settings inventory cards (Domains, Secrets, Services) === */
+.settings-domain-row,
+.settings-secret-row,
+.settings-service-row {
+    padding: 12px 16px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.settings-domain-row:last-child,
+.settings-secret-row:last-child,
+.settings-service-row:last-child {
+    margin-bottom: 0;
+}
+.settings-domain-row:hover,
+.settings-secret-row:hover,
+.settings-service-row:hover {
+    border-color: var(--brand-light);
+}
+.settings-domain-row__name,
+.settings-secret-row__name,
+.settings-service-row__name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+    word-break: break-all;
+}
+.settings-domain-row__meta,
+.settings-secret-row__meta,
+.settings-service-row__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+}
+/* === end D8 Agent A ===================================== */
+

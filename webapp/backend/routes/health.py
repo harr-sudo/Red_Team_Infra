@@ -196,34 +196,135 @@ def check_domain_config():
 
 @bp.route('/route53-domains', methods=['GET'])
 def list_route53_domains():
-    """List domains registered in the user's AWS Route 53 account"""
+    """List Route 53 registered domains AND hosted zones in the user's AWS account.
+
+    Returns both shapes for backward compatibility:
+      - ``domains``: registered domains (Route 53 Domains API, us-east-1 only).
+      - ``zones``: hosted zones (Route 53 global API) — used by the Domains &
+        DNS Settings card, with ``record_count`` + ``private`` + ``in_use_by``
+        derived from the currently selected deployment's primary domain.
+    """
     try:
         import boto3
         # Route 53 Domains API is only available in us-east-1
-        client = boto3.client('route53domains', region_name='us-east-1')
-
-        # Paginate through all domains (API returns max 20 per call)
+        domains_client = boto3.client('route53domains', region_name='us-east-1')
         domains = []
-        paginator = client.get_paginator('list_domains')
-        for page in paginator.paginate():
-            for d in page.get('Domains', []):
-                domains.append({
-                    "domain_name": d['DomainName'],
-                    "auto_renew": d.get('AutoRenew', False),
-                    "expiry": d.get('Expiry', '').isoformat() if hasattr(d.get('Expiry', ''), 'isoformat') else str(d.get('Expiry', '')),
-                    "transfer_lock": d.get('TransferLock', False)
-                })
+        try:
+            paginator = domains_client.get_paginator('list_domains')
+            for page in paginator.paginate():
+                for d in page.get('Domains', []):
+                    domains.append({
+                        "domain_name": d['DomainName'],
+                        "auto_renew": d.get('AutoRenew', False),
+                        "expiry": d.get('Expiry', '').isoformat() if hasattr(d.get('Expiry', ''), 'isoformat') else str(d.get('Expiry', '')),
+                        "transfer_lock": d.get('TransferLock', False)
+                    })
+        except Exception as inner:
+            # Registered-domains API may be unauthorized in some accounts; do
+            # not fail the whole response — hosted zones are independent.
+            print(f"list_route53_domains: registered domains lookup failed: {inner}")
+
+        # Hosted zones — global API. Used by the Domains & DNS Settings card.
+        zones = []
+        try:
+            route53 = boto3.client('route53')
+            zones_paginator = route53.get_paginator('list_hosted_zones')
+            # Best-effort: detect the currently selected deployment's primary
+            # domain so we can flag the in-use zone. Failure is non-fatal.
+            in_use_domain = None
+            try:
+                config = ConfigParser.parse_tfvars(str(tfvars_file)) if tfvars_file.exists() else {}
+                in_use_domain = (config.get('primary_domain_name') or '').strip().rstrip('.')
+            except Exception:
+                pass
+
+            for page in zones_paginator.paginate():
+                for z in page.get('HostedZones', []):
+                    raw_name = z.get('Name', '')
+                    name = raw_name.rstrip('.')
+                    is_private = bool(z.get('Config', {}).get('PrivateZone', False))
+                    zones.append({
+                        "name": name,
+                        "id": z.get('Id', '').split('/')[-1],
+                        "record_count": z.get('ResourceRecordSetCount', 0),
+                        "private": is_private,
+                        "in_use_by": "current deployment" if in_use_domain and in_use_domain == name else None,
+                    })
+        except Exception as inner:
+            print(f"list_route53_domains: hosted-zones lookup failed: {inner}")
 
         return jsonify({
             "success": True,
-            "domains": domains
+            "domains": domains,
+            "zones": zones,
         })
     except Exception as e:
         return jsonify({
             "success": False,
             "domains": [],
+            "zones": [],
             "error": str(e)
         })
+
+@bp.route('/secrets', methods=['GET'])
+def list_secrets():
+    """List Secrets Manager secrets relevant to the project.
+
+    Returns names + LastChangedDate / LastAccessedDate only — never secret
+    values. Filtered to known patterns:
+      - ``cs-license-key``                 (Cobalt Strike license)
+      - ``*-github-token``                 (per-deployment tools-repo PAT)
+      - ``*-cs-team-server-password``      (team-server bootstrap password)
+      - ``*-bastion-admin-password``       (bastion RDP admin password)
+    """
+    try:
+        import os
+        import boto3
+        region = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'eu-central-1'
+        client = boto3.client('secretsmanager', region_name=region)
+
+        def is_project_secret(name: str) -> bool:
+            if name == 'cs-license-key':
+                return True
+            if name.endswith('-github-token'):
+                return True
+            if name.endswith('-cs-team-server-password'):
+                return True
+            if name.endswith('-bastion-admin-password'):
+                return True
+            return False
+
+        out = []
+        paginator = client.get_paginator('list_secrets')
+        for page in paginator.paginate():
+            for s in page.get('SecretList', []):
+                name = s.get('Name', '')
+                if not is_project_secret(name):
+                    continue
+                last_changed = s.get('LastChangedDate')
+                last_accessed = s.get('LastAccessedDate')
+                out.append({
+                    'name': name,
+                    'description': s.get('Description', '') or '',
+                    'last_changed': last_changed.isoformat() if hasattr(last_changed, 'isoformat') else None,
+                    'last_accessed': last_accessed.isoformat() if hasattr(last_accessed, 'isoformat') else None,
+                    'arn': s.get('ARN', ''),
+                })
+
+        # Sort: cs-license-key first, then alphabetical
+        out.sort(key=lambda r: (0 if r['name'] == 'cs-license-key' else 1, r['name']))
+
+        return jsonify({
+            'success': True,
+            'secrets': out,
+            'region': region,
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'secrets': [],
+        }), 200
 
 @bp.route('/bootstrap-status', methods=['GET'])
 def check_bootstrap_status():

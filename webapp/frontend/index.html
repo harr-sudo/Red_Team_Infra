@@ -245,6 +245,11 @@
                             data-subpill="manage"
                             aria-selected="false"
                             id="subpill-manage">Manage</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
+                            data-subpill="cleanup"
+                            aria-selected="false"
+                            id="subpill-cleanup">Cleanup</button>
                 </div>
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="configure" id="subpill-pane-configure">
@@ -1614,6 +1619,46 @@ ns-143.awsdns-17.org
 
 
                     </div>
+
+                    <!-- D8 Agent B — Cleanup sub-pane (orphan AWS resources) -->
+                    <div class="subpill-pane" data-subpill-pane="cleanup" id="subpill-pane-cleanup" hidden>
+                        <div class="cleanup-header">
+                            <div>
+                                <h2 class="page-title">Cleanup</h2>
+                                <p class="t-muted">
+                                    AWS resources NOT tied to any current Terraform state. Includes orphan
+                                    EIPs, unattached EBS snapshots, stale ACM certs (eu-central-1 + us-east-1),
+                                    S3 buckets outside the project naming convention, and old Terraform workspaces.
+                                </p>
+                            </div>
+                            <button class="btn btn-secondary" onclick="loadCleanupResources(true)">Refresh</button>
+                        </div>
+
+                        <!-- Summary stats -->
+                        <div class="cleanup-summary" id="cleanup-summary">
+                            <div class="cleanup-summary__stat">
+                                <span class="cleanup-summary__num" id="cleanup-orphan-count">—</span>
+                                <span class="cleanup-summary__label">orphans found</span>
+                            </div>
+                            <div class="cleanup-summary__stat">
+                                <span class="cleanup-summary__num" id="cleanup-eip-count">—</span>
+                                <span class="cleanup-summary__label">unattached EIPs</span>
+                            </div>
+                            <div class="cleanup-summary__stat">
+                                <span class="cleanup-summary__num" id="cleanup-acm-count">—</span>
+                                <span class="cleanup-summary__label">orphan ACM certs</span>
+                            </div>
+                            <div class="cleanup-summary__stat">
+                                <span class="cleanup-summary__num" id="cleanup-buckets-count">—</span>
+                                <span class="cleanup-summary__label">untagged S3 buckets</span>
+                            </div>
+                        </div>
+
+                        <!-- Resource list, grouped by type -->
+                        <div id="cleanup-resource-list" class="motion-stagger-in">
+                            <p class="t-muted">Click Refresh to scan AWS for orphan resources.</p>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -2446,6 +2491,9 @@ ns-143.awsdns-17.org
                             <span class="settings-toc__eyebrow">SETTINGS &middot; SECTIONS</span>
                             <a href="#settings-general" class="settings-toc__item">General</a>
                             <a href="#settings-prereqs" class="settings-toc__item">AWS &amp; SSH Prerequisites</a>
+                            <a href="#settings-domains" class="settings-toc__item">Domains &amp; DNS</a>
+                            <a href="#settings-secrets" class="settings-toc__item">Secrets Manager</a>
+                            <a href="#settings-services" class="settings-toc__item">Infrastructure Services</a>
                             <a href="#settings-cost" class="settings-toc__item">Cost Tracker</a>
                             <a href="#settings-prefs" class="settings-toc__item">Deployment Preferences</a>
                             <a href="#settings-roadmap" class="settings-toc__item">Roadmap</a>
@@ -2521,6 +2569,69 @@ ns-143.awsdns-17.org
                             <button class="btn btn-primary btn-sm" onclick="checkGitHubCLI()">Check GitHub CLI</button>
                             <div id="github-cli-status" class="status-display"></div>
                         </div>
+                        </div>
+                    </section>
+
+                    <!-- D8 — Domains & DNS card (Route 53 hosted zones) -->
+                    <section id="settings-domains" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">DNS &middot; ROUTE 53</span>
+                            <h3 class="settings-section__title">Domains &amp; DNS</h3>
+                            <p class="settings-section__description">
+                                Route 53 hosted zones in this account. Linked to deployments that
+                                reference them in <code>primary_domain_name</code>.
+                            </p>
+                        </header>
+                        <div class="section-card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <span class="t-muted" id="settings-domains-status">Loading...</span>
+                                <button class="btn btn-secondary btn-sm" onclick="loadSettingsDomains(true)">Refresh</button>
+                            </div>
+                            <div id="settings-domains-list" class="motion-stagger-in">
+                                <!-- Populated by JS -->
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- D8 — Secrets Manager card -->
+                    <section id="settings-secrets" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">AWS &middot; SECRETS MANAGER</span>
+                            <h3 class="settings-section__title">Secrets Manager</h3>
+                            <p class="settings-section__description">
+                                Project secrets stored in AWS Secrets Manager. Shared across
+                                deployments; never in Terraform state.
+                            </p>
+                        </header>
+                        <div class="section-card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <span class="t-muted" id="settings-secrets-status">Loading...</span>
+                                <button class="btn btn-secondary btn-sm" onclick="loadSettingsSecrets(true)">Refresh</button>
+                            </div>
+                            <div id="settings-secrets-list" class="motion-stagger-in">
+                                <!-- Populated by JS -->
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- D8 — Infrastructure Services card -->
+                    <section id="settings-services" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">PLATFORM &middot; INFRA SERVICES</span>
+                            <h3 class="settings-section__title">Infrastructure Services</h3>
+                            <p class="settings-section__description">
+                                Shared platform services (dashboard server, S3 state backend,
+                                etc.) &mdash; distinct from per-deployment infrastructure.
+                            </p>
+                        </header>
+                        <div class="section-card" id="settings-services-card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <span class="t-muted" id="settings-services-status">Loading...</span>
+                                <button class="btn btn-secondary btn-sm" onclick="loadSettingsServices(true)">Refresh</button>
+                            </div>
+                            <div id="settings-services-list" class="motion-stagger-in">
+                                <!-- Populated by JS -->
+                            </div>
                         </div>
                     </section>
 

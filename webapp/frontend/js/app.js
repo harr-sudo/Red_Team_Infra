@@ -2192,6 +2192,8 @@ APP._runSubPillInit = function (parentTabName, subPillName) {
         } else if (subPillName === 'manage') {
             if (typeof loadDeploymentsPage === 'function') loadDeploymentsPage();
             if (typeof startAutoRefresh === 'function') startAutoRefresh();
+        } else if (subPillName === 'cleanup') {
+            if (typeof loadCleanupResources === 'function') loadCleanupResources(false);
         }
     } else if (parentTabName === 'operations-tab') {
         // D4.5 — Operations sub-pill init. Mirrors the legacy flat-tab
@@ -9978,6 +9980,162 @@ function initSettingsPage() {
     loadProjectCosts(false); // Load from cache, no API call
     // M-Redesign Agent 1 — wire TOC smooth scroll + active highlighting
     APP._setupSettingsToc();
+    // D8 — lazy-load Domains / Secrets / Infra Services inventory cards.
+    // Each loader is idempotent (guarded by dataset.loaded) so re-entering
+    // the Settings tab does not re-fetch.
+    if (typeof loadSettingsDomains === 'function') loadSettingsDomains(false);
+    if (typeof loadSettingsSecrets === 'function') loadSettingsSecrets(false);
+    if (typeof loadSettingsServices === 'function') loadSettingsServices(false);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// D8 — Settings inventory cards: Domains & DNS / Secrets Manager /
+// Infrastructure Services. Each loader fetches once per Settings tab open
+// (guarded by `list.dataset.loaded`), with explicit Refresh buttons that
+// pass forceRefresh=true. All three follow the same pattern.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Format an ISO-8601 timestamp for display in a settings row.
+ * Returns "—" for null / undefined / unparseable input.
+ */
+function _formatSettingsDate(iso) {
+    if (!iso) return '—';
+    try {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return '—';
+        return d.toISOString().slice(0, 10);
+    } catch (_e) {
+        return '—';
+    }
+}
+
+async function loadSettingsDomains(forceRefresh) {
+    const list = document.getElementById('settings-domains-list');
+    const status = document.getElementById('settings-domains-status');
+    if (!list) return;
+    if (!forceRefresh && list.dataset.loaded === 'true') return;
+    APP.renderSkeleton('settings-domains-list', 'card', 2);
+    if (status) status.textContent = 'Loading...';
+    try {
+        const res = await fetch('/api/health/route53-domains');
+        const data = await res.json();
+        const zones = data.zones || data.domains || [];
+        if (!zones.length) {
+            list.innerHTML = '<p class="t-muted">No Route 53 hosted zones found in this account.</p>';
+        } else {
+            list.innerHTML = zones.map(z => {
+                const name = escapeHtml(z.name || z.domain_name || z.domain || '—');
+                const records = z.record_count != null ? z.record_count : 0;
+                const meta = [];
+                meta.push(`<span>${records} records</span>`);
+                if (z.private) meta.push('<span class="t-muted">private</span>');
+                if (z.in_use_by) meta.push(`<span>used by ${escapeHtml(z.in_use_by)}</span>`);
+                return `
+                    <div class="settings-domain-row">
+                        <div class="settings-domain-row__name">${name}</div>
+                        <div class="settings-domain-row__meta">${meta.join('')}</div>
+                    </div>`;
+            }).join('');
+            APP._staggerOnce(list);
+        }
+        list.dataset.loaded = 'true';
+        if (status) status.textContent = `${zones.length} zone(s)`;
+    } catch (e) {
+        list.innerHTML = '<p class="callout callout--warning">Failed to load zones. Check AWS credentials.</p>';
+        if (status) status.textContent = 'Error';
+    }
+}
+
+async function loadSettingsSecrets(forceRefresh) {
+    const list = document.getElementById('settings-secrets-list');
+    const status = document.getElementById('settings-secrets-status');
+    if (!list) return;
+    if (!forceRefresh && list.dataset.loaded === 'true') return;
+    APP.renderSkeleton('settings-secrets-list', 'card', 2);
+    if (status) status.textContent = 'Loading...';
+    try {
+        const res = await fetch('/api/health/secrets');
+        const data = await res.json();
+        const secrets = data.secrets || [];
+        if (!data.success && data.error) {
+            list.innerHTML = `<p class="callout callout--warning">Failed to list secrets: ${escapeHtml(data.error)}</p>`;
+            if (status) status.textContent = 'Error';
+            return;
+        }
+        if (!secrets.length) {
+            list.innerHTML = '<p class="t-muted">No project secrets found in AWS Secrets Manager.</p>';
+        } else {
+            list.innerHTML = secrets.map(s => {
+                const name = escapeHtml(s.name || '—');
+                const changed = _formatSettingsDate(s.last_changed);
+                const accessed = _formatSettingsDate(s.last_accessed);
+                return `
+                    <div class="settings-secret-row">
+                        <div class="settings-secret-row__name">${name}</div>
+                        <div class="settings-secret-row__meta">
+                            <span>changed ${changed}</span>
+                            <span>accessed ${accessed}</span>
+                        </div>
+                    </div>`;
+            }).join('');
+            APP._staggerOnce(list);
+        }
+        list.dataset.loaded = 'true';
+        if (status) status.textContent = `${secrets.length} secret(s)`;
+    } catch (e) {
+        list.innerHTML = '<p class="callout callout--warning">Failed to load secrets. Check AWS credentials.</p>';
+        if (status) status.textContent = 'Error';
+    }
+}
+
+async function loadSettingsServices(forceRefresh) {
+    const list = document.getElementById('settings-services-list');
+    const status = document.getElementById('settings-services-status');
+    if (!list) return;
+    if (!forceRefresh && list.dataset.loaded === 'true') return;
+    APP.renderSkeleton('settings-services-list', 'card', 1);
+    if (status) status.textContent = 'Loading...';
+    try {
+        const res = await fetch('/api/deploy/resources/all-projects');
+        const data = await res.json();
+        const resources = data.resources || [];
+        // Filter to platform / dashboard-tagged resources. The dashboard
+        // server is tagged Project=dashboard (and/or Name contains
+        // "dashboard"); the S3 state backend lives in the platform layer.
+        const services = resources.filter(r => {
+            const proj = (r.project || '').toLowerCase();
+            const name = (r.name || '').toLowerCase();
+            const type = (r.type || '').toLowerCase();
+            if (proj === 'dashboard') return true;
+            if (name.includes('dashboard') && type.includes('ec2')) return true;
+            if (type === 's3-bucket' && (name.includes('tfstate') || name.includes('terraform-state'))) return true;
+            return false;
+        });
+        if (!services.length) {
+            list.innerHTML = '<p class="t-muted">No shared infrastructure services detected. The dashboard server itself may not be tagged for inventory.</p>';
+        } else {
+            list.innerHTML = services.map(svc => {
+                const name = escapeHtml(svc.name || svc.id || '—');
+                const meta = [];
+                if (svc.type) meta.push(`<span>${escapeHtml(svc.type)}</span>`);
+                if (svc.state) meta.push(`<span>${escapeHtml(svc.state)}</span>`);
+                if (svc.region) meta.push(`<span>${escapeHtml(svc.region)}</span>`);
+                if (svc.details) meta.push(`<span>${escapeHtml(svc.details)}</span>`);
+                return `
+                    <div class="settings-service-row">
+                        <div class="settings-service-row__name">${name}</div>
+                        <div class="settings-service-row__meta">${meta.join('')}</div>
+                    </div>`;
+            }).join('');
+            APP._staggerOnce(list);
+        }
+        list.dataset.loaded = 'true';
+        if (status) status.textContent = `${services.length} service(s)`;
+    } catch (e) {
+        list.innerHTML = '<p class="callout callout--warning">Failed to load infrastructure services. Check AWS credentials.</p>';
+        if (status) status.textContent = 'Error';
+    }
 }
 
 // M-Redesign Agent 1 — Settings TOC active-section tracker.
@@ -22789,6 +22947,185 @@ function closeVersionModal() {
 // ============================================================================
 // APPLICATION INITIALIZATION
 // ============================================================================
+
+// === D8 Agent B — Deployments → Cleanup sub-pill ============================
+// Lists AWS resources NOT tracked by any current Terraform state. Uses the
+// existing GET /api/deploy/resources/all-projects endpoint (no new backend).
+// Detection runs client-side: EIPs without an instance_id, ACM certs flagged
+// !in_use (eu-central-1 + us-east-1 from D5.0), S3 buckets that do not match
+// the project naming convention. Per-row actions are alert() stubs — actual
+// deletion/adoption is operator-driven via AWS CLI to keep this surface
+// read-only and safe. "Mark known-external" persists to localStorage so the
+// resource is suppressed on subsequent reloads.
+
+const CLEANUP_KNOWN_KEY = 'cleanup.knownExternal.v1';
+
+function _cleanupGetKnownExternal() {
+    try {
+        const raw = localStorage.getItem(CLEANUP_KNOWN_KEY);
+        if (!raw) return new Set();
+        const arr = JSON.parse(raw);
+        return new Set(Array.isArray(arr) ? arr : []);
+    } catch (e) {
+        return new Set();
+    }
+}
+
+function _cleanupAddKnownExternal(id) {
+    const set = _cleanupGetKnownExternal();
+    set.add(id);
+    try {
+        localStorage.setItem(CLEANUP_KNOWN_KEY, JSON.stringify(Array.from(set)));
+    } catch (e) { /* quota or disabled — silent */ }
+}
+
+function _cleanupResourceId(item, kind) {
+    // Stable ID for localStorage suppression. Falls back to a JSON hash.
+    return [
+        kind,
+        item.allocation_id || item.AllocationId ||
+        item.arn || item.Arn ||
+        item.domain || item.DomainName ||
+        item.name || item.Name ||
+        item.public_ip || item.PublicIp ||
+        JSON.stringify(item).slice(0, 64)
+    ].join('::');
+}
+
+async function loadCleanupResources(forceRefresh = false) {
+    const list = document.getElementById('cleanup-resource-list');
+    if (!list) return;
+    if (APP && typeof APP.renderSkeleton === 'function') {
+        APP.renderSkeleton('cleanup-resource-list', 'card', 3);
+    }
+    try {
+        const url = '/api/deploy/resources/all-projects' + (forceRefresh ? '?refresh=1' : '');
+        const res = await fetch(url);
+        const data = await res.json();
+        const orphans = _detectOrphans(data);
+
+        const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setText('cleanup-orphan-count', orphans.total);
+        setText('cleanup-eip-count', orphans.eips.length);
+        setText('cleanup-acm-count', orphans.acm_certs.length);
+        setText('cleanup-buckets-count', orphans.s3_buckets.length);
+
+        if (orphans.total === 0) {
+            list.innerHTML = `<div class="empty-state">
+                <div class="empty-state__icon"><span class="empty-state__icon-inner"></span></div>
+                <h3 class="empty-state__title">No orphan resources detected</h3>
+                <p class="empty-state__description">All AWS resources in this account are tracked by an active deployment.</p>
+            </div>`;
+            return;
+        }
+        list.innerHTML = _renderCleanupGroups(orphans);
+        if (APP && typeof APP._staggerOnce === 'function') APP._staggerOnce(list);
+    } catch (e) {
+        list.innerHTML = '<div class="callout callout--warning">Failed to load resources. Check AWS credentials.</div>';
+    }
+}
+
+function _detectOrphans(data) {
+    const known = _cleanupGetKnownExternal();
+    const orphans = {
+        eips: [],
+        acm_certs: [],
+        s3_buckets: [],
+        snapshots: [],
+        workspaces: [],
+        total: 0
+    };
+
+    // Unattached EIPs — no instance_id means floating allocation.
+    (data.eips || []).forEach(e => {
+        if (!e.instance_id) {
+            const id = _cleanupResourceId(e, 'eip');
+            if (!known.has(id)) orphans.eips.push(Object.assign({ _id: id }, e));
+        }
+    });
+
+    // ACM certs (eu-central-1 + us-east-1 from D5.0) — anything not in-use is an orphan.
+    const allAcm = (data.acm_certs || []).concat(data.acm_us_east_1 || []);
+    allAcm.forEach(c => {
+        if (!c.in_use) {
+            const id = _cleanupResourceId(c, 'acm');
+            if (!known.has(id)) orphans.acm_certs.push(Object.assign({ _id: id }, c));
+        }
+    });
+
+    // S3 buckets — anything outside the project naming convention.
+    const projectRe = /^(c2-adhoc|c2-purple|c2-full|goad-mini|goad-light|goad-sccm|goad-full|goad-nha|combined-)|redteam-dashboard-tfstate/;
+    (data.s3_buckets || []).forEach(b => {
+        const name = b.name || b.Name || '';
+        if (!projectRe.test(name)) {
+            const id = _cleanupResourceId(b, 's3');
+            if (!known.has(id)) orphans.s3_buckets.push(Object.assign({ _id: id }, b));
+        }
+    });
+
+    orphans.total = orphans.eips.length + orphans.acm_certs.length +
+                    orphans.s3_buckets.length + orphans.snapshots.length +
+                    orphans.workspaces.length;
+    return orphans;
+}
+
+function _renderCleanupGroups(orphans) {
+    const groups = [];
+    if (orphans.eips.length > 0) {
+        groups.push(_renderGroup('Unattached Elastic IPs', orphans.eips,
+            e => `${e.public_ip || e.PublicIp || '—'} · ${e.allocation_id || e.AllocationId || '—'}`));
+    }
+    if (orphans.acm_certs.length > 0) {
+        groups.push(_renderGroup('Orphan ACM Certificates', orphans.acm_certs,
+            c => `${c.domain || c.DomainName || '—'} · ${c.region || 'eu-central-1'} · ${c.status || c.Status || '—'}`));
+    }
+    if (orphans.s3_buckets.length > 0) {
+        groups.push(_renderGroup('Untagged S3 Buckets', orphans.s3_buckets,
+            b => `${b.name || b.Name || '—'}`));
+    }
+    return groups.join('');
+}
+
+function _renderGroup(title, items, formatter) {
+    const rows = items.map((item) => {
+        const safeId = escapeHtml(item._id || '');
+        const meta = escapeHtml(JSON.stringify(item).substring(0, 100));
+        return `
+        <div class="cleanup-resource-row" data-resource-id="${safeId}">
+            <div>
+                <div class="cleanup-resource-row__name">${escapeHtml(formatter(item))}</div>
+                <div class="cleanup-resource-row__meta">${meta}</div>
+            </div>
+            <div class="cleanup-resource-row__actions">
+                <button class="cleanup-resource-row__action" onclick="cleanupAdoptResource('${safeId}')">Adopt</button>
+                <button class="cleanup-resource-row__action cleanup-resource-row__action--danger" onclick="cleanupDestroyResource('${safeId}')">Destroy</button>
+                <button class="cleanup-resource-row__action" onclick="cleanupMarkKnown('${safeId}')">Mark known</button>
+            </div>
+        </div>`;
+    }).join('');
+    return `
+        <div class="cleanup-resource-group">
+            <h4 class="cleanup-resource-group__title">${escapeHtml(title)} <span class="t-muted">${items.length} found</span></h4>
+            ${rows}
+        </div>`;
+}
+
+function cleanupAdoptResource(_id) {
+    alert('Adopt into Terraform — manual step. See docs/ for terraform import syntax for this resource type.');
+}
+
+function cleanupDestroyResource(_id) {
+    alert('Destroy via AWS CLI — operator must confirm in console. No destructive backend endpoint is wired by design.');
+}
+
+function cleanupMarkKnown(id) {
+    if (!id) return;
+    _cleanupAddKnownExternal(id);
+    // Remove row immediately for instant feedback; full re-scan happens on next load.
+    const row = document.querySelector(`.cleanup-resource-row[data-resource-id="${CSS.escape(id)}"]`);
+    if (row) row.remove();
+}
+// === end D8 Agent B =========================================================
 
 document.addEventListener('DOMContentLoaded', () => {
     APP.init();
