@@ -5298,13 +5298,13 @@ const BEACON = {
         const pill = document.querySelector(pillSel);
         if (!pill) return;
         try {
-            // The audit endpoint doesn't support per-bid filtering, so we
-            // pull recent beacon.exec rows and filter client-side. limit=50
-            // is generous; we only need the most recent matching entry.
-            const res = await fetch('/api/audit?action_prefix=beacon.exec&limit=50');
+            // Server-side target filter (Polish B) — fetch only the most
+            // recent beacon.exec row for this bid instead of pulling 50 and
+            // filtering client-side.
+            const res = await fetch(`/api/audit?action_prefix=beacon.exec&target=${encodeURIComponent(bid)}&limit=1`);
             const data = await res.json();
             const entries = (data && data.entries) || [];
-            const match = entries.find(e => String(e.target || '') === String(bid));
+            const match = entries[0];
             const op = match
                 ? (APP.operator.all || []).find(o => o.id === match.op)
                 : null;
@@ -5360,11 +5360,11 @@ const BEACON = {
         wrap.hidden = false;
         list.innerHTML = `<li class="ops-cmd-history__empty">Loading…</li>`;
         try {
-            const res = await fetch('/api/audit?action_prefix=beacon.exec&limit=100');
+            // Server-side target filter (Polish B) — only entries for this
+            // beacon are returned, no client-side filter needed.
+            const res = await fetch(`/api/audit?action_prefix=beacon.exec&target=${encodeURIComponent(this.selectedBid)}&limit=100`);
             const data = await res.json();
-            const entries = (data && data.entries || []).filter(
-                e => String(e.target || '') === String(this.selectedBid)
-            );
+            const entries = (data && data.entries) || [];
             if (entries.length === 0) {
                 list.innerHTML = `<li class="ops-cmd-history__empty">No attributed command history for this beacon.</li>`;
                 return;
@@ -24814,7 +24814,7 @@ function cleanupMarkKnown(id) {
 //   GET    /api/operators            → { success, operators, current, default }
 //   POST   /api/operators            → { success, operator }
 //   POST   /api/operators/switch     → { success, current }  (sets cookie)
-//   GET    /api/audit?limit=&op=&action_prefix= → { success, entries, count }
+//   GET    /api/audit?limit=&op=&action_prefix=&project=&target= → { success, entries, count }
 // Frontend reuses APP.modal, APP.toast, escapeHtml; no new utilities.
 // ============================================================================
 

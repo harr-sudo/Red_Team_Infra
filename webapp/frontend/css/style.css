@@ -268,12 +268,27 @@ body > header h1 {
 }
 
 .btn-primary {
-    background: var(--burgundy);
+    /* Polish A 2026-05-18 — original pairing was burgundy (#8FA464) + gold
+       (#EFFBDB) which only hits 2.54:1 in dark mode (fails AA 4.5:1). The
+       failure was hidden from the contrast sweep because most .btn-primary
+       instances live inside modals that start hidden.
+       Fix: pair with --burgundy-dark (= --color-primary-dim #4D5C32 dark,
+       #091620 light) — the same dim brand variant the active tab + .btn
+       already use intentionally for AA on cream text. Computed ratios:
+         dark:  bg #4D5C32 + text #EFFBDB = 6.74:1 (passes AA)
+         light: bg #091620 + text-inverse #EFFBDB = 16.99:1 (passes AA)
+       Light-mode override at [data-theme="light"] .btn-primary still flips
+       the text token to --text-inverse, so we don't disturb that path. */
+    background: var(--burgundy-dark);
     color: var(--gold);
 }
 
 .btn-primary:hover {
-    background: var(--burgundy-light);
+    /* No explicit background — let global .btn:hover { filter: brightness(1.1) }
+       handle the brightening. With the dim-brand base above, that gives
+       ~5.92:1 in dark / ~16.99:1 in light, both well over AA. The previous
+       override (background: var(--burgundy-light)) shoved bg back into the
+       failing #8FA464 / #A3B87A range against the cream text. */
 }
 
 .btn-success {

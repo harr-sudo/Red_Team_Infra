@@ -56,7 +56,11 @@
     /* Primary axis (dominant brand color — buttons, links, key UI).
        Current: olive green. Primary-dim is intentionally pushed darker
        so cream text on it passes WCAG AA in the dark theme (active tab,
-       primary button fills). */
+       primary button fills).
+       AA contrast vs --color-secondary #EFFBDB (cream text):
+         --color-primary       #8FA464  →  2.54:1   FAILS (white-on-olive)
+         --color-primary-bright #A3B87A → 2.01:1   FAILS
+         --color-primary-dim   #4D5C32  →  6.74:1   PASSES (use for fills) */
     --color-primary:         #8FA464;
     --color-primary-bright:  #A3B87A;
     --color-primary-dim:     #4D5C32;

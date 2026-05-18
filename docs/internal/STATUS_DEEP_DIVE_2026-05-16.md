@@ -1068,6 +1068,9 @@ Choices the user has made that pin down implementation details. Anyone reading t
 | 21 | **Architecture tab folded into Dashboard widget + modal** (per user UX call). Architecture is reference content — operators visit once per engagement then ignore it. Top-nav real estate is the wrong placement. Becomes a contextual widget on the M-Dashboard launchpad showing the diagram for the currently-active deployment, with a "Browse all" modal that contains the existing deployment selector + diagram + markdown docs. Legacy `APP.navigateTo('architecture')` aliases redirect to the modal. | 2026-05-18 | **Nav drops to 4 final tabs** (Dashboard / Deployments / Operations / Settings) — was going to be 5 with Architecture. Folded into M-Dashboard scope: +1 widget (Architecture, total 12 widgets) + 1 modal + delete Architecture tab + update alias map. Architecture content moves out of `<div data-page="architecture">` into a modal mounted on Dashboard. Estimate addition to M-Dashboard: ~half-day. M-Architecture milestone REMOVED from the schedule (its content lives inside M-Dashboard now). |
 | 22 | **Wider V3 redesign promoted to v2.0.0** (per user request: "do the redesign right after the dashboard"). Reorder remaining milestones — **M-Redesign** ships **immediately after M-Dashboard** as the big visual-completeness cutover (`v2.0.0`), before D6 URLs and other small items. Scope expands beyond pure CSS polish into actual **page-structure** improvements (Settings reorganization, modal sizing/positioning standardization, unified empty states, loading states, error states, consistent typography end-to-end) — "like the V3 taste demo + more fluidity." | 2026-05-18 | New ordering: M-Operations ✅ → M-Dashboard (in flight, `v1.3.0`) → **M-Redesign (new big phase, `v2.0.0`)** → D6 URLs (`v2.1.0`) → M-Settings absorbed into M-Redesign → M-Modals absorbed into M-Redesign → Cleanup sub-pill = trailing micro-phase (`v2.2.0`). M-Redesign estimate: 3-5 days, ~15-20 commits. Touches every surface that's not already V3 (Settings interior, all modals, Architecture modal interior, Cost Tracker, Roadmap section, any remaining legacy buttons/forms/tables). Adds "fluidity" via consistent micro-motion (page transitions, sub-pill animations, list item enter/leave choreography). |
 | 23 | **M-Operators is attribution, not auth** (per user 2026-05-18: *"all users of this dashboard also have full admin access to the aws account so there's not much in requiring a password to login — just a simple selection of which user or add the new user 'profile' as such. This then allows for logging of actions etc."*). The trust boundary is AWS IAM + SSH, already enforced upstream — the dashboard is downstream of that boundary, so **no password / session / auth layer is added**. Operator identity = an **unsigned cookie** (`dashboard_operator=<id>`) consumed by a Flask `before_request` middleware that binds `g.operator`. Profile store = JSON file at `~/.dashboard/operators.json` with `{id, display, color, created}` per entry. CRUD via simple endpoints + a **header chip with dropdown** (current operator + "Switch" list + "Add operator…" modal with name + color picker). Audit = JSONL at `~/.dashboard/audit.log`, one line per state-changing action (`deploy.apply`, `deploy.destroy`, `beacon.exec`, `terminal.start`, `cleanup.mark_known`, etc.). Activity feed widget on Dashboard tab consumes `GET /api/audit`. Beacon session headers + terminal session titles + Cleanup rows surface "by <operator>" attribution. Tagged **v2.3.0**, branch `refactor/dashboard-m-operators`. | 2026-05-18 | Replaces the previously-sketched M-Audit milestone (5-7 days w/ auth + RLock + session recording) with a **1-2 day M-Operators** milestone. Locking/concurrency (e.g. two operators racing `terraform apply` on the same project) **deliberately deferred** — handle only if a real incident demands it. Surfaces unlocked: real activity feed on Dashboard, attributed beacon/terminal events, "marked-known-external by Alice 3d ago" in Cleanup, "currently driven by: Harris" on beacon sessions. No auth means: anyone with dashboard network access (already IAM-gated upstream) can pick any operator profile — same trust model as git's `user.name`. |
+| 24 | **Multi-operator polish split into separate items** (per user 2026-05-18). Post-M-Operators (`v2.3.0`) the user broke the remaining multi-operator work into independent shippable pieces rather than one big M-Audit-2 phase. **Group A — Dashboard attribution** (beacon session headers, terminal session titles, Cleanup row "marked-known by X" labels) **folds organically into the Phase 3 sub-pill rebuilds** — each sub-pill picks up `g.operator` surfacing as part of its V3-native rewrite. **Group B — Operator management modal** (rename / recolor / delete profiles) ships **standalone** as a self-contained modal addition. **Group C — Full audit log view + simultaneous-editing warnings** is **deliberately queued until after the top-level scaffold pick** (see Decision #25) — no point building log-viewer chrome before knowing where it lives. CS-level per-operator attribution **accepted as upstream-trust (Option C)** — no per-operator CS REST API user system, the shared `csrestapi:password` stays and CS-side actions remain attributed at the dashboard layer only. | 2026-05-18 | Avoids a monolithic M-Audit-2 milestone. Phase 3 interior sweep already shipped (`2f4179b`) carries the Group A surfacing inside each sub-pill. Operator management modal is a one-commit standalone item. Audit log view doesn't block anything operationally — paused pending scaffold direction. Locks in that we are NOT going to build per-operator CS users; CS attribution stays dashboard-side via `g.operator` + JSONL audit log (Decision #23). |
+| 25 | **Wider redesign scope correction — macro scaffold, not interior** (per user 2026-05-18). After Phase 2b shipped (Composition A summary + Hybrid wizard journey LIVE in production at `8d7bec0`), the user flagged that prior work had **narrowed the V3-native redesign to page interiors** when their original intent was the **macro scaffold** — the global header, top tab bar, sub-pill rows, page-to-page navigation patterns. Five interior rebuilds (Manage / Operations / Cleanup / Settings / Dashboard widgets) were committed as **stepping stones** rather than the destination (`2f4179b`). A **top-level scaffold preview round** then produced four candidates at `webapp/frontend/preview/top-level-*.html`: **A — left rail** (`top-level-a-left-rail.html`), **B — command palette** (`top-level-b-palette.html`), **C — workflow stages** (`top-level-c-workflow.html`), **D — dashboard-as-OS** (`top-level-d-dashboard-os.html`), with a comparison harness at `top-level-compare.html`. User to review and pick one; the chosen scaffold becomes the next milestone and Phase 4 integrates it into the live app. | 2026-05-18 | Confirms the redesign endpoint is structural, not cosmetic. Phase 3 interior commits are **kept** — they're forward-compatible with any of the four scaffolds (each interior is just sub-pill content). What changes after the pick is the chrome around them: nav placement, page transitions, global affordances. Estimated Phase 4 scope depends on which scaffold wins: A/B/C ≈ 2-3 days, D ≈ 4-5 days (more bespoke). Until the pick, no new structural code lands on `main`. |
+| 26 | **TASTE demo coverage — every page + master hub** (per user 2026-05-18). User asked for a TASTE-skill demo of every page in the app plus a master hub for batch review while away from the laptop. **Four parallel agents** generated `frontend-design`-driven demos covering: **Dashboard**, **Configure**, **Manage**, **Cleanup**, **Beacons**, **Terminal**, **Payloads**, **Settings**, plus a **Modals showcase** and the **Architecture modal**. A **master hub** embeds all demos in iframes with a global theme toggle + jump-to-page nav so the user can browse the entire app's design state in one pass without clicking through the live dashboard. Demos are throwaway: they live in `webapp/frontend/preview/` and inform the scaffold pick + downstream Phase 4 polish but do not ship to production as-is. | 2026-05-18 | Lets the user review the full design surface offline. Pairs naturally with Decision #25 — the scaffold pick informs which TASTE demo elements survive into the integrated app vs which were exploration. Validates the parallel-agent fan-out pattern (see "Lessons from the agent fan-out" section below): eight agents on the same files (style.css / index.html / app.js) coexisted through retry-on-stale-read with no outright failures. |
 
 Open decisions still pending (deferred, will revisit when relevant):
 - **Pre-commit hook** (auto-run tests on `git commit`) — defer until after T0 framework is up; revisit then.
@@ -1077,6 +1080,109 @@ Open decisions still pending (deferred, will revisit when relevant):
 - **Terminal session recording tool** — defer to P2 item #15.
 - **Layer 2 (Vitest) scope** — likely scoped to mock-infra-only or skipped entirely; will pin when T0.7 is approached.
 - **Beacon as its own top-level tab vs Operations sub-pill** — proceeding with sub-pill per Decision #8; trivially reversible if user requests later.
+
+---
+
+## 22.5 Milestone tracker
+
+Shipped + in-flight milestones, latest first. Each row is a tag (or a tag-pending commit) so the CHANGELOG can be reconstructed straight from this table.
+
+| Version | Milestone | Branch / commit | Status |
+|---|---|---|---|
+| `v2.0.0` | **M-Redesign** — global header + nav refactor + modal sizing/positioning standardization + Settings reorganization + motion utilities | merged | ✅ shipped |
+| `v2.1.0` | **D6** — Bookmarkable URLs for sub-pills (`#operations/beacons?dep=...`) | merged | ✅ shipped |
+| `v2.2.0` | **D8** — AWS Inventory & Cleanup (Settings cards + 4th Deployments sub-pill) | merged | ✅ shipped |
+| `v2.3.0` | **M-Operators** — profile picker + unsigned cookie + JSONL audit log (attribution, not auth) | merged | ✅ shipped |
+| `v2.4.0` | **Phase 2a** — Theming foundation (raw + semantic tokens, two-tier palette) + layer-aware contrast sweep | `94ebdd2` | ✅ shipped |
+| `v2.5.0` | **Phase 2b** — Composition A summary + Hybrid (J1+J3) wizard journey LIVE in Configure/Deploy | `8d7bec0` | ✅ shipped |
+| *current branch, not yet tagged* | Phase 3 interior sweep — Manage / Operations / Cleanup / Settings / Dashboard widgets + operator management modal | `2f4179b` on `refactor/dashboard-m-v3-native-phase3` | 🟡 committed, awaiting scaffold pick before tag |
+| *current branch, not yet tagged* | Top-level scaffold previews — A left rail / B command palette / C workflow stages / D dashboard-as-OS | `7f6659b` on `refactor/dashboard-m-v3-native-phase3` | 🟡 awaiting user pick |
+| *current branch, not yet tagged* | TASTE demo coverage — Dashboard / Configure / Manage / Cleanup / Beacons / Terminal / Payloads / Settings / Modals showcase / Architecture modal + master hub | in flight, parallel agents | 🟡 in flight |
+| `v2.6.0` *(pending)* | **Scaffold pick + Phase 4 integration** — chosen top-level scaffold integrated into live app | pending Decision #25 resolution | ⬜ blocked on user pick |
+| *queued* | **Audit log view** — full audit log surface with archiving + target filter | per Decision #24 Group C | ⬜ queued until scaffold lands |
+| *queued* | **Simultaneous-editing warnings** — two operators editing the same deployment | per Decision #24 Group C | ⬜ queued |
+
+**Note:** the Decision #20 M-phase versioning scheme (M-Operations as `v1.2.0`, M-Dashboard `v1.3.0`, etc.) was superseded once the wider V3-native redesign got promoted (Decision #22). The actual shipped sequence collapsed M-Operations + M-Dashboard into the broader `v2.0.0` M-Redesign cutover and renumbered downstream. The table above is the source of truth for what's actually on `main`.
+
+---
+
+## 22.6 Lessons from the agent fan-out
+
+Captured while Phase 2a → Phase 3 was running, mostly via parallel-agent execution against the same file set. Each item below is a pattern worth preserving.
+
+### 1. Layer-aware contrast is the right discipline
+
+The earlier ad-hoc "check text against the page background" heuristic missed real failures because dashboard text rarely sits on the app background — it sits on a card, on a section header, on a hover row. Multiple phases caught real bugs only because their audits walked **text → immediate-ancestor surface**, not text → app bg.
+
+- **Phase 2a** found the zombie `header { background: var(--burgundy) }` rule matching every `<header>` element including `.settings-section__header` — see `webapp/frontend/preview/contrast-audit-2a.md`. This was the **Settings light-mode bug the user reported in person**, and the audit caught it the moment the walker landed on a `<header>` not in the global nav.
+- **Phase 3d** found the Cost breakdown table `<th>` failing at **4.49:1** in light mode (just below the 4.5:1 AA threshold for normal text) — see `webapp/frontend/preview/contrast-audit-phase3d-settings.md`. The cell only renders with real cost data, so the test environment with mock-empty state never tripped it.
+- The **operator management modal agent** (Phase 3b) found `.btn-primary` (burgundy on gold) failing at ~**2.5:1** system-wide. Caught because the audit walked the modal **once visible**, not as part of the global page sweep — the modal's primary button is the same component used on every page, so the failure is system-wide; it just hadn't been audited at the right layer before.
+
+**Rule:** every UI agent runs `ui-quality-check` and walks **every text node → its immediate background-painting ancestor**, in BOTH `[data-theme="light"]` and default (dark) modes. Not page-level, not chrome-level — element-level.
+
+### 2. `--text-secondary`, not `--text-muted`, for any hint inside a hover-capable row
+
+Phase 2b established this; Phase 3a/3c/3d/3e all carried it forward. The rule:
+
+- `--text-muted` is for hints on **static** card surfaces only.
+- Any row that can become `--bg-card-hover` (any clickable list item, deployment grid card, beacon row, audit row, Cleanup row, table row with `:hover`) **must** use `--text-secondary` for its hint text. `--text-muted` drops below AA when the hover surface tints up.
+
+This is worth a `CLAUDE.md` note — currently it's implicit in the contrast audits and will be re-learned by any new agent.
+
+### 3. Operator color dots need contrast rings
+
+Phase 3b's audit of the 6 default operator colors (used for operator profile dots in audit feed entries, beacon session headers, terminal session titles) against card surfaces produced:
+
+```
+6 colors × 2 surfaces (card / card-hover) × 2 themes = 24 combinations
+12 / 24 below the 3:1 non-text threshold (WCAG 1.4.11)
+```
+
+The fix is **not** to recolor — the colors are meaningful operator identity. Instead, every operator dot gets a contrast ring:
+
+```css
+.operator-dot {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 30%, transparent);
+}
+```
+
+Color encodes identity, ring encodes contrast. Works in both themes (the ring is theme-aware via `--text-primary` mixing) and survives any future palette retheme.
+
+### 4. Parallel agent fan-out works, with caveats
+
+Eight agents executed concurrently on the same files (`style.css`, `index.html`, `app.js`) during the Phase 3 interior sweep + operator management modal + Decision #26 TASTE demos. They coexisted through Claude Code's retry-on-stale-read handling: when agent B saved a file agent A had read, agent A's next Edit returned a "file modified since last read" error, agent A re-read and re-applied. **No agent outright failed.**
+
+What made this work:
+
+- **Namespaced CSS sections** — each sub-pill agent edited only its own section header (`/* ===== MANAGE SUB-PILL ===== */` etc.), never the global rules at the top of `style.css`. Agents touching the global section were serialized by the dispatcher.
+- **Sub-pill-scoped HTML edits** — `index.html` edits were always inside a single sub-pill's container `<div>`. Agents touching the global header / nav / modal-root were serialized.
+- **Per-agent JS namespaces** — `APP.manage.*`, `APP.beacons.*`, `APP.cleanup.*`, etc. Each agent owned its namespace and the `APP.*` registration line at the bottom. The only shared surface was `APP.navigateTo` / `APP.loadPageContent` and those were not touched in Phase 3.
+
+**Worth documenting as a pattern** for future big sweeps: any time a multi-file refactor has N independent sub-areas, this fan-out can N-x the wall clock. The key is the namespace contract — without it, every agent fights every other agent on the same global surfaces.
+
+### 5. Two-tier palette is recolor-friendly
+
+Phase 2a's deliverable was a two-tier token system:
+
+- **Tier 1 — raw axes**: `--color-primary`, `--color-secondary`, `--color-tertiary` × `-bright` / `-dim` variants (6 raw colors). Plus a neutral grayscale (`--neutral-0` … `--neutral-1000`) and typography tokens.
+- **Tier 2 — semantic names**: `--bg-card`, `--bg-card-hover`, `--text-primary`, `--text-secondary`, `--accent`, `--burgundy`, etc. — all defined in terms of Tier 1.
+
+Retheming the entire app = **5-line edit** at the top of `palette.css` (re-aim the three color axes). The semantic names don't change but the underlying values are free to flex.
+
+The two-tier structure was the **prerequisite that made the contrast sweep tractable**. With raw hex values scattered through `style.css`, the audit would be unbounded. With every color resolving through a semantic name, the auditor can enumerate "every text token × every surface token × every theme" and produce a finite matrix.
+
+---
+
+## 22.7 Open questions / pending decisions (current week)
+
+Things blocking forward motion or being worked in parallel right now. Resolved items move into §22 Decisions log.
+
+| # | Question | Status | Blocker for |
+|---|---|---|---|
+| OQ-1 | **Scaffold pick** — A left rail / B command palette / C workflow stages / D dashboard-as-OS | User reviewing previews at `webapp/frontend/preview/top-level-*.html` + `top-level-compare.html` | `v2.6.0` (Phase 4 integration) and everything downstream of it |
+| OQ-2 | **`.btn-primary` system-wide contrast fix** — burgundy on gold at ~2.5:1 (per Phase 3b finding in §22.6 #1) | In flight, parallel polish agent | Any new primary-action button surface |
+| OQ-3 | **Audit log archiving + target filter** | In flight, parallel polish agent | Decision #24 Group C (queued, no hard blocker yet) |
+| OQ-4 | **Cleanup of orphaned legacy CSS** — `.activity-feed__*` rules, `.cleanup-*` v2.2.0 rules, `.settings-domain-row`, etc. | **Deliberately left in place** per the file-boundary contract of Phase 3 (no agent removes CSS that any other sub-pill agent might still be reading) | Revisit after Phase 4 scaffold integration — cleanup happens once **all sub-pill rebuilds are settled** on the chosen scaffold, otherwise we churn through delete → restore cycles |
 
 ---
 

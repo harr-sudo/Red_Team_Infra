@@ -18,10 +18,12 @@ def recent():
     op = request.args.get("op")
     action_prefix = request.args.get("action_prefix")
     project = request.args.get("project")
+    target = request.args.get("target")
     entries = audit_service.read_recent(
         limit=limit,
         op_filter=op,
         action_prefix=action_prefix,
         project_filter=project,
+        target_filter=target,
     )
     return jsonify({"success": True, "entries": entries, "count": len(entries)})
