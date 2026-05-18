@@ -50,6 +50,12 @@ test('dashboard SPA loads and has expected nav buttons', async ({ page }) => {
     // Manager) were removed from the DOM along with the ?legacyTabs=1
     // feature flag. Remaining tabs: Dashboard / Deployments / Tools /
     // Architecture / Beacon / Terminal / Settings = 7.
+    // D4.1 — New merged "Operations" tab added (Beacons/Terminal/Payloads
+    // sub-pills scaffold). The 3 Operations-related legacy buttons
+    // (Beacon / Terminal / Tools) still exist in the DOM but are hidden
+    // via data-legacy="true" + the ?legacyTabs=1 flag in app.js. The
+    // selector below counts DOM nodes, not visible ones, so the count
+    // is 7 + 1 = 8. D4.6 deletes the 3 legacy nodes → count returns to 5.
     const tabCount = await page.locator('button.tab-btn[data-target]').count();
-    expect(tabCount).toBe(7);
+    expect(tabCount).toBe(8);
 });

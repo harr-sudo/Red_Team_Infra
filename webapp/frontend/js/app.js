@@ -97,10 +97,16 @@ const NAVIGATE_ALIASES = {
     // nav-button click ({data-target="deployments-tab"}) resolves cleanly
     // instead of falling back to dashboard via the null-target guard.
     'deployments-tab': { parent: 'deployments-tab', subPill: null },
-    // D4 future-mappings — currently passthrough
+    // D4 future-mappings — currently passthrough. D4.6 retargets these to
+    // { parent: 'operations-tab', subPill: 'beacons' | 'terminal' | 'payloads' }
+    // once each subtree is re-parented (D4.2/D4.3/D4.4).
     'beacon':        { parent: 'beacon',        subPill: null },
     'terminal':      { parent: 'terminal',      subPill: null },
     'tools':         { parent: 'tools',         subPill: null },
+    // D4.1 — Identity entry for the merged Operations tab so a direct
+    // nav-button click ({data-target="operations-tab"}) resolves cleanly
+    // instead of falling back to dashboard via the null-target guard.
+    'operations-tab':{ parent: 'operations-tab', subPill: null },
     // D2 — Pre Reqs moved into Settings as a section card; legacy 'aws-check'
     // navigateTo() calls now redirect to Settings with an anchor scroll.
     'aws-check':     { parent: 'settings',      subPill: null, anchor: 'aws-prereqs-anchor' },
@@ -164,7 +170,11 @@ const APP = {
     // live pages list; the alias entries in NAVIGATE_ALIASES redirect legacy
     // callers to {parent: 'deployments-tab', subPill: …}. The aliases stay
     // forever as the supported "legacy name → new home" mapping.
-    pages: ['dashboard', 'deployments-tab', 'tools', 'architecture', 'beacon', 'terminal', 'settings'],
+    // D4.1 — 'operations-tab' added as the new merged parent for Beacon /
+    // Terminal / Tools. The 3 legacy entries stay in this list during the
+    // D4 transition (so direct hash deep-links keep working); D4.6 removes
+    // them and retargets the NAVIGATE_ALIASES entries above.
+    pages: ['dashboard', 'deployments-tab', 'operations-tab', 'tools', 'architecture', 'beacon', 'terminal', 'settings'],
     // P1 #7.6 — cached /api/version response so the modal doesn't re-fetch
     versionInfo: null,
     
@@ -179,6 +189,20 @@ const APP = {
         // merged Deployments tab is now the only entry point; legacy
         // APP.navigateTo('configuration' | 'deployment' | 'deployments')
         // callers continue to work via NAVIGATE_ALIASES (top of this file).
+
+        // D4.1 — Temporary feature flag for the Operations transition.
+        // Hides legacy Beacon/Terminal/Tools nav buttons by default; the
+        // ?legacyTabs=1 query param keeps them visible for A/B comparison
+        // during the refactor. Removed at D4.6 when the legacy buttons are
+        // deleted from the DOM entirely.
+        (function () {
+            const params = new URLSearchParams(window.location.search);
+            if (params.has('legacyTabs')) return;
+            ['beacon', 'terminal', 'tools'].forEach(target => {
+                const btn = document.querySelector(`.tab-btn[data-target="${target}"]`);
+                if (btn) btn.setAttribute('data-legacy', 'true');
+            });
+        })();
 
         // Apply saved theme
         this.initTheme();

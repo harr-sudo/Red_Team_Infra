@@ -95,6 +95,12 @@
                  Manager) and the ?legacyTabs=1 feature flag. Legacy navigateTo() callers
                  are still routed here via NAVIGATE_ALIASES in app.js. -->
             <button class="tab-btn" data-target="deployments-tab">Deployments</button>
+            <!-- D4.1/D4.6 — Merged Operations tab (Beacons / Terminal / Payloads sub-pills).
+                 D4.1: scaffold only. The 3 legacy buttons (Tools / Beacon / Terminal) are
+                 hidden by default via the data-legacy attribute applied at runtime in
+                 app.js APP.init(); ?legacyTabs=1 keeps them visible for A/B comparison
+                 during the D4 refactor. D4.6 retires them entirely (DOM removal). -->
+            <button class="tab-btn" data-target="operations-tab">Operations</button>
             <button class="tab-btn" data-target="tools">Tools</button>
             <button class="tab-btn" data-target="architecture">Architecture</button>
             <button class="tab-btn" data-target="beacon">Beacon</button>
@@ -1534,6 +1540,48 @@ ns-143.awsdns-17.org
 
 
 
+                    </div>
+                </div>
+            </div>
+
+            <!-- D4 — Operations merged tab (Beacons / Terminal / Payloads sub-pills).
+                 D4.1: scaffold only. The 3 sub-views are re-parented from
+                 data-page="beacon" / "terminal" / "tools" in D4.2-D4.4.
+                 Per Decision #6: ?legacyTabs=1 query param keeps the old 3 nav
+                 buttons accessible during the refactor; default behavior hides them. -->
+            <div class="tab-page" data-page="operations-tab" style="display: none;">
+                <div class="subpill-nav" role="tablist" aria-label="Operations sub-views">
+                    <button class="subpill-nav__pill is-active"
+                            role="tab"
+                            data-subpill="beacons"
+                            aria-selected="true"
+                            id="subpill-beacons">Beacons</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
+                            data-subpill="terminal"
+                            aria-selected="false"
+                            id="subpill-terminal">Terminal</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
+                            data-subpill="payloads"
+                            aria-selected="false"
+                            id="subpill-payloads">Payloads</button>
+                </div>
+                <div class="subpill-content" role="tabpanel">
+                    <div class="subpill-pane" data-subpill-pane="beacons" id="subpill-pane-beacons">
+                        <p style="color: var(--text-muted); padding: 20px;">
+                            Beacons sub-pane (placeholder — re-parented in D4.2).
+                        </p>
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="terminal" id="subpill-pane-terminal" hidden>
+                        <p style="color: var(--text-muted); padding: 20px;">
+                            Terminal sub-pane (placeholder — re-parented in D4.3).
+                        </p>
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="payloads" id="subpill-pane-payloads" hidden>
+                        <p style="color: var(--text-muted); padding: 20px;">
+                            Payloads sub-pane (placeholder — re-parented in D4.4).
+                        </p>
                     </div>
                 </div>
             </div>

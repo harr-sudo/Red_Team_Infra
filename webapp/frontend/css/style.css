@@ -4537,3 +4537,11 @@ body { padding-top: 64px; }
     color: var(--text-muted);
 }
 
+/* D4.1 — Restore legacy-tabs-hidden rule (was deleted at D3.6, needed
+   again during the Operations transition). The data-legacy attribute is
+   applied at runtime in app.js APP.init() to the Beacon / Terminal / Tools
+   nav buttons unless ?legacyTabs=1 is present. Removed at D4.6. */
+.tab-btn[data-legacy="true"] {
+    display: none;
+}
+
