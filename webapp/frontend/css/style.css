@@ -3539,3 +3539,141 @@ input[type="checkbox"] {
     pointer-events: none;
     max-width: 560px;
 }
+
+/* ============================================================================
+   Version Footer + Modal  (P1 #7.6)
+   - Footer sits fixed bottom-right, persists across all tabs.
+   - Uses --text-muted on --bg-section so it's readable in BOTH themes:
+       dark : #7A849E on #1F243A  (>4.5:1)
+       light: #4A5168 on #CDDAAE  (>4.5:1)
+   - --gold / --accent / --accent-muted are deliberately NOT used here —
+     they collapse to low-contrast olive on light surfaces.
+   ============================================================================ */
+#app-version-footer {
+    position: fixed;
+    bottom: 8px;
+    right: 12px;
+    z-index: 10;
+    padding: 4px 8px;
+    background: var(--bg-section);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    opacity: 0.75;
+    cursor: pointer;
+    transition: opacity 0.2s ease, color 0.2s ease;
+    user-select: none;
+}
+#app-version-footer:hover,
+#app-version-footer:focus {
+    opacity: 1;
+    color: var(--text-primary);
+    outline: none;
+    border-color: var(--border-light);
+}
+#app-version-footer:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+}
+
+/* Modal — matches the dashboard's standard fixed-overlay pattern */
+.version-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.version-modal[hidden] {
+    display: none;
+}
+.version-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    cursor: pointer;
+}
+.version-modal__content {
+    position: relative;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    min-width: 320px;
+    max-width: 480px;
+    width: 100%;
+    overflow: hidden;
+}
+.version-modal__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-section);
+}
+.version-modal__header h2 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+.version-modal__close {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.4rem;
+    line-height: 1;
+    padding: 2px 8px;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+}
+.version-modal__close:hover,
+.version-modal__close:focus {
+    color: var(--text-primary);
+    background: var(--bg-card-hover);
+    outline: none;
+}
+.version-modal__body {
+    margin: 0;
+    padding: 16px 18px;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 8px 16px;
+    font-size: 0.88rem;
+}
+.version-modal__body dt {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+.version-modal__body dd {
+    margin: 0;
+    color: var(--text-primary);
+    font-family: 'SF Mono', Monaco, monospace;
+    word-break: break-all;
+}
+.version-modal__footer {
+    padding: 12px 18px;
+    border-top: 1px solid var(--border-subtle);
+    text-align: right;
+    background: var(--bg-section);
+}
+.version-modal__footer a {
+    color: var(--info-text);
+    text-decoration: none;
+    font-size: 0.88rem;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+}
+.version-modal__footer a:hover,
+.version-modal__footer a:focus {
+    text-decoration: underline;
+    background: var(--bg-card-hover);
+    outline: none;
+}

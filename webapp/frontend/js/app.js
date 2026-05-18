@@ -76,6 +76,8 @@ function _invalidateOutputsCache(projectName) {
 const APP = {
     currentPage: 'dashboard',
     pages: ['dashboard', 'configuration', 'deployment', 'deployments', 'tools', 'aws-check', 'architecture', 'beacon', 'terminal', 'settings'],
+    // P1 #7.6 — cached /api/version response so the modal doesn't re-fetch
+    versionInfo: null,
     
     /**
      * Initialize the application
@@ -120,7 +122,80 @@ const APP = {
             }
         }).catch(() => {});
 
+        // Version footer (P1 #7.6) — populate footer + modal, wire handlers
+        this.initVersionFooter();
+
         console.log('✅ Application initialized successfully');
+    },
+
+    /**
+     * Fetch /api/version, populate the footer + modal, and wire up
+     * click/keyboard handlers. Defensive: any failure renders
+     * "v? (unknown)" — the UI never crashes on version-info errors.
+     */
+    initVersionFooter() {
+        const footer = document.getElementById('app-version-footer');
+        const footerText = document.getElementById('app-version-footer-text');
+        const modal = document.getElementById('version-modal');
+        if (!footer || !footerText || !modal) return;
+
+        const setUnknown = () => {
+            this.versionInfo = { version: 'unknown', git_sha: 'unknown', built_at: 'unknown' };
+            footerText.textContent = 'v? (unknown)';
+            this._populateVersionModal();
+        };
+
+        fetch('/api/version')
+            .then(r => r.ok ? r.json() : Promise.reject(new Error('bad status')))
+            .then(data => {
+                const version = (data && data.version) ? String(data.version) : 'unknown';
+                const sha = (data && data.git_sha) ? String(data.git_sha) : 'unknown';
+                const built = (data && data.built_at) ? String(data.built_at) : 'unknown';
+                this.versionInfo = { version, git_sha: sha, built_at: built };
+                if (version === 'unknown' && sha === 'unknown') {
+                    footerText.textContent = 'v? (unknown)';
+                } else {
+                    footerText.textContent = `v${version} (${sha})`;
+                }
+                this._populateVersionModal();
+            })
+            .catch(() => setUnknown());
+
+        // Footer click + keyboard activation
+        const openHandler = (e) => {
+            e.preventDefault();
+            openVersionModal();
+        };
+        footer.addEventListener('click', openHandler);
+        footer.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') openHandler(e);
+        });
+
+        // Close handlers — buttons + backdrop click + Escape key
+        modal.querySelectorAll('[data-version-modal-close]').forEach(el => {
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeVersionModal();
+            });
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !modal.hasAttribute('hidden')) {
+                closeVersionModal();
+            }
+        });
+    },
+
+    /**
+     * Populate the modal fields from APP.versionInfo (helper kept private).
+     */
+    _populateVersionModal() {
+        const info = this.versionInfo || { version: 'unknown', git_sha: 'unknown', built_at: 'unknown' };
+        const v = document.getElementById('version-modal-version');
+        const s = document.getElementById('version-modal-sha');
+        const b = document.getElementById('version-modal-built');
+        if (v) v.textContent = info.version || 'unknown';
+        if (s) s.textContent = info.git_sha || 'unknown';
+        if (b) b.textContent = info.built_at || 'unknown';
     },
 
     /**
@@ -14654,15 +14729,18 @@ function _renderDeploymentTimelineNow() {
     if (window._destroyInProgress) return;
 
     // Don't rebuild if any session is expanded with loaded content — re-rendering
-    // wipes lazy-loaded connection info, checklist, and credentials HTML.
+    // wipes lazy-loaded connection info, checklist, credentials, and setup-check HTML.
     // Only skip if the timeline already has content (not initial render).
     if (timelineContent.children.length > 0 && expandedSessions.size > 0) {
         const hasLoadedContent = Array.from(expandedSessions).some(sid => {
             const connDiv = document.getElementById(`${sid}-connection-content`);
             if (connDiv) {
                 const text = connDiv.textContent.trim();
-                return text !== 'Loading connection details...' && text !== '';
+                if (text !== 'Loading connection details...' && text !== '') return true;
             }
+            // Also check if setup-check has rendered host details — re-render would wipe them
+            const setupDiv = document.getElementById('setup-check-content');
+            if (setupDiv && setupDiv.querySelector('details')) return true;
             return false;
         });
         if (hasLoadedContent) return;
@@ -15255,14 +15333,14 @@ function buildSessionDetails(session, sessionId) {
             <!-- Host Setup Status (checks bootstrap script completion via SSM) -->
             ${isSuccess ? `
             <details class="details-card" data-details-id="${sessionId}-setup-check">
-                <summary style="font-weight: 600;">Host Setup Status <span id="setup-check-badge" style="font-weight: 400; margin-left: 8px; font-size: 0.78em;"></span><span id="setup-check-last-checked" style="font-weight: 400; margin-left: 8px; font-size: 0.78em; color: var(--text-muted);"></span></summary>
+                <summary style="font-weight: 600;">Host Setup Status <span id="setup-check-badge" style="font-weight: 400; margin-left: 8px;"></span><span id="setup-check-last-checked" style="font-weight: 400; margin-left: 8px; color: var(--text-muted);"></span></summary>
                 <div>
-                    <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
-                        <button onclick="runSetupCheck('${projectName}')" id="setup-check-btn" class="btn btn-secondary" style="font-size: 0.75em; padding: 4px 10px;">
+                    <div style="display: flex; gap: 12px; margin-bottom: 10px;">
+                        <button onclick="runSetupCheck('${projectName}')" id="setup-check-btn" class="btn btn-info btn-sm">
                             Check Setup
                         </button>
                     </div>
-                    <div id="setup-check-content" data-project-name="${projectName}" style="color: var(--text-secondary); font-size: 0.9em;">
+                    <div id="setup-check-content" data-project-name="${projectName}" style="color: var(--text-secondary);">
                         <p style="color: var(--text-muted); font-style: italic;">No setup check results yet. Click "Check Setup" or wait for the automatic check after deployment.</p>
                     </div>
                 </div>
@@ -18787,6 +18865,15 @@ async function loadCachedSetupCheck() {
     const contentEl = document.getElementById('setup-check-content');
     if (!contentEl) return;
 
+    // Don't reload from cache if a check is currently running -- would wipe the spinner
+    if (_setupCheckPollTimer) return;
+    const btn = document.getElementById('setup-check-btn');
+    if (btn && btn.disabled) return;
+
+    // Don't reload if content is already rendered with hosts -- avoids re-render flashing
+    // which makes the list "disappear" during scrolling/interaction
+    if (contentEl.querySelector('details')) return;
+
     // Try localStorage first
     const activeSession = document.querySelector('[data-details-id$="-setup-check"]');
     if (!activeSession) return;
@@ -18885,16 +18972,18 @@ function pollSetupCheck(checkId, project) {
                 return;
             }
 
-            // Complete
+            // Complete -- clear poll timer so future cache loads aren't blocked
+            _setupCheckPollTimer = null;
             if (data.success && data.hosts) {
                 const cacheKey = `setupCheck_${project}`;
                 localStorage.setItem(cacheKey, JSON.stringify(data));
                 renderSetupCheckResults(data);
             } else {
-                if (contentEl) contentEl.innerHTML = `<p style="color: var(--error);">Check failed: ${data.error || 'Unknown error'}</p>`;
+                if (contentEl) contentEl.innerHTML = `<p style="color: var(--danger-text);">Check failed: ${data.error || 'Unknown error'}</p>`;
             }
         } catch (e) {
-            if (contentEl) contentEl.innerHTML = `<p style="color: var(--error);">Poll error: ${e.message}</p>`;
+            _setupCheckPollTimer = null;
+            if (contentEl) contentEl.innerHTML = `<p style="color: var(--danger-text);">Poll error: ${e.message}</p>`;
         }
         if (btn) { btn.disabled = false; btn.textContent = 'Check Setup'; }
     };
@@ -18925,7 +19014,7 @@ function renderSetupCheckResults(data) {
         let badgeColor = 'var(--success)';
         if (healthy === 0) badgeColor = 'var(--error)';
         else if (healthy < total) badgeColor = 'var(--warning)';
-        badgeEl.innerHTML = `<span style="background: ${badgeColor}; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 0.75em;">${healthy}/${total} healthy</span>`;
+        badgeEl.innerHTML = `<span style="background: ${badgeColor}; color: var(--text-inverse); padding: 2px 10px; border-radius: 10px;">${healthy}/${total} healthy</span>`;
     }
 
     // Update last checked
@@ -19003,12 +19092,12 @@ function renderSetupCheckResults(data) {
                 else if (step.status === 'running') sIcon = '🔄';
 
                 const dur = step.duration_s != null ? `${step.duration_s}s` : '';
-                const msg = step.message ? `<span style="color: var(--error); font-size: 0.85em; margin-left: 8px;">${step.message}</span>` : '';
+                const msg = step.message ? `<span style="color: var(--danger-text); margin-left: 8px;">${step.message}</span>` : '';
                 stepDetailHtml += `
-                    <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                    <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                         <span>${sIcon}</span>
-                        <span style="min-width: 20px; color: var(--text-muted);">${step.step}.</span>
-                        <span>${step.name}</span>
+                        <span style="min-width: 24px; color: var(--text-muted);">${step.step}.</span>
+                        <span style="color: var(--text-primary);">${step.name}</span>
                         <span style="color: var(--text-muted); margin-left: auto;">${dur}</span>
                         ${msg}
                     </div>`;
@@ -19025,17 +19114,17 @@ function renderSetupCheckResults(data) {
                 for (const [k, v] of Object.entries(sd)) {
                     if (['status', 'status_file', 'detected_services', 'services'].includes(k)) continue;
                     const valDisplay = v || '(empty)';
-                    const valColor = v === 'needs_activation' ? 'var(--warning)' : 'var(--text-secondary)';
+                    const valColor = v === 'needs_activation' ? 'var(--warning-text)' : 'var(--text-secondary)';
                     stepDetailHtml += `
-                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                             <span>${v ? '✅' : '⚠️'}</span>
-                            <span>${k}:</span>
+                            <span style="color: var(--text-primary);">${k}:</span>
                             <span style="color: ${valColor};">${valDisplay}</span>
                         </div>`;
                 }
                 if (sd.status_file) {
                     stepDetailHtml += `
-                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                             <span>📄</span>
                             <span style="color: var(--text-muted);">Status file: ${sd.status_file}</span>
                         </div>`;
@@ -19055,21 +19144,21 @@ function renderSetupCheckResults(data) {
                 for (const svc of services) {
                     const label = serviceLabels[svc] || svc;
                     stepDetailHtml += `
-                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                             <span>✅</span>
-                            <span>${label}</span>
+                            <span style="color: var(--text-primary);">${label}</span>
                         </div>`;
                 }
                 if (sd.uptime) {
                     stepDetailHtml += `
-                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                             <span>🕐</span>
                             <span style="color: var(--text-muted);">Up since: ${sd.uptime}</span>
                         </div>`;
                 }
                 if (sd.status_file) {
                     stepDetailHtml += `
-                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                             <span>📄</span>
                             <span style="color: var(--text-muted);">Status file: ${sd.status_file}</span>
                         </div>`;
@@ -19079,17 +19168,24 @@ function renderSetupCheckResults(data) {
         }
 
         const hasDetail = stepDetailHtml !== '';
+        const rowTextColor = host.check_status === 'ok' ? 'var(--success-text)' :
+                             host.check_status === 'warning' || host.check_status === 'parse_error' || host.check_status === 'ssm_timeout' ? 'var(--warning-text)' :
+                             host.check_status === 'no_status_file' ? 'var(--text-muted)' :
+                             rowColor.includes('success') ? 'var(--success-text)' :
+                             rowColor.includes('warning') ? 'var(--warning-text)' :
+                             rowColor.includes('error') ? 'var(--danger-text)' :
+                             rowColor.includes('accent') ? 'var(--info-text)' : 'var(--text-muted)';
         html += `
-            <details style="margin-bottom: 4px; border-bottom: 1px solid var(--border); padding-bottom: 4px;">
-                <summary style="cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 6px 0; list-style: none;">
+            <details style="margin-bottom: 6px; border-bottom: 1px solid var(--border); padding-bottom: 6px;">
+                <summary style="cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 8px 4px; list-style: none; flex-wrap: wrap;">
                     <span>${icon}</span>
-                    <strong style="flex: 1;">${host.name}</strong>
-                    <span style="background: var(--bg-section); padding: 1px 6px; border-radius: 4px; font-size: 0.75em; color: var(--text-muted);">${roleLabel}</span>
-                    ${stepInfo ? `<span style="font-size: 0.8em; color: var(--text-secondary);">${stepInfo}</span>` : ''}
-                    ${durationInfo ? `<span style="font-size: 0.8em; color: var(--text-muted);">${durationInfo}</span>` : ''}
-                    ${statusText ? `<span style="font-size: 0.8em; color: ${rowColor};">${statusText}</span>` : ''}
+                    <strong style="color: var(--text-primary);">${host.name}</strong>
+                    <span style="background: var(--bg-elevated); padding: 2px 8px; border-radius: 4px; color: var(--text-secondary);">${roleLabel}</span>
+                    ${stepInfo ? `<span style="color: var(--text-secondary);">${stepInfo}</span>` : ''}
+                    ${durationInfo ? `<span style="color: var(--text-muted);">${durationInfo}</span>` : ''}
+                    ${statusText ? `<span style="color: ${rowTextColor};">${statusText}</span>` : ''}
                 </summary>
-                ${hasDetail ? stepDetailHtml : '<div style="padding: 6px 0 6px 24px; font-size: 0.85em; color: var(--text-muted);">No step details available</div>'}
+                ${hasDetail ? stepDetailHtml : '<div style="padding: 8px 0 8px 24px; color: var(--text-muted);">No step details available</div>'}
             </details>`;
     }
 
@@ -21143,6 +21239,36 @@ const TOPOLOGY = {
     },
 };
 
+
+// ============================================================================
+// Version modal helpers (P1 #7.6)
+// ============================================================================
+
+/**
+ * Open the version modal. Idempotent.
+ */
+function openVersionModal() {
+    const modal = document.getElementById('version-modal');
+    if (!modal) return;
+    modal.removeAttribute('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    // Move focus to the close button for keyboard users
+    const closeBtn = modal.querySelector('.version-modal__close');
+    if (closeBtn) closeBtn.focus();
+}
+
+/**
+ * Close the version modal. Idempotent.
+ */
+function closeVersionModal() {
+    const modal = document.getElementById('version-modal');
+    if (!modal) return;
+    modal.setAttribute('hidden', '');
+    modal.setAttribute('aria-hidden', 'true');
+    // Return focus to the footer that opened it
+    const footer = document.getElementById('app-version-footer');
+    if (footer) footer.focus();
+}
 
 // ============================================================================
 // APPLICATION INITIALIZATION

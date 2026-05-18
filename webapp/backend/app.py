@@ -161,6 +161,24 @@ def api_version():
     """Version metadata: VERSION file content + git SHA + startup timestamp."""
     return jsonify(get_version_info())
 
+
+# P1 #7.6 — serve the project CHANGELOG.md as plain-text (Markdown).
+# The frontend version modal links here; users open in a new tab.
+_CHANGELOG_FILE = project_root / 'CHANGELOG.md'
+
+
+@app.route('/changelog')
+def changelog():
+    """Return the raw CHANGELOG.md content. 404 with JSON if missing."""
+    try:
+        content = _CHANGELOG_FILE.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return jsonify({'error': 'CHANGELOG.md not found'}), 404
+    except (OSError, UnicodeDecodeError) as exc:
+        _logger.warning("Could not read CHANGELOG.md at %s: %s", _CHANGELOG_FILE, exc)
+        return jsonify({'error': 'Could not read CHANGELOG.md'}), 500
+    return content, 200, {'Content-Type': 'text/markdown; charset=utf-8'}
+
 if __name__ == '__main__':
     print("=" * 60)
     print("Red Team Infrastructure Dashboard Server")
