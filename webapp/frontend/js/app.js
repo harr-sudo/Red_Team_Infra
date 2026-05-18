@@ -1889,9 +1889,10 @@ function initGlobalHeader() {
 /**
  * D1.3 — Fetch deployments from /api/deploy/active and populate the listbox.
  *
- * Endpoint returns a sorted list of state JSON objects whose project_name
- * lives at state.project_name; status lives at state.status (always
- * "success" because the endpoint filters for it).
+ * Endpoint returns {success, deployments: [...]} where each deployment is a
+ * state JSON object. The project name lives at _filename (the state file
+ * stem); state.project_name may exist as a fallback. Status lives at
+ * state.status (typically "success" because the endpoint filters for it).
  *
  * Empty state: show a single non-selectable "No active deployments" item
  * that, when clicked, navigates to the Deploy tab.
@@ -1905,9 +1906,17 @@ async function _refreshGlobalDeployments() {
     try {
         const resp = await fetch('/api/deploy/active');
         const json = await resp.json();
-        if (json && Array.isArray(json.deployments)) {
-            deployments = json.deployments;
-        }
+        const raw = Array.isArray(json)
+            ? json
+            : (json && Array.isArray(json.deployments) ? json.deployments
+              : (json && Array.isArray(json.active_deployments) ? json.active_deployments : []));
+        // Normalize: ensure each deployment has a project_name field for
+        // downstream consumers. Falls back to _filename (state file stem),
+        // then name, then a stable placeholder.
+        deployments = raw.map(d => ({
+            ...d,
+            project_name: d.project_name || d._filename || d.name || 'unknown',
+        }));
     } catch (e) {
         // Endpoint unreachable — render empty state below.
     }

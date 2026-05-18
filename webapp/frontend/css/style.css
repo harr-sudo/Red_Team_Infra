@@ -3741,26 +3741,6 @@ body { padding-top: 64px; }
     transform: translate(-50%, -50%);
     transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
 }
-.global-header__brand-mark::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: 4px;
-    background: linear-gradient(
-        115deg,
-        transparent 35%,
-        color-mix(in srgb, var(--brand-light) 18%, transparent) 50%,
-        transparent 65%
-    );
-    pointer-events: none;
-    animation: global-header-brand-shimmer 3500ms ease-in-out infinite;
-    will-change: opacity, transform;
-}
-@keyframes global-header-brand-shimmer {
-    0%, 100% { opacity: 0; transform: translateX(-30%); }
-    45%      { opacity: 0.85; transform: translateX(0%); }
-    55%      { opacity: 0.85; transform: translateX(0%); }
-}
 .global-header__brand:hover .global-header__brand-mark {
     border-color: var(--brand-light);
 }
@@ -3782,15 +3762,6 @@ body { padding-top: 64px; }
     font-weight: 700;
     color: var(--text-primary);
     letter-spacing: -0.005em;
-}
-.global-header__brand-kicker {
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
-    font-size: 10px;
-    font-weight: 500;
-    color: var(--text-muted);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    margin-top: 3px;
 }
 
 /* ── CHIP RAIL ──────────────────────────────────────────────────────────── */
@@ -4077,11 +4048,9 @@ body { padding-top: 64px; }
 
 /* ── REDUCED MOTION ─────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-    .global-header__brand-mark::after,
     .global-header__operator-dot::after {
         animation: none;
     }
-    .global-header__brand-mark::after { opacity: 0; }
     .global-header__combobox-trigger,
     .global-header__combobox-chevron,
     .global-header__combobox-listbox,
