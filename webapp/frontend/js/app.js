@@ -379,6 +379,8 @@ const APP = {
 
     /**
      * Populate the modal fields from APP.versionInfo (helper kept private).
+     * Also dispatches an `app-version-loaded` event so the v3 shell's rail
+     * footer can refresh its version label without re-fetching.
      */
     _populateVersionModal() {
         const info = this.versionInfo || { version: 'unknown', git_sha: 'unknown', built_at: 'unknown' };
@@ -388,6 +390,7 @@ const APP = {
         if (v) v.textContent = info.version || 'unknown';
         if (s) s.textContent = info.git_sha || 'unknown';
         if (b) b.textContent = info.built_at || 'unknown';
+        document.dispatchEvent(new CustomEvent('app-version-loaded'));
     },
 
     /**
@@ -539,10 +542,16 @@ const APP = {
             return;
         }
         
-        // Activate corresponding nav button
+        // Activate corresponding nav button. The legacy .tab-btn nav was
+        // removed by the v3 shell (Agent A, 2026-05-18) — APP.shell.setActiveRoute()
+        // below is the rail-aware replacement. Lookup remains so any vestigial
+        // .tab-btn (e.g., in tests or external embeds) still toggles cleanly.
         const targetButton = document.querySelector(`.tab-btn[data-target="${pageName}"]`);
         if (targetButton) {
             targetButton.classList.add('active');
+        }
+        if (APP.shell && typeof APP.shell.setActiveRoute === 'function') {
+            APP.shell.setActiveRoute(pageName, target.subPill || null);
         }
         
         // Update current page and persist for refresh
@@ -2028,6 +2037,13 @@ APP.setActiveSubPill = function (parentTabName, subPillName) {
     // not going through navigateTo) must also refresh the bookmarkable URL.
     _updateUrlState(parentTabName, subPillName);
 
+    // v3 shell — keep the rail's active-child indicator in sync when the
+    // sub-pill changes without leaving the parent tab (e.g., subpill-nav
+    // click, arrow-key navigation between pills, programmatic switch).
+    if (APP.shell && typeof APP.shell.setActiveRoute === 'function') {
+        APP.shell.setActiveRoute(parentTabName, subPillName);
+    }
+
     // D3.5 — Run init hook for the newly-active sub-pill
     APP._runSubPillInit(parentTabName, subPillName);
 };
@@ -2043,6 +2059,169 @@ APP.activeDeployment.subscribe(() => {
     if (!APP._urlReady) return;
     _updateUrlState(APP.currentPage, APP.currentSubPill);
 });
+
+// ============================================================================
+// v3 SHELL — Production scaffold (Agent A, 2026-05-18)
+//
+// APP.shell is the rail-aware navigation controller. It wires the left
+// rail's primary nav + nested sub-pill clicks to APP.navigateTo(), keeps
+// the active-state visual indicator in sync, and maintains a breadcrumb
+// in the top utility bar. It is additive — every existing routing path
+// (NAVIGATE_ALIASES, URL hash sync, sub-pill init/cleanup, keyboard
+// shortcuts) continues to work unchanged.
+//
+// Sibling agents B/C/D build on top of this surface:
+//   - The top bar exposes slots between the breadcrumb and the right-side
+//     chips for a ⌘K palette trigger (agent B).
+//   - The rail exposes .app-rail__children > div slots for adding new
+//     sub-pills (agent D's Bolt-ons under Deployments).
+//   - The body level continues to host scrim-takeovers + overlays.
+// ============================================================================
+
+/**
+ * Human-readable breadcrumb labels keyed by the parent tab name and
+ * sub-pill name. The shell renders "PARENT · SUBPILL" in the top bar so
+ * operators can see where they are without the rail being primary chrome.
+ */
+const SHELL_PARENT_LABELS = {
+    'dashboard':       'Dashboard',
+    'deployments-tab': 'Deployments',
+    'operations-tab':  'Operations',
+    'settings':        'Settings',
+};
+const SHELL_SUBPILL_LABELS = {
+    'configure': 'Configure',
+    'deploy':    'Deploy',
+    'manage':    'Manage',
+    'cleanup':   'Cleanup',
+    'beacons':   'Beacons',
+    'terminal':  'Terminal',
+    'payloads':  'Payloads',
+};
+
+APP.shell = {
+    /**
+     * Wire rail click + expand/collapse handlers. Idempotent — safe to
+     * call multiple times (no-op on second pass via dataset.shellWired).
+     */
+    init() {
+        // Primary items (parent rows): click delegates to APP.navigateTo.
+        document.querySelectorAll('.app-rail__item[data-rail-target]').forEach((btn) => {
+            if (btn.dataset.shellWired) return;
+            btn.dataset.shellWired = '1';
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const target = btn.dataset.railTarget;
+                if (!target) return;
+                APP.navigateTo(target);
+            });
+        });
+
+        // Sub-pill children: navigate to (parent, subPill) tuple.
+        document.querySelectorAll('.app-rail__child[data-rail-target]').forEach((btn) => {
+            if (btn.dataset.shellWired) return;
+            btn.dataset.shellWired = '1';
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const parent = btn.dataset.railTarget;
+                const subPill = btn.dataset.railSubpill || null;
+                if (!parent) return;
+                APP.navigateTo(parent, subPill);
+            });
+        });
+
+        // First paint: paint the active route based on current APP state.
+        this.setActiveRoute(APP.currentPage, APP.currentSubPill);
+
+        // Footer version mirrors the dashboard's version footer text once
+        // /api/version resolves (APP.versionInfo populates async).
+        this._syncFooterVersion();
+        document.addEventListener('app-version-loaded', () => this._syncFooterVersion());
+    },
+
+    /**
+     * Paint the active rail item + active child, expand the matching
+     * parent group, and refresh the top-bar breadcrumb.
+     *
+     * @param {string} page    - parent tab name (e.g., 'deployments-tab')
+     * @param {string|null} subPill - active sub-pill, or null
+     */
+    setActiveRoute(page, subPill) {
+        // Primary item active state.
+        document.querySelectorAll('.app-rail__item').forEach((btn) => {
+            const isActive = btn.dataset.railTarget === page;
+            btn.classList.toggle('is-active', isActive);
+            if (btn.classList.contains('app-rail__item--has-children')) {
+                btn.setAttribute('aria-expanded', isActive ? 'true' : 'false');
+            }
+            if (isActive) {
+                btn.setAttribute('aria-current', 'page');
+            } else {
+                btn.removeAttribute('aria-current');
+            }
+        });
+
+        // Expand the active parent's children group, collapse the others.
+        document.querySelectorAll('.app-rail__group').forEach((group) => {
+            const childrenWrap = group.querySelector('.app-rail__children');
+            if (!childrenWrap) return;
+            const isActive = group.dataset.railGroup === page;
+            childrenWrap.classList.toggle('is-open', isActive);
+        });
+
+        // Sub-pill active state — only highlight children under the active parent.
+        document.querySelectorAll('.app-rail__child').forEach((btn) => {
+            const matchesParent = btn.dataset.railTarget === page;
+            const matchesSubpill = subPill && btn.dataset.railSubpill === subPill;
+            btn.classList.toggle('is-active', !!(matchesParent && matchesSubpill));
+        });
+
+        // Refresh breadcrumb.
+        this.syncBreadcrumb(page, subPill);
+    },
+
+    /**
+     * Update the top-bar breadcrumb text based on the active route.
+     * Falls back to a humanized version of the page name if no label is
+     * registered (defensive — new tabs added later still render something).
+     */
+    syncBreadcrumb(page, subPill) {
+        const target = document.getElementById('app-topbar-crumb-page');
+        if (!target) return;
+        const parentLabel = SHELL_PARENT_LABELS[page] || page || '—';
+        if (subPill) {
+            const subLabel = SHELL_SUBPILL_LABELS[subPill] || subPill;
+            target.textContent = `${parentLabel} · ${subLabel}`;
+        } else {
+            target.textContent = parentLabel;
+        }
+    },
+
+    /**
+     * Keep the rail footer's version text in sync with APP.versionInfo.
+     * Called from init() and again whenever /api/version finishes loading.
+     */
+    _syncFooterVersion() {
+        const el = document.getElementById('app-rail-footer-version');
+        if (!el) return;
+        const info = APP.versionInfo;
+        if (!info || info.version === 'unknown') {
+            el.textContent = 'v? (unknown)';
+            return;
+        }
+        const sha = info.git_sha && info.git_sha !== 'unknown' ? ` (${info.git_sha})` : '';
+        el.textContent = `v${info.version}${sha}`;
+    },
+};
+
+// Wire the shell once the rail DOM is present. We listen for
+// DOMContentLoaded but also call init() defensively if the document is
+// already past that phase (e.g., this script loads after parse complete).
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => APP.shell.init());
+} else {
+    APP.shell.init();
+}
 
 // ============================================================================
 // M-Redesign Agent 3 — Motion fluidity helpers + state utilities

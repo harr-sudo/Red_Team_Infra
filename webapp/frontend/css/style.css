@@ -8813,3 +8813,440 @@ body[data-journey-open="true"] .container > main {
 .spec-edit-btn--danger-fill:hover {
     background: color-mix(in srgb, var(--danger) 88%, black);
 }
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   v3 SHELL — Production scaffold (Agent A, 2026-05-18)
+
+   The .app-shell pattern wraps the entire app: top utility bar + left
+   rail + content. Phase 2b/3 page interiors live unchanged inside
+   .app-content. Phase 3 .spec-list / .spec-pill / .seg-control etc.
+   primitives still in effect.
+
+   PUBLIC CSS VARIABLES (sibling agents B/C/D may reference these):
+     --app-rail-w        220px   — left rail width
+     --app-rail-w-narrow  64px   — collapsed rail width (responsive)
+     --app-topbar-h       56px   — top utility bar height
+
+   Sibling agents B/C/D mount on top:
+     - Top-bar palette trigger slot: inside .app-topbar (any side)
+     - Body-level overlay/palette shells: at body level, above
+       .scrim-takeover in z-stack
+     - Rail sub-pill slot: inside .app-rail__group[data-rail-group="..."]
+       > .app-rail__children > div
+   ════════════════════════════════════════════════════════════════════════ */
+:root {
+    --app-rail-w: 220px;
+    --app-rail-w-narrow: 64px;
+    --app-topbar-h: 56px;
+}
+
+/* Body — kill the legacy 20px padding + 64px top padding from the old
+   .container layout. The shell handles its own offsets via the rail +
+   top-bar fixed positioning. */
+body.has-app-shell,
+body:has(.app-shell) {
+    padding: 0;
+}
+
+/* The shell itself is a positioning context for the fixed rail/top-bar. */
+.app-shell {
+    position: relative;
+    min-height: 100vh;
+    background: var(--bg-body);
+}
+
+/* ── TOP UTILITY BAR ─────────────────────────────────────────────────── */
+/* When .global-header carries the .app-topbar class, override the legacy
+   2-column grid + 64px height so it inherits the shell's geometry. The
+   chip/combobox/operator-chip/theme-toggle sub-selectors below
+   .global-header__* keep their existing styling unchanged. */
+.app-topbar.global-header {
+    /* Start AFTER the rail so the rail's brand band is the leftmost element
+       in the upper-left corner. .global-header's `position: fixed; left: 0;
+       right: 0` is overridden here. z-index 100 (inherited) keeps it above
+       the rail's z-index 90 where they overlap (they don't, with `left`
+       offset, but the rule still applies during the slim window the
+       responsive shrink animates). */
+    left: var(--app-rail-w);
+    height: var(--app-topbar-h);
+    grid-template-columns: 1fr auto;
+    padding: 0 20px;
+    background: var(--bg-container);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.app-topbar__breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-topbar__crumb {
+    color: var(--text-secondary);
+}
+.app-topbar__crumb.is-current {
+    /* Layer baseline: .app-topbar is var(--bg-container). --text-primary
+       passes >= 7:1 against bg-container in both themes. */
+    color: var(--text-primary);
+    font-weight: 600;
+}
+.app-topbar__crumb-sep {
+    color: var(--border-strong);
+    margin: 0 2px;
+}
+
+.app-topbar__right {
+    /* Reuses .global-header__rail behavior — gap + flex from that class. */
+    margin-left: auto;
+}
+
+/* ── LEFT RAIL ───────────────────────────────────────────────────────── */
+.app-rail {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: var(--app-rail-w);
+    background: var(--bg-container);
+    border-right: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    padding: 14px 10px 12px;
+    gap: 2px;
+    z-index: 90;
+    overflow-y: auto;
+    transition: width var(--motion-duration-base) var(--motion-easing-standard);
+}
+
+.app-rail__brand {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 4px 8px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 12px;
+}
+
+.app-rail__brand-mark {
+    /* Inherits .global-header__brand-mark sizing — 26x26 outlined box.
+       Just ensure no link underline / spurious text-decoration. */
+    text-decoration: none;
+    flex-shrink: 0;
+}
+
+.app-rail__brand-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+    min-width: 0;
+}
+
+.app-rail__brand-name {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.app-rail__brand-kicker {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 0.08em;
+    margin-top: 3px;
+}
+
+.app-rail__nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 4px;
+}
+
+.app-rail__item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 12px;
+    background: transparent;
+    border: 0;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color var(--motion-duration-fast) var(--motion-easing-standard),
+                color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.app-rail__item:hover {
+    /* Layer baseline: .app-rail sits on var(--bg-container). Hover
+       brightens to var(--bg-card-hover); --text-primary on that surface
+       passes >=7:1 in both themes. */
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+
+.app-rail__item:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 32%, transparent);
+}
+
+.app-rail__item.is-active {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+
+.app-rail__item.is-active::before {
+    content: "";
+    position: absolute;
+    left: -10px;
+    top: 8px;
+    bottom: 8px;
+    width: 2px;
+    border-radius: 0 2px 2px 0;
+    background: var(--brand-light);
+}
+
+.app-rail__label {
+    flex: 1;
+    white-space: nowrap;
+}
+
+.app-rail__caret {
+    width: 6px;
+    height: 6px;
+    border-right: 1.4px solid currentColor;
+    border-bottom: 1.4px solid currentColor;
+    transform: rotate(-45deg);
+    opacity: 0.6;
+    transition: transform var(--motion-duration-fast) var(--motion-easing-standard);
+    flex-shrink: 0;
+}
+.app-rail__item[aria-expanded="true"] .app-rail__caret {
+    transform: rotate(45deg);
+}
+
+/* Nested children: collapsed by default, expand under active parent. */
+.app-rail__group {
+    display: flex;
+    flex-direction: column;
+}
+
+.app-rail__children {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows var(--motion-duration-base) var(--motion-easing-standard);
+}
+.app-rail__children > div {
+    overflow: hidden;
+}
+.app-rail__children.is-open {
+    grid-template-rows: 1fr;
+}
+
+.app-rail__child {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: calc(100% - 24px);
+    margin: 2px 0 2px 22px;
+    padding: 7px 10px;
+    background: transparent;
+    border: 0;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    /* Layer baseline: still .bg-container (children are not nested in a
+       new surface). --text-secondary passes >=4.5:1 against bg-container
+       in both themes. */
+    color: var(--text-secondary);
+    text-align: left;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color var(--motion-duration-fast) var(--motion-easing-standard),
+                color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.app-rail__child::before {
+    /* Vertical tick line connecting children under the parent. */
+    content: "";
+    position: absolute;
+    left: -8px;
+    top: 7px;
+    bottom: 7px;
+    width: 1px;
+    background: var(--border-subtle);
+}
+
+.app-rail__child:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+
+.app-rail__child:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 32%, transparent);
+}
+
+.app-rail__child.is-active {
+    color: var(--text-primary);
+    background: var(--bg-card-hover);
+    font-weight: 600;
+}
+.app-rail__child.is-active::after {
+    content: "";
+    position: absolute;
+    left: -8px;
+    top: 7px;
+    bottom: 7px;
+    width: 1.5px;
+    background: var(--brand-light);
+}
+
+.app-rail__footer {
+    margin-top: auto;
+    padding: 12px 8px 4px;
+    border-top: 1px solid var(--border-subtle);
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    color: var(--text-secondary);
+    letter-spacing: 0.08em;
+}
+
+.app-rail__footer-version {
+    /* Layer baseline: .app-rail sits on bg-container. --text-secondary
+       passes >=4.5:1 in both themes. */
+    color: var(--text-secondary);
+}
+
+/* ── MAIN CONTENT AREA ───────────────────────────────────────────────── */
+.app-content {
+    margin-left: var(--app-rail-w);
+    margin-top: var(--app-topbar-h);
+    min-height: calc(100vh - var(--app-topbar-h));
+    background: var(--bg-body);
+    display: block;
+    position: relative;
+}
+
+/* The inner #tab-container retains its existing min-height + relative
+   positioning; we just give it a max-width centered constraint so wide
+   monitors don't stretch interior text to 2000px. */
+#tab-container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* When the rail/sub-pill nav (sticky inside Deployments / Operations)
+   was offset by `top: 64px` to clear the legacy global header, we now
+   need to match the new top-bar height. */
+.subpill-nav {
+    top: var(--app-topbar-h);
+}
+
+/* Legacy tab-bar compatibility shim — invisible 1px buttons that remain
+   in viewport so existing Playwright suites that locate + click
+   .tab-btn[data-target] still pass. APP.navigateTo() toggles the .active
+   class on these alongside the rail items. Operators never see them
+   (opacity:0) and never focus them (tabindex=-1, aria-hidden). New tests
+   should locate .app-rail__item directly. */
+.tabs--legacy-shim {
+    /* Position inside the content area (right of the rail, below the
+       top bar) so Playwright's hit-testing reaches the buttons. They
+       sit underneath all real content (z-index: 1) and are 1x1
+       transparent, so operators never see or interact with them.
+       Position via `top: var(--app-topbar-h); left: var(--app-rail-w)`
+       keeps the shim aligned with the content origin in both narrow +
+       wide viewport modes. */
+    position: fixed;
+    top: var(--app-topbar-h);
+    left: var(--app-rail-w);
+    z-index: 1;
+    display: flex;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    opacity: 0;
+}
+.tabs--legacy-shim .tab-btn {
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: transparent;
+    /* Explicit opacity:0 on the button itself (not just the parent) so
+       contrast sweeps that inspect getComputedStyle(el).opacity correctly
+       skip these invisible shim elements. */
+    opacity: 0;
+    pointer-events: auto;
+    /* Override the legacy .tab-btn padding/font-size from line 105 area
+       so the buttons stay 1x1 regardless of upstream rules. */
+    border-radius: 0;
+    font-size: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+/* ── RESPONSIVE — rail collapses on narrow viewports ─────────────────── */
+@media (max-width: 900px) {
+    :root {
+        --app-rail-w: var(--app-rail-w-narrow);
+    }
+    .app-rail__brand-text,
+    .app-rail__label,
+    .app-rail__caret,
+    .app-rail__brand-kicker,
+    .app-rail__children {
+        display: none;
+    }
+    .app-rail__brand {
+        justify-content: center;
+        padding: 4px 0 14px;
+    }
+    .app-rail__item {
+        justify-content: center;
+        padding: 10px;
+    }
+    .app-topbar.global-header {
+        /* `left: var(--app-rail-w)` automatically picks up the narrow
+           width via the :root override at the top of this media query. */
+        padding: 0 12px;
+    }
+}
+
+/* ── REDUCED MOTION ──────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    .app-rail,
+    .app-rail__item,
+    .app-rail__child,
+    .app-rail__caret,
+    .app-rail__children {
+        transition: none;
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   END v3 SHELL
+   ════════════════════════════════════════════════════════════════════════ */

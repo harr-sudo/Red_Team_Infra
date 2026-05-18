@@ -24,7 +24,7 @@ test.describe('D6 — bookmarkable URL contract', () => {
 
         // Operations tab nav button must be the active one.
         await expect(
-            page.locator('button.tab-btn[data-target="operations-tab"].active')
+            page.locator('.app-rail__item[data-rail-target="operations-tab"].is-active')
         ).toBeVisible({ timeout: 5000 });
 
         // Beacons sub-pill must be the active one inside the Operations pane.
@@ -38,7 +38,7 @@ test.describe('D6 — bookmarkable URL contract', () => {
         await page.goto(`/?dep=${encodeURIComponent(projectName)}`);
 
         // Wait for the SPA to boot before asking about APP state.
-        await page.locator('button.tab-btn[data-target="dashboard"]').waitFor({ timeout: 5000 });
+        await page.locator('.app-rail__item[data-rail-target="dashboard"]').waitFor({ timeout: 5000 });
 
         // The activeDeployment container is the source of truth — read it
         // directly rather than relying on the global combobox (which won't
@@ -58,7 +58,7 @@ test.describe('D6 — bookmarkable URL contract', () => {
 
         // Deployments tab + Manage sub-pill must both be active.
         await expect(
-            page.locator('button.tab-btn[data-target="deployments-tab"].active')
+            page.locator('.app-rail__item[data-rail-target="deployments-tab"].is-active')
         ).toBeVisible({ timeout: 5000 });
         await expect(
             page.locator('.tab-page[data-page="deployments-tab"] .subpill-nav__pill[data-subpill="manage"].is-active')
@@ -77,10 +77,10 @@ test.describe('D6 — bookmarkable URL contract', () => {
     test('clicking Deployments tab + Configure sub-pill updates URL via replaceState (no history entry added)', async ({ page }) => {
         // Land on Dashboard, then navigate to Deployments → Configure via the UI.
         await page.goto('/');
-        await page.locator('button.tab-btn[data-target="dashboard"]').waitFor({ timeout: 5000 });
+        await page.locator('.app-rail__item[data-rail-target="dashboard"]').waitFor({ timeout: 5000 });
         const historyLengthBefore = await page.evaluate(() => history.length);
 
-        await page.locator('button.tab-btn[data-target="deployments-tab"]').click();
+        await page.locator('.app-rail__item[data-rail-target="deployments-tab"]').click();
         // Configure is the default sub-pill on first entry (D3.5), so the
         // URL should land at #deployments-tab/configure automatically.
         await page.locator(

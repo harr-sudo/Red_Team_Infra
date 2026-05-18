@@ -88,26 +88,46 @@
         </defs>
     </svg>
 
-    <div class="container">
-        <!--
-            D1 — Global header (Plan §17 P1 #11, §21.7 D1.1-D1.4, Decision #15).
-            Sticky 64px strip ABOVE the tab nav. V3 design language (dials 5/6/5).
-            Hosts: brand, deployment selector, monthly burn, operator badge, theme toggle.
-            The legacy #operator-badge + #theme-toggle DOM has been LIFTED into here;
-            #operator-badge is kept as a hidden mirror element for backwards-compat
-            with topology.js (which reads its textContent at app.js:20268).
-        -->
-        <header class="global-header" role="banner">
-            <div class="global-header__brand">
-                <a href="#dashboard" class="global-header__brand-mark" aria-label="Red Team Infrastructure home">
-                    <span class="global-header__brand-mark-inner"></span>
-                </a>
-                <div class="global-header__brand-text">
-                    <div class="global-header__brand-name">Red Team Infrastructure</div>
-                </div>
+    <!-- ════════════════════════════════════════════════════════════════════
+         v3 SHELL — Production scaffold (Agent A, 2026-05-18).
+
+         The .app-shell pattern wraps the entire app:
+           - .app-topbar   (top utility bar, ~56px, fixed)
+           - .app-rail     (left primary nav, 220px, fixed)
+           - .app-content  (page panes; margins clear the rail + top bar)
+
+         Phase 2b/3 page interiors live UNCHANGED inside .app-content. The
+         old top tab bar (<nav class="tabs">) has been removed; rail clicks
+         drive the same APP.navigateTo() machinery. Phase 2b primitives
+         (.scrim-takeover / .takeover-card / .modal) remain at body level.
+
+         Sibling agents B/C/D mount on top of this shell:
+           - Top-bar slot for ⌘K palette trigger (between breadcrumb +
+             right-side chips — agent's choice of placement).
+           - Body-level slot for overlay / palette overlay shells.
+           - Rail slot for new sub-pills (e.g., "Bolt-ons" under
+             Deployments — agent D's responsibility).
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="app-shell">
+
+        <!-- ── TOP UTILITY BAR ───────────────────────────────────────────
+             Left: subtle breadcrumb (Dashboard / Deployments · Configure).
+             Right (left-to-right): deployment selector · cost chip ·
+             operator chip · theme toggle.
+
+             Per the user's 2026-05-18 directive, the deployment selector
+             moved from top-left to the right side. The selector + cost +
+             operator + theme controls keep their existing IDs / classes /
+             JS hooks unchanged — initGlobalHeader() (app.js) re-binds
+             everything from this new location without modification. -->
+        <header class="app-topbar global-header" role="banner">
+            <div class="app-topbar__breadcrumb" id="app-topbar-breadcrumb" aria-label="Current location">
+                <span class="app-topbar__crumb is-current" id="app-topbar-crumb-page">Dashboard</span>
             </div>
-            <div class="global-header__rail">
-                <!-- Active deployment selector (custom combobox listbox) -->
+            <div class="app-topbar__right global-header__rail">
+                <!-- Active deployment selector (custom combobox listbox) — relocated
+                     from the left side per 2026-05-18 directive. Same IDs / classes
+                     so initGlobalHeader() wires it identically. -->
                 <div class="global-header__chip global-header__deploy" id="global-deployment-chip">
                     <span class="global-header__chip-label">DEPLOYMENT</span>
                     <div class="global-header__combobox" id="global-deploy-combo">
@@ -171,6 +191,105 @@
                 </button>
             </div>
         </header>
+
+        <!-- ── LEFT RAIL — primary navigation ────────────────────────────
+             220px fixed-width column. Brand band at top, primary items
+             below (Dashboard / Deployments / Operations / Settings),
+             nested sub-pills under the active parent.
+
+             Rail clicks delegate to APP.navigateTo() so all existing
+             routing (URL hash sync, sub-pill init/cleanup, NAVIGATE_ALIASES)
+             continues to work without modification. APP.shell wires the
+             handlers + visual active state on top.
+
+             Sub-pill list under Deployments deliberately omits "Bolt-ons" —
+             that's agent D's slot.  -->
+        <aside class="app-rail" role="navigation" aria-label="Primary">
+            <div class="app-rail__brand">
+                <a href="#dashboard" class="app-rail__brand-mark global-header__brand-mark" aria-label="Red Team Infrastructure home">
+                    <span class="app-rail__brand-mark-inner global-header__brand-mark-inner"></span>
+                </a>
+                <div class="app-rail__brand-text">
+                    <div class="app-rail__brand-name">RED TEAM INFRA</div>
+                    <div class="app-rail__brand-kicker" id="app-rail-brand-kicker">v? · production</div>
+                </div>
+            </div>
+
+            <nav class="app-rail__nav" aria-label="Primary sections">
+                <!-- Dashboard -->
+                <button class="app-rail__item" type="button"
+                        data-rail-target="dashboard"
+                        aria-current="page">
+                    <span class="app-rail__label">Dashboard</span>
+                </button>
+
+                <!-- Deployments -->
+                <div class="app-rail__group" data-rail-group="deployments-tab">
+                    <button class="app-rail__item app-rail__item--has-children" type="button"
+                            data-rail-target="deployments-tab"
+                            aria-expanded="false">
+                        <span class="app-rail__label">Deployments</span>
+                        <span class="app-rail__caret" aria-hidden="true"></span>
+                    </button>
+                    <div class="app-rail__children">
+                        <div>
+                            <button class="app-rail__child" type="button"
+                                    data-rail-target="deployments-tab"
+                                    data-rail-subpill="configure">Configure</button>
+                            <button class="app-rail__child" type="button"
+                                    data-rail-target="deployments-tab"
+                                    data-rail-subpill="deploy">Deploy</button>
+                            <button class="app-rail__child" type="button"
+                                    data-rail-target="deployments-tab"
+                                    data-rail-subpill="manage">Manage</button>
+                            <button class="app-rail__child" type="button"
+                                    data-rail-target="deployments-tab"
+                                    data-rail-subpill="cleanup">Cleanup</button>
+                            <!-- Bolt-ons sub-pill mounts here (agent D). -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Operations -->
+                <div class="app-rail__group" data-rail-group="operations-tab">
+                    <button class="app-rail__item app-rail__item--has-children" type="button"
+                            data-rail-target="operations-tab"
+                            aria-expanded="false">
+                        <span class="app-rail__label">Operations</span>
+                        <span class="app-rail__caret" aria-hidden="true"></span>
+                    </button>
+                    <div class="app-rail__children">
+                        <div>
+                            <button class="app-rail__child" type="button"
+                                    data-rail-target="operations-tab"
+                                    data-rail-subpill="beacons">Beacons</button>
+                            <button class="app-rail__child" type="button"
+                                    data-rail-target="operations-tab"
+                                    data-rail-subpill="terminal">Terminal</button>
+                            <button class="app-rail__child" type="button"
+                                    data-rail-target="operations-tab"
+                                    data-rail-subpill="payloads">Payloads</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings -->
+                <button class="app-rail__item" type="button"
+                        data-rail-target="settings">
+                    <span class="app-rail__label">Settings</span>
+                </button>
+            </nav>
+
+            <div class="app-rail__footer">
+                <span class="app-rail__footer-version" id="app-rail-footer-version">v? (unknown)</span>
+            </div>
+        </aside>
+
+        <!-- ── MAIN CONTENT AREA ────────────────────────────────────────
+             Page panes live unchanged inside .app-content. Margins clear
+             the top bar + rail so existing interior layouts (page-title,
+             section-card, sub-pill rows, etc.) stay pixel-identical. -->
+        <main class="app-content" id="app-content" role="main">
         <!--
             Hidden mirror of the operator name — topology.js (app.js:20268)
             reads this textContent to label the operator node. Kept in sync
@@ -199,24 +318,26 @@
             </div>
         </div>
 
-        <!-- Navigation Tabs -->
-        <nav class="tabs" id="tab-navigation">
-            <button class="tab-btn active" data-target="dashboard">Dashboard</button>
-            <!-- D3.1/D3.6 — Merged Deployments tab (Configure / Deploy / Manage sub-pills).
-                 D3.6 retired the 3 legacy buttons (Configuration / Deploy / Deployment
-                 Manager) and the ?legacyTabs=1 feature flag. Legacy navigateTo() callers
-                 are still routed here via NAVIGATE_ALIASES in app.js. -->
-            <button class="tab-btn" data-target="deployments-tab">Deployments</button>
-            <!-- D4.1/D4.6 — Merged Operations tab (Beacons / Terminal / Payloads sub-pills).
-                 D4.6 retired the 3 legacy buttons (Beacon / Terminal / Tools) and the
-                 ?legacyTabs=1 feature flag. Legacy navigateTo() callers are still
-                 routed here via NAVIGATE_ALIASES in app.js. Final 5-tab layout:
-                 Dashboard / Deployments / Operations / Architecture / Settings. -->
-            <button class="tab-btn" data-target="operations-tab">Operations</button>
-            <!-- M-Dashboard / Decision #21 — Architecture tab folded into a Dashboard
-                 widget + modal. Legacy navigateTo('architecture') callers continue to
-                 work via NAVIGATE_ALIASES (app.js) which now opens the modal instead. -->
-            <button class="tab-btn" data-target="settings">Settings</button>
+        <!-- ── OLD TOP TAB BAR REMOVED (v3 shell — agent A, 2026-05-18) ──
+             The horizontal Dashboard / Deployments / Operations / Settings
+             tab nav was replaced by the left rail (.app-rail above). Rail
+             clicks delegate to APP.navigateTo() so all existing routing,
+             URL hash sync, and sub-pill init/cleanup continues to fire
+             identically. Phase 2b modals + journey takeovers are unchanged.
+
+             COMPATIBILITY SHIM — visually offscreen .tab-btn mirrors so
+             ~13 existing Playwright suites that locate
+             `button.tab-btn[data-target="..."]` (.active or .click) keep
+             passing. Toggled by APP.navigateTo() alongside the rail
+             items. New tests should locate .app-rail__item directly. The
+             nav is keyboard-skipped (tabindex="-1") and aria-hidden, so
+             only automated tests see it — operators interact with the
+             rail. Positioned offscreen via .tabs--legacy-shim CSS. -->
+        <nav class="tabs tabs--legacy-shim" id="tab-navigation" aria-hidden="true">
+            <button class="tab-btn active" data-target="dashboard" type="button" tabindex="-1">Dashboard</button>
+            <button class="tab-btn" data-target="deployments-tab" type="button" tabindex="-1">Deployments</button>
+            <button class="tab-btn" data-target="operations-tab" type="button" tabindex="-1">Operations</button>
+            <button class="tab-btn" data-target="settings" type="button" tabindex="-1">Settings</button>
         </nav>
 
         <!-- Tab Content Container -->
@@ -3111,8 +3232,9 @@ ns-143.awsdns-17.org
                     </div>
             </div>
 
-        </div>
-    </div>
+        </div><!-- /#tab-container -->
+        </main><!-- /.app-content -->
+    </div><!-- /.app-shell -->
 
     <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
     <!-- xterm.js for Terminal tab (CDN — can be vendored to assets/xterm/ for offline use) -->
