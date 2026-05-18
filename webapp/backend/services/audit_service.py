@@ -42,8 +42,16 @@ def write(op_id, action, *, target=None, project=None, details=None):
         pass  # never break a request because of audit
 
 
-def read_recent(limit=50, *, op_filter=None, action_prefix=None):
-    """Return most-recent-first slice. Reads from the tail of the file."""
+def read_recent(limit=50, *, op_filter=None, action_prefix=None, project_filter=None):
+    """Return most-recent-first slice. Reads from the tail of the file.
+
+    Optional filters (all AND-combined):
+      op_filter         exact match on entry["op"]
+      action_prefix     entry["action"] startswith
+      project_filter    exact match on entry["project"] — added for Phase 3a
+                        Manage sub-pill "last touched by [operator]" attribution
+                        (see CLAUDE.md Phase 3a notes).
+    """
     _ensure_log()
     with _LOCK:
         size = _LOG_PATH.stat().st_size
@@ -62,6 +70,8 @@ def read_recent(limit=50, *, op_filter=None, action_prefix=None):
         if op_filter and entry.get("op") != op_filter:
             continue
         if action_prefix and not entry.get("action", "").startswith(action_prefix):
+            continue
+        if project_filter and entry.get("project") != project_filter:
             continue
         out.append(entry)
         if len(out) >= limit:

@@ -28,6 +28,63 @@
             <symbol id="icon-chevron-down" viewBox="0 0 14 14">
                 <path d="M2.5 5 L7 9.5 L11.5 5"/>
             </symbol>
+            <!-- Phase 3c — Cleanup sub-pill action glyphs.
+                 icon-trash: destroy/delete affordance (paired with .spec-edit-btn--danger).
+                 icon-refresh: rotational refresh arrow for resource list re-scan.
+                 icon-link: adopt/import (resource linked into Terraform state). -->
+            <symbol id="icon-trash" viewBox="0 0 14 14">
+                <path d="M2.5 4 H11.5"/>
+                <path d="M3.5 4 L4 12 H10 L10.5 4"/>
+                <path d="M5.5 4 V2.5 H8.5 V4"/>
+                <path d="M6 6.5 V10 M8 6.5 V10"/>
+            </symbol>
+            <symbol id="icon-refresh" viewBox="0 0 14 14">
+                <path d="M11.5 3.5 A4.5 4.5 0 1 0 12 8"/>
+                <path d="M11.5 1.5 V4 H9"/>
+            </symbol>
+            <symbol id="icon-link" viewBox="0 0 14 14">
+                <path d="M5.5 8.5 L8.5 5.5"/>
+                <path d="M6 4.5 L7.5 3 A2.12 2.12 0 0 1 10.5 6 L9 7.5"/>
+                <path d="M8 9.5 L6.5 11 A2.12 2.12 0 0 1 3.5 8 L5 6.5"/>
+            </symbol>
+            <!-- Phase 3a (Manage sub-pill) — additional action glyphs.
+                 icon-logs: paper/page with horizontal rules — view-logs affordance.
+                 icon-health: heart-beat / EKG line — health-check affordance. -->
+            <symbol id="icon-logs" viewBox="0 0 14 14">
+                <rect x="2.5" y="1.5" width="9" height="11" rx="0.8"/>
+                <path d="M4.5 4.5 H9.5"/>
+                <path d="M4.5 6.5 H9.5"/>
+                <path d="M4.5 8.5 H7.5"/>
+            </symbol>
+            <symbol id="icon-health" viewBox="0 0 14 14">
+                <path d="M1.5 7 H4 L5 4.5 L7 9.5 L8.5 7 L9.5 8 H12.5"/>
+            </symbol>
+            <!-- Phase 3B — Operations sub-pill glyphs.
+                 icon-terminal: prompt/console affordance.
+                 icon-download: artifact retrieval action.
+                 icon-eye: preview/view-detail affordance.
+                 icon-play: send-command / generate / run-now affordance.
+                 icon-bolt: live-driven beacon attribution indicator. -->
+            <symbol id="icon-terminal" viewBox="0 0 14 14">
+                <rect x="1" y="2.5" width="12" height="9" rx="1"/>
+                <path d="M3.5 5 L5.5 7 L3.5 9"/>
+                <path d="M6.5 9.5 L10 9.5"/>
+            </symbol>
+            <symbol id="icon-download" viewBox="0 0 14 14">
+                <path d="M7 1.5 L7 9"/>
+                <path d="M3.5 6 L7 9.5 L10.5 6"/>
+                <path d="M2 12 L12 12"/>
+            </symbol>
+            <symbol id="icon-eye" viewBox="0 0 14 14">
+                <path d="M1 7 C3 3.5 5 2.5 7 2.5 C9 2.5 11 3.5 13 7 C11 10.5 9 11.5 7 11.5 C5 11.5 3 10.5 1 7 Z"/>
+                <circle cx="7" cy="7" r="2"/>
+            </symbol>
+            <symbol id="icon-play" viewBox="0 0 14 14">
+                <path d="M3.5 2 L11 7 L3.5 12 Z"/>
+            </symbol>
+            <symbol id="icon-bolt" viewBox="0 0 14 14">
+                <path d="M8 1 L3 8 L7 8 L6 13 L11 6 L7 6 Z"/>
+            </symbol>
         </defs>
     </svg>
 
@@ -97,7 +154,7 @@
                 <button class="operator-chip" id="operator-chip" type="button"
                         aria-haspopup="true" aria-expanded="false"
                         aria-label="Current operator — click to switch">
-                    <span class="operator-chip__dot" id="operator-chip-dot"></span>
+                    <span class="operator-chip__dot operator-dot" id="operator-chip-dot"></span>
                     <span class="operator-chip__name" id="operator-chip-name">&hellip;</span>
                     <svg class="operator-chip__caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
                         <path d="M2 4 L5 7 L8 4" fill="none" stroke="currentColor" stroke-width="1.5"
@@ -209,9 +266,14 @@
                     <div id="failed-deployments-alert" class="dashboard-alert dashboard-alert--danger" style="display: none;"></div>
                 </section>
 
-                <!-- 3. Live deployments grid -->
+                <!-- 3. Live deployments grid — Phase 3e: eyebrow + title rhythm -->
                 <section class="dashboard-widget">
-                    <h3 class="dashboard-widget__title">Live Deployments</h3>
+                    <header class="dashboard-widget__head">
+                        <div class="dashboard-widget__head-text">
+                            <span class="dashboard-widget__eyebrow">Active Infrastructure</span>
+                            <h3 class="dashboard-widget__title">Live Deployments</h3>
+                        </div>
+                    </header>
                     <div id="dashboard-deployments-grid" class="dashboard-deployments-grid">
                         <p class="t-muted">Loading...</p>
                     </div>
@@ -220,7 +282,12 @@
                 <!-- 4. 3-col widget row: Active Beacons + Cost Trend + Architecture -->
                 <section class="dashboard-widget-row">
                     <div class="dashboard-widget dashboard-widget--compact">
-                        <h3 class="dashboard-widget__title">Active Beacons</h3>
+                        <header class="dashboard-widget__head">
+                            <div class="dashboard-widget__head-text">
+                                <span class="dashboard-widget__eyebrow">Operations</span>
+                                <h3 class="dashboard-widget__title">Active Beacons</h3>
+                            </div>
+                        </header>
                         <div id="dashboard-beacons-widget">
                             <div class="dashboard-stat-big" id="dashboard-beacons-count">&mdash;</div>
                             <div class="dashboard-stat-caption">Last callback: <span id="dashboard-beacons-last">&mdash;</span></div>
@@ -228,7 +295,12 @@
                         </div>
                     </div>
                     <div class="dashboard-widget dashboard-widget--compact">
-                        <h3 class="dashboard-widget__title">Cost Trend (14d)</h3>
+                        <header class="dashboard-widget__head">
+                            <div class="dashboard-widget__head-text">
+                                <span class="dashboard-widget__eyebrow">Last 14 days</span>
+                                <h3 class="dashboard-widget__title">Cost Trend</h3>
+                            </div>
+                        </header>
                         <div id="dashboard-cost-widget">
                             <div class="dashboard-stat-big" id="dashboard-cost-total">&mdash;</div>
                             <svg id="dashboard-cost-sparkline" viewBox="0 0 200 40" class="dashboard-cost-sparkline" preserveAspectRatio="none" aria-hidden="true"></svg>
@@ -237,7 +309,12 @@
                         </div>
                     </div>
                     <div class="dashboard-widget dashboard-widget--compact" id="dashboard-architecture-widget">
-                        <h3 class="dashboard-widget__title">Architecture</h3>
+                        <header class="dashboard-widget__head">
+                            <div class="dashboard-widget__head-text">
+                                <span class="dashboard-widget__eyebrow">Active deployment</span>
+                                <h3 class="dashboard-widget__title">Architecture</h3>
+                            </div>
+                        </header>
                         <div class="dashboard-architecture-thumb" id="dashboard-architecture-thumb" onclick="APP.openArchitectureModal()">
                             <img id="dashboard-architecture-img" alt="Architecture diagram" style="display: none;">
                             <div class="dashboard-architecture-placeholder" id="dashboard-architecture-placeholder">
@@ -254,18 +331,24 @@
                 <!-- 5. Recent activity feed — M-Operators (Decision #23).
                      Consumes /api/audit (Agent A backend). Auto-refreshes on
                      tab activation + manual refresh button + after operator
-                     switch. Empty state when no entries. -->
+                     switch. Empty state when no entries.
+                     Phase 3e: now renders as .spec-list with .operator-dot per row. -->
                 <section class="dashboard-widget" id="dashboard-activity-widget">
-                    <div class="dashboard-activity-widget__title-row">
-                        <h3 class="dashboard-widget__title">Recent Activity</h3>
-                        <button class="dashboard-activity-widget__refresh"
-                                type="button"
-                                onclick="loadDashboardActivity(true)"
-                                aria-label="Refresh activity feed"
-                                title="Refresh">&#x21BB;</button>
-                    </div>
+                    <header class="dashboard-widget__head">
+                        <div class="dashboard-widget__head-text">
+                            <span class="dashboard-widget__eyebrow">Operator audit trail</span>
+                            <h3 class="dashboard-widget__title">Recent Activity</h3>
+                        </div>
+                        <div class="dashboard-widget__head-actions">
+                            <button class="dashboard-activity-widget__refresh"
+                                    type="button"
+                                    onclick="loadDashboardActivity(true)"
+                                    aria-label="Refresh activity feed"
+                                    title="Refresh">&#x21BB;</button>
+                        </div>
+                    </header>
                     <div id="dashboard-activity-feed">
-                        <ul class="activity-feed" id="activity-feed-list">
+                        <ul class="activity-feed spec-list" id="activity-feed-list" aria-label="Recent operator activity">
                             <li class="activity-feed__empty">Loading recent activity&hellip;</li>
                         </ul>
                     </div>
@@ -273,7 +356,12 @@
 
                 <!-- 6. Elastic Detection Rules card (preserved, polished for launchpad) -->
                 <section class="dashboard-widget" id="dashboard-elastic-rules-widget">
-                    <h3 class="dashboard-widget__title">Elastic Detection Rules</h3>
+                    <header class="dashboard-widget__head">
+                        <div class="dashboard-widget__head-text">
+                            <span class="dashboard-widget__eyebrow">SIEM mappings</span>
+                            <h3 class="dashboard-widget__title">Elastic Detection Rules</h3>
+                        </div>
+                    </header>
                     <div class="dashboard-elastic-rules-row">
                         <span id="elastic-rules-count" class="badge badge-info">&mdash;</span>
                         <span id="elastic-rules-date" class="t-muted">Last updated: &mdash;</span>
@@ -1499,19 +1587,73 @@ ns-143.awsdns-17.org
                     <div id="deployment-output" class="output-display"></div>
                     </div>
                     <div class="subpill-pane" data-subpill-pane="manage" id="subpill-pane-manage" hidden>
-                        <!-- D3.4: Deployment Manager content re-parents here -->
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <h2 style="margin: 0; font-size: 1.7em;">Deployment Manager</h2>
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <span id="deployments-last-updated" style="color: var(--text-muted); font-size: 0.9em;"></span>
-                            <button id="refresh-all-btn" class="btn btn-info" onclick="refreshAll()">Refresh All</button>
+                        <!-- D3.4: Deployment Manager content re-parents here.
+                             Phase 3a — V3-native rebuild: hero + spec-list +
+                             actions strip replace the old "Deployment Manager"
+                             chrome. Legacy IDs (#deployments-overview,
+                             #deployments-last-updated, #refresh-all-btn) are
+                             preserved so existing JS still binds. -->
+
+                    <section class="manage-view" id="manage-view" style="display: none;">
+                        <!-- Eyebrow strip: label + last-updated + status pill -->
+                        <div class="manage-view__eyebrow">
+                            <span class="manage-view__eyebrow-label">Deployment Manager</span>
+                            <div class="manage-view__eyebrow-meta">
+                                <span id="deployments-last-updated" class="manage-view__updated"></span>
+                                <span class="spec-pill spec-pill--draft" id="manage-status-pill" aria-live="polite">
+                                    <span class="spec-pill__dot" aria-hidden="true"></span>
+                                    <span id="manage-status-label">IDLE</span>
+                                </span>
+                            </div>
                         </div>
-                    </div>
+
+                        <!-- Hero: project identity + deployment type kicker -->
+                        <section class="manage-view__hero" aria-label="Deployment identity">
+                            <span class="manage-view__hero-caption">project</span>
+                            <h3 class="manage-view__hero-name" id="manage-hero-name">&mdash;</h3>
+                            <p class="manage-view__hero-type">
+                                <strong id="manage-hero-type">&mdash;</strong>
+                                <span id="manage-hero-state" class="manage-view__hero-state"></span>
+                            </p>
+                        </section>
+
+                        <!-- Resource summary spec-list (region, account, IPs, SGs, cost, last-touched) -->
+                        <dl class="spec-list" id="manage-spec-list" aria-label="Deployment resources"></dl>
+
+                        <!-- Actions strip — operator-facing controls -->
+                        <div class="manage-actions" id="manage-actions" role="toolbar" aria-label="Deployment actions">
+                            <button class="manage-action" id="manage-action-refresh" type="button" data-manage-action="refresh">
+                                <svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                                <span>Refresh</span>
+                            </button>
+                            <button class="manage-action" id="manage-action-logs" type="button" data-manage-action="logs">
+                                <svg class="icon" aria-hidden="true"><use href="#icon-logs"/></svg>
+                                <span>View Logs</span>
+                            </button>
+                            <button class="manage-action" id="manage-action-health" type="button" data-manage-action="health">
+                                <svg class="icon" aria-hidden="true"><use href="#icon-health"/></svg>
+                                <span>Health Check</span>
+                            </button>
+                            <button class="manage-action manage-action--danger" id="manage-action-destroy" type="button" data-manage-action="destroy">
+                                <svg class="icon" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                <span>Destroy</span>
+                            </button>
+                        </div>
+
+                        <!-- Inline health-check / status output panel -->
+                        <div class="manage-view__output" id="manage-output" hidden></div>
+                    </section>
 
                     <!-- Budget Alert Banner (lightweight — links to Settings for details) -->
-                    <div id="cost-budget-alert" style="display: none; margin-bottom: 20px;"></div>
+                    <div id="cost-budget-alert" style="display: none; margin: 18px 0;"></div>
 
-                    <!-- Deployment Status Overview -->
+                    <!-- Hidden controls preserved for JS: the new actions strip
+                         calls refreshAll() directly, but legacy code paths still
+                         poke #refresh-all-btn (disabled-state, label text). Keep
+                         it in the DOM but visually hidden. -->
+                    <button id="refresh-all-btn" type="button" onclick="refreshAll()" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden" aria-hidden="true" tabindex="-1">Refresh All</button>
+
+                    <!-- Deployment Status Overview — JS still mounts banners here -->
                     <div id="deployments-overview" style="margin-bottom: 30px;">
                     </div>
 
@@ -1678,43 +1820,58 @@ ns-143.awsdns-17.org
 
                     </div>
 
-                    <!-- D8 Agent B — Cleanup sub-pane (orphan AWS resources) -->
+                    <!-- D8 Agent B — Cleanup sub-pane (orphan AWS resources)
+                         Phase 3c — V3-native rebuild: legacy `.cleanup-*` skeleton replaced
+                         with `.cleanup-v3 *` namespace, summary stat tiles + spec-list
+                         resource groups composing the Phase 2b primitives. -->
                     <div class="subpill-pane" data-subpill-pane="cleanup" id="subpill-pane-cleanup" hidden>
-                        <div class="cleanup-header">
-                            <div>
-                                <h2 class="page-title">Cleanup</h2>
-                                <p class="t-muted">
-                                    AWS resources NOT tied to any current Terraform state. Includes orphan
-                                    EIPs, unattached EBS snapshots, stale ACM certs (eu-central-1 + us-east-1),
-                                    S3 buckets outside the project naming convention, and old Terraform workspaces.
-                                </p>
+                        <div class="cleanup-v3">
+                            <div class="cleanup-v3__eyebrow">
+                                <div class="cleanup-v3__eyebrow-text">
+                                    <span class="cleanup-v3__eyebrow-label">UNTRACKED RESOURCES</span>
+                                    <h2 class="cleanup-v3__title">Cleanup</h2>
+                                    <p class="cleanup-v3__description">
+                                        AWS resources NOT tied to any current Terraform state. Includes orphan
+                                        EIPs, unattached EBS snapshots, stale ACM certs (eu-central-1 + us-east-1),
+                                        S3 buckets outside the project naming convention, and old Terraform workspaces.
+                                    </p>
+                                </div>
+                                <div class="cleanup-v3__eyebrow-actions">
+                                    <span class="cleanup-v3__refreshed-at" id="cleanup-refreshed-at" hidden></span>
+                                    <button class="spec-edit-btn cleanup-v3__refresh-btn"
+                                            type="button"
+                                            id="cleanup-refresh-btn"
+                                            onclick="loadCleanupResources(true)">
+                                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                                        Refresh
+                                    </button>
+                                </div>
                             </div>
-                            <button class="btn btn-secondary" onclick="loadCleanupResources(true)">Refresh</button>
-                        </div>
 
-                        <!-- Summary stats -->
-                        <div class="cleanup-summary" id="cleanup-summary">
-                            <div class="cleanup-summary__stat">
-                                <span class="cleanup-summary__num" id="cleanup-orphan-count">—</span>
-                                <span class="cleanup-summary__label">orphans found</span>
+                            <!-- Summary stat tiles (4 numbers) -->
+                            <div class="cleanup-v3-summary" id="cleanup-summary" role="group" aria-label="Orphan resource counts">
+                                <div class="cleanup-v3-summary__tile">
+                                    <span class="cleanup-v3-summary__num" id="cleanup-orphan-count">—</span>
+                                    <span class="cleanup-v3-summary__label">orphans found</span>
+                                </div>
+                                <div class="cleanup-v3-summary__tile">
+                                    <span class="cleanup-v3-summary__num" id="cleanup-eip-count">—</span>
+                                    <span class="cleanup-v3-summary__label">unattached EIPs</span>
+                                </div>
+                                <div class="cleanup-v3-summary__tile">
+                                    <span class="cleanup-v3-summary__num" id="cleanup-acm-count">—</span>
+                                    <span class="cleanup-v3-summary__label">orphan ACM certs</span>
+                                </div>
+                                <div class="cleanup-v3-summary__tile">
+                                    <span class="cleanup-v3-summary__num" id="cleanup-buckets-count">—</span>
+                                    <span class="cleanup-v3-summary__label">untagged S3 buckets</span>
+                                </div>
                             </div>
-                            <div class="cleanup-summary__stat">
-                                <span class="cleanup-summary__num" id="cleanup-eip-count">—</span>
-                                <span class="cleanup-summary__label">unattached EIPs</span>
-                            </div>
-                            <div class="cleanup-summary__stat">
-                                <span class="cleanup-summary__num" id="cleanup-acm-count">—</span>
-                                <span class="cleanup-summary__label">orphan ACM certs</span>
-                            </div>
-                            <div class="cleanup-summary__stat">
-                                <span class="cleanup-summary__num" id="cleanup-buckets-count">—</span>
-                                <span class="cleanup-summary__label">untagged S3 buckets</span>
-                            </div>
-                        </div>
 
-                        <!-- Resource list, grouped by type -->
-                        <div id="cleanup-resource-list" class="motion-stagger-in">
-                            <p class="t-muted">Click Refresh to scan AWS for orphan resources.</p>
+                            <!-- Resource groups (rendered as .spec-list per AWS service) -->
+                            <div id="cleanup-resource-list" class="cleanup-v3__groups motion-stagger-in">
+                                <p class="cleanup-v3__placeholder">Click Refresh to scan AWS for orphan resources.</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1820,12 +1977,18 @@ ns-143.awsdns-17.org
 
                     <!-- Beacon Table -->
                     <div class="section-card" id="beacon-table-section" style="display: none;">
-                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-                            <h3 style="margin: 0;">Active Beacons</h3>
-                            <span id="beacon-count" class="badge badge-info" style="font-size: 0.85em;">0 beacons</span>
-                            <input type="text" id="beacon-filter" class="beacon-filter-input" placeholder="Filter beacons..." oninput="BEACON.filterTable(this.value)" style="max-width: 250px;">
+                        <div class="ops-beacons__header">
+                            <h3 class="ops-beacons__title">Active Beacons</h3>
+                            <span id="beacon-count" class="badge badge-info ops-beacons__count">0 beacons</span>
+                            <input type="text" id="beacon-filter" class="beacon-filter-input ops-beacons__filter" placeholder="Filter beacons..." oninput="BEACON.filterTable(this.value)">
                         </div>
-                        <div class="table-responsive">
+                        <!-- Phase 3B.1 — V3-native beacons spec-list. Renders alongside
+                             (and visually replaces) the legacy beacon-table. The table
+                             is kept in the DOM with display:none for backwards-compat
+                             with code paths that read from it; selectBeacon() updates
+                             both surfaces. -->
+                        <ol class="spec-list ops-beacons-list" id="beacons-spec-list" aria-label="Active beacons"></ol>
+                        <div class="table-responsive" style="display: none;">
                             <table class="beacon-table" id="beacon-table">
                                 <thead>
                                     <tr>
@@ -1861,6 +2024,29 @@ ns-143.awsdns-17.org
 
                         <!-- Beacon Metadata Badges -->
                         <div class="beacon-meta-badges" id="beacon-meta-badges"></div>
+
+                        <!-- Phase 3B.1 — V3-native beacon detail spec-list.
+                             Renders metadata (hostname, user, pid, sleep, listener,
+                             established, last checkin) plus "driven by" attribution
+                             pulled from /api/audit?action_prefix=beacon.exec. -->
+                        <ol class="spec-list ops-beacon-detail" id="beacon-detail-spec-list"
+                            aria-label="Beacon detail" hidden></ol>
+
+                        <!-- Phase 3B.1 — Operator-attributed command history.
+                             Rows show operator color dot + display name + command +
+                             timestamp. Sourced from the audit log (per-bid client-side
+                             filter). Stays in sync with task-feed polling. -->
+                        <div class="ops-cmd-history" id="ops-cmd-history" hidden>
+                            <div class="ops-cmd-history__header">
+                                <span class="ops-cmd-history__eyebrow">COMMAND HISTORY · ATTRIBUTED</span>
+                                <button type="button" class="spec-edit-btn ops-cmd-history__refresh"
+                                        onclick="BEACON.refreshCmdHistory()" title="Refresh history">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                                </button>
+                            </div>
+                            <ol class="spec-list ops-cmd-history__list" id="ops-cmd-history-list"
+                                aria-label="Command history"></ol>
+                        </div>
 
                         <!-- Beacon Feature Tabs -->
                         <div class="beacon-feature-tabs" id="beacon-feature-tabs">
@@ -2383,25 +2569,32 @@ ns-143.awsdns-17.org
                     Upload files to the Windows Attack Box via SCP through the bastion host. Use this for Outflank tools, custom loaders, or any binaries your operators need.
                 </div>
 
-                <!-- Target Deployment Selector -->
-                <div class="section-card" style="margin-bottom: 16px;">
-                    <label for="tools-project-select" style="display: block; font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">Target Deployment:</label>
-                    <select id="tools-project-select" class="form-select">
-                        <option value="">Loading deployments...</option>
-                    </select>
-                </div>
+                <!-- Phase 3B.3 — Two-column V3 layout.
+                     Left:  Form (target, connection, upload, destination).
+                     Right: Live parameter spec-list + command preview +
+                            transfer trigger + artifacts list + transfer log. -->
+                <div class="ops-payloads-grid" id="ops-payloads-grid">
 
-                <!-- Connection Status -->
-                <div class="section-card" id="tools-connection-card" style="margin-bottom: 16px;">
-                    <h3 style="margin-bottom: 12px; font-size: 1.1em;">Connection Status</h3>
-                    <div id="tools-connection-status">
-                        <p class="t-muted">Select a deployment above</p>
+                  <div class="ops-payloads-grid__form" id="ops-payloads-form">
+                    <!-- Target Deployment Selector -->
+                    <div class="section-card" style="margin-bottom: 16px;">
+                        <label for="tools-project-select" style="display: block; font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">Target Deployment:</label>
+                        <select id="tools-project-select" class="form-select">
+                            <option value="">Loading deployments...</option>
+                        </select>
                     </div>
-                </div>
 
-                <!-- File Upload -->
-                <div class="section-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Upload Files</h3>
+                    <!-- Connection Status -->
+                    <div class="section-card" id="tools-connection-card" style="margin-bottom: 16px;">
+                        <h3 style="margin-bottom: 12px; font-size: 1.1em;">Connection Status</h3>
+                        <div id="tools-connection-status">
+                            <p class="t-muted">Select a deployment above</p>
+                        </div>
+                    </div>
+
+                    <!-- File Upload -->
+                    <div class="section-card" style="margin-bottom: 16px;">
+                        <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Upload Files</h3>
                     <div id="tools-upload-area" style="border: 2px dashed var(--border); border-radius: var(--radius); padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s ease; margin-bottom: 12px;"
                          ondragover="event.preventDefault(); this.style.borderColor='var(--gold)'; this.style.background='rgba(143, 164, 100, 0.05)';"
                          ondragleave="this.style.borderColor='var(--border)'; this.style.background='transparent';"
@@ -2429,51 +2622,81 @@ ns-143.awsdns-17.org
                     </div>
                 </div>
 
-                <!-- Destination Picker -->
-                <div class="section-card" style="margin-bottom: 16px;">
-                    <h3 style="margin-bottom: 12px; font-size: 1.1em;">Destination</h3>
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
-                            <input type="radio" name="tools-dest" value="C:\Outflank\" checked style="accent-color: var(--gold);">
-                            <code style="font-size: 0.9em;">C:\Outflank\</code>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
-                            <input type="radio" name="tools-dest" value="C:\Tools\" style="accent-color: var(--gold);">
-                            <code style="font-size: 0.9em;">C:\Tools\</code>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
-                            <input type="radio" name="tools-dest" value="custom" style="accent-color: var(--gold);">
-                            <span>Custom:</span>
-                            <input type="text" id="tools-custom-dest" placeholder="C:\MyTools\" disabled
-                                   style="flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text-primary); font-family: monospace; font-size: 0.9em;">
-                        </label>
-                    </div>
-                </div>
-
-                <!-- Command Preview -->
-                <div class="section-card" id="tools-command-preview-card" style="margin-bottom: 16px;">
-                    <h3 style="margin-bottom: 10px; font-size: 1.1em;">Command Preview</h3>
-                    <div id="tools-command-preview" style="background: var(--bg-terminal); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font-family: monospace; font-size: 0.82em; white-space: pre-wrap; word-break: break-all; color: var(--text-terminal);">Select a deployment and stage files to see the SCP command</div>
-                </div>
-
-                <!-- Transfer Controls -->
-                <div style="margin-bottom: 16px;">
-                    <button id="tools-transfer-btn" class="btn btn-primary" onclick="startToolsTransfer()" disabled style="width: 100%; padding: 12px; font-size: 1.05em;">
-                        Transfer to Attack Box
-                    </button>
-                </div>
-
-                <!-- Transfer Log -->
-                <div class="section-card" id="tools-transfer-log-card" style="display: none;">
-                    <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Transfer Log</h3>
-                    <div id="tools-transfer-progress" style="margin-bottom: 10px;">
-                        <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
-                            <div id="tools-transfer-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
+                    <!-- Destination Picker -->
+                    <div class="section-card" style="margin-bottom: 16px;">
+                        <h3 style="margin-bottom: 12px; font-size: 1.1em;">Destination</h3>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                                <input type="radio" name="tools-dest" value="C:\Outflank\" checked style="accent-color: var(--gold);">
+                                <code style="font-size: 0.9em;">C:\Outflank\</code>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                                <input type="radio" name="tools-dest" value="C:\Tools\" style="accent-color: var(--gold);">
+                                <code style="font-size: 0.9em;">C:\Tools\</code>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                                <input type="radio" name="tools-dest" value="custom" style="accent-color: var(--gold);">
+                                <span>Custom:</span>
+                                <input type="text" id="tools-custom-dest" placeholder="C:\MyTools\" disabled
+                                       style="flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text-primary); font-family: monospace; font-size: 0.9em;">
+                            </label>
                         </div>
-                        <p id="tools-transfer-progress-text" style="font-size: 0.85em; color: var(--text-muted); margin-top: 4px;"></p>
                     </div>
-                    <div id="tools-transfer-log" class="output-display" style="max-height: 300px;"></div>
-                </div>
+                  </div><!-- /.ops-payloads-grid__form -->
+
+                  <div class="ops-payloads-grid__preview" id="ops-payloads-preview">
+                    <!-- Phase 3B.3 — Parameter summary spec-list. Re-rendered by
+                         APP.payloads.updateSpec() whenever the form changes. -->
+                    <div class="section-card ops-payloads-summary-card">
+                        <div class="ops-payloads-summary__head">
+                            <span class="ops-payloads-summary__eyebrow">PARAMETERS · LIVE</span>
+                            <span class="spec-pill spec-pill--draft" id="ops-payloads-spec-pill">
+                                <span class="spec-pill__dot"></span>
+                                <span id="ops-payloads-spec-pill-label">DRAFT</span>
+                            </span>
+                        </div>
+                        <ol class="spec-list ops-payloads-summary__list" id="ops-payloads-spec-list"
+                            aria-label="Payload generation parameters"></ol>
+                    </div>
+
+                    <!-- Command Preview -->
+                    <div class="section-card" id="tools-command-preview-card" style="margin-bottom: 16px;">
+                        <h3 style="margin-bottom: 10px; font-size: 1.1em;">Command Preview</h3>
+                        <div id="tools-command-preview" style="background: var(--bg-terminal); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font-family: monospace; font-size: 0.82em; white-space: pre-wrap; word-break: break-all; color: var(--text-terminal);">Select a deployment and stage files to see the SCP command</div>
+                    </div>
+
+                    <!-- Transfer Controls -->
+                    <div style="margin-bottom: 16px;">
+                        <button id="tools-transfer-btn" class="btn btn-primary" onclick="startToolsTransfer()" disabled style="width: 100%; padding: 12px; font-size: 1.05em;">
+                            Transfer to Attack Box
+                        </button>
+                    </div>
+
+                    <!-- Phase 3B.3 — Generated artifacts list. Each artifact gets
+                         a .spec-row with Download / View icon-buttons. -->
+                    <div class="section-card ops-payloads-artifacts-card" id="ops-payloads-artifacts-card" hidden>
+                        <div class="ops-payloads-artifacts__head">
+                            <span class="ops-payloads-artifacts__eyebrow">ARTIFACTS</span>
+                            <span class="ops-payloads-artifacts__count" id="ops-payloads-artifacts-count">0</span>
+                        </div>
+                        <ol class="spec-list ops-payloads-artifacts__list" id="ops-payloads-artifacts-list"
+                            aria-label="Generated artifacts"></ol>
+                    </div>
+
+                    <!-- Transfer Log -->
+                    <div class="section-card" id="tools-transfer-log-card" style="display: none;">
+                        <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Transfer Log</h3>
+                        <div id="tools-transfer-progress" style="margin-bottom: 10px;">
+                            <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
+                                <div id="tools-transfer-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
+                            </div>
+                            <p id="tools-transfer-progress-text" style="font-size: 0.85em; color: var(--text-muted); margin-top: 4px;"></p>
+                        </div>
+                        <div id="tools-transfer-log" class="output-display" style="max-height: 300px;"></div>
+                    </div>
+                  </div><!-- /.ops-payloads-grid__preview -->
+
+                </div><!-- /.ops-payloads-grid -->
                     </div>
                 </div>
             </div>
@@ -2641,12 +2864,13 @@ ns-143.awsdns-17.org
                             </p>
                         </header>
                         <div class="section-card">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                                <span class="t-muted" id="settings-domains-status">Loading...</span>
+                            <!-- Phase 3d: spec-list toolbar replaces inline-flex pair. -->
+                            <div class="settings-spec-toolbar">
+                                <span class="settings-spec-toolbar__status" id="settings-domains-status" data-state="loading">Loading...</span>
                                 <button class="btn btn-secondary btn-sm" onclick="loadSettingsDomains(true)">Refresh</button>
                             </div>
                             <div id="settings-domains-list" class="motion-stagger-in">
-                                <!-- Populated by JS -->
+                                <!-- Populated by JS — emits .spec-list / .spec-row markup. -->
                             </div>
                         </div>
                     </section>
@@ -2662,12 +2886,12 @@ ns-143.awsdns-17.org
                             </p>
                         </header>
                         <div class="section-card">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                                <span class="t-muted" id="settings-secrets-status">Loading...</span>
+                            <div class="settings-spec-toolbar">
+                                <span class="settings-spec-toolbar__status" id="settings-secrets-status" data-state="loading">Loading...</span>
                                 <button class="btn btn-secondary btn-sm" onclick="loadSettingsSecrets(true)">Refresh</button>
                             </div>
                             <div id="settings-secrets-list" class="motion-stagger-in">
-                                <!-- Populated by JS -->
+                                <!-- Populated by JS — emits .spec-list / .spec-row markup. -->
                             </div>
                         </div>
                     </section>
@@ -2683,12 +2907,12 @@ ns-143.awsdns-17.org
                             </p>
                         </header>
                         <div class="section-card" id="settings-services-card">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                                <span class="t-muted" id="settings-services-status">Loading...</span>
+                            <div class="settings-spec-toolbar">
+                                <span class="settings-spec-toolbar__status" id="settings-services-status" data-state="loading">Loading...</span>
                                 <button class="btn btn-secondary btn-sm" onclick="loadSettingsServices(true)">Refresh</button>
                             </div>
                             <div id="settings-services-list" class="motion-stagger-in">
-                                <!-- Populated by JS -->
+                                <!-- Populated by JS — emits .spec-list / .spec-row markup. -->
                             </div>
                         </div>
                     </section>
@@ -2707,8 +2931,12 @@ ns-143.awsdns-17.org
                             Refresh Costs &mdash; never refreshed
                         </button>
 
-                        <!-- Summary cards -->
-                        <div id="cost-summary-cards" class="grid-auto" style="margin-bottom: 20px;">
+                        <!-- Phase 3d — Cost summary spec-list (replaces lifecycle-card four-up).
+                             The container ID is preserved so existing JS (and any deep-links)
+                             still find it; the inner markup is now a .spec-list. -->
+                        <div class="cost-tracker-summary" style="margin-bottom: 20px;">
+                            <div id="cost-summary-cards">
+                            </div>
                         </div>
 
                         <!-- Budget progress bar -->
@@ -2762,7 +2990,18 @@ ns-143.awsdns-17.org
                         <div class="section-card">
                             <div class="form-group form-group--compact">
                                 <label for="auto-refresh-interval">Auto-Refresh Interval</label>
-                                <select id="auto-refresh-interval" onchange="applyAutoRefreshSetting()">
+                                <!-- Phase 3d — seg-control wraps the existing <select> for V3 chrome.
+                                     The <select> is kept as a hidden state-of-truth element so
+                                     existing handlers (applyAutoRefreshSetting + localStorage) keep
+                                     working unchanged. The seg-control mirrors select.value on click. -->
+                                <div class="seg-control" id="auto-refresh-seg" role="tablist" aria-label="Auto-refresh interval">
+                                    <button type="button" class="seg-control__option" data-value="0" role="tab">Off</button>
+                                    <button type="button" class="seg-control__option" data-value="10" role="tab">10s</button>
+                                    <button type="button" class="seg-control__option is-active" data-value="30" role="tab" aria-selected="true">30s</button>
+                                    <button type="button" class="seg-control__option" data-value="60" role="tab">60s</button>
+                                    <button type="button" class="seg-control__option" data-value="120" role="tab">2m</button>
+                                </div>
+                                <select id="auto-refresh-interval" onchange="applyAutoRefreshSetting()" hidden aria-hidden="true">
                                     <option value="0">Off &mdash; manual refresh only</option>
                                     <option value="10">Every 10 seconds</option>
                                     <option value="30" selected>Every 30 seconds</option>
@@ -2787,7 +3026,7 @@ ns-143.awsdns-17.org
                         <details style="margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
                             <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; background: var(--bg-section);">
                                 Beacon Web App &mdash; Unimplemented API Features
-                                <span style="float: right; font-weight: 400; font-size: 0.85em; color: var(--text-muted);">beacon-api-features-backlog.md</span>
+                                <span class="roadmap-summary__doc">beacon-api-features-backlog.md</span>
                             </summary>
                             <div style="padding: 16px; font-size: 0.9em;">
                                 <p style="color: var(--text-secondary); margin-bottom: 12px;">Features available via the CS REST API (219 endpoints) not yet in the web app UI. Backend service methods exist for most.</p>
@@ -2824,7 +3063,7 @@ ns-143.awsdns-17.org
                         <details style="margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
                             <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; background: var(--bg-section);">
                                 CS REST API &mdash; Test Plan
-                                <span style="float: right; font-weight: 400; font-size: 0.85em; color: var(--text-muted);">API_TEST_PLAN.md</span>
+                                <span class="roadmap-summary__doc">API_TEST_PLAN.md</span>
                             </summary>
                             <div style="padding: 16px; font-size: 0.9em;">
                                 <p style="color: var(--text-secondary); margin-bottom: 12px;">Endpoint-by-endpoint test coverage for the CS REST API (219 endpoints). Tracks what's been tested live vs outstanding.</p>
@@ -2849,7 +3088,7 @@ ns-143.awsdns-17.org
                         <details style="margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
                             <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; background: var(--bg-section);">
                                 Attack Box &mdash; Golden AMI
-                                <span style="float: right; font-weight: 400; font-size: 0.85em; color: var(--text-muted);">planned</span>
+                                <span class="roadmap-summary__doc">planned</span>
                             </summary>
                             <div style="padding: 16px; font-size: 0.9em;">
                                 <p style="color: var(--text-secondary); margin-bottom: 12px;">Create a reusable AMI from the current c2-adhoc attack box (46GB, 40+ tools pre-installed). Eliminates 15-20 min bootstrap on future deployments.</p>
@@ -2987,6 +3226,33 @@ ns-143.awsdns-17.org
                         <button class="btn btn-primary" type="submit">Add operator</button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- M-Operators (Decision #23) — Manage operators modal.
+         Wired through APP.operatorManagement.open(); list rendered into
+         #operator-management-list via the Phase 2b .spec-list / .spec-row
+         primitives so the modal inherits dual-theme contrast invariants. -->
+    <div id="operator-management-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="operator-management-title">
+        <div class="modal__backdrop" data-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 id="operator-management-title" class="modal__title">Manage operators</h2>
+                <button type="button" class="modal__close" aria-label="Close" data-modal-close>&times;</button>
+            </header>
+            <div class="modal__body">
+                <p class="t-muted" style="margin-top: 0;">
+                    Operator profiles are for action attribution. Switching profiles is a click;
+                    the trust boundary is upstream via AWS IAM and SSH.
+                </p>
+                <dl class="spec-list operator-mgmt__list" id="operator-management-list" aria-label="Operator profiles">
+                    <!-- populated by APP.operatorManagement.render() -->
+                </dl>
+                <div class="modal__footer" style="margin-top: 20px; padding: 0; border: 0;">
+                    <button class="btn btn-secondary" type="button" data-modal-close>Close</button>
+                    <button class="btn btn-primary" id="operator-management-add" type="button">+ Add operator</button>
+                </div>
             </div>
         </div>
     </div>

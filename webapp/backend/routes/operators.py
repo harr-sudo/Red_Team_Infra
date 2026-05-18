@@ -12,11 +12,26 @@ bp = Blueprint("operators", __name__, url_prefix="/api/operators")
 
 @bp.route("", methods=["GET"])
 def list_all():
-    """Return all operators + the current one (from cookie)."""
+    """Return all operators + the current one (from cookie).
+
+    Each operator dict is augmented with ``last_active`` (ISO timestamp or
+    null) and ``action_count`` (int) so the Manage operators modal can
+    render those stats without a per-row audit fetch. Computed via a single
+    audit-log scan — see ``operator_service.get_last_active_map``.
+    """
     current = operator_service.resolve_from_request(request)
+    stats = operator_service.get_last_active_map()
+    operators = []
+    for op in operator_service.list_operators():
+        s = stats.get(op["id"], {"last_active": None, "action_count": 0})
+        operators.append({
+            **op,
+            "last_active": s["last_active"],
+            "action_count": s["action_count"],
+        })
     return jsonify({
         "success": True,
-        "operators": operator_service.list_operators(),
+        "operators": operators,
         "current": current,
         "default": operator_service.get_default(),
     })
@@ -31,6 +46,34 @@ def add():
         return jsonify({"success": False, "error": str(e)}), 400
     actor = getattr(g, "operator", None) or {"id": "unknown"}
     audit_service.write(actor.get("id"), "operator.add", target=entry["id"])
+    return jsonify({"success": True, "operator": entry})
+
+
+@bp.route("/<op_id>", methods=["PATCH"])
+def update(op_id):
+    """Rename and/or recolor an operator. Body: ``{display?, color?}``.
+
+    Only emits an audit row when at least one field actually changed —
+    skipped no-op PATCHes do not pollute the timeline. The audit entry's
+    ``details`` payload mirrors the request so the activity feed can
+    replay what was changed.
+    """
+    data = request.get_json(silent=True) or {}
+    display = data.get("display")
+    color = data.get("color")
+    try:
+        entry = operator_service.update(op_id, display=display, color=color)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    changed = {k: v for k, v in {"display": display, "color": color}.items() if v is not None}
+    if changed:
+        actor = getattr(g, "operator", None) or {"id": "unknown"}
+        audit_service.write(
+            actor.get("id"),
+            "operator.update",
+            target=op_id,
+            details=changed,
+        )
     return jsonify({"success": True, "operator": entry})
 
 

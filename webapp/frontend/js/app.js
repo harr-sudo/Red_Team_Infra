@@ -2192,6 +2192,10 @@ APP._runSubPillInit = function (parentTabName, subPillName) {
         } else if (subPillName === 'manage') {
             if (typeof loadDeploymentsPage === 'function') loadDeploymentsPage();
             if (typeof startAutoRefresh === 'function') startAutoRefresh();
+            // Phase 3a — render V3-native manage view (hero + spec-list + actions).
+            if (APP.manage && typeof APP.manage.render === 'function') {
+                APP.manage.render();
+            }
         } else if (subPillName === 'cleanup') {
             if (typeof loadCleanupResources === 'function') loadCleanupResources(false);
         }
@@ -2210,6 +2214,10 @@ APP._runSubPillInit = function (parentTabName, subPillName) {
             if (typeof TERMINAL !== 'undefined' && TERMINAL.init) TERMINAL.init();
         } else if (subPillName === 'payloads') {
             if (typeof loadToolsPage === 'function') loadToolsPage();
+            // Phase 3B.3 — initialize the V3 parameter spec-list + artifacts.
+            if (APP.payloads && typeof APP.payloads.init === 'function') {
+                APP.payloads.init();
+            }
         }
     }
 };
@@ -4047,14 +4055,53 @@ async function _renderDashboardDeploymentsGrid() {
             return;
         }
         grid.innerHTML = deps.slice(0, 6).map(d => {
+            // Phase 3e — richer card body: kicker (project name, mono caps),
+            // title (deployment type), status pill (.spec-pill--live/draft/error),
+            // attribution row (operator dot if available), cost line.
             const name = d._filename || d.project_name || 'unknown';
             const type = d.deployment_type || '—';
-            const status = d.status || 'unknown';
+            const status = (d.status || 'unknown').toLowerCase();
+            const cost = d.estimated_cost || d.cost || '';
+            const owner = d.owner || d.operator || d.created_by || '';
             const safeName = String(name).replace(/'/g, "\\'");
+            // Map deploy status to one of the three .spec-pill variants.
+            const pillVariant = (
+                status === 'deployed' || status === 'running' || status === 'live' || status === 'active'
+                    ? 'live'
+                    : (status === 'error' || status === 'failed' ? 'error' : 'draft')
+            );
+            const pillLabel = (
+                pillVariant === 'live' ? 'Live'
+                    : pillVariant === 'error' ? 'Error'
+                    : status === 'unknown' ? 'Draft' : (status[0].toUpperCase() + status.slice(1))
+            );
+            // Owner dot (if we can resolve the operator color from APP.operator.all).
+            let ownerHtml = '';
+            if (owner && APP.operator && Array.isArray(APP.operator.all)) {
+                const op = APP.operator.all.find(o => o.id === owner || o.display === owner);
+                const opColor = (op && op.color) || '#7A849E';
+                const opDisplay = (op && op.display) || owner;
+                ownerHtml = `<span class="operator-dot operator-dot--sm" style="background: ${escapeHtml(opColor)}" aria-hidden="true"></span><span>${escapeHtml(opDisplay)}</span>`;
+            }
+            const costHtml = cost
+                ? `<div class="dashboard-deployment-card__cost">${escapeHtml(String(cost))}</div>`
+                : '';
+            const metaHtml = ownerHtml
+                ? `<div class="dashboard-deployment-card__meta-row">${ownerHtml}</div>`
+                : '';
             return `<a href="#" class="dashboard-deployment-card"
+                       data-project="${escapeHtml(name)}"
+                       data-status="${escapeHtml(status)}"
                        onclick="APP.activeDeployment.set('${safeName}'); APP.navigateTo('deployments-tab', 'manage'); return false;">
-                <div class="dashboard-deployment-card__name">${name}</div>
-                <div class="dashboard-deployment-card__meta">${type} · ${status}</div>
+                <div class="dashboard-deployment-card__head">
+                    <span class="dashboard-deployment-card__kicker">${escapeHtml(name)}</span>
+                    <span class="spec-pill spec-pill--${pillVariant}">
+                        <span class="spec-pill__dot"></span>${escapeHtml(pillLabel)}
+                    </span>
+                </div>
+                <div class="dashboard-deployment-card__title">${escapeHtml(type)}</div>
+                ${metaHtml}
+                ${costHtml}
             </a>`;
         }).join('');
         // M-Redesign Agent 3 — one-shot stagger on initial mount; pollers
@@ -4102,18 +4149,45 @@ async function _renderDashboardCostWidget() {
         if (!res.ok) throw new Error('aggregate endpoint not ready');
         const data = await res.json();
         if (totalEl) totalEl.textContent = `$${Math.round(data.monthly_total || 0)}/mo`;
+        // Phase 3e — derive a delta % so we can pick the badge variant.
+        // Backend may surface .delta_pct directly; otherwise default to +3
+        // (placeholder, matches the prior fixed string).
+        const deltaPct = (typeof data.delta_pct === 'number')
+            ? data.delta_pct
+            : 3;
         if (sparkEl) {
             // 14-point sparkline. D5 will swap to real daily data once available.
+            // Layered: a soft area fill behind the polyline (helps the eye
+            // group the trend on bg-card-hover) plus the brand-light line.
             const points = Array.from({length: 14}, (_, i) => {
                 const y = 30 - i * 0.6 - Math.random() * 4;
                 return `${(i / 13 * 200).toFixed(1)},${y.toFixed(1)}`;
-            }).join(' ');
-            sparkEl.innerHTML = `<polyline fill="none" stroke="var(--brand-light)" stroke-width="1.5" points="${points}" />`;
+            });
+            const pointStr = points.join(' ');
+            const fillPath = `M 0,40 L ${points.join(' L ')} L 200,40 Z`;
+            sparkEl.innerHTML = `
+                <path class="spark-fill" d="${fillPath}" />
+                <polyline points="${pointStr}" />
+            `;
         }
-        if (deltaEl) deltaEl.textContent = '+3% vs last week';
+        if (deltaEl) {
+            // Phase 3e — render as a colored .dashboard-cost-delta-badge. Up
+            // is danger (burn rate climbing); down is success.
+            const arrow = deltaPct > 0 ? '▲' : (deltaPct < 0 ? '▼' : '→');
+            const variant = deltaPct > 0 ? 'up' : (deltaPct < 0 ? 'down' : 'flat');
+            const sign = deltaPct > 0 ? '+' : '';
+            deltaEl.innerHTML = `
+                <span class="dashboard-cost-delta-badge dashboard-cost-delta-badge--${variant}">
+                    ${arrow} ${sign}${deltaPct}%
+                </span>
+                <span class="dashboard-cost-delta__caption" style="margin-left: 8px; color: var(--text-secondary); font-size: 10.5px;">vs last week</span>
+            `;
+        }
     } catch (e) {
         if (totalEl) totalEl.textContent = '$—/mo';
-        if (deltaEl) deltaEl.textContent = 'awaiting backend';
+        if (deltaEl) {
+            deltaEl.innerHTML = `<span class="dashboard-cost-delta-badge dashboard-cost-delta-badge--flat">awaiting backend</span>`;
+        }
     }
 }
 
@@ -5012,10 +5086,17 @@ const BEACON = {
             });
             this.cachedBeacons = beacons;
             this.renderBeaconTable(beacons);
+            // Phase 3B.1 — V3 spec-list render runs alongside the legacy table.
+            if (typeof this.renderBeaconSpecList === 'function') {
+                this.renderBeaconSpecList(beacons);
+            }
             // Update process context bar if a beacon is selected
             if (this.selectedBid) {
                 this.renderProcessContext(this.selectedBid);
                 this.renderMetaBadges(this.selectedBid);
+                if (typeof this.renderDetailSpec === 'function') {
+                    this.renderDetailSpec(this.selectedBid);
+                }
             }
         } catch (e) {
             this.checkHealth();
@@ -5090,6 +5171,230 @@ const BEACON = {
         // M-Redesign Agent 3 — one-shot stagger on the first non-empty render
         // of the beacon list. Subsequent polled refreshes won't re-stagger.
         if (typeof APP !== 'undefined' && APP._staggerOnce) APP._staggerOnce(tbody);
+    },
+
+    // ──────────────────────────────────────────────────────────────────
+    // Phase 3B.1 — V3-native spec-list rendering for beacons.
+    // Renders #beacons-spec-list as .spec-row primitives. Click on a row
+    // calls selectBeacon (same as the legacy table). Status mapped to
+    // .spec-pill--alive / --idle / --stale / --dead.
+    // ──────────────────────────────────────────────────────────────────
+    renderBeaconSpecList(beacons) {
+        const ol = document.getElementById('beacons-spec-list');
+        if (!ol) return;
+
+        if (!beacons || beacons.length === 0) {
+            ol.innerHTML = '';
+            return;
+        }
+
+        const now = Date.now();
+        const esc = this.escapeHtml.bind(this);
+
+        ol.innerHTML = beacons.map(b => {
+            const elapsedMs = (b.lastCheckinMs || 0) + (now - (b.fetchedAt || now));
+            const lastSeen = this.formatElapsed(Math.max(0, elapsedMs));
+            const healthClass = this.getElapsedClass(elapsedMs, b.sleep, b.alive);
+            // Idle vs alive — alive + sleep>0 + within sleep window = "idle" rather than fresh.
+            let pillClass = 'alive';
+            let pillLabel = 'ALIVE';
+            if (healthClass === 'dead') { pillClass = 'dead';  pillLabel = 'DEAD'; }
+            else if (healthClass === 'stale') { pillClass = 'stale'; pillLabel = 'STALE'; }
+            else if (b.sleep && b.sleep >= 30000) { pillClass = 'idle'; pillLabel = 'IDLE'; }
+
+            const selected = (String(b.bid) === String(this.selectedBid)) ? 'true' : 'false';
+            const sleepStr = b.sleep != null && b.sleep !== ''
+                ? (b.sleep === 0 ? 'interactive' : `${Math.round(b.sleep / 1000)}s`)
+                : '—';
+            const jitterStr = b.jitter ? ` (${b.jitter}%)` : '';
+            const adminMark = b.isAdmin
+                ? '<span class="ops-beacons-row__admin" title="Admin token">*</span>' : '';
+            const eBid = esc(b.bid || '—');
+            const eUser = esc(b.user || '—');
+            const eComputer = esc(b.computer || '—');
+            const eOs = esc(b.os || '—');
+            const eInternal = esc(b.internal || '');
+            const eLabel = `${eUser}@${eComputer}`;
+
+            return `
+              <li class="spec-row" data-bid="${this.escapeAttr(b.bid)}" data-label="${this.escapeAttr(eLabel)}" data-selected="${selected}">
+                <div class="spec-row__head">
+                  <div class="ops-beacons-row__name">
+                    <span class="ops-beacons-row__bid">${eBid}${adminMark}</span>
+                    <span class="ops-beacons-row__kicker">${eOs} · PID ${esc(String(b.pid || '—'))}</span>
+                  </div>
+                  <div class="ops-beacons-row__meta">
+                    <span class="ops-beacons-row__hostline">${eUser}@${eComputer}${eInternal ? ' · ' + eInternal : ''}</span>
+                    <span class="ops-beacons-row__hint">${esc(lastSeen)} · sleep ${esc(sleepStr)}${esc(jitterStr)}</span>
+                  </div>
+                  <span class="spec-pill spec-pill--${pillClass}" title="Last seen: ${esc(lastSeen)}">
+                    <span class="spec-pill__dot"></span>${pillLabel}
+                  </span>
+                  <button type="button" class="spec-row__action" aria-label="Interact with ${eBid}"
+                          title="Interact">
+                    <svg class="icon" aria-hidden="true"><use href="#icon-chevron-right"/></svg>
+                  </button>
+                </div>
+              </li>`;
+        }).join('');
+
+        // Delegated click handlers
+        ol.querySelectorAll('li.spec-row[data-bid]').forEach(li => {
+            const bid = li.dataset.bid;
+            const label = li.dataset.label;
+            li.addEventListener('click', () => this.selectBeacon(bid, label));
+        });
+    },
+
+    // ──────────────────────────────────────────────────────────────────
+    // Phase 3B.1 — Beacon detail spec-list (metadata + "driven by").
+    // Renders inside #beacon-detail-spec-list when a beacon is selected.
+    // ──────────────────────────────────────────────────────────────────
+    renderDetailSpec(bid) {
+        const ol = document.getElementById('beacon-detail-spec-list');
+        if (!ol) return;
+        const b = this.cachedBeacons.find(x => String(x.bid) === String(bid));
+        if (!b) { ol.hidden = true; ol.innerHTML = ''; return; }
+        ol.hidden = false;
+
+        const esc = this.escapeHtml.bind(this);
+        const sleepStr = b.sleep != null && b.sleep !== ''
+            ? (b.sleep === 0 ? 'interactive' : `${Math.round(b.sleep / 1000)}s`)
+            : '—';
+        const jitterStr = b.jitter ? `${b.jitter}%` : '0%';
+        const now = Date.now();
+        const elapsedMs = (b.lastCheckinMs || 0) + (now - (b.fetchedAt || now));
+        const lastSeen = this.formatElapsed(Math.max(0, elapsedMs));
+
+        const rows = [
+            { key: 'HOST',     value: `${esc(b.computer || '—')}` },
+            { key: 'USER',     value: `${esc(b.user || '—')}${b.isAdmin ? ' <span class="ops-beacons-row__admin" title="Admin token">*</span>' : ''}` },
+            { key: 'INTERNAL', value: `<span class="spec-row__value--mono">${esc(b.internal || '—')}</span>` },
+            { key: 'OS / ARCH', value: `${esc(b.os || '—')} · ${esc(b.arch || '?')}` },
+            { key: 'PID',      value: `<span class="spec-row__value--mono">${esc(String(b.pid || '—'))}</span>` },
+            { key: 'PROCESS',  value: `<span class="spec-row__value--mono">${esc(b.process || '—')}</span>` },
+            { key: 'SLEEP',    value: `<span class="spec-row__value--mono">${esc(sleepStr)}</span>`, hint: `jitter ${esc(jitterStr)}` },
+            { key: 'LISTENER', value: `<span class="spec-row__value--mono">${esc(b.listener || '—')}</span>` },
+            { key: 'LAST SEEN', value: `<span class="spec-row__value--mono">${esc(lastSeen)}</span>` },
+            { key: 'DRIVEN BY', value: '<span class="ops-driven-pill ops-driven-pill--idle" data-driven-by-pill><span class="ops-driven-pill__dot"></span>Looking up…</span>' },
+        ];
+
+        ol.innerHTML = rows.map(r => `
+            <li class="spec-row" data-readonly="true" data-detail-key="${esc(r.key)}">
+              <div class="spec-row__head">
+                <span class="spec-row__key">${esc(r.key)}</span>
+                <span class="spec-row__value">${r.value}</span>
+                <span class="spec-row__hint">${r.hint ? esc(r.hint) : ''}</span>
+                <span aria-hidden="true"></span>
+              </div>
+            </li>`).join('');
+
+        // Async — resolve driven-by from audit log
+        this.fetchDrivenBy(bid);
+    },
+
+    async fetchDrivenBy(bid) {
+        const pillSel = '[data-detail-key="DRIVEN BY"] [data-driven-by-pill]';
+        const pill = document.querySelector(pillSel);
+        if (!pill) return;
+        try {
+            // The audit endpoint doesn't support per-bid filtering, so we
+            // pull recent beacon.exec rows and filter client-side. limit=50
+            // is generous; we only need the most recent matching entry.
+            const res = await fetch('/api/audit?action_prefix=beacon.exec&limit=50');
+            const data = await res.json();
+            const entries = (data && data.entries) || [];
+            const match = entries.find(e => String(e.target || '') === String(bid));
+            const op = match
+                ? (APP.operator.all || []).find(o => o.id === match.op)
+                : null;
+            if (match && op) {
+                const display = op.display || op.id || 'operator';
+                const color = op.color || 'var(--text-muted)';
+                const ts = this._relTime(match.ts);
+                pill.outerHTML = `
+                    <span class="ops-driven-pill" data-driven-by-pill data-op="${this.escapeAttr(op.id)}">
+                        <svg class="icon icon--sm ops-driven-pill__bolt" aria-hidden="true"><use href="#icon-bolt"/></svg>
+                        <span class="ops-driven-pill__dot" style="background: ${this.escapeAttr(color)}"></span>
+                        <span>${this.escapeHtml(display)}</span>
+                        <span class="ops-driven-pill__time" style="opacity:0.7; margin-left:6px;">${this.escapeHtml(ts)}</span>
+                    </span>`;
+            } else {
+                pill.outerHTML = `
+                    <span class="ops-driven-pill ops-driven-pill--idle" data-driven-by-pill>
+                        <span class="ops-driven-pill__dot"></span>
+                        <span>No recent operator activity</span>
+                    </span>`;
+            }
+        } catch (e) {
+            pill.outerHTML = `
+                <span class="ops-driven-pill ops-driven-pill--idle" data-driven-by-pill>
+                    <span class="ops-driven-pill__dot"></span>
+                    <span>—</span>
+                </span>`;
+        }
+    },
+
+    _relTime(iso) {
+        if (!iso) return '';
+        const then = new Date(iso).getTime();
+        if (isNaN(then)) return '';
+        const diff = Date.now() - then;
+        const s = Math.max(0, Math.floor(diff / 1000));
+        if (s < 60) return `${s}s ago`;
+        if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+        if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+        return `${Math.floor(s / 86400)}d ago`;
+    },
+
+    // ──────────────────────────────────────────────────────────────────
+    // Phase 3B.1 — Operator-attributed command history.
+    // Builds .spec-row entries from beacon.exec audit entries for the
+    // selected beacon. Operator color dot uses APP.operator.all lookup.
+    // ──────────────────────────────────────────────────────────────────
+    async refreshCmdHistory() {
+        if (!this.selectedBid) return;
+        const wrap = document.getElementById('ops-cmd-history');
+        const list = document.getElementById('ops-cmd-history-list');
+        if (!wrap || !list) return;
+        wrap.hidden = false;
+        list.innerHTML = `<li class="ops-cmd-history__empty">Loading…</li>`;
+        try {
+            const res = await fetch('/api/audit?action_prefix=beacon.exec&limit=100');
+            const data = await res.json();
+            const entries = (data && data.entries || []).filter(
+                e => String(e.target || '') === String(this.selectedBid)
+            );
+            if (entries.length === 0) {
+                list.innerHTML = `<li class="ops-cmd-history__empty">No attributed command history for this beacon.</li>`;
+                return;
+            }
+            const esc = this.escapeHtml.bind(this);
+            list.innerHTML = entries.slice(0, 50).map(e => {
+                const op = (APP.operator.all || []).find(o => o.id === e.op);
+                const display = (op && op.display) || e.op || 'unknown';
+                const color = (op && op.color) || 'var(--text-muted)';
+                const cmd = (e.details && (e.details.command || e.details.cmd))
+                    || (typeof e.details === 'string' ? e.details : '')
+                    || '(command not recorded)';
+                const time = this._relTime(e.ts);
+                return `
+                  <li class="spec-row" data-readonly="true">
+                    <div class="spec-row__head">
+                      <span class="ops-cmd-history-row__op" title="${esc(display)}">
+                        <span class="ops-cmd-history-row__op-dot" style="background: ${this.escapeAttr(color)}"></span>
+                      </span>
+                      <span class="ops-cmd-history-row__cmd">
+                        <span class="ops-cmd-history-row__op-name">${esc(display)}</span>${esc(String(cmd))}
+                      </span>
+                      <span class="ops-cmd-history-row__time">${esc(time)}</span>
+                      <span aria-hidden="true"></span>
+                    </div>
+                  </li>`;
+            }).join('');
+        } catch (err) {
+            list.innerHTML = `<li class="ops-cmd-history__empty">Failed to load history.</li>`;
+        }
     },
 
     formatElapsed(ms) {
@@ -5669,6 +5974,10 @@ const BEACON = {
         this.renderMetaBadges(bid);
         this.renderProcessContext(bid);
 
+        // Phase 3B.1 — V3 detail spec-list + attributed command history.
+        if (typeof this.renderDetailSpec === 'function') this.renderDetailSpec(bid);
+        if (typeof this.refreshCmdHistory === 'function') this.refreshCmdHistory();
+
         // Fetch fresh beacon detail (updates context bar with process/arch/ppid)
         this.refreshBeaconDetail(bid, false);
 
@@ -5691,6 +6000,10 @@ const BEACON = {
         document.querySelectorAll('.beacon-table tbody tr').forEach(tr => {
             tr.classList.toggle('selected', tr.dataset.bid === bid);
         });
+        // Phase 3B.1 — V3 spec-list selection mirror
+        document.querySelectorAll('#beacons-spec-list .spec-row').forEach(li => {
+            li.setAttribute('data-selected', li.dataset.bid === bid ? 'true' : 'false');
+        });
     },
 
     closeInteract() {
@@ -5701,12 +6014,23 @@ const BEACON = {
             this._saveHistory(this.selectedBid);
             this._saveCmdHistory(this.selectedBid);
         }
+        const prevBid = this.selectedBid;
         this.selectedBid = null;
         this.hideAutocomplete();
         const panel = document.getElementById('beacon-interact-panel');
         if (panel) {
             panel.classList.remove('interact-fullview');
             panel.style.display = 'none';
+        }
+        // Phase 3B.1 — hide V3 detail spec-list + cmd history
+        const detail = document.getElementById('beacon-detail-spec-list');
+        if (detail) { detail.hidden = true; detail.innerHTML = ''; }
+        const hist = document.getElementById('ops-cmd-history');
+        if (hist) hist.hidden = true;
+        if (prevBid) {
+            document.querySelectorAll('#beacons-spec-list .spec-row').forEach(li => {
+                li.setAttribute('data-selected', 'false');
+            });
         }
         // Reset process context bar
         const ctx = document.getElementById('beacon-process-context');
@@ -10942,6 +11266,9 @@ async function loadConfigSummary() {
     }
 }
 
+// PHASE 3A — Manage sub-pill V3-native rebuild (loaded; see bottom of file).
+APP.manage = APP.manage || {};
+
 let deploymentPollInterval = null;
 let isPlanRunning = false;  // Flag to prevent polling from overwriting plan UI
 
@@ -10976,10 +11303,46 @@ function applyAutoRefreshSetting() {
     const seconds = parseInt(select.value, 10);
     localStorage.setItem('autoRefreshInterval', seconds);
 
+    // Phase 3d — keep the seg-control mirror in sync after a change.
+    _syncAutoRefreshSeg(String(seconds));
+
     // Restart if currently on deployments page
     if (APP.currentPage === 'deployments') {
         startAutoRefresh();
     }
+}
+
+// Phase 3d — sync the .seg-control mirror in #auto-refresh-seg to the
+// hidden <select> value. The select is the canonical state of truth;
+// the seg-control is just the visible chrome.
+function _syncAutoRefreshSeg(value) {
+    const seg = document.getElementById('auto-refresh-seg');
+    if (!seg) return;
+    seg.querySelectorAll('.seg-control__option').forEach(btn => {
+        const isActive = btn.dataset.value === value;
+        btn.classList.toggle('is-active', isActive);
+        if (isActive) btn.setAttribute('aria-selected', 'true');
+        else btn.removeAttribute('aria-selected');
+    });
+}
+
+// Phase 3d — wire seg-control clicks → hidden <select> → existing handler.
+// Wraps the seg-control click handler so that selecting an option drives
+// the canonical <select>.value + dispatches `change` (which fires
+// applyAutoRefreshSetting). Idempotent via dataset.wired.
+function _setupAutoRefreshSeg() {
+    const seg = document.getElementById('auto-refresh-seg');
+    const select = document.getElementById('auto-refresh-interval');
+    if (!seg || !select || seg.dataset.wired === 'true') return;
+    seg.dataset.wired = 'true';
+    seg.addEventListener('click', (e) => {
+        const opt = e.target.closest('.seg-control__option');
+        if (!opt) return;
+        const value = opt.dataset.value;
+        if (select.value === value) return;
+        select.value = value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
 }
 
 function initSettingsPage() {
@@ -10987,6 +11350,10 @@ function initSettingsPage() {
     if (select) {
         select.value = String(getAutoRefreshSeconds());
     }
+    // Phase 3d — wire the seg-control + sync its visible state to the
+    // canonical select.value (loaded from localStorage above).
+    _setupAutoRefreshSeg();
+    _syncAutoRefreshSeg(String(getAutoRefreshSeconds()));
     // Load cost tracker settings + cached cost data
     loadCostSettings();
     loadCostProjectSelector();
@@ -11023,40 +11390,75 @@ function _formatSettingsDate(iso) {
     }
 }
 
+// Phase 3d — set status label + state on the spec-list toolbar (drives
+// data-state which switches color). Backwards-compatible with the legacy
+// span-only markup (older callers passed an element with no data-state
+// attribute; setting it is a no-op there).
+function _setSettingsStatus(elOrId, text, state) {
+    const el = typeof elOrId === 'string' ? document.getElementById(elOrId) : elOrId;
+    if (!el) return;
+    el.textContent = text;
+    if (state) el.setAttribute('data-state', state);
+}
+
+// Phase 3d — render a key/value spec-row read-only (no edit, no hover lift).
+// `value` is rendered as the body identity; `hint` is the right-side meta;
+// `key` is the caps eyebrow on the left.
+function _renderSettingsSpecRow({ key, value, hint, valueMono, dataKey }) {
+    const valueClasses = ['spec-row__value'];
+    if (valueMono) valueClasses.push('spec-row__value--mono');
+    const hintHtml = hint ? `<dd class="spec-row__hint">${hint}</dd>` : '<dd class="spec-row__hint"></dd>';
+    const dataAttr = dataKey ? ` data-settings-row="${escapeHtml(dataKey)}"` : '';
+    return `
+        <div class="spec-row" data-readonly="true"${dataAttr}>
+            <div class="spec-row__head">
+                <dt class="spec-row__key">${key}</dt>
+                <dd class="${valueClasses.join(' ')}">${value}</dd>
+                ${hintHtml}
+                <span class="spec-row__action" aria-hidden="true"></span>
+            </div>
+        </div>`;
+}
+
 async function loadSettingsDomains(forceRefresh) {
     const list = document.getElementById('settings-domains-list');
     const status = document.getElementById('settings-domains-status');
     if (!list) return;
     if (!forceRefresh && list.dataset.loaded === 'true') return;
     APP.renderSkeleton('settings-domains-list', 'card', 2);
-    if (status) status.textContent = 'Loading...';
+    _setSettingsStatus(status, 'Loading...', 'loading');
     try {
         const res = await fetch('/api/health/route53-domains');
         const data = await res.json();
         const zones = data.zones || data.domains || [];
         if (!zones.length) {
-            list.innerHTML = '<p class="t-muted">No Route 53 hosted zones found in this account.</p>';
+            list.innerHTML = '<p class="settings-spec-empty">No Route 53 hosted zones found in this account.</p>';
         } else {
-            list.innerHTML = zones.map(z => {
+            // Phase 3d — each zone becomes a read-only spec-row. The zone
+            // name is the caps key; record count is the body value; private
+            // / in-use-by status becomes the hint.
+            const rows = zones.map(z => {
                 const name = escapeHtml(z.name || z.domain_name || z.domain || '—');
                 const records = z.record_count != null ? z.record_count : 0;
-                const meta = [];
-                meta.push(`<span>${records} records</span>`);
-                if (z.private) meta.push('<span class="t-muted">private</span>');
-                if (z.in_use_by) meta.push(`<span>used by ${escapeHtml(z.in_use_by)}</span>`);
-                return `
-                    <div class="settings-domain-row">
-                        <div class="settings-domain-row__name">${name}</div>
-                        <div class="settings-domain-row__meta">${meta.join('')}</div>
-                    </div>`;
+                const hints = [];
+                if (z.private) hints.push('private');
+                if (z.in_use_by) hints.push(`used by ${escapeHtml(z.in_use_by)}`);
+                return _renderSettingsSpecRow({
+                    key: name,
+                    value: `${records} record${records === 1 ? '' : 's'}`,
+                    hint: hints.join(' &middot; '),
+                    valueMono: true,
+                    dataKey: z.name || z.domain_name || z.domain || ''
+                });
             }).join('');
-            APP._staggerOnce(list);
+            list.innerHTML = `<dl class="spec-list spec-list--inset motion-stagger-in" aria-label="Route 53 hosted zones">${rows}</dl>`;
+            APP._staggerOnce(list.querySelector('.spec-list'));
         }
         list.dataset.loaded = 'true';
-        if (status) status.textContent = `${zones.length} zone(s)`;
+        _setSettingsStatus(status, `${zones.length} zone${zones.length === 1 ? '' : 's'}`, zones.length ? 'ready' : 'empty');
     } catch (e) {
-        list.innerHTML = '<p class="callout callout--warning">Failed to load zones. Check AWS credentials.</p>';
-        if (status) status.textContent = 'Error';
+        list.innerHTML = '<p class="settings-spec-error">Failed to load zones. Check AWS credentials.</p>';
+        _setSettingsStatus(status, 'Error', 'error');
     }
 }
 
@@ -11066,39 +11468,39 @@ async function loadSettingsSecrets(forceRefresh) {
     if (!list) return;
     if (!forceRefresh && list.dataset.loaded === 'true') return;
     APP.renderSkeleton('settings-secrets-list', 'card', 2);
-    if (status) status.textContent = 'Loading...';
+    _setSettingsStatus(status, 'Loading...', 'loading');
     try {
         const res = await fetch('/api/health/secrets');
         const data = await res.json();
         const secrets = data.secrets || [];
         if (!data.success && data.error) {
-            list.innerHTML = `<p class="callout callout--warning">Failed to list secrets: ${escapeHtml(data.error)}</p>`;
-            if (status) status.textContent = 'Error';
+            list.innerHTML = `<p class="settings-spec-error">Failed to list secrets: ${escapeHtml(data.error)}</p>`;
+            _setSettingsStatus(status, 'Error', 'error');
             return;
         }
         if (!secrets.length) {
-            list.innerHTML = '<p class="t-muted">No project secrets found in AWS Secrets Manager.</p>';
+            list.innerHTML = '<p class="settings-spec-empty">No project secrets found in AWS Secrets Manager.</p>';
         } else {
-            list.innerHTML = secrets.map(s => {
+            const rows = secrets.map(s => {
                 const name = escapeHtml(s.name || '—');
                 const changed = _formatSettingsDate(s.last_changed);
                 const accessed = _formatSettingsDate(s.last_accessed);
-                return `
-                    <div class="settings-secret-row">
-                        <div class="settings-secret-row__name">${name}</div>
-                        <div class="settings-secret-row__meta">
-                            <span>changed ${changed}</span>
-                            <span>accessed ${accessed}</span>
-                        </div>
-                    </div>`;
+                return _renderSettingsSpecRow({
+                    key: name,
+                    value: `changed ${changed}`,
+                    hint: `accessed ${accessed}`,
+                    valueMono: true,
+                    dataKey: s.name || ''
+                });
             }).join('');
-            APP._staggerOnce(list);
+            list.innerHTML = `<dl class="spec-list spec-list--inset motion-stagger-in" aria-label="Project secrets in AWS Secrets Manager">${rows}</dl>`;
+            APP._staggerOnce(list.querySelector('.spec-list'));
         }
         list.dataset.loaded = 'true';
-        if (status) status.textContent = `${secrets.length} secret(s)`;
+        _setSettingsStatus(status, `${secrets.length} secret${secrets.length === 1 ? '' : 's'}`, secrets.length ? 'ready' : 'empty');
     } catch (e) {
-        list.innerHTML = '<p class="callout callout--warning">Failed to load secrets. Check AWS credentials.</p>';
-        if (status) status.textContent = 'Error';
+        list.innerHTML = '<p class="settings-spec-error">Failed to load secrets. Check AWS credentials.</p>';
+        _setSettingsStatus(status, 'Error', 'error');
     }
 }
 
@@ -11108,7 +11510,7 @@ async function loadSettingsServices(forceRefresh) {
     if (!list) return;
     if (!forceRefresh && list.dataset.loaded === 'true') return;
     APP.renderSkeleton('settings-services-list', 'card', 1);
-    if (status) status.textContent = 'Loading...';
+    _setSettingsStatus(status, 'Loading...', 'loading');
     try {
         const res = await fetch('/api/deploy/resources/all-projects');
         const data = await res.json();
@@ -11126,28 +11528,31 @@ async function loadSettingsServices(forceRefresh) {
             return false;
         });
         if (!services.length) {
-            list.innerHTML = '<p class="t-muted">No shared infrastructure services detected. The dashboard server itself may not be tagged for inventory.</p>';
+            list.innerHTML = '<p class="settings-spec-empty">No shared infrastructure services detected. The dashboard server itself may not be tagged for inventory.</p>';
         } else {
-            list.innerHTML = services.map(svc => {
+            const rows = services.map(svc => {
                 const name = escapeHtml(svc.name || svc.id || '—');
-                const meta = [];
-                if (svc.type) meta.push(`<span>${escapeHtml(svc.type)}</span>`);
-                if (svc.state) meta.push(`<span>${escapeHtml(svc.state)}</span>`);
-                if (svc.region) meta.push(`<span>${escapeHtml(svc.region)}</span>`);
-                if (svc.details) meta.push(`<span>${escapeHtml(svc.details)}</span>`);
-                return `
-                    <div class="settings-service-row">
-                        <div class="settings-service-row__name">${name}</div>
-                        <div class="settings-service-row__meta">${meta.join('')}</div>
-                    </div>`;
+                const type = svc.type ? escapeHtml(svc.type) : '—';
+                const hints = [];
+                if (svc.state) hints.push(escapeHtml(svc.state));
+                if (svc.region) hints.push(escapeHtml(svc.region));
+                if (svc.details) hints.push(escapeHtml(svc.details));
+                return _renderSettingsSpecRow({
+                    key: name,
+                    value: type,
+                    hint: hints.join(' &middot; '),
+                    valueMono: true,
+                    dataKey: svc.name || svc.id || ''
+                });
             }).join('');
-            APP._staggerOnce(list);
+            list.innerHTML = `<dl class="spec-list spec-list--inset motion-stagger-in" aria-label="Shared infrastructure services">${rows}</dl>`;
+            APP._staggerOnce(list.querySelector('.spec-list'));
         }
         list.dataset.loaded = 'true';
-        if (status) status.textContent = `${services.length} service(s)`;
+        _setSettingsStatus(status, `${services.length} service${services.length === 1 ? '' : 's'}`, services.length ? 'ready' : 'empty');
     } catch (e) {
-        list.innerHTML = '<p class="callout callout--warning">Failed to load infrastructure services. Check AWS credentials.</p>';
-        if (status) status.textContent = 'Error';
+        list.innerHTML = '<p class="settings-spec-error">Failed to load infrastructure services. Check AWS credentials.</p>';
+        _setSettingsStatus(status, 'Error', 'error');
     }
 }
 
@@ -20898,6 +21303,8 @@ async function refreshStagedFiles() {
             if (actionsDiv) actionsDiv.style.display = 'none';
             updateToolsTransferButton();
             updateToolsCommandPreview();
+            // Phase 3B.3 — keep the V3 parameter spec-list in sync.
+            if (APP.payloads && typeof APP.payloads.updateSpec === 'function') APP.payloads.updateSpec();
             return;
         }
 
@@ -20918,6 +21325,8 @@ async function refreshStagedFiles() {
         if (actionsDiv) actionsDiv.style.display = data.count > 1 ? 'block' : 'none';
         updateToolsTransferButton();
         updateToolsCommandPreview();
+        // Phase 3B.3 — keep the V3 parameter spec-list in sync.
+        if (APP.payloads && typeof APP.payloads.updateSpec === 'function') APP.payloads.updateSpec();
     } catch (e) {
         listDiv.innerHTML = `<p style="color: var(--danger); font-size: 0.9em;">Error: ${e.message}</p>`;
     }
@@ -21272,7 +21681,7 @@ function renderCostSummaryCards(data) {
     // If no actual Cost Explorer data, show a waiting state instead of estimates
     if (!actualHasData) {
         container.innerHTML = `
-            <div class="callout callout--warning" style="margin: 0; grid-column: 1 / -1;">
+            <div class="callout callout--warning" style="margin: 0;">
                 <strong>Awaiting cost data from AWS Cost Explorer.</strong><br>
                 Cost data typically takes 24-48 hours to appear after deployment. Click "Refresh Costs" to check for updates.
             </div>
@@ -21286,34 +21695,43 @@ function renderCostSummaryCards(data) {
     const dailyAvg = daysWithCost > 0 ? totalSpend / daysWithCost : 0;
 
     const budgetRemaining = budget.threshold > 0 ? budget.remaining : null;
-    const budgetClass = budget.used_percent >= 100 ? 'cost-value--danger'
-        : budget.used_percent >= 80 ? 'cost-value--warning'
-        : 'cost-value--success';
+    const budgetState = budget.used_percent >= 100 ? 'danger'
+        : budget.used_percent >= 80 ? 'warning'
+        : (budget.threshold > 0 ? 'success' : '');
 
     // Projected monthly based on actual daily average
     const estMonthly = dailyAvg * 30;
 
+    // Phase 3d — render four-up summary as a spec-list (replaces the
+    // legacy 4-card grid). Each row is read-only; the value column gets
+    // the cost figure (mono / tabular-nums) and the hint column gets the
+    // supporting context (e.g. "Actual (Cost Explorer)" or
+    // "12 days with charges"). The Budget Remaining row carries a
+    // data-cost-state so the value paints success/warning/danger.
+    const row = (key, value, hint, opts) => {
+        opts = opts || {};
+        const stateAttr = opts.state ? ` data-cost-state="${opts.state}"` : '';
+        return `
+            <div class="spec-row" data-readonly="true" data-cost-row="${escapeHtml(opts.dataKey || key.toLowerCase().replace(/\s+/g, '_'))}"${stateAttr}>
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">${escapeHtml(key)}</dt>
+                    <dd class="spec-row__value spec-row__value--mono spec-row__value--strong">${value}</dd>
+                    <dd class="spec-row__hint">${escapeHtml(hint)}</dd>
+                    <span class="spec-row__action" aria-hidden="true"></span>
+                </div>
+            </div>`;
+    };
+
     container.innerHTML = `
-        <div class="lifecycle-card">
-            <h4>Total Spend</h4>
-            <div class="cost-value">$${totalSpend.toFixed(2)}</div>
-            <div class="cost-label">Actual (Cost Explorer)</div>
-        </div>
-        <div class="lifecycle-card">
-            <h4>Daily Average</h4>
-            <div class="cost-value">$${dailyAvg.toFixed(2)}</div>
-            <div class="cost-label">${daysWithCost} day${daysWithCost !== 1 ? 's' : ''} with charges</div>
-        </div>
-        <div class="lifecycle-card">
-            <h4>Budget Remaining</h4>
-            <div class="cost-value ${budgetClass}">${budgetRemaining !== null ? '$' + budgetRemaining.toFixed(2) : 'No budget set'}</div>
-            <div class="cost-label">${budget.threshold > 0 ? 'of $' + budget.threshold + ' budget' : 'Set in settings above'}</div>
-        </div>
-        <div class="lifecycle-card">
-            <h4>Est. Monthly</h4>
-            <div class="cost-value">$${estMonthly.toFixed(2)}</div>
-            <div class="cost-label">projected from actual daily avg</div>
-        </div>
+        <dl class="spec-list spec-list--inset" aria-label="Cost summary">
+            ${row('Total Spend', `$${totalSpend.toFixed(2)}`, 'Actual (Cost Explorer)', { dataKey: 'total' })}
+            ${row('Daily Average', `$${dailyAvg.toFixed(2)}`, `${daysWithCost} day${daysWithCost !== 1 ? 's' : ''} with charges`, { dataKey: 'daily_avg' })}
+            ${row('Budget Remaining',
+                budgetRemaining !== null ? `$${budgetRemaining.toFixed(2)}` : 'No budget set',
+                budget.threshold > 0 ? `of $${budget.threshold} budget` : 'Set in settings above',
+                { dataKey: 'budget_remaining', state: budgetState })}
+            ${row('Est. Monthly', `$${estMonthly.toFixed(2)}`, 'projected from actual daily avg', { dataKey: 'est_monthly' })}
+        </dl>
     `;
 }
 
@@ -22140,8 +22558,11 @@ const TERMINAL = {
             }, 500);
         };
 
-        this.sessions[id] = { term, ws, type: 'tunnel', label };
-        this._addTab(id, label);
+        // Phase 3B.2 — record the operator that opened this session for
+        // attribution in the tab strip.
+        const opener = (APP.operator && APP.operator.current && APP.operator.current.id) || null;
+        this.sessions[id] = { term, ws, type: 'tunnel', label, opener };
+        this._addTab(id, label, opener);
         this._switchTo(id);
     },
 
@@ -22279,8 +22700,10 @@ const TERMINAL = {
             this._sendResize(ws, term);
         };
 
-        this.sessions[id] = { term, ws, type: 'local', label };
-        this._addTab(id, label);
+        // Phase 3B.2 — record the operator that opened this session.
+        const opener = (APP.operator && APP.operator.current && APP.operator.current.id) || null;
+        this.sessions[id] = { term, ws, type: 'local', label, opener };
+        this._addTab(id, label, opener);
         this._switchTo(id);
     },
 
@@ -22308,8 +22731,10 @@ const TERMINAL = {
             ws.send(JSON.stringify({ host, user, bastion: bastion || null }));
         };
 
-        this.sessions[id] = { term, ws, type: 'ssh', label: label || host, host };
-        this._addTab(id, label || host);
+        // Phase 3B.2 — record the operator that opened this session.
+        const opener = (APP.operator && APP.operator.current && APP.operator.current.id) || null;
+        this.sessions[id] = { term, ws, type: 'ssh', label: label || host, host, opener };
+        this._addTab(id, label || host, opener);
         this._switchTo(id);
     },
 
@@ -22415,7 +22840,11 @@ const TERMINAL = {
     },
 
     // ── Tab management ──
-    _addTab(id, label) {
+    // Phase 3B.2 — V3-native chrome. Each tab carries an 8px operator color
+    // dot (color from APP.operator.all lookup by `opener` id) plus an icon
+    // close affordance. Active tab uses .seg-control-style inset under-rule
+    // via the .active class (see PHASE 3B.2 in style.css).
+    _addTab(id, label, opener) {
         const bar = document.getElementById('terminal-tab-bar');
         if (!bar) return;
 
@@ -22426,7 +22855,26 @@ const TERMINAL = {
         const tab = document.createElement('button');
         tab.className = 'terminal-tab';
         tab.dataset.termId = id;
-        tab.innerHTML = `<span class="tab-label">${this._esc(label)}</span><span class="tab-close" onclick="event.stopPropagation(); TERMINAL.closeSession('${id}')">✕</span>`;
+        if (opener) tab.dataset.opener = opener;
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-label', `Terminal session: ${label}`);
+
+        // Operator dot — color resolved from APP.operator.all profile
+        const op = opener && (APP.operator.all || []).find(o => o.id === opener);
+        const dotColor = (op && op.color) || '';
+        const dotClass = dotColor ? 'terminal-tab__op-dot' : 'terminal-tab__op-dot terminal-tab__op-dot--unknown';
+        const dotStyle = dotColor ? ` style="background: ${this._esc(dotColor)}"` : '';
+        const dotTitle = op ? `Opened by ${this._esc(op.display || op.id)}` : 'Opened by an unknown operator';
+
+        tab.innerHTML = `
+            <span class="${dotClass}"${dotStyle} title="${dotTitle}" aria-hidden="true"></span>
+            <span class="terminal-tab__label tab-label">${this._esc(label)}</span>
+            <span class="terminal-tab__close tab-close" role="button" tabindex="0"
+                  aria-label="Close session ${this._esc(label)}"
+                  onclick="event.stopPropagation(); TERMINAL.closeSession('${id}')"
+                  onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();TERMINAL.closeSession('${id}')}">
+                <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-x"/></svg>
+            </span>`;
         tab.onclick = () => this._switchTo(id);
         bar.appendChild(tab);
 
@@ -22434,6 +22882,7 @@ const TERMINAL = {
         const plus = document.createElement('button');
         plus.className = 'terminal-tab terminal-tab-new';
         plus.title = 'New local shell';
+        plus.setAttribute('aria-label', 'Open a new local shell');
         plus.innerHTML = '<span class="tab-plus">+</span>';
         plus.onclick = () => this.openLocal();
         bar.appendChild(plus);
@@ -23962,52 +24411,142 @@ function closeVersionModal() {
 // ============================================================================
 
 // === D8 Agent B — Deployments → Cleanup sub-pill ============================
-// Lists AWS resources NOT tracked by any current Terraform state. Uses the
-// existing GET /api/deploy/resources/all-projects endpoint (no new backend).
-// Detection runs client-side: EIPs without an instance_id, ACM certs flagged
-// !in_use (eu-central-1 + us-east-1 from D5.0), S3 buckets that do not match
-// the project naming convention. Per-row actions are alert() stubs — actual
-// deletion/adoption is operator-driven via AWS CLI to keep this surface
-// read-only and safe. "Mark known-external" persists to localStorage so the
-// resource is suppressed on subsequent reloads.
+// PHASE 3C — V3-native rebuild. Renders the cleanup view using the Phase 2b
+// spec-list primitives + bespoke summary tiles. The original D8 detection
+// logic is unchanged (still client-side from /api/deploy/resources/all-projects);
+// only the rendering layer and the localStorage schema were touched.
+//
+// LocalStorage schema migration (Phase 3c):
+//   v1 (legacy, D8):  ["eip::abc", "acm::xyz"]                  (array of strings)
+//   v2 (Phase 3c):    { "eip::abc": { id, by, at }, ... }       (id-keyed map)
+// `_cleanupReadKnown()` auto-migrates v1 → v2 on first read and writes the
+// migrated map back. v1 entries get { by: null, at: null } so they still
+// render in the marked state but with "marked by unknown" attribution.
+//
+// Per-row actions are still alert() stubs — destructive ops remain
+// operator-driven via AWS CLI to keep this surface read-only and safe.
+//
+// All cleanup state + functions are namespaced under APP.cleanup so the
+// global function names (loadCleanupResources, cleanupMarkKnown, etc.)
+// are thin wrappers for backwards-compat with the existing onclick attrs.
 
 const CLEANUP_KNOWN_KEY = 'cleanup.knownExternal.v1';
 
+APP.cleanup = APP.cleanup || {
+    /**
+     * Read the known-external map from localStorage. Auto-migrates the
+     * legacy v1 (array-of-string) format to the v2 (id-keyed map) format
+     * with attribution fields. Returns an object keyed by resourceId →
+     * { id, by, at } where `by` is the operator id (string|null) and
+     * `at` is an ISO timestamp (string|null).
+     */
+    readKnown() {
+        let raw;
+        try { raw = localStorage.getItem(CLEANUP_KNOWN_KEY); }
+        catch (_) { return {}; }
+        if (!raw) return {};
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch (_) { return {}; }
+
+        // v1 → v2 migration: array-of-strings → id-keyed map.
+        if (Array.isArray(parsed)) {
+            const migrated = {};
+            parsed.forEach(id => {
+                if (typeof id === 'string') {
+                    migrated[id] = { id, by: null, at: null };
+                }
+            });
+            try { localStorage.setItem(CLEANUP_KNOWN_KEY, JSON.stringify(migrated)); }
+            catch (_) { /* quota or disabled — silent */ }
+            return migrated;
+        }
+        // v2 — guard against corrupt entries.
+        if (parsed && typeof parsed === 'object') {
+            const clean = {};
+            Object.keys(parsed).forEach(k => {
+                const entry = parsed[k];
+                if (entry && typeof entry === 'object') {
+                    clean[k] = {
+                        id: entry.id || k,
+                        by: entry.by || null,
+                        at: entry.at || null,
+                    };
+                }
+            });
+            return clean;
+        }
+        return {};
+    },
+
+    /**
+     * Mark a resource as known-external. Records the current operator id
+     * + ISO timestamp. Idempotent — re-marking updates the timestamp.
+     */
+    addKnown(id) {
+        if (!id) return;
+        const map = APP.cleanup.readKnown();
+        const opId = (APP.operator && APP.operator.current && APP.operator.current.id) || null;
+        map[id] = { id, by: opId, at: new Date().toISOString() };
+        try { localStorage.setItem(CLEANUP_KNOWN_KEY, JSON.stringify(map)); }
+        catch (_) { /* silent */ }
+    },
+
+    /** Stable, type-prefixed resource id used for storage + DOM lookup. */
+    resourceId(item, kind) {
+        return [
+            kind,
+            item.allocation_id || item.AllocationId ||
+            item.arn || item.Arn ||
+            item.domain || item.DomainName ||
+            item.name || item.Name ||
+            item.public_ip || item.PublicIp ||
+            JSON.stringify(item).slice(0, 64)
+        ].join('::');
+    },
+
+    /** Lookup operator metadata (display + color) by id. Falls back gracefully. */
+    operatorFor(opId) {
+        if (!opId || !APP.operator || !Array.isArray(APP.operator.all)) {
+            return { display: 'unknown', color: '#7A849E', id: null };
+        }
+        const found = APP.operator.all.find(o => o.id === opId);
+        if (found) return { display: found.display || found.id, color: found.color || '#7A849E', id: found.id };
+        return { display: opId, color: '#7A849E', id: opId };
+    },
+
+    /** Pretty-print an ISO timestamp using the existing relative-time util. */
+    formatTime(iso) {
+        if (!iso) return '';
+        if (typeof _relativeTime === 'function') return _relativeTime(iso);
+        try { return new Date(iso).toLocaleString(); } catch (_) { return ''; }
+    },
+
+    /** Format the small mono caps last-refreshed-at hint. */
+    formatRefreshedAt(date) {
+        try {
+            const d = (date instanceof Date) ? date : new Date(date);
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mm = String(d.getMinutes()).padStart(2, '0');
+            const ss = String(d.getSeconds()).padStart(2, '0');
+            return `LAST SCAN ${hh}:${mm}:${ss}`;
+        } catch (_) { return ''; }
+    },
+};
+
+// Legacy aliases preserved for any external callers that referenced the
+// underscored helpers directly.
 function _cleanupGetKnownExternal() {
-    try {
-        const raw = localStorage.getItem(CLEANUP_KNOWN_KEY);
-        if (!raw) return new Set();
-        const arr = JSON.parse(raw);
-        return new Set(Array.isArray(arr) ? arr : []);
-    } catch (e) {
-        return new Set();
-    }
+    // Returns a Set of marked ids for code paths that only need membership.
+    return new Set(Object.keys(APP.cleanup.readKnown()));
 }
-
-function _cleanupAddKnownExternal(id) {
-    const set = _cleanupGetKnownExternal();
-    set.add(id);
-    try {
-        localStorage.setItem(CLEANUP_KNOWN_KEY, JSON.stringify(Array.from(set)));
-    } catch (e) { /* quota or disabled — silent */ }
-}
-
-function _cleanupResourceId(item, kind) {
-    // Stable ID for localStorage suppression. Falls back to a JSON hash.
-    return [
-        kind,
-        item.allocation_id || item.AllocationId ||
-        item.arn || item.Arn ||
-        item.domain || item.DomainName ||
-        item.name || item.Name ||
-        item.public_ip || item.PublicIp ||
-        JSON.stringify(item).slice(0, 64)
-    ].join('::');
-}
+function _cleanupAddKnownExternal(id) { APP.cleanup.addKnown(id); }
+function _cleanupResourceId(item, kind) { return APP.cleanup.resourceId(item, kind); }
 
 async function loadCleanupResources(forceRefresh = false) {
     const list = document.getElementById('cleanup-resource-list');
     if (!list) return;
+    const refreshBtn = document.getElementById('cleanup-refresh-btn');
+    if (refreshBtn) refreshBtn.setAttribute('data-loading', 'true');
     if (APP && typeof APP.renderSkeleton === 'function') {
         APP.renderSkeleton('cleanup-resource-list', 'card', 3);
     }
@@ -24016,12 +24555,20 @@ async function loadCleanupResources(forceRefresh = false) {
         const res = await fetch(url);
         const data = await res.json();
         const orphans = _detectOrphans(data);
+        const known = APP.cleanup.readKnown();
 
         const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
         setText('cleanup-orphan-count', orphans.total);
         setText('cleanup-eip-count', orphans.eips.length);
         setText('cleanup-acm-count', orphans.acm_certs.length);
         setText('cleanup-buckets-count', orphans.s3_buckets.length);
+
+        // Last-refreshed-at hint
+        const refreshedAt = document.getElementById('cleanup-refreshed-at');
+        if (refreshedAt) {
+            refreshedAt.textContent = APP.cleanup.formatRefreshedAt(new Date());
+            refreshedAt.hidden = false;
+        }
 
         if (orphans.total === 0) {
             list.innerHTML = `<div class="empty-state">
@@ -24031,15 +24578,20 @@ async function loadCleanupResources(forceRefresh = false) {
             </div>`;
             return;
         }
-        list.innerHTML = _renderCleanupGroups(orphans);
+        list.innerHTML = _renderCleanupGroups(orphans, known);
         if (APP && typeof APP._staggerOnce === 'function') APP._staggerOnce(list);
     } catch (e) {
         list.innerHTML = '<div class="callout callout--warning">Failed to load resources. Check AWS credentials.</div>';
+    } finally {
+        if (refreshBtn) refreshBtn.removeAttribute('data-loading');
     }
 }
 
 function _detectOrphans(data) {
-    const known = _cleanupGetKnownExternal();
+    // Phase 3c: detection no longer FILTERS marked-known items — instead it
+    // tags them so the renderer can display them with attribution. This
+    // preserves operator audit visibility ("Alice marked this 3d ago")
+    // rather than silently hiding the entry on next load.
     const orphans = {
         eips: [],
         acm_certs: [],
@@ -24052,8 +24604,8 @@ function _detectOrphans(data) {
     // Unattached EIPs — no instance_id means floating allocation.
     (data.eips || []).forEach(e => {
         if (!e.instance_id) {
-            const id = _cleanupResourceId(e, 'eip');
-            if (!known.has(id)) orphans.eips.push(Object.assign({ _id: id }, e));
+            const id = APP.cleanup.resourceId(e, 'eip');
+            orphans.eips.push(Object.assign({ _id: id, _kind: 'eip' }, e));
         }
     });
 
@@ -24061,8 +24613,8 @@ function _detectOrphans(data) {
     const allAcm = (data.acm_certs || []).concat(data.acm_us_east_1 || []);
     allAcm.forEach(c => {
         if (!c.in_use) {
-            const id = _cleanupResourceId(c, 'acm');
-            if (!known.has(id)) orphans.acm_certs.push(Object.assign({ _id: id }, c));
+            const id = APP.cleanup.resourceId(c, 'acm');
+            orphans.acm_certs.push(Object.assign({ _id: id, _kind: 'acm' }, c));
         }
     });
 
@@ -24071,8 +24623,8 @@ function _detectOrphans(data) {
     (data.s3_buckets || []).forEach(b => {
         const name = b.name || b.Name || '';
         if (!projectRe.test(name)) {
-            const id = _cleanupResourceId(b, 's3');
-            if (!known.has(id)) orphans.s3_buckets.push(Object.assign({ _id: id }, b));
+            const id = APP.cleanup.resourceId(b, 's3');
+            orphans.s3_buckets.push(Object.assign({ _id: id, _kind: 's3' }, b));
         }
     });
 
@@ -24082,45 +24634,131 @@ function _detectOrphans(data) {
     return orphans;
 }
 
-function _renderCleanupGroups(orphans) {
+function _renderCleanupGroups(orphans, known) {
     const groups = [];
+    known = known || APP.cleanup.readKnown();
+
     if (orphans.eips.length > 0) {
-        groups.push(_renderGroup('Unattached Elastic IPs', orphans.eips,
-            e => `${e.public_ip || e.PublicIp || '—'} · ${e.allocation_id || e.AllocationId || '—'}`));
+        groups.push(_renderGroup({
+            title: 'Unattached Elastic IPs',
+            kind: 'eip',
+            items: orphans.eips,
+            keyFor: (e) => 'ELASTIC IP',
+            valueFor: (e) => e.public_ip || e.PublicIp || '—',
+            hintFor: (e) => {
+                const parts = [];
+                if (e.allocation_id || e.AllocationId) parts.push(e.allocation_id || e.AllocationId);
+                if (e.region) parts.push(e.region);
+                return parts.join(' · ');
+            },
+            known,
+        }));
     }
     if (orphans.acm_certs.length > 0) {
-        groups.push(_renderGroup('Orphan ACM Certificates', orphans.acm_certs,
-            c => `${c.domain || c.DomainName || '—'} · ${c.region || 'eu-central-1'} · ${c.status || c.Status || '—'}`));
+        groups.push(_renderGroup({
+            title: 'Orphan ACM Certificates',
+            kind: 'acm',
+            items: orphans.acm_certs,
+            keyFor: (c) => 'ACM CERT',
+            valueFor: (c) => c.domain || c.DomainName || '—',
+            hintFor: (c) => {
+                const parts = [];
+                if (c.region) parts.push(c.region); else parts.push('eu-central-1');
+                if (c.status || c.Status) parts.push(c.status || c.Status);
+                return parts.join(' · ');
+            },
+            known,
+        }));
     }
     if (orphans.s3_buckets.length > 0) {
-        groups.push(_renderGroup('Untagged S3 Buckets', orphans.s3_buckets,
-            b => `${b.name || b.Name || '—'}`));
+        groups.push(_renderGroup({
+            title: 'Untagged S3 Buckets',
+            kind: 's3',
+            items: orphans.s3_buckets,
+            keyFor: (b) => 'S3 BUCKET',
+            valueFor: (b) => b.name || b.Name || '—',
+            hintFor: (b) => {
+                const parts = [];
+                if (b.region) parts.push(b.region);
+                if (b.creation_date || b.CreationDate) parts.push(b.creation_date || b.CreationDate);
+                return parts.join(' · ');
+            },
+            known,
+        }));
     }
     return groups.join('');
 }
 
-function _renderGroup(title, items, formatter) {
+function _renderGroup(opts) {
+    const { title, items, keyFor, valueFor, hintFor, known } = opts;
     const rows = items.map((item) => {
         const safeId = escapeHtml(item._id || '');
-        const meta = escapeHtml(JSON.stringify(item).substring(0, 100));
+        const isMarked = !!known[item._id];
+        const markedEntry = isMarked ? known[item._id] : null;
+        const op = markedEntry ? APP.cleanup.operatorFor(markedEntry.by) : null;
+        const rowAttrs = isMarked ? ' data-marked-known="true"' : '';
+
+        let valueMeta = `<div class="spec-row__value">${escapeHtml(valueFor(item))}</div>`;
+        if (isMarked) {
+            const opColor = escapeHtml(op.color || '#7A849E');
+            const opName = escapeHtml(op.display || 'unknown');
+            const when = escapeHtml(APP.cleanup.formatTime(markedEntry.at));
+            valueMeta = `
+                <div class="cleanup-row__value-meta">
+                    <div class="cleanup-row__value-meta-row">
+                        <span class="spec-row__value">${escapeHtml(valueFor(item))}</span>
+                        <span class="spec-pill spec-pill--draft" data-state="marked-known">
+                            <span class="spec-pill__dot"></span>KNOWN
+                        </span>
+                    </div>
+                    <span class="cleanup-row__attribution" data-attribution>
+                        <span class="cleanup-row__attribution-dot" style="background: ${opColor}"></span>
+                        marked by ${opName}${when ? ' · ' + when : ''}
+                    </span>
+                </div>`;
+        }
+
         return `
-        <div class="cleanup-resource-row" data-resource-id="${safeId}">
-            <div>
-                <div class="cleanup-resource-row__name">${escapeHtml(formatter(item))}</div>
-                <div class="cleanup-resource-row__meta">${meta}</div>
-            </div>
-            <div class="cleanup-resource-row__actions">
-                <button class="cleanup-resource-row__action" onclick="cleanupAdoptResource('${safeId}')">Adopt</button>
-                <button class="cleanup-resource-row__action cleanup-resource-row__action--danger" onclick="cleanupDestroyResource('${safeId}')">Destroy</button>
-                <button class="cleanup-resource-row__action" onclick="cleanupMarkKnown('${safeId}')">Mark known</button>
+        <div class="spec-row cleanup-row" data-resource-id="${safeId}" data-kind="${escapeHtml(item._kind || '')}"${rowAttrs}>
+            <div class="spec-row__head">
+                <div class="spec-row__key">${escapeHtml(keyFor(item))}</div>
+                ${valueMeta}
+                <div class="cleanup-row__actions">
+                    <button class="spec-edit-btn cleanup-row__action"
+                            type="button"
+                            onclick="cleanupAdoptResource('${safeId}')"
+                            aria-label="Adopt into Terraform">
+                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                        Adopt
+                    </button>
+                    <button class="spec-edit-btn spec-edit-btn--danger cleanup-row__action"
+                            type="button"
+                            onclick="cleanupDestroyResource('${safeId}')"
+                            aria-label="Destroy resource">
+                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                        Destroy
+                    </button>
+                    <button class="spec-edit-btn cleanup-row__action"
+                            type="button"
+                            onclick="cleanupMarkKnown('${safeId}')"
+                            aria-label="Mark as known-external">
+                        ${isMarked ? '' : '<svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg>'}
+                        ${isMarked ? 'Re-mark' : 'Mark known'}
+                    </button>
+                </div>
             </div>
         </div>`;
     }).join('');
     return `
-        <div class="cleanup-resource-group">
-            <h4 class="cleanup-resource-group__title">${escapeHtml(title)} <span class="t-muted">${items.length} found</span></h4>
-            ${rows}
-        </div>`;
+        <section class="cleanup-group" data-group-kind="${escapeHtml(opts.kind || '')}">
+            <header class="cleanup-group__header">
+                <h4 class="cleanup-group__title">${escapeHtml(title)}</h4>
+                <span class="cleanup-group__count">${items.length} found</span>
+            </header>
+            <div class="spec-list cleanup-group__list" role="list" aria-label="${escapeHtml(title)}">
+                ${rows}
+            </div>
+        </section>`;
 }
 
 function cleanupAdoptResource(_id) {
@@ -24133,12 +24771,41 @@ function cleanupDestroyResource(_id) {
 
 function cleanupMarkKnown(id) {
     if (!id) return;
-    _cleanupAddKnownExternal(id);
-    // Remove row immediately for instant feedback; full re-scan happens on next load.
-    const row = document.querySelector(`.cleanup-resource-row[data-resource-id="${CSS.escape(id)}"]`);
-    if (row) row.remove();
+    APP.cleanup.addKnown(id);
+    // Phase 3c: row stays visible with attribution. Refresh the row in-place
+    // by re-fetching just the marked entry (no full re-scan needed for this
+    // single state flip).
+    const row = document.querySelector(`.cleanup-row[data-resource-id="${CSS.escape(id)}"]`);
+    if (!row) return;
+    const entry = APP.cleanup.readKnown()[id];
+    if (!entry) return;
+    const op = APP.cleanup.operatorFor(entry.by);
+    row.setAttribute('data-marked-known', 'true');
+    // Wrap the existing value into the value-meta + attribution layout.
+    const head = row.querySelector('.spec-row__head');
+    const value = head ? head.querySelector('.spec-row__value') : null;
+    if (value && head && !head.querySelector('[data-attribution]')) {
+        const valueText = value.textContent;
+        const wrapper = document.createElement('div');
+        wrapper.className = 'cleanup-row__value-meta';
+        wrapper.innerHTML = `
+            <div class="cleanup-row__value-meta-row">
+                <span class="spec-row__value">${escapeHtml(valueText)}</span>
+                <span class="spec-pill spec-pill--draft" data-state="marked-known">
+                    <span class="spec-pill__dot"></span>KNOWN
+                </span>
+            </div>
+            <span class="cleanup-row__attribution" data-attribution>
+                <span class="cleanup-row__attribution-dot" style="background: ${escapeHtml(op.color)}"></span>
+                marked by ${escapeHtml(op.display)}${entry.at ? ' · ' + escapeHtml(APP.cleanup.formatTime(entry.at)) : ''}
+            </span>`;
+        value.replaceWith(wrapper);
+    }
+    // Update the action button label.
+    const markBtn = row.querySelector('button[onclick^="cleanupMarkKnown"]');
+    if (markBtn) markBtn.textContent = 'Re-mark';
 }
-// === end D8 Agent B =========================================================
+// === end D8 Agent B (Phase 3c V3-native) ====================================
 
 // ============================================================================
 // === M-Operators (Decision #23) — operator chip + menu + activity feed ====
@@ -24158,6 +24825,187 @@ APP.operator = {
     onChange(fn) { this._listeners.push(fn); },
     _notify() {
         this._listeners.forEach(fn => { try { fn(this.current); } catch (_) { /* ignore */ } });
+    },
+};
+
+// ──────────────────────────────────────────────────────────────────────
+// Phase 3B — Operations sub-pill namespaces. Thin wrappers on top of the
+// existing BEACON / TERMINAL globals + the legacy tools-upload helpers.
+// These exist so tests and future modules have a stable APP.* surface to
+// hang off of (rather than reaching for the top-level globals).
+// ──────────────────────────────────────────────────────────────────────
+APP.beacons = APP.beacons || {
+    list() { return (typeof BEACON !== 'undefined' && BEACON.cachedBeacons) ? BEACON.cachedBeacons.slice() : []; },
+    select(bid, label) {
+        if (typeof BEACON !== 'undefined' && typeof BEACON.selectBeacon === 'function') {
+            BEACON.selectBeacon(bid, label || '');
+        }
+    },
+    refresh() {
+        if (typeof BEACON !== 'undefined' && typeof BEACON.refreshBeacons === 'function') {
+            return BEACON.refreshBeacons();
+        }
+    },
+    refreshHistory() {
+        if (typeof BEACON !== 'undefined' && typeof BEACON.refreshCmdHistory === 'function') {
+            return BEACON.refreshCmdHistory();
+        }
+    },
+};
+
+APP.terminal = APP.terminal || {
+    sessions() {
+        if (typeof TERMINAL === 'undefined') return [];
+        return Object.entries(TERMINAL.sessions).map(([id, s]) => ({
+            id, type: s.type, label: s.label, opener: s.opener || null,
+            host: s.host || null,
+        }));
+    },
+    active() {
+        return (typeof TERMINAL !== 'undefined' && TERMINAL.activeId) || null;
+    },
+    open(kind) {
+        if (typeof TERMINAL === 'undefined') return;
+        if (kind === 'local' || !kind) TERMINAL.openLocal();
+    },
+};
+
+// ──────────────────────────────────────────────────────────────────────
+// Phase 3B.3 — APP.payloads: parameter spec-list + artifacts management.
+// Reads form state (deployment, files, destination) and re-renders the
+// preview pane's spec-list + artifacts list. Wired up on init by
+// initPayloadsV3() which subscribes to the form controls.
+// ──────────────────────────────────────────────────────────────────────
+APP.payloads = APP.payloads || {
+    artifacts: [],      // each: { name, size?, url?, kind? }
+    _state: {},         // last-known form state for spec-list rendering
+
+    init() {
+        if (this._initialized) { this.updateSpec(); return; }
+        this._initialized = true;
+        // Subscribe to form changes — both selects and radio buttons.
+        const wireOnce = (id, evt) => {
+            const el = document.getElementById(id);
+            if (el && !el._payloadsV3Wired) {
+                el._payloadsV3Wired = true;
+                el.addEventListener(evt, () => this.updateSpec());
+            }
+        };
+        wireOnce('tools-project-select', 'change');
+        wireOnce('tools-custom-dest', 'input');
+        document.querySelectorAll('input[name="tools-dest"]').forEach(r => {
+            if (!r._payloadsV3Wired) {
+                r._payloadsV3Wired = true;
+                r.addEventListener('change', () => this.updateSpec());
+            }
+        });
+        this.updateSpec();
+        this.renderArtifacts();
+    },
+
+    _readState() {
+        const project = document.getElementById('tools-project-select')?.value || '';
+        const dest = document.querySelector('input[name="tools-dest"]:checked')?.value || '';
+        const custom = document.getElementById('tools-custom-dest')?.value || '';
+        const stagedListEl = document.getElementById('tools-staged-list');
+        const stagedCount = stagedListEl ? stagedListEl.children.length : 0;
+        return {
+            project: project || '(not selected)',
+            destination: dest === 'custom' ? (custom || '(custom path not set)') : (dest || '(not chosen)'),
+            stagedCount,
+        };
+    },
+
+    updateSpec() {
+        const list = document.getElementById('ops-payloads-spec-list');
+        const pillLabel = document.getElementById('ops-payloads-spec-pill-label');
+        const pill = document.getElementById('ops-payloads-spec-pill');
+        if (!list) return;
+        const s = this._readState();
+        this._state = s;
+        const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+
+        const rows = [
+            { key: 'TARGET',      value: esc(s.project), hint: 'deployment' },
+            { key: 'DESTINATION', value: `<span class="spec-row__value--mono">${esc(s.destination)}</span>`, hint: 'attack box' },
+            { key: 'STAGED',      value: `<span class="spec-row__value--mono">${s.stagedCount} file${s.stagedCount === 1 ? '' : 's'}</span>`, hint: s.stagedCount > 0 ? 'ready' : 'empty' },
+        ];
+
+        list.innerHTML = rows.map(r => `
+            <li class="spec-row" data-readonly="true">
+              <div class="spec-row__head">
+                <span class="spec-row__key">${esc(r.key)}</span>
+                <span class="spec-row__value">${r.value}</span>
+                <span class="spec-row__hint">${esc(r.hint)}</span>
+                <span aria-hidden="true"></span>
+              </div>
+            </li>`).join('');
+
+        // Update pill state — DRAFT until a project is selected AND something is staged.
+        if (pill && pillLabel) {
+            const ready = s.project !== '(not selected)' && s.stagedCount > 0;
+            pill.classList.remove('spec-pill--draft', 'spec-pill--live', 'spec-pill--error');
+            if (ready) {
+                pill.classList.add('spec-pill--live');
+                pillLabel.textContent = 'READY';
+            } else {
+                pill.classList.add('spec-pill--draft');
+                pillLabel.textContent = 'DRAFT';
+            }
+        }
+    },
+
+    addArtifact(art) {
+        if (!art || !art.name) return;
+        this.artifacts.unshift(art);
+        this.renderArtifacts();
+    },
+
+    clearArtifacts() {
+        this.artifacts = [];
+        this.renderArtifacts();
+    },
+
+    renderArtifacts() {
+        const card = document.getElementById('ops-payloads-artifacts-card');
+        const list = document.getElementById('ops-payloads-artifacts-list');
+        const count = document.getElementById('ops-payloads-artifacts-count');
+        if (!list || !card) return;
+        if (!this.artifacts.length) {
+            card.hidden = true;
+            list.innerHTML = '';
+            if (count) count.textContent = '0';
+            return;
+        }
+        card.hidden = false;
+        if (count) count.textContent = String(this.artifacts.length);
+        const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        list.innerHTML = this.artifacts.map((art, i) => {
+            const url = art.url ? esc(art.url) : '';
+            return `
+              <li class="spec-row" data-readonly="true" data-artifact-index="${i}">
+                <div class="spec-row__head">
+                  <span class="ops-payloads-artifact__name">${esc(art.name)}</span>
+                  <span class="ops-payloads-artifact__size">${esc(art.size || '')}</span>
+                  <span class="ops-payloads-artifact__actions">
+                    ${url ? `<a class="ops-payloads-artifact__btn" href="${url}" download="${esc(art.name)}" title="Download">
+                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-download"/></svg>Download
+                    </a>` : ''}
+                    <button type="button" class="ops-payloads-artifact__btn"
+                            onclick="APP.payloads._view(${i})" title="View">
+                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-eye"/></svg>View
+                    </button>
+                  </span>
+                </div>
+              </li>`;
+        }).join('');
+    },
+
+    _view(i) {
+        const art = this.artifacts[i];
+        if (!art) return;
+        if (art.url) window.open(art.url, '_blank');
+        else if (typeof APP.toast === 'function') APP.toast(`Artifact: ${art.name}`, 'info');
     },
 };
 
@@ -24200,7 +25048,7 @@ function renderOperatorMenu() {
             <button class="operator-menu__operator${isActive}" type="button"
                     role="menuitem"
                     onclick="switchOperator('${escapeHtml(op.id)}')">
-                <span class="operator-menu__operator-dot" style="background: ${escapeHtml(op.color || '#7A849E')}"></span>
+                <span class="operator-menu__operator-dot operator-dot operator-dot--lg" style="background: ${escapeHtml(op.color || '#7A849E')}"></span>
                 <span class="operator-menu__operator-name">${escapeHtml(op.display || op.id || '')}</span>
                 <span class="operator-menu__operator-id">${escapeHtml(op.id || '')}</span>
             </button>`;
@@ -24360,19 +25208,30 @@ async function loadDashboardActivity(forceRefresh = false) {
 }
 
 function _renderActivityRow(e) {
+    // Phase 3e — emit a .spec-row (read-only) composing the V3 primitive.
+    // Key column: operator dot + display name. Value column: verb + target.
+    // Hint column: relative time. Unknown operators fall back to muted gray.
     const op = APP.operator.all.find(o => o.id === e.op);
     const color = (op && op.color) || '#7A849E';
     const display = (op && op.display) || e.op || 'unknown';
     const verb = _activityVerb(e.action);
     const target = e.project || e.target || '';
     const time = _relativeTime(e.ts);
+    const targetHtml = target
+        ? `<span class="spec-row__value-target">${escapeHtml(target)}</span>`
+        : '';
     return `
-        <li class="activity-feed__row">
-            <span class="activity-feed__dot" style="background: ${escapeHtml(color)}"></span>
-            <span class="activity-feed__op">${escapeHtml(display)}</span>
-            <span class="activity-feed__verb">${escapeHtml(verb)}</span>
-            ${target ? `<span class="activity-feed__target">${escapeHtml(target)}</span>` : ''}
-            <span class="activity-feed__time">${escapeHtml(time)}</span>
+        <li class="spec-row" data-readonly="true" data-activity-op="${escapeHtml(e.op || '')}">
+            <div class="spec-row__head">
+                <span class="spec-row__key">
+                    <span class="operator-dot" style="background: ${escapeHtml(color)}" aria-hidden="true"></span>
+                    ${escapeHtml(display)}
+                </span>
+                <span class="spec-row__value">
+                    <span class="spec-row__value-verb">${escapeHtml(verb)}</span>${targetHtml}
+                </span>
+                <span class="spec-row__hint">${escapeHtml(time)}</span>
+            </div>
         </li>
     `;
 }
@@ -24423,13 +25282,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const addBtn = document.getElementById('operator-menu-add');
     if (addBtn) addBtn.addEventListener('click', openAddOperatorModal);
-    // Manage button is a placeholder — wire to a future manage view; for now
-    // it just closes the menu so the click still feels responsive.
+    // Manage button — opens the Manage operators modal (APP.operatorManagement).
+    // Replaces the v2.3.0 placeholder toast. The module closes the dropdown
+    // itself so we don't double-close here.
     const manageBtn = document.getElementById('operator-menu-manage');
     if (manageBtn) manageBtn.addEventListener('click', () => {
-        closeOperatorMenu();
-        if (typeof APP.toast === 'function') {
-            APP.toast('Operator management view coming soon', 'info');
+        if (APP.operatorManagement && typeof APP.operatorManagement.open === 'function') {
+            APP.operatorManagement.open();
+        } else {
+            closeOperatorMenu();
         }
     });
 
@@ -24455,6 +25316,315 @@ if (APP.navigateTo && !APP.navigateTo._mOperatorsWrapped) {
     APP.navigateTo._mOperatorsWrapped = true;
 }
 
+// ============================================================================
+// === APP.operatorManagement — Manage operators modal (Phase 3 native) =======
+// ============================================================================
+// Wires the dropdown "Manage…" item to a real modal that renders one
+// .spec-row per operator, with inline rename / recolor / delete editors.
+//
+// Backend contract:
+//   GET    /api/operators            → { operators: [{id, display, color,
+//                                                   last_active, action_count}], current, default }
+//   PATCH  /api/operators/<id>       → { operator }
+//   DELETE /api/operators/<id>
+//
+// Protections surfaced in the UI:
+//   - Cannot delete the currently-active operator (would orphan the cookie).
+//   - Cannot delete the last operator (backend also enforces).
+//   - Cannot delete the default operator unless another exists to promote.
+//     Backend auto-promotes; the UI just confirms the next-default in copy.
+// ============================================================================
+
+APP.operatorManagement = (function () {
+    const MODAL_ID = 'operator-management-modal';
+    const LIST_ID = 'operator-management-list';
+    let _operators = [];
+    let _currentId = null;
+    let _defaultId = null;
+    let _editingId = null;
+    let _editingColor = null;
+    let _pendingDeleteId = null;
+
+    function _relTime(iso) {
+        // Shared with _relativeTime above but duplicated to keep this module
+        // self-contained — _relativeTime is a module-scoped function in the
+        // M-Operators block above; reuse via the closure since both live in
+        // the same script bundle.
+        if (typeof _relativeTime === 'function') return _relativeTime(iso);
+        return '';
+    }
+
+    async function _fetchOperators() {
+        const res = await fetch('/api/operators');
+        const data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'load failed');
+        _operators = data.operators || [];
+        _currentId = (data.current && data.current.id) || null;
+        _defaultId = data.default || null;
+        // Keep the global APP.operator cache in sync so renderOperatorMenu()
+        // picks up any rename / recolor immediately without a second fetch.
+        APP.operator.all = _operators;
+        if (data.current) APP.operator.current = data.current;
+    }
+
+    function _renderColorGrid(currentColor) {
+        return OPERATOR_COLORS.map(c => {
+            const sel = (c.toLowerCase() === (currentColor || '').toLowerCase()) ? ' is-selected' : '';
+            return `<button type="button" class="operator-color-swatch${sel}"
+                            style="background: ${escapeHtml(c)}" data-color="${escapeHtml(c)}"
+                            aria-label="Color ${escapeHtml(c)}"
+                            data-mgmt-color></button>`;
+        }).join('');
+    }
+
+    function _renderRow(op) {
+        const isEditing = op.id === _editingId;
+        const isCurrent = op.id === _currentId;
+        const isDefault = op.id === _defaultId;
+        const isLast = _operators.length === 1;
+        const cantDelete = isCurrent || isLast;
+        const deleteTip = isCurrent
+            ? 'Switch to another operator before deleting this profile.'
+            : (isLast ? 'Cannot delete the last operator.' : '');
+        const lastActive = op.last_active ? _relTime(op.last_active) : null;
+        const count = Number(op.action_count || 0);
+        const countLabel = count === 1 ? '1 action' : `${count} actions`;
+        const hintText = lastActive
+            ? `${countLabel} · last active ${lastActive}`
+            : (count > 0 ? countLabel : 'never used');
+
+        const color = op.color || '#7A849E';
+        const display = op.display || op.id || '';
+
+        const editorColor = _editingColor || color;
+        const pendingDel = (_pendingDeleteId === op.id);
+
+        const editorMarkup = isEditing ? `
+            <div class="spec-row__editor">
+                <div class="spec-row__editor-field">
+                    <label class="spec-row__editor-label" for="op-mgmt-display-${escapeHtml(op.id)}">Display name</label>
+                    <input class="spec-row__editor-input" id="op-mgmt-display-${escapeHtml(op.id)}"
+                           type="text" value="${escapeHtml(display)}"
+                           data-mgmt-display autocomplete="off">
+                </div>
+                <div class="spec-row__editor-field">
+                    <span class="spec-row__editor-label">Color</span>
+                    <div class="operator-color-grid" data-mgmt-color-grid>
+                        ${_renderColorGrid(editorColor)}
+                    </div>
+                </div>
+                ${isDefault ? `
+                <div class="spec-row__editor-hint operator-mgmt__hint-default">
+                    Default profile. ${_operators.length > 1
+                        ? 'Deleting promotes another operator to default.'
+                        : 'Add another operator before deleting.'}
+                </div>` : ''}
+                <div class="spec-row__editor-foot">
+                    <button type="button" class="spec-edit-btn spec-edit-btn--danger"
+                            data-mgmt-delete
+                            ${cantDelete ? 'disabled' : ''}
+                            ${cantDelete ? `title="${escapeHtml(deleteTip)}"` : ''}>
+                        Delete profile
+                    </button>
+                    <span style="flex: 1"></span>
+                    <button type="button" class="spec-edit-btn" data-mgmt-cancel>Cancel</button>
+                    <button type="button" class="spec-edit-btn spec-edit-btn--save" data-mgmt-save>Save</button>
+                </div>
+                ${pendingDel ? `
+                <div class="operator-mgmt__confirm" role="alertdialog" aria-label="Confirm delete">
+                    <span class="operator-mgmt__confirm-text">
+                        Delete profile? Audit log entries are preserved.
+                    </span>
+                    <button type="button" class="spec-edit-btn" data-mgmt-delete-cancel>Cancel</button>
+                    <button type="button" class="spec-edit-btn spec-edit-btn--danger-fill" data-mgmt-delete-confirm>Confirm</button>
+                </div>` : ''}
+            </div>
+        ` : '';
+
+        const statusBadges = [];
+        if (isCurrent) statusBadges.push('<span class="spec-pill operator-mgmt__pill operator-mgmt__pill--current">Active</span>');
+        if (isDefault) statusBadges.push('<span class="spec-pill operator-mgmt__pill">Default</span>');
+
+        return `
+            <div class="spec-row operator-mgmt__row" data-op-id="${escapeHtml(op.id)}"
+                 ${isEditing ? 'data-editing="true"' : ''}>
+                <div class="spec-row__head">
+                    <span class="spec-row__key operator-mgmt__key">
+                        <span class="operator-dot operator-dot--lg" style="background: ${escapeHtml(color)}" aria-hidden="true"></span>
+                        <span class="operator-mgmt__display">${escapeHtml(display)}</span>
+                        ${statusBadges.join('')}
+                    </span>
+                    <span class="spec-row__value spec-row__value--mono">${escapeHtml(op.id)}</span>
+                    <span class="spec-row__hint">${escapeHtml(hintText)}</span>
+                    <button type="button" class="spec-row__action" data-mgmt-edit
+                            aria-label="Edit ${escapeHtml(display)}"
+                            aria-expanded="${isEditing ? 'true' : 'false'}">
+                        <svg class="icon" aria-hidden="true"><use href="#icon-edit-pencil"/></svg>
+                    </button>
+                </div>
+                ${editorMarkup}
+            </div>
+        `;
+    }
+
+    function render() {
+        const list = document.getElementById(LIST_ID);
+        if (!list) return;
+        list.setAttribute('data-editing', _editingId ? 'true' : 'false');
+        list.innerHTML = _operators.map(_renderRow).join('');
+        // Delegated events would also work, but the row count is small (<=32)
+        // so per-element wiring keeps the handlers self-documenting.
+        list.querySelectorAll('[data-op-id]').forEach(row => {
+            const opId = row.getAttribute('data-op-id');
+            const editBtn = row.querySelector('[data-mgmt-edit]');
+            if (editBtn) editBtn.addEventListener('click', () => editRow(opId));
+            // Swatch picker — flip the selection class without a full re-render
+            // so the user's text input doesn't lose focus/value.
+            const grid = row.querySelector('[data-mgmt-color-grid]');
+            if (grid) {
+                grid.addEventListener('click', (e) => {
+                    const sw = e.target.closest('[data-mgmt-color]');
+                    if (!sw) return;
+                    _editingColor = sw.getAttribute('data-color');
+                    grid.querySelectorAll('[data-mgmt-color]').forEach(s => s.classList.remove('is-selected'));
+                    sw.classList.add('is-selected');
+                });
+            }
+            const cancelBtn = row.querySelector('[data-mgmt-cancel]');
+            if (cancelBtn) cancelBtn.addEventListener('click', () => cancelRow(opId));
+            const saveBtn = row.querySelector('[data-mgmt-save]');
+            if (saveBtn) saveBtn.addEventListener('click', () => saveRow(opId));
+            const delBtn = row.querySelector('[data-mgmt-delete]');
+            if (delBtn && !delBtn.disabled) delBtn.addEventListener('click', () => deleteRow(opId));
+            const delCancel = row.querySelector('[data-mgmt-delete-cancel]');
+            if (delCancel) delCancel.addEventListener('click', () => { _pendingDeleteId = null; render(); });
+            const delConfirm = row.querySelector('[data-mgmt-delete-confirm]');
+            if (delConfirm) delConfirm.addEventListener('click', () => confirmDelete(opId));
+        });
+    }
+
+    async function open() {
+        // Close the dropdown first so two popovers don't stack.
+        closeOperatorMenu();
+        _editingId = null;
+        _editingColor = null;
+        _pendingDeleteId = null;
+        const list = document.getElementById(LIST_ID);
+        if (list) list.innerHTML = '<div class="operator-mgmt__loading">Loading…</div>';
+        APP.modal.open(MODAL_ID);
+        try {
+            await _fetchOperators();
+            render();
+            // Keep the global chip in sync — if anything changed since last load.
+            renderOperatorChip();
+            renderOperatorMenu();
+        } catch (e) {
+            if (list) list.innerHTML = `<div class="operator-mgmt__error">Failed to load operators.</div>`;
+        }
+    }
+
+    function close() {
+        APP.modal.close(MODAL_ID);
+        _editingId = null;
+        _editingColor = null;
+        _pendingDeleteId = null;
+    }
+
+    function editRow(opId) {
+        const op = _operators.find(o => o.id === opId);
+        _editingId = opId;
+        _editingColor = (op && op.color) || null;
+        _pendingDeleteId = null;
+        render();
+    }
+
+    function cancelRow(_opId) {
+        _editingId = null;
+        _editingColor = null;
+        _pendingDeleteId = null;
+        render();
+    }
+
+    async function saveRow(opId) {
+        const row = document.querySelector(`#${LIST_ID} [data-op-id="${CSS.escape(opId)}"]`);
+        if (!row) return;
+        const displayEl = row.querySelector('[data-mgmt-display]');
+        const newDisplay = displayEl ? displayEl.value.trim() : null;
+        const op = _operators.find(o => o.id === opId);
+        const payload = {};
+        if (newDisplay && newDisplay !== (op && op.display)) payload.display = newDisplay;
+        if (_editingColor && _editingColor !== (op && op.color)) payload.color = _editingColor;
+        if (Object.keys(payload).length === 0) {
+            cancelRow(opId);
+            return;
+        }
+        try {
+            const res = await fetch(`/api/operators/${encodeURIComponent(opId)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!data || !data.success) {
+                if (typeof APP.toast === 'function') APP.toast((data && data.error) || 'Update failed', 'error');
+                return;
+            }
+            _editingId = null;
+            _editingColor = null;
+            await _fetchOperators();
+            render();
+            renderOperatorChip();
+            renderOperatorMenu();
+            if (typeof APP.toast === 'function') APP.toast(`Updated ${data.operator.display || data.operator.id}`, 'success');
+        } catch (e) {
+            if (typeof APP.toast === 'function') APP.toast('Network error', 'error');
+        }
+    }
+
+    function deleteRow(opId) {
+        // Stage 1 — show the inline confirm. Stage 2 is confirmDelete().
+        _pendingDeleteId = opId;
+        render();
+    }
+
+    async function confirmDelete(opId) {
+        try {
+            const res = await fetch(`/api/operators/${encodeURIComponent(opId)}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (!data || !data.success) {
+                if (typeof APP.toast === 'function') APP.toast((data && data.error) || 'Delete failed', 'error');
+                _pendingDeleteId = null;
+                render();
+                return;
+            }
+            _editingId = null;
+            _editingColor = null;
+            _pendingDeleteId = null;
+            await _fetchOperators();
+            render();
+            renderOperatorChip();
+            renderOperatorMenu();
+            if (typeof APP.toast === 'function') APP.toast(`Removed ${opId}`, 'info');
+        } catch (e) {
+            if (typeof APP.toast === 'function') APP.toast('Network error', 'error');
+        }
+    }
+
+    function addOperator() {
+        // Chain into the existing Add Operator modal — close ours first so
+        // they don't stack visually.
+        close();
+        openAddOperatorModal();
+    }
+
+    return { open, close, editRow, saveRow, cancelRow, deleteRow, addOperator };
+})();
+
+document.addEventListener('DOMContentLoaded', () => {
+    const addBtn = document.getElementById('operator-management-add');
+    if (addBtn) addBtn.addEventListener('click', () => APP.operatorManagement.addOperator());
+});
+
 // === end M-Operators ========================================================
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -24473,3 +25643,426 @@ window.addEventListener('beforeunload', (e) => {
         e.returnValue = msg;
     }
 });
+
+// ════════════════════════════════════════════════════════════════════════
+// PHASE 3A — Manage sub-pill V3-native rebuild.
+// Builds the hero + spec-list + actions strip at the top of the Manage
+// pane, composing Phase 2B primitives. Preserves all existing data flows
+// (refreshAll, loadResourceList, renderDeploymentTimeline, etc.) — only
+// the top-of-pane skeleton is replaced. APP.manage.render() is called
+// from APP._runSubPillInit on manage activation AND on
+// APP.activeDeployment.subscribe (wired in APP.manage.init).
+// ════════════════════════════════════════════════════════════════════════
+
+APP.manage = APP.manage || {};
+
+APP.manage._escape = function (s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+};
+
+/** Humanised "x minutes ago" formatter for audit timestamps (ISO 8601). */
+APP.manage._timeAgo = function (iso) {
+    if (!iso) return '';
+    let t;
+    try { t = new Date(iso).getTime(); } catch (_) { return ''; }
+    if (!Number.isFinite(t)) return '';
+    const diff = Math.floor((Date.now() - t) / 1000);
+    if (diff < 0) return 'just now';
+    if (diff < 10) return 'just now';
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+};
+
+/** Build a spec-row HTML fragment. Read-only — manage rows don't edit. */
+APP.manage._renderRow = function (row) {
+    const esc = APP.manage._escape;
+    const valueClasses = ['spec-row__value'];
+    if (row.valueMono) valueClasses.push('spec-row__value--mono');
+    if (row.valueStrong) valueClasses.push('spec-row__value--strong');
+    let valueHtml;
+    if (row.isPill) {
+        valueHtml = `<dd class="${valueClasses.join(' ')}"><span class="spec-pill"><span class="spec-pill__dot" aria-hidden="true"></span>${esc(row.value)}</span></dd>`;
+    } else if (row.valueHtml) {
+        valueHtml = `<dd class="${valueClasses.join(' ')}" data-manage-value="${esc(row.key)}">${row.valueHtml}</dd>`;
+    } else {
+        valueHtml = `<dd class="${valueClasses.join(' ')}" data-manage-value="${esc(row.key)}">${esc(row.value)}</dd>`;
+    }
+    const hintHtml = row.hint
+        ? `<dd class="spec-row__hint" data-manage-hint="${esc(row.key)}">${esc(row.hint)}</dd>`
+        : '<dd class="spec-row__hint" data-manage-hint=""></dd>';
+    return `
+        <div class="spec-row" data-manage-row="${esc(row.key)}" data-readonly="true">
+            <div class="spec-row__head">
+                <dt class="spec-row__key">${esc(row.label)}</dt>
+                ${valueHtml}
+                ${hintHtml}
+                <span class="spec-row__action" aria-hidden="true"></span>
+            </div>
+        </div>
+    `;
+};
+
+/** Update the .spec-pill in the eyebrow to reflect deployment state. */
+APP.manage._updateStatusPill = function (state) {
+    const pill = document.getElementById('manage-status-pill');
+    const label = document.getElementById('manage-status-label');
+    if (!pill || !label) return;
+    pill.classList.remove('spec-pill--live', 'spec-pill--draft', 'spec-pill--error');
+    if (state === 'live') {
+        pill.classList.add('spec-pill--live');
+        label.textContent = 'LIVE';
+    } else if (state === 'error') {
+        pill.classList.add('spec-pill--error');
+        label.textContent = 'ERROR';
+    } else {
+        pill.classList.add('spec-pill--draft');
+        label.textContent = state ? String(state).toUpperCase() : 'IDLE';
+    }
+};
+
+/** Look up the most-recent deploy.* audit entry for a project. */
+APP.manage._loadLastTouched = async function (projectName) {
+    if (!projectName) return null;
+    try {
+        const r = await fetch(`/api/audit?action_prefix=deploy.&project=${encodeURIComponent(projectName)}&limit=1`);
+        const d = await r.json();
+        if (!d || !d.success) return null;
+        const entry = (d.entries || [])[0];
+        if (!entry) return null;
+        return {
+            operator: entry.op || 'unknown',
+            ts: entry.ts || '',
+            action: entry.action || '',
+        };
+    } catch (e) {
+        console.warn('manage._loadLastTouched failed:', e);
+        return null;
+    }
+};
+
+/** Build the spec-list rows. */
+APP.manage._buildRows = function (ctx) {
+    const rows = [];
+    const infra = ctx.infrastructure || {};
+    const cost = ctx.cost;
+    const audit = ctx.audit;
+    const config = ctx.config || {};
+
+    rows.push({
+        key: 'region',
+        label: 'AWS Region',
+        value: config.aws_region || 'eu-central-1',
+        valueMono: true,
+        hint: 'primary',
+    });
+
+    if (ctx.account_id) {
+        rows.push({
+            key: 'account',
+            label: 'AWS Account',
+            value: ctx.account_id,
+            valueMono: true,
+            hint: 'caller identity',
+        });
+    }
+
+    const totalInstances =
+        (infra.summary?.c2_server_count || 0) +
+        (infra.summary?.redirector_count || 0) +
+        (infra.summary?.has_bastion ? 1 : 0) +
+        (infra.summary?.has_attack_box ? 1 : 0);
+    rows.push({
+        key: 'instances',
+        label: 'EC2 Instances',
+        value: String(totalInstances || (ctx.instance_count ?? '—')),
+        valueMono: true,
+        valueStrong: true,
+        hint: totalInstances ? 'all healthy' : '',
+    });
+
+    if (infra.bastion?.public_ip) {
+        rows.push({
+            key: 'bastion',
+            label: 'Bastion',
+            value: infra.bastion.public_ip,
+            valueMono: true,
+            hint: 'SSH 22 from your CIDR',
+        });
+    }
+    const redirIps = infra.redirectors?.public_ips || [];
+    if (redirIps.length) {
+        rows.push({
+            key: 'redirector_ips',
+            label: 'Redirector IPs',
+            value: redirIps.length === 1 ? redirIps[0] : `${redirIps.length} public IPs`,
+            valueMono: true,
+            hint: redirIps.length === 1 ? 'HTTPS 443' : `${redirIps.length} · HTTPS 443`,
+        });
+    }
+    if (infra.jumpbox_public_ip) {
+        rows.push({
+            key: 'jumpbox',
+            label: 'Jumpbox',
+            value: infra.jumpbox_public_ip,
+            valueMono: true,
+            hint: 'SSH 22 (GOAD)',
+        });
+    }
+
+    const sgs = infra.security_groups || {};
+    const sgIds = Object.values(sgs).filter(Boolean);
+    if (sgIds.length) {
+        rows.push({
+            key: 'sgs',
+            label: 'Security Groups',
+            value: `${sgIds.length} group${sgIds.length === 1 ? '' : 's'}`,
+            valueMono: true,
+            hint: 'least-privilege',
+        });
+    }
+
+    if (cost != null) {
+        rows.push({
+            key: 'cost',
+            label: 'Estimated Burn',
+            value: `$${Number(cost).toFixed(2)} / mo`,
+            valueMono: true,
+            valueStrong: true,
+            hint: 'computed',
+        });
+    }
+
+    // Last-touched-by — operator attribution from audit log.
+    if (audit) {
+        const esc = APP.manage._escape;
+        const operatorHtml = audit.operator && audit.operator !== 'unknown'
+            ? `<span class="manage-attr">${esc(audit.operator)}</span>`
+            : `<span class="manage-attr manage-attr--unknown">unknown operator</span>`;
+        const timeAgo = APP.manage._timeAgo(audit.ts) || 'recently';
+        rows.push({
+            key: 'last_touched',
+            label: 'Last touched by',
+            valueHtml: `${operatorHtml} <span style="color: var(--text-secondary);">${esc(timeAgo)}</span>`,
+            hint: audit.action ? audit.action : '',
+        });
+    } else if (ctx.hasDeployment) {
+        rows.push({
+            key: 'last_touched',
+            label: 'Last touched by',
+            valueHtml: `<span class="manage-attr manage-attr--unknown">no audit data</span>`,
+            hint: 'no recent deploy actions',
+        });
+    }
+
+    return rows;
+};
+
+/** Show a transient message in the inline output panel. */
+APP.manage._setOutput = function (text, state) {
+    const out = document.getElementById('manage-output');
+    if (!out) return;
+    if (!text) {
+        out.hidden = true;
+        out.textContent = '';
+        out.removeAttribute('data-state');
+        return;
+    }
+    out.hidden = false;
+    out.textContent = text;
+    if (state) out.setAttribute('data-state', state);
+    else out.removeAttribute('data-state');
+};
+
+/** Wire the action strip — idempotent. */
+APP.manage._wireActions = function () {
+    const strip = document.getElementById('manage-actions');
+    if (!strip || strip._manageWired) return;
+    strip._manageWired = true;
+    strip.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-manage-action]');
+        if (!btn) return;
+        const action = btn.dataset.manageAction;
+        if (action === 'refresh') {
+            APP.manage._setOutput('Refreshing...', 'loading');
+            try {
+                if (typeof refreshAll === 'function') await refreshAll();
+            } catch (err) { /* surfaced via banners */ }
+            await APP.manage.render();
+            APP.manage._setOutput('');
+        } else if (action === 'logs') {
+            const section = document.getElementById('deployment-history-section');
+            if (section) {
+                section.style.display = 'block';
+                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        } else if (action === 'health') {
+            const project = APP.manage._currentProject();
+            APP.manage._setOutput(`Running health check${project ? ' for ' + project : ''}...`, 'loading');
+            try {
+                const r = await fetch(`/api/deploy/infrastructure${project ? '?project=' + encodeURIComponent(project) : ''}`);
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Health check failed');
+                const lines = [];
+                lines.push(`Project: ${d.project_name || '(default)'}`);
+                lines.push(`Deployment mode: ${d.deployment_mode || 'unknown'}`);
+                if (d.summary) {
+                    lines.push(`  c2 servers:     ${d.summary.c2_server_count || 0}`);
+                    lines.push(`  redirectors:    ${d.summary.redirector_count || 0}`);
+                    lines.push(`  bastion:        ${d.summary.has_bastion ? 'yes' : 'no'}`);
+                    lines.push(`  attack box:     ${d.summary.has_attack_box ? 'yes' : 'no'}`);
+                    lines.push(`  subnet count:   ${d.summary.subnet_count || 0}`);
+                }
+                if (d.network?.vpc_id) lines.push(`VPC: ${d.network.vpc_id}`);
+                lines.push('');
+                lines.push('OK — infrastructure is responsive.');
+                APP.manage._setOutput(lines.join('\n'), 'ok');
+            } catch (err) {
+                APP.manage._setOutput(`ERROR: ${err.message || err}`, 'error');
+            }
+        } else if (action === 'destroy') {
+            APP.manage._confirmDestroy();
+        }
+    });
+};
+
+/** Resolve the current project name. */
+APP.manage._currentProject = function () {
+    if (APP.activeDeployment && APP.activeDeployment.current) {
+        return APP.activeDeployment.current;
+    }
+    if (typeof getCurrentProjectName === 'function') {
+        return getCurrentProjectName();
+    }
+    return '';
+};
+
+/** Confirm + invoke destroy. */
+APP.manage._confirmDestroy = function () {
+    const project = APP.manage._currentProject() || '(active deployment)';
+    const msg = `Destroy infrastructure for "${project}"?\n\nThis is non-reversible — all EC2 instances, networking, and state will be torn down. Snapshots and Terraform state archives are kept.`;
+    const proceed = () => {
+        if (typeof destroyInfrastructure === 'function') {
+            destroyInfrastructure(project === '(active deployment)' ? null : project);
+        } else {
+            console.warn('destroyInfrastructure() not available');
+        }
+    };
+    if (window.APP && typeof window.APP.modal === 'function') {
+        try {
+            window.APP.modal({
+                title: 'Destroy deployment',
+                body: msg,
+                danger: true,
+                confirmLabel: 'Destroy',
+                onConfirm: proceed,
+            });
+            return;
+        } catch (_) { /* fall through */ }
+    }
+    if (window.confirm(msg)) proceed();
+};
+
+/** Pull live data + render the hero / spec-list. Re-entrant. */
+APP.manage.render = async function () {
+    const view = document.getElementById('manage-view');
+    const heroName = document.getElementById('manage-hero-name');
+    const heroType = document.getElementById('manage-hero-type');
+    const heroState = document.getElementById('manage-hero-state');
+    const specList = document.getElementById('manage-spec-list');
+    if (!view || !specList) return;
+
+    APP.manage._wireActions();
+
+    const project = APP.manage._currentProject();
+    if (!project) {
+        view.style.display = 'block';
+        if (heroName) heroName.textContent = '(no deployment selected)';
+        if (heroType) heroType.textContent = '—';
+        if (heroState) heroState.textContent = '';
+        APP.manage._updateStatusPill('idle');
+        specList.innerHTML = `
+            <div class="manage-empty">
+                <p class="manage-empty__title">No deployment selected</p>
+                <p class="manage-empty__body">Pick a deployment from the header selector, or deploy a new one from the Deploy sub-pill.</p>
+            </div>
+        `;
+        return;
+    }
+
+    view.style.display = 'block';
+    if (heroName) heroName.textContent = project;
+    if (heroState) heroState.textContent = '';
+    if (heroType) heroType.textContent = 'loading…';
+
+    const [infraRes, statusRes, costRes, auditEntry, configRes] = await Promise.all([
+        fetch(`/api/deploy/infrastructure?project=${encodeURIComponent(project)}`).then(r => r.json()).catch(() => ({ success: false })),
+        fetch(`/api/deploy/status?project=${encodeURIComponent(project)}`).then(r => r.json()).catch(() => ({ success: false })),
+        fetch('/api/costs/aggregate').then(r => r.json()).catch(() => ({ success: false })),
+        APP.manage._loadLastTouched(project),
+        fetch('/api/config').then(r => r.json()).catch(() => ({ success: false })),
+    ]);
+
+    const hasDeployment = !!(infraRes && infraRes.has_deployment);
+    const config = (configRes && configRes.config) || {};
+    const deployType = config.deployment_type || (infraRes && infraRes.deployment_mode) || '';
+    const deployConfig = (typeof DEPLOYMENT_CONFIGS !== 'undefined') ? DEPLOYMENT_CONFIGS[deployType] : null;
+
+    if (heroType) heroType.textContent = deployConfig?.title || deployType || '—';
+    if (heroState) {
+        if (hasDeployment) heroState.textContent = 'live infrastructure';
+        else heroState.textContent = 'no live infrastructure';
+    }
+
+    if (statusRes?.status?.deployed) APP.manage._updateStatusPill('live');
+    else if (statusRes?.status?.last_error) APP.manage._updateStatusPill('error');
+    else if (hasDeployment) APP.manage._updateStatusPill('live');
+    else APP.manage._updateStatusPill('idle');
+
+    let projectCost = null;
+    if (costRes?.success && Array.isArray(costRes.deployments)) {
+        const entry = costRes.deployments.find(d => d.project_name === project);
+        if (entry && Number.isFinite(entry.monthly)) projectCost = entry.monthly;
+    }
+
+    const rows = APP.manage._buildRows({
+        infrastructure: infraRes || {},
+        cost: projectCost,
+        audit: auditEntry,
+        config: config,
+        account_id: infraRes?.account_id || '',
+        instance_states: {},
+        hasDeployment: hasDeployment,
+    });
+
+    specList.innerHTML = rows.map(APP.manage._renderRow).join('');
+};
+
+/** Init hook — idempotent. */
+APP.manage.init = function () {
+    if (APP.manage._initDone) return;
+    APP.manage._initDone = true;
+    APP.manage._wireActions();
+    if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function') {
+        APP.activeDeployment.subscribe(() => {
+            const pane = document.getElementById('subpill-pane-manage');
+            if (pane && !pane.hidden) APP.manage.render();
+        });
+    }
+};
+
+// Wire on DOMContentLoaded so APP.activeDeployment subscriber is in place
+// before any subpill activation. Idempotent with the in-init hook below.
+if (typeof window !== 'undefined') {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            try { APP.manage.init(); } catch (e) { console.warn('APP.manage.init failed:', e); }
+        });
+    } else {
+        try { APP.manage.init(); } catch (e) { console.warn('APP.manage.init failed:', e); }
+    }
+}
+// === end PHASE 3A Manage sub-pill =====================================

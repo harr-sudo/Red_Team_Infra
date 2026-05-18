@@ -9,6 +9,7 @@ upstream of the dashboard.
 import json
 import os
 import pwd
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,11 @@ _STORE_PATH = Path.home() / ".dashboard" / "operators.json"
 _LOCK = threading.RLock()
 
 DEFAULT_COLORS = ["#a31621", "#3b82f6", "#0d9488", "#7c3aed", "#ea580c", "#65a30d"]
+
+# 6-hex-char color literal validator. The frontend swatch picker only emits
+# values from DEFAULT_COLORS, but the PATCH endpoint accepts arbitrary input
+# from any client so we validate strictly.
+_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _ensure_store():
@@ -81,6 +87,34 @@ def add(op_id, display, color):
         return entry
 
 
+def update(op_id, *, display=None, color=None):
+    """Rename and/or recolor an existing operator. Returns the updated entry.
+
+    Only ``display`` and ``color`` are mutable — the ``id`` is the audit-log
+    join key and must never change. Pass ``None`` for fields you don't want
+    to touch; an empty/whitespace ``display`` is also treated as no-op
+    (callers shouldn't blank out display names).
+
+    Raises ValueError for unknown id or invalid color literal.
+    """
+    if color is not None:
+        if not isinstance(color, str) or not _COLOR_RE.match(color):
+            raise ValueError("color must be a 6-hex-char '#RRGGBB' literal")
+    with _LOCK:
+        data = load()
+        entry = next((o for o in data["operators"] if o["id"] == op_id), None)
+        if entry is None:
+            raise ValueError(f"operator '{op_id}' not found")
+        if display is not None:
+            d = str(display).strip()
+            if d:
+                entry["display"] = d
+        if color is not None:
+            entry["color"] = color
+        save(data)
+        return entry
+
+
 def remove(op_id):
     with _LOCK:
         data = load()
@@ -102,6 +136,45 @@ def get_default():
         return default_id
     ops = data.get("operators") or []
     return ops[0]["id"] if ops else None
+
+
+def get_last_active(op_id):
+    """Return the ISO timestamp of the most recent audit-log action by
+    ``op_id``, or None if the operator has never acted.
+
+    Imported lazily to avoid a circular dependency: audit_service is a peer
+    module that does not import operator_service, but the Flask app wires
+    both into the same package and we'd rather not invert that.
+    """
+    from webapp.backend.services import audit_service
+    rows = audit_service.read_recent(limit=500, op_filter=op_id)
+    return rows[0]["ts"] if rows else None
+
+
+def get_last_active_map():
+    """Bulk variant — single audit-log scan returning a map of
+    ``{op_id: {"last_active": iso_or_None, "action_count": int}}`` for every
+    known operator. O(N audit entries) once, vs O(N operators * N entries)
+    if callers loop over get_last_active().
+
+    Unknown operators (entries in audit log whose id no longer exists in the
+    operator store) are silently ignored — they don't get a slot in the map.
+    """
+    from webapp.backend.services import audit_service
+    ids = {o["id"] for o in list_operators()}
+    out = {oid: {"last_active": None, "action_count": 0} for oid in ids}
+    # 500 is the same cap used by the activity feed; sufficient for typical
+    # ops history and bounded so a runaway audit log doesn't tank this call.
+    for entry in audit_service.read_recent(limit=500):
+        op = entry.get("op")
+        if op not in out:
+            continue
+        slot = out[op]
+        slot["action_count"] += 1
+        # read_recent is most-recent-first, so the first hit IS last_active.
+        if slot["last_active"] is None:
+            slot["last_active"] = entry.get("ts")
+    return out
 
 
 def resolve_from_request(request):

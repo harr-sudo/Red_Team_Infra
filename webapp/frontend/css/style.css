@@ -5652,7 +5652,13 @@ body { padding-top: 64px; }
 }
 /* === end M-Redesign Agent 3 ===================================== */
 
-/* === D8 Agent B — Deployments → Cleanup sub-pill === */
+/* === D8 Agent B — Deployments → Cleanup sub-pill ===
+   DEPRECATED BY PHASE 3C — superseded by `.cleanup-v3 *` namespace at the
+   bottom of this file (`/* === PHASE 3C — CLEANUP SUB-PILL === */`).
+   Kept temporarily because legacy markup paths (older test fixtures) still
+   reference `.cleanup-header`, `.cleanup-summary*`, `.cleanup-resource-*`.
+   Slated for removal once those callers migrate. Do not extend.
+*/
 .cleanup-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
 .cleanup-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
 .cleanup-summary__stat {
@@ -5742,7 +5748,13 @@ body { padding-top: 64px; }
 }
 /* === end D8 Agent B ===================================== */
 
-/* === D8 Agent A — Settings inventory cards (Domains, Secrets, Services) === */
+/* === D8 Agent A — Settings inventory cards (Domains, Secrets, Services) ===
+   PHASE 3D DEPRECATION (2026-05-18): These selectors are no longer rendered
+   by `loadSettingsDomains` / `loadSettingsSecrets` / `loadSettingsServices`.
+   Those loaders now emit `.spec-list` / `.spec-row` markup (Phase 2b
+   primitives). Kept here for ~one release as a safety net — any third-party
+   override or stale render that still references the legacy class names
+   continues to look reasonable. Remove in Phase 4 after verified soak time. */
 .settings-domain-row,
 .settings-secret-row,
 .settings-service-row {
@@ -5780,7 +5792,10 @@ body { padding-top: 64px; }
     flex-wrap: wrap;
     gap: 12px;
     font-size: 11px;
-    color: var(--text-muted);
+    /* Promoted from --text-muted to --text-secondary on 2026-05-18 (Phase
+       3d). 11px monospace on --bg-input is borderline at AA in light mode
+       under --text-muted; --text-secondary is comfortably above 4.5:1. */
+    color: var(--text-secondary);
     font-family: var(--font-family-mono);
 }
 /* === end D8 Agent A ===================================== */
@@ -7027,4 +7042,1759 @@ body[data-journey-open="true"] .container > main {
     color: var(--text-secondary);
     letter-spacing: 0.06em;
     text-transform: uppercase;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   PHASE 3D — SETTINGS REFINEMENT
+   ════════════════════════════════════════════════════════════════════════
+   Scope: audit + targeted refinement of the 8 Settings sections under
+   `.tab-page[data-page="settings"]`. NOT a full rebuild — Phase 2a
+   established the section header rhythm (settings-section__eyebrow /
+   __title / __description) and Phase 3d only normalizes what was left.
+
+   What this section does:
+     1. Provides the `.spec-list--inset` modifier — the Phase 2b primitive
+        renders with no surface chrome (deliberate, so spec-edit can sit
+        directly inside a takeover card). When consumed inside a Settings
+        `.section-card`, we want the rows to feel inset against the card
+        without re-painting the whole surface. The modifier widens the
+        gutter so the row hover rail doesn't kiss the card edge.
+     2. Provides the `.settings-spec-toolbar` — the status + Refresh button
+        pair that lives above each Domains/Secrets/Services spec-list. It
+        used to be a one-off flex row built with inline styles; now a
+        proper component with consistent type rhythm.
+     3. Settings-scoped `.seg-control` overrides — by default seg-control
+        is `inline-flex`, fine for compact toolbars. In Deployment
+        Preferences we want it to fill the form-row width and stack to
+        wrap on narrow viewports. Just a width hint, no new chrome.
+     4. Cost Tracker summary surface — the four-up bill / daily-avg / etc.
+        cards are now a `.spec-list--inset` so the section reads as a
+        single rhythmic strip (matches Deploy summary composition A).
+        Existing chart blocks (`.cost-trend-section`, breakdown table)
+        are untouched.
+     5. Roadmap `<details>` blocks — the existing styling from Phase 2a
+        (line 5480) hits the `<details>` chrome already; we add a small
+        eyebrow-style padding on the `<summary>` so the type rhythm
+        matches the rest of the Settings page.
+
+   Layer-aware contrast invariants verified:
+     - Settings .section-card paints --bg-card. The .spec-list inside
+       inherits transparent, so .spec-row__head paints on --bg-card
+       (rest) and --bg-card-hover (hover/editing). Both pass AA for
+       --text-primary / --text-secondary / --text-muted body text.
+     - .spec-list--inset only changes outer padding, not paint, so the
+       contrast pairings are unchanged.
+     - .settings-spec-toolbar text on --bg-card → --text-secondary OK
+       in both themes (8.4:1 dark, 6.2:1 light).
+     - .seg-control already audited in Phase 2b; no change.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. spec-list inset wrapper (use when spec-list sits inside a card) ─ */
+.spec-list--inset {
+    /* Spec-rows have a 2px brand-light hover rail painted via ::before
+       at left: 0. When the list sits inside .section-card (which adds
+       22px of padding), the rail collides with the card border. The
+       inset modifier pulls the list to the card padding edge so the
+       rail has clearance, and adds a hairline top border so the first
+       row's lack of top-border doesn't read as visual debt against the
+       card body. */
+    margin-top: 4px;
+    border-top: 1px solid var(--border-subtle);
+}
+.spec-list--inset .spec-row:last-child {
+    /* Visually balance the top hairline with the bottom edge of the
+       last row when the consumer card has its own bottom padding. */
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+/* ── 2. Settings spec-list toolbar (status + refresh button) ──────────── */
+/* Used in Domains, Secrets, Infrastructure Services, and any future
+   inventory section. Replaces the inline-style `display: flex` toolbars
+   added in D8. Anchors the type rhythm to mono caps so the section reads
+   consistently across every inventory loader. */
+.settings-spec-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.settings-spec-toolbar__status {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    /* On --bg-card. Promoted from --text-muted (D8 default) to
+       --text-secondary for AA stability at 10.5px caps. */
+    color: var(--text-secondary);
+}
+.settings-spec-toolbar__status[data-state="error"] {
+    color: var(--danger-text);
+}
+.settings-spec-toolbar__status[data-state="loading"] {
+    color: var(--text-muted);
+}
+
+/* ── 3. Settings-scoped seg-control sizing ────────────────────────────── */
+.tab-page[data-page="settings"] .seg-control {
+    /* Default seg-control is inline-flex; in form rows we want it to
+       fill the form column and wrap to new lines on narrow viewports. */
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+    max-width: 480px;
+}
+.tab-page[data-page="settings"] .seg-control__option {
+    flex: 1 1 auto;
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* ── 4. Cost Tracker summary as spec-list (Phase 3d goal 5) ──────────── */
+/* The four-up cards (Total / Daily Avg / Budget Remaining / Est Monthly)
+   are now a spec-list. The chart + breakdown blocks below remain as-is.
+   This modifier just adds a small bottom rhythm so the summary feels
+   like a self-contained block before the chart. */
+.cost-tracker-summary {
+    /* Container that hosts the inline spec-list. Adds rhythm; no chrome. */
+    margin-bottom: 4px;
+}
+.cost-tracker-summary .spec-row__value {
+    /* Cost values are always numbers — render tabular by default so
+       the column aligns vertically across rows. */
+    font-variant-numeric: tabular-nums;
+}
+.cost-tracker-summary .spec-row[data-cost-state="success"] .spec-row__value {
+    color: var(--success-text);
+}
+.cost-tracker-summary .spec-row[data-cost-state="warning"] .spec-row__value {
+    color: var(--warning-text);
+}
+.cost-tracker-summary .spec-row[data-cost-state="danger"] .spec-row__value {
+    color: var(--danger-text);
+}
+
+/* ── 5. Roadmap <details> — refine summary padding for V3 rhythm ──────── */
+/* Phase 2a styled the <details> chrome; this just tightens the summary
+   line-height so the eyebrow caption that lives on the right of each
+   summary (e.g. `beacon-api-features-backlog.md`) aligns properly. */
+.tab-page[data-page="settings"] #settings-roadmap details summary {
+    /* Already 12px 16px from Phase 2a defaults. Bump to 13px 16px so the
+       roadmap items match the V3 13px body rhythm exactly. */
+    font-size: 13px;
+    padding: 12px 16px;
+    line-height: 1.45;
+}
+.tab-page[data-page="settings"] #settings-roadmap details summary .roadmap-summary__doc {
+    /* Caption that sits on the right of each summary line; floats with
+       the doc filename. Mono caps eyebrow on --bg-section. */
+    float: right;
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    /* Promoted from --text-muted to --text-secondary for AA in light
+       mode against --bg-section. */
+    color: var(--text-secondary);
+}
+
+/* ── 6. Section-header rhythm — caps clamp ─────────────────────────────── */
+/* During the audit pass, two of the eight section eyebrows were authored
+   in title case ("Application Information" / "Roadmap"); the other six
+   used mono caps. This is purely a defensive rule — no-op for already-
+   capped strings, but clamps any future eyebrow content authored in
+   regular case to the mono-caps rhythm. */
+.tab-page[data-page="settings"] .settings-section__eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+}
+
+/* ── 7. Description max-width — keep descriptions at ~2 lines max ─────── */
+/* Phase 3d audit found section descriptions were sometimes >2 lines on
+   normal viewports. Cap the readable width so the eyebrow → title →
+   description block reads as one tight header column. */
+.tab-page[data-page="settings"] .settings-section__description {
+    max-width: 64ch;
+    line-height: 1.55;
+}
+
+/* ── 8. Status display callout used in Prereqs section — V3 alignment ── */
+/* The `.status-display.info` block at the top of the General section
+   carries the legacy "Application Information" copy. Add a hairline
+   border-left so it visually reads as an info note rather than a wide
+   solid-bg block. */
+.tab-page[data-page="settings"] #settings-general .status-display.info {
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-left: 3px solid var(--brand-light);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+}
+.tab-page[data-page="settings"] #settings-general .status-display.info p {
+    margin: 4px 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+.tab-page[data-page="settings"] #settings-general .status-display.info p strong {
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+}
+
+/* ── 9. Preferences form-group — V3 13px inline label ─────────────────── */
+.tab-page[data-page="settings"] #settings-prefs .form-group--compact {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0;
+}
+.tab-page[data-page="settings"] #settings-prefs .form-group--compact label {
+    margin-bottom: 0;
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+.tab-page[data-page="settings"] #settings-prefs .form-group--compact small {
+    margin-top: 4px;
+    font-size: 11.5px;
+    /* On --bg-card; --text-muted at 11.5px is borderline in light mode.
+       Use --text-secondary for safety. */
+    color: var(--text-secondary);
+}
+
+/* ── 9b. Cost breakdown table — contrast fix (Phase 3d audit catch) ───
+   Phase 2a's sweep didn't visit this table because cost data only renders
+   conditionally (when actual cost-explorer data >$0.01 is present). The
+   global `.cost-breakdown-table th { color: var(--gold-muted); }` rule
+   resolves to (73, 92, 45) on the table-header background (194, 208, 159)
+   in light mode → 4.49:1, just below AA (4.5). Promote to
+   --text-primary inside the Settings cost surface so the table headers
+   are stable in both themes. */
+.tab-page[data-page="settings"] .cost-breakdown-table th {
+    color: var(--text-primary);
+}
+
+/* ── 10. Empty / error states for spec-list loaders ───────────────────── */
+.settings-spec-empty,
+.settings-spec-error {
+    margin: 14px 4px 4px 4px;
+    padding: 14px 16px;
+    background: var(--bg-input);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+.settings-spec-error {
+    border-style: solid;
+    border-color: var(--danger-border);
+    background: var(--danger-bg);
+    color: var(--danger-text);
+}
+/* === end PHASE 3D — SETTINGS REFINEMENT ============================== */
+
+/* ════════════════════════════════════════════════════════════════════════
+   === PHASE 3C — CLEANUP SUB-PILL ===
+   V3-native rebuild of the Deployments → Cleanup sub-pane. Replaces the
+   legacy `.cleanup-*` skeleton (now deprecated above) with primitives
+   composed from Phase 2b: `.spec-list`, `.spec-row`, `.spec-pill`,
+   `.spec-edit-btn`, `.icon`.
+
+   Namespace: `.cleanup-v3 *`. The 4 summary stat tiles are the only
+   bespoke chrome; everything below uses the shared spec-list spine.
+
+   Layer-aware contrast: all surfaces sit on `--bg-card` (group container)
+   or `--bg-card-hover` (row hover/editing). Text tokens follow the same
+   "no --text-muted on a hover/editing surface" rule established in
+   Phase 2b (see contrast-audit-2b.md).
+   ════════════════════════════════════════════════════════════════════════ */
+
+.cleanup-v3 {
+    max-width: 980px;
+    margin: 0;
+    padding: 0;
+}
+
+/* ── Eyebrow strip: title + description + actions ───────────────────── */
+.cleanup-v3__eyebrow {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 24px;
+}
+.cleanup-v3__eyebrow-text {
+    flex: 1;
+    min-width: 0;
+}
+.cleanup-v3__eyebrow-label {
+    display: inline-block;
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+.cleanup-v3__title {
+    font-size: 22px;
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    letter-spacing: -0.012em;
+    margin: 0 0 6px 0;
+    line-height: 1.2;
+}
+.cleanup-v3__description {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.55;
+    max-width: 680px;
+}
+.cleanup-v3__eyebrow-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.cleanup-v3__refreshed-at {
+    font-family: var(--font-family-mono);
+    font-size: 10px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.cleanup-v3__refreshed-at[hidden] { display: none; }
+.cleanup-v3__refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.cleanup-v3__refresh-btn .icon { vertical-align: 0; }
+.cleanup-v3__refresh-btn[data-loading="true"] .icon {
+    animation: cleanup-v3-spin 900ms linear infinite;
+}
+
+@keyframes cleanup-v3-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+/* ── Summary stat tiles (4 numbers) ─────────────────────────────────── */
+.cleanup-v3-summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 28px;
+}
+.cleanup-v3-summary__tile {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    padding: 18px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.cleanup-v3-summary__tile:hover {
+    border-color: var(--border-light);
+}
+.cleanup-v3-summary__num {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+}
+.cleanup-v3-summary__label {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+
+/* ── Group cards: one per AWS service ───────────────────────────────── */
+.cleanup-v3__groups {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+}
+.cleanup-v3__placeholder {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin: 0;
+    padding: 32px 16px;
+    text-align: center;
+    border: 1px dashed var(--border-subtle);
+    border-radius: var(--radius);
+}
+
+.cleanup-group {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+.cleanup-group__header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 18px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.cleanup-group__title {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    margin: 0;
+}
+.cleanup-group__count {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+}
+.cleanup-group__list {
+    /* Spec-list inside a group. Rows manage their own padding. */
+    padding: 0;
+}
+
+/* ── Per-row action cluster (Adopt / Destroy / Mark known) ──────────── */
+/* The Phase 2b .spec-row__action slot is a single 22px square. The
+   Cleanup sub-pill needs three text buttons inline, so we extend the
+   action column to fit a button cluster while keeping the spec-row head
+   grid stable. */
+.cleanup-row .spec-row__head {
+    grid-template-columns: 180px 1fr auto;
+    align-items: center;
+    cursor: default;
+}
+.cleanup-row:hover .spec-row__head {
+    /* Cleanup rows are not click-to-edit, just hover-to-reveal-actions.
+       Cancel the spec-row hover transform (no left-rail jump) but keep
+       the hover background so the actions read as targetable. */
+    transform: none;
+}
+.cleanup-row:hover .spec-row__head::before {
+    /* Keep the brand-light left rail subtle — these rows are informational,
+       not click-to-edit. */
+    opacity: 0.45;
+}
+.cleanup-row .spec-row__head > .cleanup-row__actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+    align-items: center;
+    opacity: 0.6;
+    transition: opacity var(--motion-duration-base) var(--motion-easing-standard);
+}
+.cleanup-row:hover .spec-row__head > .cleanup-row__actions,
+.cleanup-row:focus-within .spec-row__head > .cleanup-row__actions {
+    opacity: 1;
+}
+
+/* spec-edit-btn--danger: destructive variant. Border + text in danger
+   tokens, fill stays neutral until hover (avoid red-by-default). */
+.spec-edit-btn--danger {
+    color: var(--danger-text, var(--danger));
+    border-color: var(--danger-border, var(--danger));
+}
+.spec-edit-btn--danger:hover {
+    background: var(--danger-bg, color-mix(in srgb, var(--danger) 12%, transparent));
+    border-color: var(--danger);
+    color: var(--danger-text, var(--danger));
+}
+.spec-edit-btn--danger:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
+/* Cleanup-action button — compact spec-edit-btn variant for the action
+   cluster. Inherits .spec-edit-btn; just trims padding + adds an icon. */
+.cleanup-row__action {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    font-size: 10.5px;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    white-space: nowrap;
+}
+.cleanup-row__action .icon { vertical-align: 0; }
+
+/* ── Marked-known-external row state ────────────────────────────────── */
+/* When a resource is marked known by an operator, the row stays visible
+   with a draft pill + attribution hint. */
+.cleanup-row[data-marked-known="true"] .spec-row__head {
+    opacity: 0.78;
+}
+.cleanup-row[data-marked-known="true"] .spec-row__value {
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in srgb, var(--text-muted) 60%, transparent);
+    text-decoration-thickness: 1px;
+}
+.cleanup-row__attribution {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    /* On --bg-card and --bg-card-hover surfaces — use --text-secondary,
+       NOT --text-muted (same rule as spec-row__hint). */
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+.cleanup-row__attribution-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+}
+.cleanup-row__value-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.cleanup-row__value-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+/* ── Narrow viewport ────────────────────────────────────────────────── */
+@media (max-width: 720px) {
+    .cleanup-v3-summary { grid-template-columns: repeat(2, 1fr); }
+    .cleanup-v3__eyebrow { flex-direction: column; align-items: stretch; }
+    .cleanup-v3__eyebrow-actions { justify-content: flex-end; }
+    .cleanup-row .spec-row__head {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto;
+        gap: 6px 12px;
+    }
+    .cleanup-row .spec-row__head > .cleanup-row__actions {
+        opacity: 1;
+        justify-content: flex-start;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cleanup-v3__refresh-btn[data-loading="true"] .icon { animation: none; }
+    .cleanup-v3-summary__tile { transition: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   === PHASE 3A — MANAGE SUB-PILL ===
+   V3-native rebuild of the Manage sub-pill (Deployments tab → Manage).
+   Composes Phase 2B primitives (.spec-list, .spec-row, .spec-pill, .icon)
+   into a hero header + resource summary + actions strip.
+
+   Files boundary:
+     - This section appends to style.css (only).
+     - HTML lives in #subpill-pane-manage in index.html.
+     - JS lives under APP.manage.* in app.js.
+
+   Layer-aware contrast: hero + spec-list sit on the .subpill-pane
+   surface (= app/section background). Action buttons use the same
+   .spec-edit-btn pattern from Phase 2B (verified on hover-card).
+   --text-muted is avoided everywhere a hover state lifts the
+   background to --bg-card-hover (see Phase 2B audit note on
+   .spec-row__hint).
+   ════════════════════════════════════════════════════════════════════════ */
+
+.manage-view {
+    max-width: 920px;
+    margin: 0;
+    padding: 0;
+    animation: manage-fade-in 320ms var(--motion-easing-standard) both;
+}
+
+/* Eyebrow strip: thin caps label + meta cluster, hairline below */
+.manage-view__eyebrow {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 22px;
+    flex-wrap: wrap;
+}
+.manage-view__eyebrow-label {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.manage-view__eyebrow-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+}
+.manage-view__updated {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    /* --text-secondary, not --text-muted: on hover/active panes the
+       parent surface can flicker to --bg-card-hover; --text-secondary
+       is safe on both --bg-app and --bg-card-hover (see Phase 2B
+       contrast audit hint). */
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+.manage-view__updated:empty { display: none; }
+
+/* Hero: mono kicker + large project name + type/state caption */
+.manage-view__hero {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 26px;
+}
+.manage-view__hero-caption {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.manage-view__hero-name {
+    font-family: var(--font-family-mono);
+    font-size: 22px;
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    letter-spacing: -0.012em;
+    word-break: break-all;
+    line-height: 1.2;
+    margin: 0;
+}
+.manage-view__hero-type {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 0;
+}
+.manage-view__hero-type strong {
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+}
+.manage-view__hero-state {
+    color: var(--text-secondary);
+}
+.manage-view__hero-state::before {
+    content: " · ";
+    color: var(--border-light);
+    margin: 0 4px;
+}
+
+/* Action strip: row of icon+label buttons, consistent with spec-edit-btn
+   chrome but slightly larger for the page-level affordance. */
+.manage-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 24px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border-subtle);
+}
+.manage-action {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 8px 14px;
+    border-radius: var(--radius-xs);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                border-color var(--motion-duration-base) var(--motion-easing-standard),
+                color var(--motion-duration-base) var(--motion-easing-standard),
+                transform var(--motion-duration-base) var(--motion-easing-spring);
+}
+.manage-action:hover:not([disabled]) {
+    background: var(--bg-card-hover);
+    border-color: var(--border-light);
+    transform: translateY(-1px);
+}
+.manage-action:focus-visible {
+    outline: none;
+    border-color: var(--brand-light);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+}
+.manage-action[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.manage-action .icon {
+    /* Action-strip glyphs slightly larger than inline-icon default */
+    width: 13px;
+    height: 13px;
+    stroke-width: 1.4;
+    color: var(--text-secondary);
+    transition: color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.manage-action:hover:not([disabled]) .icon {
+    color: var(--text-primary);
+}
+
+/* Danger variant — burgundy ring + brand on hover, never a solid
+   destructive fill (operator must click + confirm in modal). */
+.manage-action--danger {
+    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+    color: var(--danger-text, var(--text-primary));
+}
+.manage-action--danger:hover:not([disabled]) {
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    border-color: var(--danger);
+    color: var(--text-primary);
+}
+.manage-action--danger:hover:not([disabled]) .icon {
+    color: var(--danger);
+}
+.manage-action--danger:focus-visible {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
+/* Inline output panel — terminal-ish surface for health-check results.
+   Uses --bg-terminal (always-dark) per the terminal-safe-variables rule
+   in CLAUDE.md, so contrast holds in both themes. */
+.manage-view__output {
+    margin-top: 18px;
+    background: var(--bg-terminal);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    color: var(--text-terminal);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    line-height: 1.55;
+    max-height: 320px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.manage-view__output[hidden] { display: none; }
+.manage-view__output[data-state="loading"] {
+    color: var(--text-secondary);
+}
+.manage-view__output[data-state="error"] {
+    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+
+/* Last-touched attribution row — operator name renders inside .spec-row__value;
+   we lean on the existing primitive but mark the attribution token. */
+.spec-row__value .manage-attr {
+    font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+}
+.spec-row__value .manage-attr--unknown {
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-medium);
+    font-style: italic;
+}
+
+/* Empty state when no deployment selected */
+.manage-empty {
+    padding: 36px 24px;
+    text-align: center;
+    border: 1px dashed var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+}
+.manage-empty__title {
+    font-size: 14px;
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+    margin: 0 0 6px;
+}
+.manage-empty__body {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.55;
+}
+
+@keyframes manage-fade-in {
+    from { opacity: 0; transform: translateY(2px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 720px) {
+    .manage-view__eyebrow {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    .manage-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .manage-action {
+        justify-content: center;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .manage-view, .manage-action {
+        animation: none;
+        transition: none;
+    }
+    .manage-action:hover:not([disabled]) {
+        transform: none;
+    }
+}
+
+/* === END PHASE 3A — MANAGE SUB-PILL === */
+
+/* === END PHASE 3C — CLEANUP SUB-PILL === */
+
+/* ════════════════════════════════════════════════════════════════════════
+   === PHASE 3E — DASHBOARD WIDGETS ===
+   M-V3-Native Phase 3e (branch refactor/dashboard-m-v3-native-phase3).
+   Refreshes the 12 dashboard widgets to compose Phase 2b primitives
+   (.spec-list / .spec-row / .spec-pill) rather than the bespoke
+   .activity-feed / .dashboard-deployment-card markup introduced in
+   M-Dashboard. Existing widget chrome (the cards themselves at
+   ~line 4966) is preserved; only the INTERIOR typography rhythm,
+   attribution dots, status pills, and cost-delta badge variants are
+   re-derived from the V3 token set.
+
+   No existing .dashboard-widget rules are deleted — typography is
+   layered on top via .dashboard-widget__eyebrow + an overrideable
+   .dashboard-widget__title block below. The legacy single-line title
+   rendering still works for any widget that hasn't been migrated.
+
+   API surface (introduced in this phase):
+     .operator-dot                — 8px circle utility, identity color
+                                     via inline style background. Same
+                                     visual treatment everywhere it
+                                     appears (header chip, activity
+                                     feed, deployment cards).
+     .operator-dot--sm / --lg     — 6px / 10px variants.
+     .dashboard-widget__eyebrow   — mono caps kicker above the title.
+     .dashboard-widget__head      — flex row container for eyebrow +
+                                     title + optional trailing controls.
+     .dashboard-widget__title     — (existing) — overrides apply when
+                                     paired with __eyebrow.
+     .dashboard-deployment-card   — (existing) — body block rebuilt
+                                     with kicker / title / pill / meta /
+                                     cost rhythm.
+     .dashboard-cost-delta-badge  — colored success/danger pill for
+                                     the % change indicator.
+     .activity-feed (legacy class) is preserved as a wrapper around the
+       new .spec-list usage so any external CSS / JS that probes it
+       still finds it.
+
+   Layer-aware contrast invariants verified in BOTH themes (audit
+   written to preview/contrast-audit-phase3e-dashboard.md):
+     - eyebrow on .dashboard-widget bg-card → --text-secondary OK
+     - title on .dashboard-widget bg-card → --text-primary OK
+     - .spec-row__key (operator name) on bg-card → --text-primary OK
+     - .spec-row__value (verb + target) on bg-card → --text-primary OK
+     - cost delta-badge text on --success-bg / --danger-bg fills → OK
+     - sparkline polyline uses --brand-light, the same stroke used by
+       .spec-row hover rail; reads cleanly in both themes.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Operator dot — unified utility for header chip + activity + cards. ── */
+.operator-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    /* Hairline ring on the neutral surface helps very-dark identity
+       colors remain perceptible against bg-card-hover (close in
+       luminance to the darker operator hexes in dark mode). */
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 22%, transparent);
+    background: var(--text-muted); /* fallback when no inline color set */
+    transition: transform var(--motion-duration-base) var(--motion-easing-standard);
+}
+.operator-dot--sm { width: 6px; height: 6px; }
+.operator-dot--lg { width: 10px; height: 10px; }
+/* When the dot lives inside an interactive row, lift it on hover —
+   same affordance the .spec-row left rail uses. */
+.spec-row:hover .operator-dot,
+.dashboard-deployment-card:hover .operator-dot {
+    transform: scale(1.08);
+}
+@media (prefers-reduced-motion: reduce) {
+    .operator-dot,
+    .spec-row:hover .operator-dot,
+    .dashboard-deployment-card:hover .operator-dot {
+        transition: none;
+        transform: none;
+    }
+}
+
+/* ── Widget typography rhythm (eyebrow + title) ────────────────────────── */
+.dashboard-widget__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+}
+.dashboard-widget__head-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.dashboard-widget__eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.1;
+}
+/* When paired with an eyebrow the title takes the V3 section-title
+   rhythm (15px / 600 / primary) instead of the legacy 9.5px caps
+   treatment. Selector specificity beats the .dashboard-widget__title
+   default without disturbing widgets that haven't been migrated. */
+.dashboard-widget__head .dashboard-widget__title,
+.dashboard-widget__head-text .dashboard-widget__title {
+    margin: 0;
+    font-family: var(--font-family-base);
+    font-size: 15px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    letter-spacing: -0.005em;
+    text-transform: none;
+    line-height: 1.25;
+}
+.dashboard-widget__head-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+/* ── Live deployments grid — rebuilt card body ─────────────────────────── */
+.dashboard-deployment-card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.dashboard-deployment-card__kicker {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dashboard-deployment-card__title {
+    font-size: 13px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    word-break: break-word;
+}
+.dashboard-deployment-card__meta-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+}
+.dashboard-deployment-card__cost {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Cost trend delta badge ────────────────────────────────────────────── */
+.dashboard-cost-delta-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-bold);
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+    /* Default neutral state — falls back when delta is "—" / "0%". */
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+}
+.dashboard-cost-delta-badge--up {
+    /* Cost UP is a danger signal for ops (burn rate climbing). */
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    border-color: var(--danger-border);
+}
+.dashboard-cost-delta-badge--down {
+    background: var(--success-bg);
+    color: var(--success-text);
+    border-color: var(--success-border);
+}
+.dashboard-cost-delta-badge--flat {
+    /* Identical to default. Kept as an explicit class so JS does not
+       have to toggle "no class". */
+}
+
+/* ── Cost sparkline — brand-light stroke, soft fill, both themes. ──────── */
+.dashboard-cost-sparkline polyline {
+    stroke: var(--brand-light);
+    stroke-width: 1.5;
+    fill: none;
+}
+.dashboard-cost-sparkline path.spark-fill {
+    fill: var(--brand-light);
+    opacity: 0.08;
+}
+
+/* ── Activity feed — wraps .spec-list now. ─────────────────────────────── */
+/* The <ul class="activity-feed"> wrapper survives for backwards-compat;
+   it now hosts <li> nodes that compose .spec-row. We restyle the
+   wrapper so it doesn't add its own borders / paddings on top of
+   .spec-row's hairline rule. */
+.activity-feed.spec-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.activity-feed.spec-list > li.spec-row {
+    display: block;
+}
+/* Activity-feed spec-rows are non-interactive (data-readonly), but
+   we DO want the dot to read as the row's identity glyph — pull the
+   key column down to fit the dot + operator name comfortably. */
+.activity-feed.spec-list .spec-row__head {
+    grid-template-columns: 168px 1fr auto 0;
+    padding: 10px 14px 10px 14px;
+}
+.activity-feed.spec-list .spec-row__key {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-transform: none;
+    letter-spacing: 0.02em;
+    font-size: 11px;
+    color: var(--text-primary);
+}
+.activity-feed.spec-list .spec-row__value {
+    font-size: 12px;
+    color: var(--text-primary);
+}
+.activity-feed.spec-list .spec-row__value-verb {
+    color: var(--text-secondary);
+    margin-right: 4px;
+}
+.activity-feed.spec-list .spec-row__value-target {
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+    color: var(--text-primary);
+}
+.activity-feed__empty {
+    color: var(--text-secondary);
+    padding: 14px 0;
+    text-align: center;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    list-style: none;
+}
+
+/* Architecture-meta refresh — mono kicker reads cleaner on bg-card. */
+.dashboard-architecture-meta span {
+    color: var(--text-secondary);
+}
+
+/* Narrow viewport — collapse the activity feed's key column. */
+@media (max-width: 600px) {
+    .activity-feed.spec-list .spec-row__head {
+        grid-template-columns: 1fr auto;
+        grid-template-rows: auto auto;
+        gap: 2px 12px;
+    }
+    .activity-feed.spec-list .spec-row__key {
+        grid-column: 1 / -1;
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   === END PHASE 3E — DASHBOARD WIDGETS ===
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════════════
+   === PHASE 3B.1 — OPERATIONS · BEACONS ===
+   V3-native rebuild of the Beacons sub-pill interior. Composes Phase 2b
+   primitives (.spec-list / .spec-row / .spec-pill / .icon). Surfaces:
+     - #beacons-spec-list           → list of active beacons (replaces the
+                                      legacy .beacon-table visually; the
+                                      table is kept display:none for data
+                                      compatibility with code that reads
+                                      DOM rows directly).
+     - #beacon-detail-spec-list     → metadata for the selected beacon
+                                      inside the Interact panel (host,
+                                      user, pid, sleep, listener, etc.,
+                                      plus "Driven by [operator]" pulled
+                                      from /api/audit beacon.exec entries).
+     - #ops-cmd-history-list        → operator-attributed command history.
+   Layer-aware contrast verified in both themes. The operator color dot
+   is purely decorative (3:1 against card surface is sufficient for
+   non-text UI affordances; we additionally render a 1px border-mix
+   ring so it is visible on every background tone).
+   ════════════════════════════════════════════════════════════════════════ */
+
+.ops-beacons__header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.ops-beacons__title {
+    margin: 0;
+    font-size: 1.05em;
+    color: var(--text-primary);
+}
+.ops-beacons__count { font-size: 0.85em; }
+.ops-beacons__filter {
+    max-width: 250px;
+    margin-left: auto;
+}
+
+/* Beacons list — composes .spec-row with extra columns for status pill +
+   computer/user kicker. We override the default .spec-row__head grid
+   template so we get: name(220) | host kicker(1fr) | last seen pill(auto) | action(22). */
+.ops-beacons-list {
+    list-style: none;
+}
+.ops-beacons-list .spec-row__head {
+    grid-template-columns: 220px 1fr auto 22px;
+}
+.ops-beacons-list .spec-row__head[data-selected="true"]::before {
+    opacity: 1;
+    transform: scaleY(1);
+}
+.ops-beacons-list .spec-row[data-selected="true"] .spec-row__head {
+    background: var(--bg-card-hover);
+}
+.ops-beacons-list .ops-beacons-row__name {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.ops-beacons-list .ops-beacons-row__bid {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-base);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ops-beacons-list .ops-beacons-row__admin {
+    color: var(--brand-light);
+    margin-left: 4px;
+    font-size: 0.85em;
+}
+.ops-beacons-list .ops-beacons-row__kicker {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ops-beacons-list .ops-beacons-row__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    color: var(--text-secondary);
+}
+.ops-beacons-list .ops-beacons-row__hostline {
+    font-size: var(--font-size-base);
+    color: var(--text-primary);
+    word-break: break-word;
+}
+.ops-beacons-list .ops-beacons-row__hint {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+/* Spec-pill variants tuned for beacon status. .spec-pill base lives in
+   Phase 2b — these add the alive / idle / stale / dead state dots. */
+.spec-pill--alive .spec-pill__dot { background: var(--success); }
+.spec-pill--alive { color: var(--text-primary); }
+.spec-pill--idle  .spec-pill__dot { background: var(--brand-light); }
+.spec-pill--stale .spec-pill__dot { background: var(--warning); }
+.spec-pill--dead  .spec-pill__dot { background: var(--danger); opacity: 0.75; }
+.spec-pill--dead  { opacity: 0.7; }
+
+/* Beacon detail spec-list (inside the interact panel) — narrower key column
+   because the metadata labels are short ("HOST", "USER", "PID"...). */
+.ops-beacon-detail {
+    margin-top: 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    list-style: none;
+}
+.ops-beacon-detail .spec-row__head {
+    grid-template-columns: 160px 1fr auto 22px;
+}
+.ops-beacon-detail .spec-row[data-readonly="true"] .spec-row__head {
+    cursor: default;
+}
+
+/* "Driven by" attribution pill — uses the operator's color (set inline by JS)
+   with a high-contrast ring so it reads on every surface in both themes. */
+.ops-driven-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 11px 3px 9px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.ops-driven-pill__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 30%, transparent);
+    flex-shrink: 0;
+}
+.ops-driven-pill__bolt {
+    color: var(--brand-light);
+    margin-right: 2px;
+}
+.ops-driven-pill--idle {
+    background: transparent;
+    color: var(--text-muted);
+}
+.ops-driven-pill--idle .ops-driven-pill__dot {
+    background: transparent;
+    border: 1px dashed var(--border-strong);
+    box-shadow: none;
+}
+
+/* Command history — V3 spec-row rhythm + operator color dot per row. */
+.ops-cmd-history {
+    margin-top: 18px;
+    padding: 14px 16px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+}
+.ops-cmd-history__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.ops-cmd-history__eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.ops-cmd-history__refresh {
+    padding: 4px 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+.ops-cmd-history__list { list-style: none; }
+.ops-cmd-history__list .spec-row__head {
+    grid-template-columns: 28px 1fr auto 22px;
+    align-items: center;
+    padding-top: 10px;
+    padding-bottom: 10px;
+}
+.ops-cmd-history__list .ops-cmd-history-row__op {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.ops-cmd-history__list .ops-cmd-history-row__op-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 30%, transparent);
+}
+.ops-cmd-history__list .ops-cmd-history-row__cmd {
+    font-family: var(--font-family-mono);
+    color: var(--text-primary);
+    font-size: var(--font-size-base);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ops-cmd-history__list .ops-cmd-history-row__op-name {
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-semibold);
+    margin-right: 8px;
+}
+.ops-cmd-history__list .ops-cmd-history-row__time {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+.ops-cmd-history__empty {
+    padding: 14px 8px;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   === PHASE 3B.2 — OPERATIONS · TERMINAL ===
+   Re-skin of the terminal tab strip with V3 density. The xterm.js
+   surface itself is untouched — we only restyle the tab strip + close
+   affordance + new-tab button. Each tab carries an operator color dot
+   indicating the operator that opened the session (from APP.operator.all).
+   Active tab uses the seg-control inset-underline rhythm so terminal
+   tabs feel like the same rail as the rest of the V3 nav.
+   ════════════════════════════════════════════════════════════════════════ */
+
+#terminal-tab-bar {
+    background: var(--bg-section) !important;
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 0 4px !important;
+    gap: 0 !important;
+    min-height: 38px;
+    align-items: stretch !important;
+}
+
+/* Override the legacy .terminal-tab look with V3 density. */
+.terminal-tab {
+    padding: 0 12px !important;
+    height: 38px;
+    background: transparent !important;
+    border: 0 !important;
+    border-bottom: 2px solid transparent !important;
+    color: var(--text-secondary) !important;
+    font-family: var(--font-family-base);
+    font-size: 11.5px !important;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.04em;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: color var(--motion-duration-base) var(--motion-easing-standard),
+                background-color var(--motion-duration-base) var(--motion-easing-standard),
+                box-shadow var(--motion-duration-base) var(--motion-easing-standard);
+}
+.terminal-tab:hover {
+    background: var(--bg-card-hover) !important;
+    color: var(--text-primary) !important;
+}
+.terminal-tab.active {
+    background: var(--bg-card-hover) !important;
+    color: var(--text-primary) !important;
+    box-shadow: inset 0 -2px 0 var(--brand-light);
+    border-bottom-color: transparent !important;
+}
+.terminal-tab:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--brand-light) 50%, transparent);
+}
+
+/* Operator color dot — 8px circle on every tab. The color is set inline
+   via style="background:<operator.color>" so this rule controls geometry
+   only. Dot is decorative; visibility ensured via a contrast ring. */
+.terminal-tab__op-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 30%, transparent);
+    flex-shrink: 0;
+}
+.terminal-tab__op-dot--unknown {
+    background: transparent;
+    border: 1px dashed var(--border-strong);
+    box-shadow: none;
+}
+
+.terminal-tab__label {
+    color: inherit;
+    font-family: var(--font-family-base);
+    font-weight: inherit;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Close button — V3 icon glyph, not the legacy ✕ character. */
+.terminal-tab__close {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 2px 4px;
+    margin-left: 2px;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: var(--radius-xs);
+    display: inline-flex;
+    align-items: center;
+    line-height: 1;
+    transition: color var(--motion-duration-base) var(--motion-easing-standard),
+                background-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.terminal-tab__close:hover {
+    background: color-mix(in srgb, var(--danger) 22%, transparent);
+    color: var(--danger);
+}
+.terminal-tab__close:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-light) 50%, transparent);
+}
+
+/* "+ New tab" button — neutral, smaller padding than a session tab. */
+.terminal-tab.terminal-tab-new {
+    padding: 0 10px !important;
+    color: var(--text-secondary) !important;
+}
+.terminal-tab.terminal-tab-new:hover {
+    background: var(--bg-card-hover) !important;
+    color: var(--brand-light) !important;
+}
+.terminal-tab.terminal-tab-new .tab-plus {
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+    color: inherit;
+    background: transparent;
+    font-weight: var(--font-weight-bold);
+}
+
+/* Hide the legacy SVG-less ✕ glyph if any tab still emits it (back-compat
+   with code paths that render the old close span). The .terminal-tab__close
+   class above is the canonical V3 affordance. */
+.terminal-tab .tab-close:not(.terminal-tab__close) {
+    color: var(--text-muted);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   === PHASE 3B.3 — OPERATIONS · PAYLOADS ===
+   Two-column form/preview layout for the Payloads sub-pill. Form sits
+   left (~44%), preview right (~56%). Live parameter spec-list at the
+   top of the preview pane shows what is being prepared; artifacts list
+   below the transfer button shows generated files. Collapses to a
+   single column under 920px.
+   ════════════════════════════════════════════════════════════════════════ */
+
+.ops-payloads-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.1fr);
+    gap: 18px;
+    align-items: start;
+}
+.ops-payloads-grid__form,
+.ops-payloads-grid__preview {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+.ops-payloads-grid__preview {
+    position: sticky;
+    top: 8px;
+}
+
+@media (max-width: 960px) {
+    .ops-payloads-grid {
+        grid-template-columns: 1fr;
+    }
+    .ops-payloads-grid__preview {
+        position: static;
+    }
+}
+
+/* Summary card (spec-list parameter readout) */
+.ops-payloads-summary-card {
+    margin-bottom: 16px;
+}
+.ops-payloads-summary__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.ops-payloads-summary__eyebrow,
+.ops-payloads-artifacts__eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.ops-payloads-summary__list {
+    list-style: none;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+}
+.ops-payloads-summary__list .spec-row__head {
+    grid-template-columns: 160px 1fr auto 22px;
+    cursor: default;
+}
+.ops-payloads-summary__list .spec-row:hover .spec-row__head {
+    background: transparent;
+    transform: none;
+}
+.ops-payloads-summary__list .spec-row:hover .spec-row__head::before { opacity: 0; }
+.ops-payloads-summary__list .spec-row__action { display: none; }
+
+/* Artifacts card */
+.ops-payloads-artifacts-card {
+    margin-bottom: 16px;
+}
+.ops-payloads-artifacts__head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.ops-payloads-artifacts__count {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    padding: 2px 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-full);
+    background: var(--bg-input);
+    letter-spacing: 0.04em;
+}
+.ops-payloads-artifacts__list {
+    list-style: none;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+}
+.ops-payloads-artifacts__list .spec-row__head {
+    grid-template-columns: 1fr auto auto;
+    gap: 14px;
+}
+.ops-payloads-artifacts__list .ops-payloads-artifact__name {
+    font-family: var(--font-family-mono);
+    color: var(--text-primary);
+    font-size: var(--font-size-base);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ops-payloads-artifacts__list .ops-payloads-artifact__size {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+.ops-payloads-artifacts__list .ops-payloads-artifact__actions {
+    display: inline-flex;
+    gap: 6px;
+}
+.ops-payloads-artifacts__list .ops-payloads-artifact__btn {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    color: var(--text-primary);
+    font: inherit;
+    font-family: var(--font-family-base);
+    font-size: 11px;
+    font-weight: var(--font-weight-semibold);
+    cursor: pointer;
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                border-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.ops-payloads-artifacts__list .ops-payloads-artifact__btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--brand-light);
+}
+.ops-payloads-artifacts__list .ops-payloads-artifact__btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-light) 50%, transparent);
+}
+
+/* === OPERATOR MANAGEMENT MODAL ===========================================
+   Phase 3 — small additions on top of the Phase 2b primitives.
+   The modal itself uses .modal / .modal__content / .modal__header / ...
+   The body's list uses .spec-list + .spec-row directly; the only deltas
+   here are layout tweaks for the key column (dot + name + status pills),
+   the inline delete-confirm row, and a danger variant of the edit button.
+   All colors via tokens — verified against --bg-card surface in both themes. */
+.operator-mgmt__list .spec-row__head {
+    /* Slightly wider key column to fit the dot + display + status pills
+       without wrapping on the typical operator name (<= ~18 chars). */
+    grid-template-columns: minmax(220px, 1.6fr) minmax(120px, 1fr) auto 22px;
+}
+.operator-mgmt__key {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    /* Override .spec-row__key's caps/mono/secondary — this column is the
+       human-readable display name, not an eyebrow label. */
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    font-family: var(--font-family-base);
+    color: var(--text-primary);
+    white-space: normal;
+}
+.operator-mgmt__display {
+    color: var(--text-primary);
+}
+.operator-mgmt__pill {
+    font-size: 9.5px;
+    padding: 1px 7px;
+    /* Sits on .bg-card → bg-input value/border tokens give comfortable 7:1+. */
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    border-color: var(--border-subtle);
+}
+.operator-mgmt__pill--current {
+    background: color-mix(in srgb, var(--brand-light) 18%, var(--bg-input));
+    color: var(--text-primary);
+    border-color: color-mix(in srgb, var(--brand-light) 40%, var(--border));
+}
+.operator-mgmt__hint-default {
+    /* Sits inside .spec-row__editor on .bg-card-hover; --text-secondary
+       passes AA on every layer this primitive lives on. */
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+.operator-mgmt__loading,
+.operator-mgmt__error {
+    padding: 24px 8px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+}
+.operator-mgmt__error { color: var(--danger); }
+
+/* Inline delete-confirm strip — appears below the editor footer when the
+   operator clicks Delete. Two-stage so a misclick can't drop a profile. */
+.operator-mgmt__confirm {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-radius: var(--radius-xs);
+    background: color-mix(in srgb, var(--danger) 12%, var(--bg-input));
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+.operator-mgmt__confirm-text {
+    flex: 1;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+}
+
+/* Danger variants of .spec-edit-btn — outlined (button stays in editor
+   footer) and filled (confirm button in the inline confirm strip).
+   Text uses --danger-text (the layer-aware token paired with the editor
+   surface, NOT --danger which is a saturated fill color that fails AA
+   when used as text on --bg-card-hover). The fill variant uses the
+   palette's --danger-bg dark surface with --danger-text as a high-
+   contrast pairing — same combo every other status callout uses. */
+.spec-edit-btn--danger {
+    color: var(--danger-text);
+    border-color: var(--danger-border);
+}
+.spec-edit-btn--danger:hover:not(:disabled) {
+    background: var(--danger-bg);
+    border-color: var(--danger);
+}
+.spec-edit-btn--danger:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.spec-edit-btn--danger-fill {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: var(--text-on-primary);
+}
+.spec-edit-btn--danger-fill:hover {
+    background: color-mix(in srgb, var(--danger) 88%, black);
 }
