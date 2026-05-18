@@ -69,6 +69,22 @@ describe('D0 NAVIGATE_ALIASES map', () => {
         expect(block).toMatch(/'deployments':\s*\{\s*parent:\s*'deployments-tab',\s*subPill:\s*'manage'/);
     });
 
+    it('D4.2/3/4 — legacy flat names resolve to operations-tab sub-pills', () => {
+        const src = loadAppJsSource();
+        const match = src.match(/const NAVIGATE_ALIASES = \{[\s\S]*?\n\};/);
+        expect(match).not.toBeNull();
+        const block = match[0];
+        // D4.2 re-parented Beacon under #subpill-pane-beacons.
+        // D4.3 re-parented Terminal under #subpill-pane-terminal.
+        // D4.4 re-parented Tools under #subpill-pane-payloads (renamed per §19.4).
+        // Aliases route through the merged parent so existing cross-link
+        // call sites (`APP.navigateTo('beacon' | 'terminal' | 'tools')`)
+        // keep working.
+        expect(block).toMatch(/'beacon':\s*\{\s*parent:\s*'operations-tab',\s*subPill:\s*'beacons'/);
+        expect(block).toMatch(/'terminal':\s*\{\s*parent:\s*'operations-tab',\s*subPill:\s*'terminal'/);
+        expect(block).toMatch(/'tools':\s*\{\s*parent:\s*'operations-tab',\s*subPill:\s*'payloads'/);
+    });
+
     it('APP object declares currentSubPill state field', () => {
         const src = loadAppJsSource();
         expect(src).toMatch(/currentSubPill:\s*null/);

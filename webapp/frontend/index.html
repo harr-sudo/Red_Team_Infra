@@ -1569,170 +1569,6 @@ ns-143.awsdns-17.org
                 </div>
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="beacons" id="subpill-pane-beacons">
-                        <p style="color: var(--text-muted); padding: 20px;">
-                            Beacons sub-pane (placeholder — re-parented in D4.2).
-                        </p>
-                    </div>
-                    <div class="subpill-pane" data-subpill-pane="terminal" id="subpill-pane-terminal" hidden>
-                        <p style="color: var(--text-muted); padding: 20px;">
-                            Terminal sub-pane (placeholder — re-parented in D4.3).
-                        </p>
-                    </div>
-                    <div class="subpill-pane" data-subpill-pane="payloads" id="subpill-pane-payloads" hidden>
-                        <p style="color: var(--text-muted); padding: 20px;">
-                            Payloads sub-pane (placeholder — re-parented in D4.4).
-                        </p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- D2 — Pre Reqs content moved into Settings tab below as a section card. -->
-
-            <!-- Tools Upload Page -->
-            <div class="tab-page" data-page="tools">
-                <h2 style="color: var(--accent); margin-bottom: 20px; font-size: 1.7em;">Tools Upload</h2>
-                <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
-                    Upload files to the Windows Attack Box via SCP through the bastion host. Use this for Outflank tools, custom loaders, or any binaries your operators need.
-                </div>
-
-                <!-- Target Deployment Selector -->
-                <div class="section-card" style="margin-bottom: 16px;">
-                    <label for="tools-project-select" style="display: block; font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">Target Deployment:</label>
-                    <select id="tools-project-select" class="form-select">
-                        <option value="">Loading deployments...</option>
-                    </select>
-                </div>
-
-                <!-- Connection Status -->
-                <div class="section-card" id="tools-connection-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--gold-muted); margin-bottom: 12px; font-size: 1.1em;">Connection Status</h3>
-                    <div id="tools-connection-status">
-                        <p class="t-muted">Select a deployment above</p>
-                    </div>
-                </div>
-
-                <!-- File Upload -->
-                <div class="section-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Upload Files</h3>
-                    <div id="tools-upload-area" style="border: 2px dashed var(--border); border-radius: var(--radius); padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s ease; margin-bottom: 12px;"
-                         ondragover="event.preventDefault(); this.style.borderColor='var(--gold)'; this.style.background='rgba(143, 164, 100, 0.05)';"
-                         ondragleave="this.style.borderColor='var(--border)'; this.style.background='transparent';"
-                         ondrop="event.preventDefault(); this.style.borderColor='var(--border)'; this.style.background='transparent'; handleToolsDrop(event);"
-                         onclick="document.getElementById('tools-file-input').click();">
-                        <p style="color: var(--text-secondary); margin: 0;">Drag & drop files or folders here, or click to browse</p>
-                        <p style="color: var(--text-muted); font-size: 0.8em; margin: 6px 0 0 0;">Any file type accepted, up to 500MB. Folders preserve directory structure.</p>
-                    </div>
-                    <input type="file" id="tools-file-input" multiple style="display: none;" onchange="handleToolsFileSelect(event)">
-                    <button class="btn btn-sm btn-secondary" style="margin-bottom: 12px;" onclick="document.getElementById('tools-folder-input').click();">Browse Folder</button>
-                    <input type="file" id="tools-folder-input" webkitdirectory directory multiple style="display: none;" onchange="handleToolsFolderSelect(event)">
-                    <div id="tools-upload-progress" style="display: none; margin-bottom: 12px;">
-                        <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
-                            <div id="tools-upload-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
-                        </div>
-                        <p id="tools-upload-progress-text" style="font-size: 0.8em; color: var(--text-muted); margin-top: 4px;">Uploading...</p>
-                    </div>
-
-                    <!-- Staged Files List -->
-                    <div id="tools-staged-container">
-                        <div id="tools-staged-list" style="margin-bottom: 8px;"></div>
-                        <div id="tools-staged-actions" style="display: none; text-align: right;">
-                            <button class="btn btn-sm btn-secondary" onclick="clearAllToolsFiles()">Clear All</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Destination Picker -->
-                <div class="section-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--gold-muted); margin-bottom: 12px; font-size: 1.1em;">Destination</h3>
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
-                            <input type="radio" name="tools-dest" value="C:\Outflank\" checked style="accent-color: var(--gold);">
-                            <code style="font-size: 0.9em;">C:\Outflank\</code>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
-                            <input type="radio" name="tools-dest" value="C:\Tools\" style="accent-color: var(--gold);">
-                            <code style="font-size: 0.9em;">C:\Tools\</code>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
-                            <input type="radio" name="tools-dest" value="custom" style="accent-color: var(--gold);">
-                            <span>Custom:</span>
-                            <input type="text" id="tools-custom-dest" placeholder="C:\MyTools\" disabled
-                                   style="flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text-primary); font-family: monospace; font-size: 0.9em;">
-                        </label>
-                    </div>
-                </div>
-
-                <!-- Command Preview -->
-                <div class="section-card" id="tools-command-preview-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--accent-muted); margin-bottom: 10px; font-size: 1.1em;">Command Preview</h3>
-                    <div id="tools-command-preview" style="background: var(--bg-terminal); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font-family: monospace; font-size: 0.82em; white-space: pre-wrap; word-break: break-all; color: var(--text-terminal);">Select a deployment and stage files to see the SCP command</div>
-                </div>
-
-                <!-- Transfer Controls -->
-                <div style="margin-bottom: 16px;">
-                    <button id="tools-transfer-btn" class="btn btn-primary" onclick="startToolsTransfer()" disabled style="width: 100%; padding: 12px; font-size: 1.05em;">
-                        Transfer to Attack Box
-                    </button>
-                </div>
-
-                <!-- Transfer Log -->
-                <div class="section-card" id="tools-transfer-log-card" style="display: none;">
-                    <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Transfer Log</h3>
-                    <div id="tools-transfer-progress" style="margin-bottom: 10px;">
-                        <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
-                            <div id="tools-transfer-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
-                        </div>
-                        <p id="tools-transfer-progress-text" style="font-size: 0.85em; color: var(--text-muted); margin-top: 4px;"></p>
-                    </div>
-                    <div id="tools-transfer-log" class="output-display" style="max-height: 300px;"></div>
-                </div>
-            </div>
-
-            <!-- Settings Page -->
-            <!-- Architecture Docs Page -->
-            <div class="tab-page" data-page="architecture">
-                <h2 class="page-title">Infrastructure Architecture</h2>
-
-                <div class="section-card" style="margin-bottom: 20px;">
-                    <label for="architecture-select" style="display: block; font-weight: 600; margin-bottom: 10px; color: var(--gold-muted);">Select Deployment Architecture:</label>
-                    <select id="architecture-select" class="form-select">
-                        <optgroup label="Full C2 Infrastructure (Internet-Facing Ops)">
-                            <option value="c2-adhoc">C2 Ad-Hoc: Single Server + Redirectors</option>
-                            <option value="c2-adhoc-domain-fronting">C2 Ad-Hoc: Domain Fronting Mode</option>
-                            <option value="ssl-options">SSL/TLS Options Comparison</option>
-                            <option value="c2-purple">C2 Purple Team: Redundant Servers</option>
-                            <option value="c2-full">C2 Full Red Team: Phase-Based Operations</option>
-                        </optgroup>
-                        <optgroup label="GOAD Training Labs (with Cobalt Strike)">
-                            <option value="goad-mini">GOAD Mini + CS: 1 VM, 1 Domain</option>
-                            <option value="goad-light">GOAD Light + CS: 3 VMs, 2 Domains</option>
-                            <option value="goad-full">GOAD Full + CS: 5 VMs, 3 Domains, 2 Forests</option>
-                            <option value="goad-sccm">GOAD SCCM + CS: 4 VMs, SCCM Lab</option>
-                            <option value="goad-nha">GOAD NHA + CS: 5 VMs, Challenge Lab</option>
-                        </optgroup>
-                        <optgroup label="Full C2 + GOAD Lab (Realistic Training)">
-                            <option value="combined-mini">Full C2 Ad-Hoc + GOAD Mini</option>
-                            <option value="combined-light">Full C2 Ad-Hoc + GOAD Light</option>
-                            <option value="combined-full">Full C2 Red Team + GOAD Full</option>
-                        </optgroup>
-                        <optgroup label="Component Architecture (Technical Details)">
-                            <option value="attack-box">Windows Attack Box - Detailed Architecture</option>
-                            <option value="s3-storage">S3 Deployment Storage - Security Architecture</option>
-                            <option value="iam-security">IAM Security - Roles & Permissions</option>
-                            <option value="ssh-key-management">SSH Key Management - Automation</option>
-                        </optgroup>
-                    </select>
-                </div>
-
-                <div class="arch-content-area">
-                    <div id="markdown-content" class="markdown-content">
-                        <p style="color: var(--text-muted); text-align: center; padding: 40px 0;">Select an architecture above to view documentation</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Beacon Management Page -->
-            <div class="tab-page" data-page="beacon">
                 <h2>Beacon Management</h2>
 
                 <!-- Deployment Selector -->
@@ -2320,10 +2156,8 @@ ns-143.awsdns-17.org
                     </div>
 
                 </div>
-            </div>
-
-            <!-- Terminal Page -->
-            <div class="tab-page" data-page="terminal">
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="terminal" id="subpill-pane-terminal" hidden>
                 <h2 class="page-title">Terminal</h2>
 
                 <!-- Local Shell — primary action, always available -->
@@ -2365,6 +2199,151 @@ ns-143.awsdns-17.org
                 <div id="terminal-dep-warning" style="display: none;" class="status-display warning">
                     <strong>Terminal dependencies not installed.</strong><br>
                     Run: <code>pip install flask-sock</code> then restart the webapp.
+                </div>
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="payloads" id="subpill-pane-payloads" hidden>
+                <h2 style="color: var(--accent); margin-bottom: 20px; font-size: 1.7em;">Tools Upload</h2>
+                <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
+                    Upload files to the Windows Attack Box via SCP through the bastion host. Use this for Outflank tools, custom loaders, or any binaries your operators need.
+                </div>
+
+                <!-- Target Deployment Selector -->
+                <div class="section-card" style="margin-bottom: 16px;">
+                    <label for="tools-project-select" style="display: block; font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">Target Deployment:</label>
+                    <select id="tools-project-select" class="form-select">
+                        <option value="">Loading deployments...</option>
+                    </select>
+                </div>
+
+                <!-- Connection Status -->
+                <div class="section-card" id="tools-connection-card" style="margin-bottom: 16px;">
+                    <h3 style="color: var(--gold-muted); margin-bottom: 12px; font-size: 1.1em;">Connection Status</h3>
+                    <div id="tools-connection-status">
+                        <p class="t-muted">Select a deployment above</p>
+                    </div>
+                </div>
+
+                <!-- File Upload -->
+                <div class="section-card" style="margin-bottom: 16px;">
+                    <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Upload Files</h3>
+                    <div id="tools-upload-area" style="border: 2px dashed var(--border); border-radius: var(--radius); padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s ease; margin-bottom: 12px;"
+                         ondragover="event.preventDefault(); this.style.borderColor='var(--gold)'; this.style.background='rgba(143, 164, 100, 0.05)';"
+                         ondragleave="this.style.borderColor='var(--border)'; this.style.background='transparent';"
+                         ondrop="event.preventDefault(); this.style.borderColor='var(--border)'; this.style.background='transparent'; handleToolsDrop(event);"
+                         onclick="document.getElementById('tools-file-input').click();">
+                        <p style="color: var(--text-secondary); margin: 0;">Drag & drop files or folders here, or click to browse</p>
+                        <p style="color: var(--text-muted); font-size: 0.8em; margin: 6px 0 0 0;">Any file type accepted, up to 500MB. Folders preserve directory structure.</p>
+                    </div>
+                    <input type="file" id="tools-file-input" multiple style="display: none;" onchange="handleToolsFileSelect(event)">
+                    <button class="btn btn-sm btn-secondary" style="margin-bottom: 12px;" onclick="document.getElementById('tools-folder-input').click();">Browse Folder</button>
+                    <input type="file" id="tools-folder-input" webkitdirectory directory multiple style="display: none;" onchange="handleToolsFolderSelect(event)">
+                    <div id="tools-upload-progress" style="display: none; margin-bottom: 12px;">
+                        <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
+                            <div id="tools-upload-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
+                        </div>
+                        <p id="tools-upload-progress-text" style="font-size: 0.8em; color: var(--text-muted); margin-top: 4px;">Uploading...</p>
+                    </div>
+
+                    <!-- Staged Files List -->
+                    <div id="tools-staged-container">
+                        <div id="tools-staged-list" style="margin-bottom: 8px;"></div>
+                        <div id="tools-staged-actions" style="display: none; text-align: right;">
+                            <button class="btn btn-sm btn-secondary" onclick="clearAllToolsFiles()">Clear All</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Destination Picker -->
+                <div class="section-card" style="margin-bottom: 16px;">
+                    <h3 style="color: var(--gold-muted); margin-bottom: 12px; font-size: 1.1em;">Destination</h3>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                            <input type="radio" name="tools-dest" value="C:\Outflank\" checked style="accent-color: var(--gold);">
+                            <code style="font-size: 0.9em;">C:\Outflank\</code>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                            <input type="radio" name="tools-dest" value="C:\Tools\" style="accent-color: var(--gold);">
+                            <code style="font-size: 0.9em;">C:\Tools\</code>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                            <input type="radio" name="tools-dest" value="custom" style="accent-color: var(--gold);">
+                            <span>Custom:</span>
+                            <input type="text" id="tools-custom-dest" placeholder="C:\MyTools\" disabled
+                                   style="flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text-primary); font-family: monospace; font-size: 0.9em;">
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Command Preview -->
+                <div class="section-card" id="tools-command-preview-card" style="margin-bottom: 16px;">
+                    <h3 style="color: var(--accent-muted); margin-bottom: 10px; font-size: 1.1em;">Command Preview</h3>
+                    <div id="tools-command-preview" style="background: var(--bg-terminal); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font-family: monospace; font-size: 0.82em; white-space: pre-wrap; word-break: break-all; color: var(--text-terminal);">Select a deployment and stage files to see the SCP command</div>
+                </div>
+
+                <!-- Transfer Controls -->
+                <div style="margin-bottom: 16px;">
+                    <button id="tools-transfer-btn" class="btn btn-primary" onclick="startToolsTransfer()" disabled style="width: 100%; padding: 12px; font-size: 1.05em;">
+                        Transfer to Attack Box
+                    </button>
+                </div>
+
+                <!-- Transfer Log -->
+                <div class="section-card" id="tools-transfer-log-card" style="display: none;">
+                    <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Transfer Log</h3>
+                    <div id="tools-transfer-progress" style="margin-bottom: 10px;">
+                        <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
+                            <div id="tools-transfer-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
+                        </div>
+                        <p id="tools-transfer-progress-text" style="font-size: 0.85em; color: var(--text-muted); margin-top: 4px;"></p>
+                    </div>
+                    <div id="tools-transfer-log" class="output-display" style="max-height: 300px;"></div>
+                </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- D2 — Pre Reqs content moved into Settings tab below as a section card. -->
+
+            <!-- Settings Page -->
+            <!-- Architecture Docs Page -->
+            <div class="tab-page" data-page="architecture">
+                <h2 class="page-title">Infrastructure Architecture</h2>
+
+                <div class="section-card" style="margin-bottom: 20px;">
+                    <label for="architecture-select" style="display: block; font-weight: 600; margin-bottom: 10px; color: var(--gold-muted);">Select Deployment Architecture:</label>
+                    <select id="architecture-select" class="form-select">
+                        <optgroup label="Full C2 Infrastructure (Internet-Facing Ops)">
+                            <option value="c2-adhoc">C2 Ad-Hoc: Single Server + Redirectors</option>
+                            <option value="c2-adhoc-domain-fronting">C2 Ad-Hoc: Domain Fronting Mode</option>
+                            <option value="ssl-options">SSL/TLS Options Comparison</option>
+                            <option value="c2-purple">C2 Purple Team: Redundant Servers</option>
+                            <option value="c2-full">C2 Full Red Team: Phase-Based Operations</option>
+                        </optgroup>
+                        <optgroup label="GOAD Training Labs (with Cobalt Strike)">
+                            <option value="goad-mini">GOAD Mini + CS: 1 VM, 1 Domain</option>
+                            <option value="goad-light">GOAD Light + CS: 3 VMs, 2 Domains</option>
+                            <option value="goad-full">GOAD Full + CS: 5 VMs, 3 Domains, 2 Forests</option>
+                            <option value="goad-sccm">GOAD SCCM + CS: 4 VMs, SCCM Lab</option>
+                            <option value="goad-nha">GOAD NHA + CS: 5 VMs, Challenge Lab</option>
+                        </optgroup>
+                        <optgroup label="Full C2 + GOAD Lab (Realistic Training)">
+                            <option value="combined-mini">Full C2 Ad-Hoc + GOAD Mini</option>
+                            <option value="combined-light">Full C2 Ad-Hoc + GOAD Light</option>
+                            <option value="combined-full">Full C2 Red Team + GOAD Full</option>
+                        </optgroup>
+                        <optgroup label="Component Architecture (Technical Details)">
+                            <option value="attack-box">Windows Attack Box - Detailed Architecture</option>
+                            <option value="s3-storage">S3 Deployment Storage - Security Architecture</option>
+                            <option value="iam-security">IAM Security - Roles & Permissions</option>
+                            <option value="ssh-key-management">SSH Key Management - Automation</option>
+                        </optgroup>
+                    </select>
+                </div>
+
+                <div class="arch-content-area">
+                    <div id="markdown-content" class="markdown-content">
+                        <p style="color: var(--text-muted); text-align: center; padding: 40px 0;">Select an architecture above to view documentation</p>
+                    </div>
                 </div>
             </div>
 

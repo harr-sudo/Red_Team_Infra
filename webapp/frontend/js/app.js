@@ -97,12 +97,12 @@ const NAVIGATE_ALIASES = {
     // nav-button click ({data-target="deployments-tab"}) resolves cleanly
     // instead of falling back to dashboard via the null-target guard.
     'deployments-tab': { parent: 'deployments-tab', subPill: null },
-    // D4 future-mappings — currently passthrough. D4.6 retargets these to
-    // { parent: 'operations-tab', subPill: 'beacons' | 'terminal' | 'payloads' }
-    // once each subtree is re-parented (D4.2/D4.3/D4.4).
-    'beacon':        { parent: 'beacon',        subPill: null },
-    'terminal':      { parent: 'terminal',      subPill: null },
-    'tools':         { parent: 'tools',         subPill: null },
+    // D4.2/3/4 — legacy flat names now resolve to sub-pills of the merged
+    // 'operations-tab'. Cross-link call sites (`APP.navigateTo('beacon')`
+    // etc.) keep working: the alias activates the parent tab + the matching pill.
+    'beacon':        { parent: 'operations-tab', subPill: 'beacons' },
+    'terminal':      { parent: 'operations-tab', subPill: 'terminal' },
+    'tools':         { parent: 'operations-tab', subPill: 'payloads' },
     // D4.1 — Identity entry for the merged Operations tab so a direct
     // nav-button click ({data-target="operations-tab"}) resolves cleanly
     // instead of falling back to dashboard via the null-target guard.
@@ -174,7 +174,7 @@ const APP = {
     // Terminal / Tools. The 3 legacy entries stay in this list during the
     // D4 transition (so direct hash deep-links keep working); D4.6 removes
     // them and retargets the NAVIGATE_ALIASES entries above.
-    pages: ['dashboard', 'deployments-tab', 'operations-tab', 'tools', 'architecture', 'beacon', 'terminal', 'settings'],
+    pages: ['dashboard', 'deployments-tab', 'operations-tab', 'architecture', 'settings'],
     // P1 #7.6 — cached /api/version response so the modal doesn't re-fetch
     versionInfo: null,
     
@@ -524,20 +524,20 @@ const APP = {
                 // cases removed. Sub-pill init now lives in
                 // APP._runSubPillInit() (D3.5), invoked from the
                 // 'deployments-tab' case below.
-                case 'tools':
-                    loadToolsPage();
-                    break;
+                // D4.4 — Legacy 'tools' case removed. Tools subtree is now
+                // re-parented under #subpill-pane-payloads (renamed per §19.4)
+                // inside 'operations-tab'. loadToolsPage() will be wired into
+                // APP._runSubPillInit at D4.5.
                 case 'architecture':
                     if (typeof initArchitecturePage === 'function') {
                         initArchitecturePage();
                     }
                     break;
-                case 'beacon':
-                    BEACON.init();
-                    break;
-                case 'terminal':
-                    TERMINAL.init();
-                    break;
+                // D4.2/3 — Legacy 'beacon' / 'terminal' cases removed. Both
+                // subtrees are now re-parented under #subpill-pane-beacons /
+                // #subpill-pane-terminal inside 'operations-tab'. Their init
+                // functions (BEACON.init / TERMINAL.init) will be wired into
+                // APP._runSubPillInit at D4.5.
                 case 'settings':
                     initSettingsPage();
                     break;
