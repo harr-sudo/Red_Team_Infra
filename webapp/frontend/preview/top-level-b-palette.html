@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Top-Level Scaffold B — Command Palette (V3-native)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           SCAFFOLD B — COMMAND PALETTE PRIMARY NAVIGATION (V3 5/6/5)
+           Hypothesis: Persistent nav disappears. Movement happens
+           through fuzzy search (Cmd-K). Brand + operator + theme +
+           a single "Search…" pill sit in a hairline top strip. A
+           breadcrumb shows current location. Pages swap under it.
+           Keyboard-first ethos visible everywhere via ⌘K, ESC, ↵.
+           ============================================================ */
+
+        :root {
+            --temp-header-h: 52px;
+            --temp-hairline: var(--border-subtle);
+            --temp-scrim: rgba(8, 9, 14, 0.65);
+        }
+        [data-theme="light"] {
+            --temp-scrim: rgba(140, 160, 100, 0.38);
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        /* ── TOP STRIP ──────────────────────────────────────────────── */
+        .b-header {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--temp-header-h);
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            gap: 24px;
+            padding: 0 24px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--temp-hairline);
+            box-shadow: inset 0 1px 0 0 var(--border-subtle);
+            z-index: 100;
+        }
+        .b-brand {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+        }
+        .b-mark {
+            position: relative;
+            width: 22px; height: 22px;
+            border: 1.5px solid var(--brand);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .b-mark::before {
+            content: "";
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 8px; height: 8px;
+            background: var(--brand);
+            border-radius: 2px;
+            transform: translate(-50%, -50%);
+        }
+        .b-brand-text {
+            display: flex; flex-direction: column;
+            line-height: 1.1;
+        }
+        .b-brand-name {
+            font-size: 12.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .b-brand-kicker {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+
+        /* Centered search pill — the primary nav */
+        .b-search-trigger {
+            justify-self: center;
+            display: inline-flex;
+            align-items: center;
+            gap: 14px;
+            min-width: 380px;
+            max-width: 560px;
+            width: 100%;
+            padding: 7px 8px 7px 14px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            font: inherit;
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .b-search-trigger:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            color: var(--text-primary);
+            transform: translateY(-1px);
+        }
+        .b-search-trigger:focus-visible {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+        .b-search-trigger__icon {
+            width: 14px; height: 14px;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+        .b-search-trigger__placeholder {
+            flex: 1;
+            text-align: left;
+            font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        }
+        .b-search-trigger__kbd {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            padding: 3px 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            letter-spacing: 0.06em;
+        }
+
+        .b-right {
+            display: flex; align-items: center; gap: 18px;
+        }
+        .b-op {
+            display: inline-flex; align-items: center; gap: 10px;
+        }
+        .b-op__dot {
+            position: relative;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+        .b-op__dot::after {
+            content: "";
+            position: absolute;
+            inset: -3px;
+            border-radius: 50%;
+            border: 1px solid var(--success);
+            opacity: 0.55;
+            animation: b-pulse 2600ms ease-out infinite;
+        }
+        @keyframes b-pulse {
+            0% { transform: scale(0.7); opacity: 0.65; }
+            70% { transform: scale(1.5); opacity: 0; }
+            100% { transform: scale(1.5); opacity: 0; }
+        }
+        .b-op__name {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .b-op__name::before {
+            content: "operator/";
+            color: var(--text-secondary);
+            font-weight: 400;
+            margin-right: 4px;
+        }
+        .b-theme {
+            width: 30px; height: 30px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            transition: background-color 180ms ease, border-color 180ms ease;
+        }
+        .b-theme:hover { background: var(--bg-card-hover); border-color: var(--border-light); }
+        .b-theme__glyph {
+            position: relative;
+            width: 13px; height: 13px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+        }
+        .b-theme__glyph::before {
+            content: "";
+            position: absolute;
+            top: -1px; right: -3px;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--bg-container);
+        }
+        [data-theme="light"] .b-theme__glyph { background: var(--text-primary); }
+        [data-theme="light"] .b-theme__glyph::before { background: var(--bg-container); }
+
+        /* ── MAIN ───────────────────────────────────────────────────── */
+        .b-main {
+            margin-top: var(--temp-header-h);
+            min-height: calc(100vh - var(--temp-header-h));
+            padding: 32px 40px 64px;
+            max-width: 980px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .b-breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 26px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--temp-hairline);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .b-breadcrumb__chip {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 3px 8px;
+            border-radius: 4px;
+            transition: background-color 180ms ease, color 180ms ease;
+        }
+        .b-breadcrumb__chip:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .b-breadcrumb__sep { color: var(--border-strong); }
+        .b-breadcrumb__leaf {
+            color: var(--text-primary);
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-weight: 700;
+        }
+        .b-breadcrumb__hint {
+            margin-left: auto;
+            font-size: 10px;
+            color: var(--text-secondary);
+        }
+        .b-breadcrumb__hint kbd {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            padding: 2px 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            margin: 0 2px;
+            color: var(--text-primary);
+        }
+
+        /* ── INTERIOR (spec-list, swappable) ─────────────────────── */
+        .b-eyebrow {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--temp-hairline);
+            margin-bottom: 26px;
+        }
+        .b-eyebrow__label {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .b-eyebrow__action {
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 5px 12px;
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .b-eyebrow__action:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            transform: translateY(-1px);
+        }
+        .b-hero {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 28px;
+            animation: b-fade-in 320ms cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+        @keyframes b-fade-in {
+            from { opacity: 0; transform: translateY(4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .b-hero__caption {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .b-hero__name {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            word-break: break-all;
+        }
+        .b-hero__type {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .b-hero__type strong { color: var(--text-primary); font-weight: 600; }
+
+        .b-speclist {
+            margin: 0; padding: 0;
+            display: flex; flex-direction: column;
+            max-width: 820px;
+        }
+        .b-spec-row {
+            position: relative;
+            display: grid;
+            grid-template-columns: 200px 1fr auto;
+            align-items: baseline;
+            gap: 20px;
+            padding: 14px 16px 14px 14px;
+            border-bottom: 1px solid var(--temp-hairline);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .b-spec-row::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 10px; bottom: 10px;
+            width: 2px;
+            border-radius: 2px;
+            background: var(--brand-light);
+            opacity: 0;
+            transform: scaleY(0.4);
+            transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .b-spec-row:hover {
+            background: var(--bg-card-hover);
+            transform: translateX(2px);
+        }
+        .b-spec-row:hover::before { opacity: 1; transform: scaleY(1); }
+        .b-spec-row:last-child { border-bottom: none; }
+        .b-spec-key {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .b-spec-value {
+            font-size: 13.5px;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        .b-spec-value--mono {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 13px;
+        }
+        .b-spec-hint {
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            letter-spacing: 0.02em;
+        }
+        .b-spec-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 9px;
+            border-radius: 9px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        .b-spec-pill__dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+        }
+
+        /* Footer chrome with keyboard hints */
+        .b-keymap {
+            margin-top: 32px;
+            padding-top: 18px;
+            border-top: 1px solid var(--temp-hairline);
+            display: flex;
+            gap: 22px;
+            flex-wrap: wrap;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+        .b-keymap span {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .b-keymap kbd {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            padding: 2px 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text-primary);
+        }
+
+        /* ── COMMAND PALETTE ───────────────────────────────────────── */
+        .b-scrim {
+            position: fixed;
+            inset: var(--temp-header-h) 0 0 0;
+            background: var(--temp-scrim);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 200;
+        }
+        .b-scrim.is-open { opacity: 1; pointer-events: auto; }
+
+        .b-palette {
+            position: fixed;
+            top: 92px;
+            left: 50%;
+            transform: translate(-50%, -8px);
+            width: min(640px, calc(100vw - 48px));
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 10px;
+            box-shadow: 0 30px 70px -20px rgba(0,0,0,0.65),
+                        0 8px 24px -8px rgba(0,0,0,0.35);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            z-index: 210;
+            overflow: hidden;
+        }
+        .b-palette.is-open {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translate(-50%, 0);
+        }
+        .b-palette__input-wrap {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .b-palette__input-wrap svg { color: var(--text-secondary); flex-shrink: 0; }
+        .b-palette__input {
+            flex: 1;
+            background: transparent;
+            border: 0;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 15px;
+            outline: none;
+        }
+        .b-palette__input::placeholder { color: var(--text-secondary); }
+        .b-palette__esc {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            padding: 3px 8px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-secondary);
+        }
+
+        .b-palette__section-label {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 14px 18px 8px;
+        }
+        .b-palette__list {
+            max-height: 360px;
+            overflow-y: auto;
+            padding: 0 6px 8px;
+        }
+        .b-palette__item {
+            display: grid;
+            grid-template-columns: 18px 1fr auto auto;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+            cursor: pointer;
+            transition: background-color 160ms ease, transform 160ms ease;
+        }
+        .b-palette__item:hover, .b-palette__item.is-active {
+            background: var(--bg-card-hover);
+        }
+        .b-palette__item-icon { color: var(--text-secondary); display: inline-flex; }
+        .b-palette__item-label { font-weight: 500; }
+        .b-palette__item-label .crumb {
+            color: var(--text-secondary);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            letter-spacing: 0.04em;
+            margin-right: 8px;
+        }
+        .b-palette__item-kind {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            background: var(--bg-input);
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }
+        .b-palette__item-kbd {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            color: var(--text-secondary);
+            padding: 2px 6px;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            background: var(--bg-input);
+        }
+        .b-palette__footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 18px;
+            border-top: 1px solid var(--temp-hairline);
+            background: var(--bg-section);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            color: var(--text-secondary);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .b-palette__footer kbd {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            padding: 2px 5px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text-primary);
+            margin: 0 2px;
+        }
+
+        /* ── + NEW DEPLOYMENT (route-change feel via palette) ───────── */
+        .b-new-banner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px;
+            border: 1px dashed var(--border-light);
+            border-radius: 6px;
+            margin: 8px 6px 0;
+            color: var(--text-primary);
+            font-size: 12.5px;
+            cursor: pointer;
+            transition: background-color 180ms ease, border-color 180ms ease;
+        }
+        .b-new-banner:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--brand-light);
+        }
+        .b-new-banner__plus {
+            display: inline-block;
+            width: 14px; height: 14px;
+            position: relative;
+            margin-right: 10px;
+            color: var(--brand-light);
+            vertical-align: -2px;
+        }
+        .b-new-banner__plus::before, .b-new-banner__plus::after {
+            content: "";
+            position: absolute;
+            background: currentColor;
+            border-radius: 1px;
+        }
+        .b-new-banner__plus::before {
+            left: 50%; top: 0; bottom: 0; width: 1.6px; transform: translateX(-50%);
+        }
+        .b-new-banner__plus::after {
+            top: 50%; left: 0; right: 0; height: 1.6px; transform: translateY(-50%);
+        }
+        .b-new-banner__hint {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            color: var(--text-secondary);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .preview-banner {
+            position: fixed;
+            bottom: 16px;
+            left: 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            z-index: 80;
+        }
+        .preview-banner b { color: var(--text-primary); font-weight: 700; }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                animation-duration: 0.01ms !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="b-header" role="banner">
+        <div class="b-brand">
+            <span class="b-mark" aria-hidden="true"></span>
+            <div class="b-brand-text">
+                <span class="b-brand-name">Red Team Infrastructure</span>
+                <span class="b-brand-kicker">control plane</span>
+            </div>
+        </div>
+
+        <button class="b-search-trigger" id="search-trigger" type="button" aria-haspopup="dialog">
+            <svg class="b-search-trigger__icon" viewBox="0 0 14 14" fill="none">
+                <circle cx="6" cy="6" r="4.2" stroke="currentColor" stroke-width="1.3"/>
+                <path d="M9.2 9.2 L12.5 12.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            <span class="b-search-trigger__placeholder">Search projects, beacons, settings, commands…</span>
+            <span class="b-search-trigger__kbd">⌘ K</span>
+        </button>
+
+        <div class="b-right">
+            <div class="b-op">
+                <span class="b-op__dot" aria-hidden="true"></span>
+                <span class="b-op__name">harriss</span>
+            </div>
+            <button class="b-theme" type="button" aria-label="Toggle theme"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+                <span class="b-theme__glyph" aria-hidden="true"></span>
+            </button>
+        </div>
+    </header>
+
+    <main class="b-main">
+        <div class="b-breadcrumb" aria-label="Breadcrumb">
+            <a class="b-breadcrumb__chip" href="#">Workspace</a>
+            <span class="b-breadcrumb__sep">/</span>
+            <a class="b-breadcrumb__chip" href="#">Deployments</a>
+            <span class="b-breadcrumb__sep">/</span>
+            <span class="b-breadcrumb__leaf" id="bc-leaf">goad_mini_dev_harriss</span>
+            <span class="b-breadcrumb__hint">jump anywhere · <kbd>⌘</kbd><kbd>K</kbd></span>
+        </div>
+
+        <section>
+            <div class="b-eyebrow">
+                <span class="b-eyebrow__label">Configuration Summary</span>
+                <button class="b-eyebrow__action" type="button">Edit config</button>
+            </div>
+            <div class="b-hero">
+                <span class="b-hero__caption">project</span>
+                <span class="b-hero__name">goad_mini_dev_harriss_macbook_pro</span>
+                <span class="b-hero__type"><strong>GOAD Mini + Cobalt Strike</strong> &middot; ready to deploy</span>
+            </div>
+
+            <dl class="b-speclist">
+                <div class="b-spec-row">
+                    <dt class="b-spec-key">Deployment Type</dt>
+                    <dd class="b-spec-value">GOAD Mini + Cobalt Strike</dd>
+                    <dd class="b-spec-hint">Combined</dd>
+                </div>
+                <div class="b-spec-row">
+                    <dt class="b-spec-key">Environment</dt>
+                    <dd class="b-spec-value"><span class="b-spec-pill"><span class="b-spec-pill__dot" aria-hidden="true"></span>DEV</span></dd>
+                    <dd class="b-spec-hint">isolated</dd>
+                </div>
+                <div class="b-spec-row">
+                    <dt class="b-spec-key">AWS Region</dt>
+                    <dd class="b-spec-value b-spec-value--mono">eu-central-1</dd>
+                    <dd class="b-spec-hint">Frankfurt</dd>
+                </div>
+                <div class="b-spec-row">
+                    <dt class="b-spec-key">Management CIDR</dt>
+                    <dd class="b-spec-value b-spec-value--mono">82.35.149.127/32</dd>
+                    <dd class="b-spec-hint">single host</dd>
+                </div>
+                <div class="b-spec-row">
+                    <dt class="b-spec-key">SSH Keys</dt>
+                    <dd class="b-spec-value">Auto-generated</dd>
+                    <dd class="b-spec-hint">ed25519</dd>
+                </div>
+                <div class="b-spec-row">
+                    <dt class="b-spec-key">Est. Monthly Cost</dt>
+                    <dd class="b-spec-value">~$260/mo</dd>
+                    <dd class="b-spec-hint">7 instances</dd>
+                </div>
+            </dl>
+
+            <div class="b-keymap" aria-label="Keyboard map">
+                <span><kbd>⌘</kbd><kbd>K</kbd> open palette</span>
+                <span><kbd>↑</kbd><kbd>↓</kbd> nav</span>
+                <span><kbd>↵</kbd> open</span>
+                <span><kbd>⌘</kbd><kbd>↵</kbd> open in new pane</span>
+                <span><kbd>ESC</kbd> dismiss</span>
+            </div>
+        </section>
+    </main>
+
+    <!-- ── PALETTE OVERLAY ───────────────────────────────────────── -->
+    <div class="b-scrim" id="b-scrim" aria-hidden="true"></div>
+    <div class="b-palette" id="b-palette" role="dialog" aria-modal="true" aria-labelledby="palette-input" aria-hidden="true">
+        <div class="b-palette__input-wrap">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.3"/>
+                <path d="M10.5 10.5 L14 14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            <input id="palette-input" class="b-palette__input" type="text"
+                placeholder="Jump to anything — Deployments / new, beacons, region, settings…"
+                autocomplete="off">
+            <span class="b-palette__esc">ESC</span>
+        </div>
+
+        <div class="b-palette__section-label">Recent</div>
+        <div class="b-palette__list">
+            <div class="b-palette__item is-active" data-action="route" data-leaf="goad_mini_dev_harriss">
+                <span class="b-palette__item-icon">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <rect x="1.5" y="1.5" width="11" height="3.5" rx="0.6" stroke="currentColor" stroke-width="1.2"/>
+                        <rect x="1.5" y="8.5" width="11" height="3.5" rx="0.6" stroke="currentColor" stroke-width="1.2"/>
+                    </svg>
+                </span>
+                <span class="b-palette__item-label">
+                    <span class="crumb">Deployments /</span> goad_mini_dev_harriss_macbook_pro
+                </span>
+                <span class="b-palette__item-kind">project</span>
+                <span class="b-palette__item-kbd">↵</span>
+            </div>
+            <div class="b-palette__item" data-action="route" data-leaf="c2_adhoc_dev">
+                <span class="b-palette__item-icon">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.2"/>
+                        <circle cx="7" cy="7" r="2" fill="currentColor"/>
+                    </svg>
+                </span>
+                <span class="b-palette__item-label">
+                    <span class="crumb">Deployments /</span> c2_adhoc_dev_harriss_macbook_pro_01
+                </span>
+                <span class="b-palette__item-kind">project</span>
+                <span class="b-palette__item-kbd">↵</span>
+            </div>
+
+            <div class="b-new-banner" id="palette-new">
+                <span>
+                    <span class="b-new-banner__plus" aria-hidden="true"></span>
+                    New deployment
+                </span>
+                <span class="b-new-banner__hint">opens wizard</span>
+            </div>
+
+            <div class="b-palette__section-label" style="padding-top: 16px;">Pages</div>
+            <div class="b-palette__item" data-action="route" data-leaf="beacons">
+                <span class="b-palette__item-icon">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <circle cx="7" cy="7" r="2" stroke="currentColor" stroke-width="1.2"/>
+                        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.2" opacity="0.5"/>
+                    </svg>
+                </span>
+                <span class="b-palette__item-label">
+                    <span class="crumb">Operations /</span> Beacons
+                </span>
+                <span class="b-palette__item-kind">page</span>
+                <span class="b-palette__item-kbd">↵</span>
+            </div>
+            <div class="b-palette__item" data-action="route" data-leaf="cleanup">
+                <span class="b-palette__item-icon">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <path d="M3 4h8M5 4V2h4v2M4.5 4l0.5 8h4l0.5-8" stroke="currentColor" stroke-width="1.2"/>
+                    </svg>
+                </span>
+                <span class="b-palette__item-label">
+                    <span class="crumb">Deployments /</span> Cleanup
+                </span>
+                <span class="b-palette__item-kind">page</span>
+                <span class="b-palette__item-kbd">↵</span>
+            </div>
+            <div class="b-palette__item" data-action="route" data-leaf="settings">
+                <span class="b-palette__item-icon">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <circle cx="7" cy="7" r="2" stroke="currentColor" stroke-width="1.2"/>
+                        <path d="M7 0.8 L8 3 L10.3 2.4 L10.7 4.7 L13 5.5 L12 7 L13 8.5 L10.7 9.3 L10.3 11.6 L8 11 L7 13.2 L6 11 L3.7 11.6 L3.3 9.3 L1 8.5 L2 7 L1 5.5 L3.3 4.7 L3.7 2.4 L6 3 Z" stroke="currentColor" stroke-width="1"/>
+                    </svg>
+                </span>
+                <span class="b-palette__item-label">
+                    <span class="crumb">App /</span> Settings
+                </span>
+                <span class="b-palette__item-kind">page</span>
+                <span class="b-palette__item-kbd">↵</span>
+            </div>
+
+            <div class="b-palette__section-label" style="padding-top: 16px;">Actions</div>
+            <div class="b-palette__item" data-action="cmd">
+                <span class="b-palette__item-icon">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <path d="M2.5 7 L11.5 7M7 2.5 L7 11.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    </svg>
+                </span>
+                <span class="b-palette__item-label">
+                    <span class="crumb">Action /</span> Deploy now
+                </span>
+                <span class="b-palette__item-kind">action</span>
+                <span class="b-palette__item-kbd">↵</span>
+            </div>
+            <div class="b-palette__item" data-action="cmd">
+                <span class="b-palette__item-icon">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <rect x="2" y="2" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.2"/>
+                        <path d="M5 7 L7 9 L10 5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+                <span class="b-palette__item-label">
+                    <span class="crumb">Action /</span> Run health-check
+                </span>
+                <span class="b-palette__item-kind">action</span>
+                <span class="b-palette__item-kbd">↵</span>
+            </div>
+        </div>
+
+        <div class="b-palette__footer">
+            <span><kbd>↵</kbd> open · <kbd>↑</kbd><kbd>↓</kbd> nav · <kbd>⌘</kbd><kbd>↵</kbd> new pane</span>
+            <span><kbd>ESC</kbd> dismiss</span>
+        </div>
+    </div>
+
+    <div class="preview-banner">Scaffold <b>B</b> &middot; command palette</div>
+
+    <script>
+    (function () {
+        'use strict';
+        const scrim = document.getElementById('b-scrim');
+        const palette = document.getElementById('b-palette');
+        const trigger = document.getElementById('search-trigger');
+        const input = document.getElementById('palette-input');
+        const bcLeaf = document.getElementById('bc-leaf');
+        const items = palette.querySelectorAll('.b-palette__item');
+
+        let activeIndex = 0;
+
+        function setActive(idx) {
+            items.forEach((el, i) => el.classList.toggle('is-active', i === idx));
+            activeIndex = idx;
+            items[idx]?.scrollIntoView({ block: 'nearest' });
+        }
+
+        function open() {
+            scrim.classList.add('is-open');
+            palette.classList.add('is-open');
+            palette.setAttribute('aria-hidden', 'false');
+            scrim.setAttribute('aria-hidden', 'false');
+            setActive(0);
+            setTimeout(() => input.focus(), 80);
+        }
+        function close() {
+            scrim.classList.remove('is-open');
+            palette.classList.remove('is-open');
+            palette.setAttribute('aria-hidden', 'true');
+            scrim.setAttribute('aria-hidden', 'true');
+            input.value = '';
+        }
+
+        function pick(item) {
+            if (item.dataset.action === 'route' && item.dataset.leaf) {
+                bcLeaf.textContent = item.dataset.leaf;
+            }
+            close();
+        }
+
+        trigger.addEventListener('click', open);
+        scrim.addEventListener('click', close);
+
+        document.addEventListener('keydown', (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                palette.classList.contains('is-open') ? close() : open();
+                return;
+            }
+            if (!palette.classList.contains('is-open')) return;
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                close();
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setActive((activeIndex + 1) % items.length);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setActive((activeIndex - 1 + items.length) % items.length);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                pick(items[activeIndex]);
+            }
+        });
+
+        items.forEach((it, i) => {
+            it.addEventListener('mouseenter', () => setActive(i));
+            it.addEventListener('click', () => pick(it));
+        });
+
+        document.getElementById('palette-new')?.addEventListener('click', () => {
+            bcLeaf.textContent = 'new deployment · wizard';
+            close();
+        });
+
+        // Filter as user types (simple includes match)
+        input.addEventListener('input', () => {
+            const q = input.value.trim().toLowerCase();
+            let firstVisible = -1;
+            items.forEach((it, i) => {
+                const text = it.textContent.toLowerCase();
+                const match = !q || text.includes(q);
+                it.style.display = match ? '' : 'none';
+                if (match && firstVisible === -1) firstVisible = i;
+            });
+            if (firstVisible >= 0) setActive(firstVisible);
+        });
+    })();
+    </script>
+</body>
+</html>
