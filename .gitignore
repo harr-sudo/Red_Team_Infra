@@ -97,3 +97,12 @@ tools/goad/.vagrant/
 # Local-only files (not for remote)
 local-only/
 
+# Test framework (added by T0.1)
+node_modules/
+package-lock.json
+.pytest_cache/
+playwright-report/
+test-results/
+.vitest-cache/
+docs/cobalt-strike-api/spec.json
+

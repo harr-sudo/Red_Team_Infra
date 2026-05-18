@@ -1,0 +1,3 @@
+# Tests
+
+This directory contains the four-layer test suite for the Red Team Infrastructure dashboard. `tests/backend/` holds pytest-based Python tests (Flask routes, services, AWS interactions via moto) — Layer 1. `tests/cs_contract/` holds Cobalt Strike REST API OpenAPI contract tests (Layer 1.5) that validate request/response shapes against `docs/cobalt-strike-api/spec.js`. `tests/js/` holds Vitest unit tests for frontend JavaScript modules running in jsdom (Layer 2). `tests/browser/` holds Playwright end-to-end browser tests that drive the live dashboard UI (Layer 3). Run the full suite with `make test` from the repo root, or `make test-fast` to skip the slower browser layer.
