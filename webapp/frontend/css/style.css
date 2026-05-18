@@ -5762,3 +5762,257 @@ body { padding-top: 64px; }
 }
 /* === end D8 Agent A ===================================== */
 
+/* ===========================================================================
+   M-Operators (Decision #23) — operator chip + menu + add modal + activity feed
+   Dual-theme: every color via palette tokens (the 6 operator-color-swatch
+   colors are intentional identity hex values — see DEFAULT_COLORS in app.js).
+   =========================================================================== */
+
+/* --- Operator chip (header) --- */
+.operator-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-size: 12px;
+    transition: border-color 180ms ease,
+                background-color 180ms ease,
+                color 180ms ease,
+                box-shadow 180ms ease;
+}
+.operator-chip:hover {
+    border-color: var(--border-light);
+    background: var(--bg-card-hover);
+}
+.operator-chip:focus-visible {
+    outline: none;
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 28%, transparent);
+}
+.operator-chip__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--success);
+}
+.operator-chip__name {
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 0.02em;
+}
+.operator-chip__caret {
+    color: var(--text-muted);
+    transition: transform 200ms ease;
+}
+.operator-chip[aria-expanded="true"] .operator-chip__caret {
+    transform: rotate(180deg);
+}
+
+/* --- Operator menu (popover) --- */
+.operator-menu {
+    position: fixed;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    min-width: 260px;
+    padding: 8px;
+    z-index: 1000;
+}
+.operator-menu__section { padding: 4px; }
+.operator-menu__label {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 4px 8px;
+    margin-bottom: 2px;
+}
+.operator-menu__divider {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+}
+.operator-menu__operator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    background: transparent;
+    border: 0;
+    color: var(--text-primary);
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    text-align: left;
+    transition: background-color 180ms ease;
+}
+.operator-menu__operator:hover { background: var(--bg-input); }
+.operator-menu__operator.is-active {
+    background: var(--bg-input);
+    font-weight: 600;
+}
+.operator-menu__operator-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.operator-menu__operator-name {
+    flex: 1;
+    color: var(--text-primary);
+}
+.operator-menu__operator-id {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.operator-menu__action {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    background: transparent;
+    border: 0;
+    color: var(--text-secondary);
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    text-align: left;
+    transition: background-color 180ms ease, color 180ms ease;
+}
+.operator-menu__action:hover {
+    background: var(--bg-input);
+    color: var(--text-primary);
+}
+.operator-menu__action-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* --- Add Operator modal — color picker --- */
+.operator-color-grid {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+}
+.operator-color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    padding: 0;
+    transition: border-color 200ms ease, transform 200ms ease;
+}
+.operator-color-swatch:hover { transform: scale(1.1); }
+.operator-color-swatch.is-selected { border-color: var(--text-primary); }
+.operator-color-swatch:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 28%, transparent);
+}
+
+/* --- Activity feed widget --- */
+.dashboard-activity-widget__title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+.dashboard-activity-widget__title-row .dashboard-widget__title {
+    margin: 0;
+}
+.dashboard-activity-widget__refresh {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 180ms ease, border-color 180ms ease, background-color 180ms ease;
+}
+.dashboard-activity-widget__refresh:hover {
+    color: var(--text-primary);
+    border-color: var(--border-light);
+    background: var(--bg-input);
+}
+.activity-feed {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.activity-feed__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 12px;
+}
+.activity-feed__row:last-child { border-bottom: 0; }
+.activity-feed__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.activity-feed__op {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+.activity-feed__verb { color: var(--text-muted); }
+.activity-feed__target {
+    color: var(--text-primary);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+}
+.activity-feed__time {
+    margin-left: auto;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.activity-feed__empty {
+    color: var(--text-muted);
+    padding: 12px 0;
+    text-align: center;
+    font-size: 11px;
+}
+
+/* Reduced-motion respect */
+@media (prefers-reduced-motion: reduce) {
+    .operator-chip,
+    .operator-chip__caret,
+    .operator-menu__operator,
+    .operator-menu__action,
+    .operator-color-swatch,
+    .dashboard-activity-widget__refresh { transition: none; }
+    .operator-color-swatch:hover { transform: none; }
+}
+/* === end M-Operators ====================================================== */

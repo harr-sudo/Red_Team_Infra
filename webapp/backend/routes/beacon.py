@@ -5,8 +5,15 @@ Proxies requests to the Cobalt Strike REST API through the beacon service.
 Registered with url_prefix='/api/beacon' in app.py.
 """
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from webapp.backend.services.beacon_service import beacon_service
+from webapp.backend.services import audit_service
+
+
+def _audit_actor():
+    op = getattr(g, "operator", None)
+    return op.get("id") if op else "unknown"
+
 
 bp = Blueprint("beacon", __name__)
 
@@ -63,6 +70,13 @@ def console_command(bid):
         return jsonify({"success": False, "error": "No command provided"}), 400
 
     result = beacon_service.console_command(bid, command)
+    if isinstance(result, dict) and result.get("success", True) is not False:
+        audit_service.write(
+            _audit_actor(),
+            "beacon.exec",
+            target=bid,
+            details={"cmd": command},
+        )
     return jsonify(result)
 
 
@@ -364,7 +378,10 @@ def listeners_get(lid):
 
 @bp.route("/listeners/<lid>", methods=["DELETE"])
 def listeners_delete(lid):
-    return jsonify(beacon_service.delete_listener(lid))
+    result = beacon_service.delete_listener(lid)
+    if isinstance(result, dict) and result.get("success", True) is not False:
+        audit_service.write(_audit_actor(), "beacon.listener_delete", target=lid)
+    return jsonify(result)
 
 
 @bp.route("/listeners/create/<listener_type>", methods=["POST"])
@@ -376,7 +393,15 @@ def listeners_create(listener_type):
             "error": f"Invalid type. Valid: {', '.join(valid_types)}",
         }), 400
     config = request.json or {}
-    return jsonify(beacon_service.create_listener(listener_type, config))
+    result = beacon_service.create_listener(listener_type, config)
+    if isinstance(result, dict) and result.get("success", True) is not False:
+        audit_service.write(
+            _audit_actor(),
+            "beacon.listener_create",
+            target=(config.get("name") if isinstance(config, dict) else None),
+            details={"type": listener_type},
+        )
+    return jsonify(result)
 
 
 # ── Beacon Config ──

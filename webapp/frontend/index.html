@@ -64,13 +64,23 @@
                     <div class="global-header__cost-value" id="global-cost-amount">&mdash;</div>
                     <div class="global-header__cost-caption">MONTHLY BURN</div>
                 </div>
-                <!-- Operator badge (lifted from old location) -->
-                <div class="global-header__chip global-header__operator" id="global-operator-chip">
-                    <span class="global-header__operator-dot" aria-hidden="true"></span>
-                    <div class="global-header__operator-text">
-                        <span class="global-header__operator-prefix">op://</span><span class="global-header__operator-name" id="global-operator-name">&mdash;</span>
-                    </div>
-                </div>
+                <!-- M-Operators (Decision #23) — interactive operator chip + menu.
+                     Replaces the prior display-only #global-operator-chip badge.
+                     Uses /api/operators (Agent A backend) for current/switch/add.
+                     The hidden #global-operator-name span below is kept as a
+                     mirror so the legacy code paths (whoami populator at
+                     app.js:317 + #operator-badge mirror at :88) keep working. -->
+                <button class="operator-chip" id="operator-chip" type="button"
+                        aria-haspopup="true" aria-expanded="false"
+                        aria-label="Current operator — click to switch">
+                    <span class="operator-chip__dot" id="operator-chip-dot"></span>
+                    <span class="operator-chip__name" id="operator-chip-name">&hellip;</span>
+                    <svg class="operator-chip__caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                        <path d="M2 4 L5 7 L8 4" fill="none" stroke="currentColor" stroke-width="1.5"
+                              stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+                <span id="global-operator-name" hidden>&mdash;</span>
                 <!-- Theme toggle (lifted from old location) -->
                 <button class="global-header__theme-toggle"
                         id="global-theme-toggle"
@@ -86,6 +96,27 @@
             by the same fetch that populates #global-operator-name.
         -->
         <span id="operator-badge" hidden></span>
+
+        <!-- M-Operators (Decision #23) — switch-operator dropdown menu.
+             Floating popover positioned by JS relative to #operator-chip.
+             Lives outside the header so it can escape any overflow clipping. -->
+        <div class="operator-menu" id="operator-menu" role="menu" hidden>
+            <div class="operator-menu__section">
+                <div class="operator-menu__label">Switch operator</div>
+                <div id="operator-menu-list"></div>
+            </div>
+            <div class="operator-menu__divider"></div>
+            <div class="operator-menu__section">
+                <button class="operator-menu__action" id="operator-menu-add" type="button" role="menuitem">
+                    <span class="operator-menu__action-icon">+</span>
+                    Add operator&hellip;
+                </button>
+                <button class="operator-menu__action" id="operator-menu-manage" type="button" role="menuitem">
+                    <span class="operator-menu__action-icon">&#x22EF;</span>
+                    Manage&hellip;
+                </button>
+            </div>
+        </div>
 
         <!-- Navigation Tabs -->
         <nav class="tabs" id="tab-navigation">
@@ -196,14 +227,23 @@
                     </div>
                 </section>
 
-                <!-- 5. Recent activity feed (placeholder pre-P1#4) -->
-                <section class="dashboard-widget">
-                    <h3 class="dashboard-widget__title">Recent Activity</h3>
+                <!-- 5. Recent activity feed — M-Operators (Decision #23).
+                     Consumes /api/audit (Agent A backend). Auto-refreshes on
+                     tab activation + manual refresh button + after operator
+                     switch. Empty state when no entries. -->
+                <section class="dashboard-widget" id="dashboard-activity-widget">
+                    <div class="dashboard-activity-widget__title-row">
+                        <h3 class="dashboard-widget__title">Recent Activity</h3>
+                        <button class="dashboard-activity-widget__refresh"
+                                type="button"
+                                onclick="loadDashboardActivity(true)"
+                                aria-label="Refresh activity feed"
+                                title="Refresh">&#x21BB;</button>
+                    </div>
                     <div id="dashboard-activity-feed">
-                        <p class="t-muted">
-                            Operator audit log will appear here once the audit middleware lands (P1 #4).
-                            For now: see deployment history in the Deployments tab &rarr; Manage sub-pill.
-                        </p>
+                        <ul class="activity-feed" id="activity-feed-list">
+                            <li class="activity-feed__empty">Loading recent activity&hellip;</li>
+                        </ul>
                     </div>
                 </section>
 
@@ -2885,6 +2925,51 @@ ns-143.awsdns-17.org
             </header>
             <div class="modal__body" id="archived-logs-modal-body"></div>
             <footer class="modal__footer" id="archived-logs-modal-footer"></footer>
+        </div>
+    </div>
+
+    <!-- M-Operators (Decision #23) — Add operator modal.
+         Uses the V3 .modal/.modal__backdrop/.modal__content pattern (same as
+         architecture-modal, version-modal). Wired through APP.modal.open()
+         and APP.modal.close() helpers in app.js. -->
+    <div id="add-operator-modal" class="modal modal--small" hidden role="dialog" aria-modal="true" aria-labelledby="add-operator-title">
+        <div class="modal__backdrop" data-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 id="add-operator-title" class="modal__title">Add operator profile</h2>
+                <button type="button" class="modal__close" aria-label="Close" data-modal-close>&times;</button>
+            </header>
+            <div class="modal__body">
+                <p class="t-muted" style="margin-top: 0;">
+                    Operator profiles are for action attribution &mdash; no password, no auth.
+                    Trust is upstream via AWS IAM and SSH access.
+                </p>
+                <form id="add-operator-form" onsubmit="return submitAddOperator(event)">
+                    <div class="form-group">
+                        <label for="add-op-id">Operator ID</label>
+                        <input type="text" id="add-op-id" required
+                               pattern="[a-z0-9_-]+"
+                               autocomplete="off"
+                               placeholder="alice">
+                        <small>Lowercase alphanumeric, hyphens, or underscores.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="add-op-display">Display name</label>
+                        <input type="text" id="add-op-display" required placeholder="Alice">
+                    </div>
+                    <div class="form-group">
+                        <label>Color</label>
+                        <div class="operator-color-grid" id="add-op-color-grid">
+                            <!-- populated by JS — 6 swatches -->
+                        </div>
+                    </div>
+                    <div id="add-op-error" class="callout callout--warning" style="display: none; margin-top: 12px;"></div>
+                    <div class="modal__footer" style="margin-top: 20px; padding: 0; border: 0;">
+                        <button class="btn btn-secondary" type="button" data-modal-close>Cancel</button>
+                        <button class="btn btn-primary" type="submit">Add operator</button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 

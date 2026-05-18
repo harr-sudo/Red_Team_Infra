@@ -19,10 +19,13 @@ sys.path.insert(0, str(project_root))
 # Frontend path
 frontend_path = Path(__file__).parent.parent / 'frontend'
 
-from flask import Flask, render_template, jsonify, request, send_from_directory
+from flask import Flask, g, render_template, jsonify, request, send_from_directory
 from flask_cors import CORS
 from webapp.backend.routes import config, deploy, aws_check, health, goad, architecture, tools, profiles, costs, setup_check, beacon, terminal
+from webapp.backend.routes import operators as operators_routes
+from webapp.backend.routes import audit as audit_routes
 from webapp.backend.middleware import identity
+from webapp.backend.services import operator_service
 
 _logger = logging.getLogger(__name__)
 
@@ -96,6 +99,14 @@ def enforce_loopback():
     if request.remote_addr != '127.0.0.1':
         return jsonify({"error": "Access denied - connect via SSH tunnel"}), 403
 
+
+# Resolve the current operator from the dashboard_operator cookie on every
+# request and bind to flask.g.operator. The cookie is unsigned by design —
+# trust is upstream (AWS IAM + SSH). See Decision #23 / M-Operators.
+@app.before_request
+def _resolve_operator():
+    g.operator = operator_service.resolve_from_request(request)
+
 # Register blueprints
 app.register_blueprint(config.bp, url_prefix='/api/config')
 app.register_blueprint(deploy.bp, url_prefix='/api/deploy')
@@ -110,6 +121,8 @@ app.register_blueprint(setup_check.bp, url_prefix='/api/setup-check')
 app.register_blueprint(beacon.bp, url_prefix='/api/beacon')
 app.register_blueprint(terminal.bp)
 app.register_blueprint(identity.bp)
+app.register_blueprint(operators_routes.bp)
+app.register_blueprint(audit_routes.bp)
 
 # Initialize WebSocket support for terminal
 terminal.init_sock(app)

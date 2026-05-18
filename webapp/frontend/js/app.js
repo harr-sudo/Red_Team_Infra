@@ -23127,6 +23127,323 @@ function cleanupMarkKnown(id) {
 }
 // === end D8 Agent B =========================================================
 
+// ============================================================================
+// === M-Operators (Decision #23) — operator chip + menu + activity feed ====
+// ============================================================================
+// Backend contract (Agent A):
+//   GET    /api/operators            → { success, operators, current, default }
+//   POST   /api/operators            → { success, operator }
+//   POST   /api/operators/switch     → { success, current }  (sets cookie)
+//   GET    /api/audit?limit=&op=&action_prefix= → { success, entries, count }
+// Frontend reuses APP.modal, APP.toast, escapeHtml; no new utilities.
+// ============================================================================
+
+APP.operator = {
+    current: null,
+    all: [],
+    _listeners: [],
+    onChange(fn) { this._listeners.push(fn); },
+    _notify() {
+        this._listeners.forEach(fn => { try { fn(this.current); } catch (_) { /* ignore */ } });
+    },
+};
+
+async function loadOperators() {
+    try {
+        const res = await fetch('/api/operators');
+        const data = await res.json();
+        if (!data || !data.success) return;
+        APP.operator.current = data.current || null;
+        APP.operator.all = data.operators || [];
+        renderOperatorChip();
+        renderOperatorMenu();
+        APP.operator._notify();
+    } catch (e) {
+        console.warn('Failed to load operators', e);
+    }
+}
+
+function renderOperatorChip() {
+    const op = APP.operator.current;
+    if (!op) return;
+    const dot = document.getElementById('operator-chip-dot');
+    const name = document.getElementById('operator-chip-name');
+    if (dot) dot.style.background = op.color || 'var(--success)';
+    if (name) name.textContent = op.display || op.id || '—';
+    // Keep legacy hidden mirrors in sync (topology.js + any whoami consumers)
+    const ghName = document.getElementById('global-operator-name');
+    if (ghName) ghName.textContent = op.display || op.id || '';
+    const legacyBadge = document.getElementById('operator-badge');
+    if (legacyBadge) legacyBadge.textContent = op.display || op.id || '';
+}
+
+function renderOperatorMenu() {
+    const list = document.getElementById('operator-menu-list');
+    if (!list) return;
+    const currentId = APP.operator.current ? APP.operator.current.id : null;
+    list.innerHTML = APP.operator.all.map(op => {
+        const isActive = op.id === currentId ? ' is-active' : '';
+        return `
+            <button class="operator-menu__operator${isActive}" type="button"
+                    role="menuitem"
+                    onclick="switchOperator('${escapeHtml(op.id)}')">
+                <span class="operator-menu__operator-dot" style="background: ${escapeHtml(op.color || '#7A849E')}"></span>
+                <span class="operator-menu__operator-name">${escapeHtml(op.display || op.id || '')}</span>
+                <span class="operator-menu__operator-id">${escapeHtml(op.id || '')}</span>
+            </button>`;
+    }).join('');
+}
+
+async function switchOperator(opId) {
+    try {
+        const res = await fetch('/api/operators/switch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: opId }),
+        });
+        const data = await res.json();
+        if (data && data.success) {
+            APP.operator.current = data.current;
+            renderOperatorChip();
+            renderOperatorMenu();
+            APP.operator._notify();
+            closeOperatorMenu();
+            if (typeof APP.toast === 'function' && data.current) {
+                APP.toast(`Switched to ${data.current.display || data.current.id}`, 'info');
+            }
+            // Refresh the activity feed so it re-attributes rows with the
+            // newly-current operator's color (and picks up any audit entry
+            // the backend wrote for the switch itself).
+            loadDashboardActivity(true);
+        }
+    } catch (e) {
+        console.warn('Failed to switch operator', e);
+    }
+}
+
+function openOperatorMenu() {
+    const menu = document.getElementById('operator-menu');
+    const chip = document.getElementById('operator-chip');
+    if (!menu || !chip) return;
+    menu.hidden = false;
+    chip.setAttribute('aria-expanded', 'true');
+    // Position below the chip, right-aligned to it.
+    const rect = chip.getBoundingClientRect();
+    menu.style.top = (rect.bottom + 8) + 'px';
+    menu.style.right = Math.max(8, window.innerWidth - rect.right) + 'px';
+    document.addEventListener('click', _operatorMenuOutsideClick, true);
+    document.addEventListener('keydown', _operatorMenuEsc);
+}
+
+function closeOperatorMenu() {
+    const menu = document.getElementById('operator-menu');
+    const chip = document.getElementById('operator-chip');
+    if (!menu || !chip) return;
+    if (menu.hidden) return;
+    menu.hidden = true;
+    chip.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', _operatorMenuOutsideClick, true);
+    document.removeEventListener('keydown', _operatorMenuEsc);
+}
+
+function _operatorMenuOutsideClick(e) {
+    const menu = document.getElementById('operator-menu');
+    const chip = document.getElementById('operator-chip');
+    if (!menu || !chip) return;
+    if (!menu.contains(e.target) && !chip.contains(e.target)) closeOperatorMenu();
+}
+function _operatorMenuEsc(e) { if (e.key === 'Escape') closeOperatorMenu(); }
+
+// --- Add Operator modal ---
+const OPERATOR_COLORS = ['#a31621', '#3b82f6', '#0d9488', '#7c3aed', '#ea580c', '#65a30d'];
+let _selectedOperatorColor = OPERATOR_COLORS[0];
+
+function openAddOperatorModal() {
+    closeOperatorMenu();
+    if (!APP.modal || typeof APP.modal.open !== 'function') return;
+    APP.modal.open('add-operator-modal');
+    populateOperatorColorGrid();
+    const idEl = document.getElementById('add-op-id');
+    const displayEl = document.getElementById('add-op-display');
+    const errEl = document.getElementById('add-op-error');
+    if (idEl) idEl.value = '';
+    if (displayEl) displayEl.value = '';
+    if (errEl) errEl.style.display = 'none';
+}
+
+function populateOperatorColorGrid() {
+    const grid = document.getElementById('add-op-color-grid');
+    if (!grid) return;
+    _selectedOperatorColor = OPERATOR_COLORS[0];
+    grid.innerHTML = OPERATOR_COLORS.map((c, i) => `
+        <button type="button"
+                class="operator-color-swatch${i === 0 ? ' is-selected' : ''}"
+                style="background: ${c}" data-color="${c}"
+                onclick="selectOperatorColor('${c}', this)"
+                aria-label="Color ${c}"></button>
+    `).join('');
+}
+
+function selectOperatorColor(color, btn) {
+    _selectedOperatorColor = color;
+    document.querySelectorAll('#add-op-color-grid .operator-color-swatch').forEach(s => {
+        s.classList.remove('is-selected');
+    });
+    if (btn) btn.classList.add('is-selected');
+}
+
+async function submitAddOperator(e) {
+    e.preventDefault();
+    const idEl = document.getElementById('add-op-id');
+    const displayEl = document.getElementById('add-op-display');
+    const errBox = document.getElementById('add-op-error');
+    if (!idEl || !displayEl || !errBox) return false;
+    const id = idEl.value.trim();
+    const display = displayEl.value.trim();
+    errBox.style.display = 'none';
+    try {
+        const res = await fetch('/api/operators', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, display, color: _selectedOperatorColor }),
+        });
+        const data = await res.json();
+        if (!data || !data.success) {
+            errBox.textContent = (data && data.error) || 'Failed to add operator';
+            errBox.style.display = 'block';
+            return false;
+        }
+        APP.modal.close('add-operator-modal');
+        await loadOperators();
+        if (data.operator && data.operator.id) {
+            await switchOperator(data.operator.id);
+        }
+        if (typeof APP.toast === 'function' && data.operator) {
+            APP.toast(`Operator ${data.operator.display || data.operator.id} added`, 'success');
+        }
+    } catch (err) {
+        errBox.textContent = 'Network error';
+        errBox.style.display = 'block';
+    }
+    return false;
+}
+
+// --- Activity feed ---
+async function loadDashboardActivity(forceRefresh = false) {
+    const list = document.getElementById('activity-feed-list');
+    if (!list) return;
+    try {
+        const res = await fetch('/api/audit?limit=20');
+        const data = await res.json();
+        const entries = (data && data.entries) || [];
+        if (entries.length === 0) {
+            list.innerHTML = '<li class="activity-feed__empty">No recent activity.</li>';
+            return;
+        }
+        list.innerHTML = entries.map(e => _renderActivityRow(e)).join('');
+    } catch (err) {
+        list.innerHTML = '<li class="activity-feed__empty">Failed to load activity.</li>';
+    }
+}
+
+function _renderActivityRow(e) {
+    const op = APP.operator.all.find(o => o.id === e.op);
+    const color = (op && op.color) || '#7A849E';
+    const display = (op && op.display) || e.op || 'unknown';
+    const verb = _activityVerb(e.action);
+    const target = e.project || e.target || '';
+    const time = _relativeTime(e.ts);
+    return `
+        <li class="activity-feed__row">
+            <span class="activity-feed__dot" style="background: ${escapeHtml(color)}"></span>
+            <span class="activity-feed__op">${escapeHtml(display)}</span>
+            <span class="activity-feed__verb">${escapeHtml(verb)}</span>
+            ${target ? `<span class="activity-feed__target">${escapeHtml(target)}</span>` : ''}
+            <span class="activity-feed__time">${escapeHtml(time)}</span>
+        </li>
+    `;
+}
+
+function _activityVerb(action) {
+    const map = {
+        'deploy.apply': 'deployed',
+        'deploy.destroy': 'destroyed',
+        'deploy.plan': 'planned',
+        'deploy.save_config': 'saved config for',
+        'beacon.exec': 'ran a command on',
+        'beacon.listener_create': 'created listener on',
+        'terminal.start': 'started terminal on',
+        'operator.add': 'added operator',
+        'operator.remove': 'removed operator',
+        'operator.switch': 'switched to',
+        'cleanup.mark_known': 'marked known-external',
+    };
+    return map[action] || action || '';
+}
+
+function _relativeTime(iso) {
+    if (!iso) return '';
+    const then = new Date(iso).getTime();
+    if (isNaN(then)) return '';
+    const diff = Date.now() - then;
+    const s = Math.max(0, Math.floor(diff / 1000));
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    return `${d}d ago`;
+}
+
+// Wire up on DOMContentLoaded — coexists with APP.init() (separate listener).
+document.addEventListener('DOMContentLoaded', () => {
+    loadOperators();
+    const chip = document.getElementById('operator-chip');
+    if (chip) {
+        chip.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const menu = document.getElementById('operator-menu');
+            if (!menu) return;
+            if (menu.hidden) openOperatorMenu(); else closeOperatorMenu();
+        });
+    }
+    const addBtn = document.getElementById('operator-menu-add');
+    if (addBtn) addBtn.addEventListener('click', openAddOperatorModal);
+    // Manage button is a placeholder — wire to a future manage view; for now
+    // it just closes the menu so the click still feels responsive.
+    const manageBtn = document.getElementById('operator-menu-manage');
+    if (manageBtn) manageBtn.addEventListener('click', () => {
+        closeOperatorMenu();
+        if (typeof APP.toast === 'function') {
+            APP.toast('Operator management view coming soon', 'info');
+        }
+    });
+
+    // Initial activity load — also loaded on every Dashboard tab activation.
+    loadDashboardActivity(true);
+});
+
+// Hook into APP.navigateTo so the activity feed refreshes on Dashboard entry.
+// Wrap idempotently — guarded by _mOperatorsWrapped so HMR/dup-load is safe.
+if (APP.navigateTo && !APP.navigateTo._mOperatorsWrapped) {
+    const _origNav = APP.navigateTo.bind(APP);
+    APP.navigateTo = function (...args) {
+        const result = _origNav(...args);
+        // The dashboard tab is registered as 'dashboard' (data-target="dashboard");
+        // the spec referenced 'dashboard-tab' for forward-compat — accept both.
+        const first = args[0];
+        const parent = (first && typeof first === 'object') ? first.parent : first;
+        if (parent === 'dashboard' || parent === 'dashboard-tab') {
+            loadDashboardActivity(true);
+        }
+        return result;
+    };
+    APP.navigateTo._mOperatorsWrapped = true;
+}
+
+// === end M-Operators ========================================================
+
 document.addEventListener('DOMContentLoaded', () => {
     APP.init();
 });

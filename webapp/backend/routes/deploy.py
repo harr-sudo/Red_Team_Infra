@@ -3,7 +3,7 @@ Deployment API Routes
 Handle infrastructure deployment operations
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 from pathlib import Path
 import sys
 import threading
@@ -20,8 +20,15 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from webapp.backend.services.terraform_service import TerraformService, get_terraform_service
+from webapp.backend.services import audit_service
 from webapp.backend.utils.goad_template_processor import get_lab_info, extract_vm_info
 from webapp.backend.middleware.identity import get_operator
+
+
+def _audit_actor():
+    """Return the current operator id from flask.g (set by app.before_request)."""
+    op = getattr(g, "operator", None)
+    return op.get("id") if op else "unknown"
 
 bp = Blueprint('deploy', __name__)
 
@@ -1931,7 +1938,14 @@ def deploy():
     thread = threading.Thread(target=run_deployment, args=(project_name,))
     thread.daemon = False
     thread.start()
-    
+
+    audit_service.write(
+        _audit_actor(),
+        "deploy.apply",
+        project=project_name,
+        details={"deployment_type": deployment_type},
+    )
+
     return jsonify({
         "success": True,
         "message": f"Deployment started for project '{project_name}' ({deployment_type})",
@@ -2016,7 +2030,9 @@ def destroy():
     thread = threading.Thread(target=run_destroy, args=(project_name,))
     thread.daemon = False
     thread.start()
-    
+
+    audit_service.write(_audit_actor(), "deploy.destroy", project=project_name)
+
     return jsonify({
         "success": True,
         "message": f"Destruction started" + (f" for project '{project_name}'" if project_name else ""),
@@ -2296,6 +2312,7 @@ def plan():
         
         if result["success"]:
             add_history_entry("Terraform plan completed successfully", "success", entry_type='plan')
+            audit_service.write(_audit_actor(), "deploy.plan")
             return jsonify({
                 "success": True,
                 "exit_code": result.get("exit_code"),

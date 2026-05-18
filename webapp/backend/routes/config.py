@@ -4,7 +4,7 @@ Handle configuration file management
 """
 
 import subprocess
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 from pathlib import Path
 import os
 import sys
@@ -15,6 +15,12 @@ sys.path.insert(0, str(project_root))
 
 from webapp.backend.utils.config_parser import ConfigParser
 from webapp.backend.utils.validators import ConfigValidator
+from webapp.backend.services import audit_service
+
+
+def _audit_actor():
+    op = getattr(g, "operator", None)
+    return op.get("id") if op else "unknown"
 
 bp = Blueprint('config', __name__)
 
@@ -128,6 +134,12 @@ def update_config():
             os.unlink(tmp_path)
             raise
         
+        project_name = (config or {}).get("project_name") if isinstance(config, dict) else None
+        audit_service.write(
+            _audit_actor(),
+            "deploy.save_config",
+            project=project_name,
+        )
         return jsonify({
             "success": True,
             "message": "Configuration saved successfully",
