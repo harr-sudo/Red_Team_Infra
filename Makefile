@@ -41,4 +41,4 @@ test-browser-headed:
 test-fast: test-backend test-js
 
 refresh-cs-spec:
-	@echo "T0.2 not yet implemented"
+	@./scripts/refresh-cs-spec.sh
