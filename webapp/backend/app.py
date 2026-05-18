@@ -7,6 +7,9 @@ Access via SSH tunnel only — Flask binds to loopback, loopback guard rejects a
 
 import os
 import sys
+import logging
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add project root to path
@@ -20,6 +23,61 @@ from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_cors import CORS
 from webapp.backend.routes import config, deploy, aws_check, health, goad, architecture, tools, profiles, costs, setup_check, beacon, terminal
 from webapp.backend.middleware import identity
+
+_logger = logging.getLogger(__name__)
+
+# --- Versioning helpers (P1 #7.6) -----------------------------------------
+# Resolve the VERSION file at repo root. Works whether the app is run from
+# the venv locally or from systemd on the dashboard EC2 — both cases reach
+# the repo root via three .parent hops from this file.
+_VERSION_FILE = project_root / 'VERSION'
+
+
+def _read_version_file():
+    """Read the VERSION file. Returns 'unknown' on any failure so the app
+    never fails to start because of versioning."""
+    try:
+        return _VERSION_FILE.read_text(encoding='utf-8').strip() or 'unknown'
+    except (OSError, UnicodeDecodeError) as exc:
+        _logger.warning("Could not read VERSION file at %s: %s", _VERSION_FILE, exc)
+        return 'unknown'
+
+
+def _read_git_sha():
+    """Return short (7-char) git SHA, or 'unknown' if git is unavailable or
+    this is not a git checkout. Captured once at startup — do not call per
+    request."""
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--short=7', 'HEAD'],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            sha = result.stdout.strip()
+            if sha:
+                return sha[:7]
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        _logger.warning("git rev-parse failed: %s", exc)
+    return 'unknown'
+
+
+# Capture once at startup — module-level constants (no per-request cost).
+_VERSION = _read_version_file()
+_GIT_SHA = _read_git_sha()
+_BUILT_AT = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def get_version_info():
+    """Return cached version metadata for /api/ and /api/version."""
+    return {
+        'version': _VERSION,
+        'git_sha': _GIT_SHA,
+        'built_at': _BUILT_AT,
+    }
+# --------------------------------------------------------------------------
 
 # Initialize Flask app
 app = Flask(__name__, 
@@ -87,7 +145,7 @@ def api_info():
     """API information endpoint"""
     return jsonify({
         'name': 'Red Team Infrastructure API',
-        'version': '1.0.0',
+        'version': get_version_info()['version'],
         'endpoints': {
             'config': '/api/config',
             'deploy': '/api/deploy',
@@ -96,6 +154,12 @@ def api_info():
             'costs': '/api/costs'
         }
     })
+
+
+@app.route('/api/version')
+def api_version():
+    """Version metadata: VERSION file content + git SHA + startup timestamp."""
+    return jsonify(get_version_info())
 
 if __name__ == '__main__':
     print("=" * 60)
