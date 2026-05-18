@@ -6039,3 +6039,992 @@ body { padding-top: 64px; }
     .operator-color-swatch:hover { transform: none; }
 }
 /* === end M-Operators ====================================================== */
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   PHASE 2B — SHARED V3-NATIVE PRIMITIVES
+   These are the building blocks for Composition A, the Hybrid journey,
+   and every Phase 3 sub-pill rebuild. Do NOT redefine these in Phase 3
+   sections — extend or compose. Keep this section the single source of
+   truth.
+
+   API surface (Phase 3 agents consume these names verbatim):
+
+     .spec-list                  — container; flex column of .spec-row;
+                                   no chrome of its own; aria-label is the
+                                   consumer's responsibility.
+     .spec-list[data-editing]    — sibling-dim modifier; non-editing rows
+                                   drop to 0.4 opacity.
+     .spec-row                   — 200px / 1fr / auto grid; hairline below;
+                                   hover paints a 2px brand-light left rail
+                                   via ::before; nests .spec-row__editor.
+     .spec-row[data-readonly]    — non-interactive variant (no hover, no
+                                   pencil); used for computed rows like
+                                   estimated cost.
+     .spec-row[data-editing]     — active editing state — head highlighted,
+                                   left rail painted, editor expanded.
+     .spec-row__key              — caps mono eyebrow; --text-secondary.
+     .spec-row__value            — body identity value; --text-primary;
+                                   modifier .spec-row__value--mono for
+                                   tabular monospace values.
+     .spec-row__hint             — inline meta to the right; --text-muted.
+     .spec-row__action           — 22px square edit-pencil button; reveals
+                                   on row hover. Defaults to .icon child.
+     .spec-row__editor           — slot below head; collapses by default,
+                                   expands when row is editing. Padding
+                                   12px 16px 18px 14px.
+     .spec-row__editor-foot      — flex row, right-aligned, gap 8px; hosts
+                                   Cancel / Save .spec-edit-btn buttons.
+     .spec-edit-btn              — neutral border button; modifier
+                                   .spec-edit-btn--save for brand-light fill.
+
+     .seg-control                — inline-flex segmented control container;
+                                   borders + radius own the chrome.
+     .seg-control__option        — child button; transparent by default;
+                                   .is-active paints bg-card-hover +
+                                   text-primary + inset 2px brand-light
+                                   under-rule. Layer-aware contrast OK in
+                                   both themes.
+
+     .scrim-takeover             — fixed-position scrim overlay; backdrop
+                                   blur + dim. Open via [data-open="true"].
+                                   z-index var(--z-takeover, 200).
+     .takeover-card              — modal surface above the scrim; centered
+                                   max-width 680px; bg-card; radius-lg;
+                                   shadow-elevation; consumers add their
+                                   own internal padding via children.
+     body[data-journey-open]     — dashboard dim trigger; .tab-content
+                                   gets blur(8px) + opacity 0.28.
+
+     .icon                       — 14x14 SVG glyph; currentColor stroke;
+                                   variants .icon--sm (12) / .icon--lg (18).
+     Symbols mounted in #icon-defs (index.html): icon-edit-pencil,
+       icon-check, icon-x, icon-chevron-right, icon-chevron-down.
+
+   Layer-aware contrast invariants verified in both themes:
+     - .spec-row__key on --bg-body / --bg-card → --text-secondary OK
+     - .spec-row__value on --bg-card-hover (hover) → --text-primary OK
+     - .seg-control__option text on --bg-card-hover (.is-active) → OK
+     - .takeover-card children on --bg-card → standard text tokens OK
+     - .takeover-card sits on .scrim-takeover (no transparency leakage)
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── ICON system — 14px line-art glyphs ────────────────────────────────── */
+.icon {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: currentColor;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vertical-align: -2px;
+}
+.icon--sm { width: 12px; height: 12px; }
+.icon--lg { width: 18px; height: 18px; stroke-width: 1.4; }
+
+/* ── SPEC-LIST — definition list spine for summary + spec-edit views ─── */
+.spec-list {
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+    border: 0;
+}
+
+.spec-row {
+    position: relative;
+    padding: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                opacity var(--motion-duration-base) var(--motion-easing-standard);
+}
+.spec-row:last-child { border-bottom: none; }
+
+.spec-row__head {
+    position: relative;
+    display: grid;
+    grid-template-columns: 200px 1fr auto 22px;
+    align-items: baseline;
+    gap: 20px;
+    padding: 12px 16px 12px 14px;
+    cursor: pointer;
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                transform var(--motion-duration-base) var(--motion-easing-standard);
+}
+.spec-row__head::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 10px;
+    bottom: 10px;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--brand-light);
+    opacity: 0;
+    transform: scaleY(0.4);
+    transform-origin: center;
+    transition: opacity 200ms var(--motion-easing-standard),
+                transform 200ms var(--motion-easing-spring);
+    pointer-events: none;
+}
+.spec-row:hover .spec-row__head {
+    background: var(--bg-card-hover);
+    transform: translateX(2px);
+}
+.spec-row:hover .spec-row__head::before,
+.spec-row[data-editing="true"] .spec-row__head::before {
+    opacity: 1;
+    transform: scaleY(1);
+}
+.spec-row[data-editing="true"] .spec-row__head {
+    background: var(--bg-card-hover);
+}
+
+/* Sibling-dim: when any row in the list is editing, fade the rest. */
+.spec-list[data-editing="true"] .spec-row:not([data-editing="true"]) {
+    opacity: 0.4;
+}
+.spec-list[data-editing="true"] .spec-row:not([data-editing="true"]) .spec-row__head {
+    pointer-events: none;
+}
+
+/* Read-only rows (no edit affordance, no hover lift) */
+.spec-row[data-readonly="true"] .spec-row__head { cursor: default; }
+.spec-row[data-readonly="true"]:hover .spec-row__head {
+    background: transparent;
+    transform: none;
+}
+.spec-row[data-readonly="true"]:hover .spec-row__head::before { opacity: 0; }
+.spec-row[data-readonly="true"] .spec-row__action { display: none; }
+
+.spec-row__key {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    white-space: nowrap;
+    margin: 0;
+}
+.spec-row__value {
+    font-size: var(--font-size-base);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-medium);
+    min-width: 0;
+    word-break: break-word;
+    margin: 0;
+}
+.spec-row__value--mono {
+    font-family: var(--font-family-mono);
+    font-variant-numeric: tabular-nums;
+}
+.spec-row__value--strong {
+    font-weight: var(--font-weight-semibold);
+}
+.spec-row__hint {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    /* Use --text-secondary, NOT --text-muted: the hint sits inside .spec-row__head
+       which switches to --bg-card-hover on row hover and on data-editing="true".
+       --text-muted (e.g. #858FAB on #232840) is at the AA threshold (~4.49:1)
+       which fails the contrast invariant guard. --text-secondary is comfortably
+       above threshold on every layer this primitive can sit on. */
+    color: var(--text-secondary);
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+    margin: 0;
+}
+
+.spec-row__action {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--text-secondary);
+    opacity: 0.4;
+    cursor: pointer;
+    transition: opacity var(--motion-duration-base) var(--motion-easing-standard),
+                color var(--motion-duration-base) var(--motion-easing-standard),
+                background-color var(--motion-duration-base) var(--motion-easing-standard),
+                border-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.spec-row:hover .spec-row__action,
+.spec-row[data-editing="true"] .spec-row__action {
+    opacity: 1;
+    color: var(--text-primary);
+    border-color: var(--border-subtle);
+    background: var(--bg-input);
+}
+.spec-row__action:hover {
+    border-color: var(--brand-light);
+}
+.spec-row__action:focus-visible {
+    outline: none;
+    opacity: 1;
+    border-color: var(--brand-light);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+}
+
+/* Editor slot — collapsed by default, expanded when row is editing */
+.spec-row__editor {
+    display: none;
+    padding: 6px 16px 18px 14px;
+}
+.spec-row[data-editing="true"] .spec-row__editor {
+    display: block;
+    animation: spec-edit-in 240ms var(--motion-easing-standard) both;
+}
+
+.spec-row__editor-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+.spec-row__editor-label {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.spec-row__editor-input {
+    width: 100%;
+    box-sizing: border-box;
+    appearance: none;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 10px 12px;
+    border-radius: var(--radius-xs);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-base);
+    transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.spec-row__editor-input:focus {
+    outline: none;
+    border-color: var(--brand-light);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+}
+.spec-row__editor-hint {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+}
+.spec-row__editor-foot {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 10px;
+}
+
+.spec-edit-btn {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 6px 14px;
+    border-radius: var(--radius-xs);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: var(--font-weight-semibold);
+    cursor: pointer;
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                border-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.spec-edit-btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-light);
+}
+.spec-edit-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+}
+.spec-edit-btn--save {
+    background: var(--brand-light);
+    border-color: var(--brand-light);
+    color: var(--text-inverse);
+}
+.spec-edit-btn--save:hover {
+    background: var(--brand);
+    border-color: var(--brand);
+}
+
+/* Small status pill used inside spec-row values (e.g., environment, status) */
+.spec-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 9px;
+    border-radius: var(--radius-full);
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-bold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+}
+.spec-pill__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--brand-light);
+    flex-shrink: 0;
+}
+.spec-pill--live .spec-pill__dot {
+    background: var(--success);
+    animation: spec-pill-pulse 1.8s ease-in-out infinite;
+}
+.spec-pill--error .spec-pill__dot { background: var(--danger); }
+.spec-pill--draft .spec-pill__dot { background: var(--text-muted); }
+
+@keyframes spec-pill-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 60%, transparent); }
+    50%      { box-shadow: 0 0 0 5px color-mix(in srgb, var(--success) 0%, transparent); }
+}
+
+@keyframes spec-edit-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Narrow viewport — collapse to stacked rows */
+@media (max-width: 600px) {
+    .spec-row__head {
+        grid-template-columns: 1fr auto;
+        grid-template-rows: auto auto;
+        gap: 4px 12px;
+    }
+    .spec-row__key { grid-column: 1 / -1; }
+    .spec-row__hint { display: none; }
+}
+
+/* ── SEG-CONTROL — segmented choice ─────────────────────────────────── */
+.seg-control {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    overflow: hidden;
+    background: var(--bg-input);
+}
+.seg-control__option {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    border-left: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 6px 14px;
+    font-family: var(--font-family-base);
+    font-size: 11.5px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.seg-control__option:first-child { border-left: 0; }
+.seg-control__option:hover:not([disabled]) {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+.seg-control__option.is-active {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+    box-shadow: inset 0 -2px 0 var(--brand-light);
+}
+.seg-control__option:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--brand-light) 50%, transparent);
+}
+.seg-control__option[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* ── SCRIM TAKEOVER + DASHBOARD-DIM TRIGGER ─────────────────────────── */
+:root { --z-takeover: 200; }
+
+.scrim-takeover {
+    position: fixed;
+    inset: 0;
+    background: var(--scrim);
+    backdrop-filter: var(--scrim-blur);
+    -webkit-backdrop-filter: var(--scrim-blur);
+    z-index: calc(var(--z-takeover) - 1);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--motion-duration-base) var(--motion-easing-standard);
+}
+.scrim-takeover[data-open="true"] {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.takeover-card {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, calc(-50% + 8px));
+    width: calc(100% - 48px);
+    max-width: 680px;
+    max-height: calc(100vh - 96px);
+    overflow-y: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 16px 64px rgba(0, 0, 0, 0.4);
+    padding: 32px;
+    z-index: var(--z-takeover);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--motion-duration-base) var(--motion-easing-standard),
+                transform var(--motion-duration-base) var(--motion-easing-standard);
+}
+.takeover-card[data-open="true"] {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, -50%);
+}
+
+/* Dashboard-dim: when journey is open, blur + fade everything underneath. */
+body[data-journey-open="true"] .container > .tab-content,
+body[data-journey-open="true"] .container > main {
+    filter: blur(8px);
+    opacity: 0.28;
+    transition: filter var(--motion-duration-base) var(--motion-easing-standard),
+                opacity var(--motion-duration-base) var(--motion-easing-standard);
+    pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .spec-row, .spec-row__head, .spec-row__head::before,
+    .spec-row__action, .scrim-takeover, .takeover-card,
+    body[data-journey-open="true"] .container > .tab-content {
+        transition: none;
+        animation: none;
+    }
+    .spec-row:hover .spec-row__head { transform: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   END PHASE 2B SHARED PRIMITIVES
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Phase 2b.2 — Deploy summary spec-list wrapper (composes primitives) ─ */
+.deploy-summary {
+    max-width: 820px;
+    margin: 0;
+    padding: 0;
+}
+.deploy-summary__eyebrow {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 22px;
+}
+.deploy-summary__eyebrow-label {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.deploy-summary__hero {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 24px;
+}
+.deploy-summary__hero-caption {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.deploy-summary__hero-name {
+    font-family: var(--font-family-mono);
+    font-size: 21px;
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    letter-spacing: -0.012em;
+    word-break: break-all;
+    line-height: 1.2;
+    margin: 0;
+}
+.deploy-summary__hero-type {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 0;
+}
+.deploy-summary__hero-type strong {
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+}
+.deploy-summary__warnings {
+    margin-top: 18px;
+    padding: 12px 14px;
+    background: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+    border-radius: var(--radius-xs);
+}
+.deploy-summary__warnings-title {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--warning-text);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+.deploy-summary__warnings-list {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--warning-text);
+    font-size: var(--font-size-sm);
+    line-height: 1.55;
+}
+
+/* ── Phase 2b.3 — Journey takeover internals ───────────────────────── */
+.journey-card {
+    /* extends .takeover-card; no overrides needed at the surface level */
+}
+.journey-progress {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 24px;
+}
+.journey-progress__dots {
+    display: flex;
+    gap: 12px;
+}
+.journey-progress__dot {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    transition: color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.journey-progress__dot-circle {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-light);
+    background: transparent;
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                border-color var(--motion-duration-base) var(--motion-easing-standard),
+                transform var(--motion-duration-base) var(--motion-easing-spring);
+}
+.journey-progress__dot.is-done .journey-progress__dot-circle {
+    background: var(--brand-light);
+    border-color: var(--brand-light);
+}
+.journey-progress__dot.is-active {
+    color: var(--text-primary);
+}
+.journey-progress__dot.is-active .journey-progress__dot-circle {
+    border-color: var(--brand-light);
+    background: var(--brand-light);
+    transform: scale(1.25);
+}
+.journey-progress__dot:hover .journey-progress__dot-circle {
+    border-color: var(--brand-light);
+}
+.journey-progress__dot:focus-visible {
+    outline: none;
+}
+.journey-progress__dot:focus-visible .journey-progress__dot-circle {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+}
+.journey-progress__close {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 5px 12px;
+    border-radius: var(--radius-xs);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: var(--font-weight-semibold);
+    cursor: pointer;
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                border-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.journey-progress__close:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-light);
+}
+
+.journey-step {
+    display: none;
+    flex-direction: column;
+    gap: 22px;
+    animation: spec-edit-in 320ms var(--motion-easing-standard) both;
+}
+.journey-step.is-active { display: flex; }
+.journey-step__eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.journey-step__title {
+    font-size: 21px;
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    letter-spacing: -0.012em;
+    margin: 0;
+    line-height: 1.25;
+}
+.journey-step__lede {
+    font-size: 13.5px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    margin: 0;
+}
+
+.journey-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--border-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+.journey-card-option {
+    position: relative;
+    display: grid;
+    grid-template-columns: 22px 1fr auto;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    cursor: pointer;
+    background: var(--bg-card);
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                transform var(--motion-duration-base) var(--motion-easing-standard);
+    color: var(--text-primary);
+}
+.journey-card-option::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 10px; bottom: 10px;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--brand-light);
+    opacity: 0;
+    transform: scaleY(0.4);
+    transform-origin: center;
+    transition: opacity 200ms var(--motion-easing-standard),
+                transform 200ms var(--motion-easing-spring);
+}
+.journey-card-option:hover {
+    background: var(--bg-card-hover);
+    transform: translateX(2px);
+}
+.journey-card-option:hover::before {
+    opacity: 1;
+    transform: scaleY(1);
+}
+.journey-card-option input[type="radio"] {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid var(--border-light);
+    border-radius: 50%;
+    margin: 0;
+    cursor: pointer;
+    position: relative;
+    background: var(--bg-card);
+    transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.journey-card-option input[type="radio"]:checked {
+    border-color: var(--brand-light);
+}
+.journey-card-option input[type="radio"]:checked::after {
+    content: "";
+    position: absolute;
+    inset: 2.5px;
+    background: var(--brand-light);
+    border-radius: 50%;
+}
+.journey-card-option.is-checked {
+    background: var(--bg-card-hover);
+}
+.journey-card-option.is-checked::before {
+    opacity: 1;
+    transform: scaleY(1);
+}
+.journey-card-option__body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.journey-card-option__title {
+    font-size: 13.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    letter-spacing: -0.005em;
+}
+.journey-card-option__desc {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+.journey-card-option__hint {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.journey-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.journey-field__label {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.journey-field__input,
+.journey-field__select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 10px 12px;
+    border-radius: var(--radius-xs);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-base);
+    transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.journey-field__input:focus,
+.journey-field__select:focus {
+    outline: none;
+    border-color: var(--brand-light);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+}
+.journey-field__hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-family-mono);
+    letter-spacing: 0.02em;
+}
+.journey-field--row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+}
+
+.journey-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 18px;
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 24px;
+}
+.journey-foot__crumb {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.journey-foot__buttons { display: flex; gap: 10px; }
+.journey-btn {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 8px 16px;
+    border-radius: var(--radius-xs);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: var(--font-weight-semibold);
+    cursor: pointer;
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                border-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.journey-btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-light);
+}
+.journey-btn:focus-visible {
+    outline: none;
+    border-color: var(--brand-light);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+}
+.journey-btn--primary {
+    background: var(--brand-light);
+    border-color: var(--brand-light);
+    color: var(--text-inverse);
+}
+.journey-btn--primary:hover {
+    background: var(--brand);
+    border-color: var(--brand);
+}
+.journey-btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* Review-phase chrome inside journey */
+.journey-review {
+    display: none;
+    flex-direction: column;
+    gap: 22px;
+    animation: spec-edit-in 320ms var(--motion-easing-standard) both;
+}
+.journey-review.is-active { display: flex; }
+.journey-review__breadcrumb {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 12px;
+    align-self: flex-start;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.journey-review__breadcrumb-link {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    color: var(--text-primary);
+    font: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+    text-decoration-color: var(--border-light);
+    transition: text-decoration-color 200ms ease;
+}
+.journey-review__breadcrumb-link:hover {
+    text-decoration-color: var(--brand-light);
+}
+
+/* Type-grid radio cards used in the "Deployment Type" inline editor */
+.spec-type-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 6px;
+}
+.spec-type-grid__group {
+    grid-column: 1 / -1;
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    margin-top: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.spec-type-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    background: var(--bg-card);
+    cursor: pointer;
+    transition: border-color var(--motion-duration-base) var(--motion-easing-standard),
+                background-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.spec-type-card input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+.spec-type-card:hover {
+    border-color: var(--border-light);
+    background: var(--bg-card-hover);
+}
+.spec-type-card.is-checked {
+    border-color: var(--brand-light);
+    background: var(--bg-card-hover);
+}
+.spec-type-card.is-checked::after {
+    content: "";
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--brand-light);
+}
+.spec-type-card__title {
+    font-size: 12.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+}
+.spec-type-card__hint {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    color: var(--text-secondary);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}

@@ -7,6 +7,30 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+    <!-- Phase 2B — Shared icon symbol library. Consumers reference glyphs via
+         <svg class="icon"><use href="#icon-edit-pencil"/></svg>. Mounted once
+         at body-top so every later <use> resolves regardless of mount order. -->
+    <svg id="icon-defs" width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="icon-edit-pencil" viewBox="0 0 14 14">
+                <path d="M9.5 1.5 L12.5 4.5 L4 13 H1 V10 Z"/>
+                <path d="M8 3 L11 6"/>
+            </symbol>
+            <symbol id="icon-check" viewBox="0 0 14 14">
+                <path d="M2 7.5 L5.5 11 L12 3.5"/>
+            </symbol>
+            <symbol id="icon-x" viewBox="0 0 14 14">
+                <path d="M3 3 L11 11 M11 3 L3 11"/>
+            </symbol>
+            <symbol id="icon-chevron-right" viewBox="0 0 14 14">
+                <path d="M5 2.5 L9.5 7 L5 11.5"/>
+            </symbol>
+            <symbol id="icon-chevron-down" viewBox="0 0 14 14">
+                <path d="M2.5 5 L7 9.5 L11.5 5"/>
+            </symbol>
+        </defs>
+    </svg>
+
     <div class="container">
         <!--
             D1 — Global header (Plan §17 P1 #11, §21.7 D1.1-D1.4, Decision #15).
@@ -1061,38 +1085,32 @@ ns-143.awsdns-17.org
                             <div id="deploy-type-details" class="overview-detail"></div>
                         </div>
 
-                        <!-- Configuration Summary Section -->
-                        <div id="config-summary-section" class="config-summary" style="display: none;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                                <h4 style="margin: 0;">Configuration Summary</h4>
-                                <button class="btn btn-secondary btn-sm" onclick="APP.toggleInlineConfigPanel()">
-                                    Edit Config
-                                </button>
+                        <!-- Configuration Summary Section — Phase 2B Composition A.
+                             V3-native spec-list: hero project identity + key/value rows
+                             with hover row-rail + per-row inline edit (data-row="key"
+                             rows are populated + wired by APP.deploySummary in app.js). -->
+                        <div id="config-summary-section" class="deploy-summary" style="display: none;">
+                            <div class="deploy-summary__eyebrow">
+                                <span class="deploy-summary__eyebrow-label">Configuration Summary</span>
+                                <span class="spec-pill spec-pill--draft" id="deploy-summary-status" aria-live="polite">
+                                    <span class="spec-pill__dot" aria-hidden="true"></span>
+                                    <span id="deploy-summary-status-label">DRAFT</span>
+                                </span>
                             </div>
 
-                            <div id="config-summary-grid" class="summary-grid">
-                                <!-- Populated by JavaScript -->
-                            </div>
+                            <section class="deploy-summary__hero" aria-label="Deployment identity">
+                                <span class="deploy-summary__hero-caption">project</span>
+                                <h3 class="deploy-summary__hero-name" id="deploy-summary-hero-name">&mdash;</h3>
+                                <p class="deploy-summary__hero-type">
+                                    <strong id="deploy-summary-hero-type">&mdash;</strong>
+                                    <span id="deploy-summary-hero-state" class="t-muted"> &middot; click any row to edit</span>
+                                </p>
+                            </section>
 
-                            <!-- Warnings/Issues -->
-                            <div id="config-summary-warnings" style="margin-top: 15px; display: none;">
-                                <!-- Populated by JavaScript if there are issues -->
-                            </div>
+                            <dl class="spec-list" id="deploy-summary-spec-list" aria-label="Configuration values"></dl>
 
-                            <!-- D3.3 — inline-collapse "Edit Config" entrypoint.
-                                 Operator stays on the Deploy sub-pill (preserves scroll/form state)
-                                 but gets a visible reminder + one-click jump to Configure. -->
-                            <details id="inline-config-panel" style="margin-top: 12px;">
-                                <summary style="cursor: pointer; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); font-weight: 600; color: var(--text-primary);">
-                                    Edit configuration inline
-                                </summary>
-                                <div id="inline-config-content" style="padding: 12px; border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius);">
-                                    <p style="color: var(--text-muted); font-size: 0.9em; margin: 0 0 12px 0;">
-                                        Switch to the Configure tab to make changes &mdash; your scroll position and form state are preserved.
-                                    </p>
-                                    <button class="btn btn-primary" onclick="APP.setActiveSubPill('deployments-tab', 'configure')">Open Configure sub-pill</button>
-                                </div>
-                            </details>
+                            <!-- Validation warnings — rendered if config is incomplete -->
+                            <div id="config-summary-warnings" class="deploy-summary__warnings" style="display: none;"></div>
                         </div>
 
                         <!-- Domain Configuration Check (C2 deployments only) -->
@@ -2984,6 +3002,21 @@ ns-143.awsdns-17.org
             </header>
             <div class="modal__body" id="screenshot-overlay-body"></div>
         </div>
+    </div>
+
+    <!-- Phase 2B — New Deployment journey takeover.
+         Mounted lazily by APP.journey.open(); shells remain in the DOM but
+         the actual wizard / review interior is rendered into #journey-card
+         on first open. Scrim + card use shared .scrim-takeover / .takeover-card
+         primitives so dim/blur/animations stay consistent with Phase 3 reuse. -->
+    <div id="journey-scrim" class="scrim-takeover" hidden aria-hidden="true"></div>
+    <div id="journey-takeover"
+         class="takeover-card"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="journey-takeover-title"
+         hidden>
+        <div id="journey-takeover-body"></div>
     </div>
 </body>
 </html>

@@ -2281,15 +2281,9 @@ APP._setupOperationsSelectorSubscriptions = function () {
     APP._operationsSelectorSubscriptionsReady = true;
 };
 
-// D3.3 — Inline "Edit Config" collapse toggle. Lives next to the Configuration
-// Summary card on the Deploy sub-pane and toggles the <details id="inline-
-// config-panel"> open/closed without switching sub-pills (preserves operator
-// scroll position + form state). Future D3.8 polish can replace this with a
-// full inline editor; today's MVP is a visible signpost to the Configure pill.
-APP.toggleInlineConfigPanel = function () {
-    const panel = document.getElementById('inline-config-panel');
-    if (panel) panel.open = !panel.open;
-};
+// Phase 2B — D3.3 inline-collapse is replaced by per-row spec-list editing.
+// Helper retained as a no-op so any cached external callers don't throw.
+APP.toggleInlineConfigPanel = function () { /* deprecated under Phase 2B */ };
 
 // Wire pill buttons. Listener attached at DOMContentLoaded so the .subpill-nav__pill
 // DOM is guaranteed present (the scaffold lives in index.html, not injected by JS).
@@ -2370,12 +2364,15 @@ function initGlobalHeader() {
     // of the Configure sub-pane (#configure-new-deployment-btn).
     const newBtn = document.getElementById('global-new-deployment-btn');
     if (newBtn && !newBtn.dataset.ghWired) {
-        newBtn.addEventListener('click', () => APP.startNewDeployment());
+        // Phase 2B — wire to Hybrid takeover journey rather than legacy
+        // jump-to-Configure. APP.journey.open() mounts the wizard surface
+        // and dims the dashboard. Cancel/Escape/scrim-click restore.
+        newBtn.addEventListener('click', () => APP.journey.open({ trigger: newBtn }));
         newBtn.dataset.ghWired = '1';
     }
     const bannerBtn = document.getElementById('configure-new-deployment-btn');
     if (bannerBtn && !bannerBtn.dataset.ghWired) {
-        bannerBtn.addEventListener('click', () => APP.startNewDeployment());
+        bannerBtn.addEventListener('click', () => APP.journey.open({ trigger: bannerBtn }));
         bannerBtn.dataset.ghWired = '1';
     }
 }
@@ -2521,6 +2518,699 @@ APP.openArchitectureModal = function () {
 APP.closeArchitectureModal = function () {
     APP.modal.close('architecture-modal');
 };
+
+// ============================================================================
+// Phase 2B — NEW DEPLOYMENT JOURNEY (Hybrid wizard + spec-edit review)
+// ============================================================================
+// APP.journey is the controller for the "+ New Deployment" takeover. It
+// mounts a lazy-rendered wizard surface inside #journey-takeover (cleared
+// on close), dims/blurs the underlying dashboard via [data-journey-open],
+// and POSTs the assembled config to /api/config on Deploy. Operator
+// attribution is handled by the server-side g.operator middleware — no
+// extra wiring required here.
+//
+// State shape (single source of truth, mirrored from the preview demo):
+//   { phase, step, family, type, typeTitle, typeFamily,
+//     projectName, environment, region, regionHint, cidr, ssh }
+//
+// Lifecycle:
+//   open()        → mount DOM, set body[data-journey-open], start at step 1
+//   close({ confirmIfDirty }) → tear down DOM, restore focus, optional confirm
+//   goToStep(n)   → navigate within wizard
+//   goToReview()  → switch to review phase (J3 spec-edit)
+//   saveAndApply()→ POST /api/config, then navigate to Deploy sub-pill
+
+APP.journey = (function () {
+    const FAMILY_LABEL = { c2: 'Red team C2', goad: 'Training lab', combined: 'Combined' };
+    const FAMILY_TYPES = {
+        c2: ['c2-adhoc', 'c2-purple', 'c2-full'],
+        goad: ['goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha'],
+        combined: ['combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full'],
+    };
+    const REGION_LIST = [
+        ['eu-central-1', 'Frankfurt'],
+        ['eu-west-1', 'Ireland'],
+        ['eu-west-2', 'London'],
+        ['us-east-1', 'N. Virginia'],
+        ['us-west-2', 'Oregon'],
+    ];
+    const STEP_LABELS = ['Family', 'Type', 'Identity', 'Network'];
+    const ENV_OPTIONS = [
+        { val: 'dev', label: 'DEV — isolated, throwaway' },
+        { val: 'staging', label: 'STAGING — pre-production' },
+        { val: 'prod', label: 'PROD — production engagement' },
+    ];
+
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function defaultState() {
+        return {
+            phase: 'wizard',
+            step: 1,
+            family: 'goad',
+            type: 'goad-mini',
+            typeTitle: 'GOAD Mini',
+            typeFamily: FAMILY_LABEL.goad,
+            projectName: `new_dev_${(Date.now() % 100000).toString(36)}`,
+            environment: 'dev',
+            region: 'eu-central-1',
+            regionHint: 'Frankfurt',
+            cidr: '',
+            ssh: 'Auto-generated',
+            dirty: false,
+        };
+    }
+
+    // ─── State + DOM refs ────────────────────────────────────────────
+    let state = defaultState();
+    let _lastTrigger = null;
+    let _escHandler = null;
+    let _scrimClickHandler = null;
+    let _buffer = {};
+
+    function $(id) { return document.getElementById(id); }
+
+    function setDirty() { state.dirty = true; }
+
+    // ─── Render shells ───────────────────────────────────────────────
+    function renderShell() {
+        const card = $('journey-takeover');
+        if (!card) return;
+        const dotsHtml = STEP_LABELS.map((label, i) => {
+            const step = i + 1;
+            return `<button class="journey-progress__dot" type="button" data-journey-step="${step}">
+                        <span class="journey-progress__dot-circle"></span>${esc(label)}
+                    </button>`;
+        }).join('');
+
+        $('journey-takeover-body').innerHTML = `
+            <div id="journey-wizard">
+                <div class="journey-progress">
+                    <div class="journey-progress__dots" role="tablist" aria-label="Wizard progress">
+                        ${dotsHtml}
+                    </div>
+                    <button class="journey-progress__close" type="button" data-journey-cancel>Cancel</button>
+                </div>
+                <div id="journey-step-host"></div>
+                <div class="journey-foot">
+                    <span class="journey-foot__crumb" id="journey-crumb">Step 1 of 4 — Family</span>
+                    <div class="journey-foot__buttons">
+                        <button class="journey-btn" type="button" id="journey-back" disabled>Back</button>
+                        <button class="journey-btn journey-btn--primary" type="button" id="journey-next">Continue</button>
+                    </div>
+                </div>
+            </div>
+            <section class="journey-review" id="journey-review">
+                <div class="deploy-summary__eyebrow">
+                    <span class="deploy-summary__eyebrow-label">New Deployment · Review</span>
+                    <button class="journey-progress__close" type="button" data-journey-cancel>Cancel</button>
+                </div>
+                <span class="journey-review__breadcrumb">
+                    <span>From wizard</span>
+                    <span aria-hidden="true">·</span>
+                    <button class="journey-review__breadcrumb-link" type="button" id="journey-restart">Restart wizard</button>
+                </span>
+                <section class="deploy-summary__hero" aria-label="Deployment identity">
+                    <span class="deploy-summary__hero-caption">project</span>
+                    <h3 class="deploy-summary__hero-name" id="journey-hero-name" tabindex="-1">—</h3>
+                    <p class="deploy-summary__hero-type">
+                        <strong id="journey-hero-type">—</strong>
+                        <span class="t-muted"> · click any row to edit</span>
+                    </p>
+                </section>
+                <dl class="spec-list" id="journey-spec-list"></dl>
+                <div class="journey-foot">
+                    <span class="journey-foot__crumb">Ready to deploy</span>
+                    <div class="journey-foot__buttons">
+                        <button class="journey-btn" type="button" data-journey-cancel>Cancel</button>
+                        <button class="journey-btn journey-btn--primary" type="button" id="journey-deploy">Deploy &#9656;</button>
+                    </div>
+                </div>
+            </section>
+        `;
+
+        // Wire wizard controls
+        card.querySelectorAll('[data-journey-step]').forEach(d => {
+            d.addEventListener('click', () => goToStep(parseInt(d.dataset.journeyStep, 10)));
+        });
+        $('journey-back').addEventListener('click', () => goToStep(Math.max(1, state.step - 1)));
+        $('journey-next').addEventListener('click', () => {
+            if (state.step === 4) goToReview();
+            else goToStep(state.step + 1);
+        });
+        card.querySelectorAll('[data-journey-cancel]').forEach(b => {
+            b.addEventListener('click', () => close({ confirmIfDirty: true }));
+        });
+        $('journey-restart').addEventListener('click', () => {
+            state = defaultState();
+            renderStep();
+            goToStep(1);
+        });
+        $('journey-deploy').addEventListener('click', () => saveAndApply());
+    }
+
+    // ─── Wizard step rendering ───────────────────────────────────────
+    function renderStep() {
+        const host = $('journey-step-host');
+        if (!host) return;
+        const n = state.step;
+        let html = '';
+        if (n === 1) {
+            const cards = ['c2', 'goad', 'combined'].map(f => {
+                const checked = state.family === f;
+                const desc = f === 'c2' ? 'Cobalt Strike team server with redirectors and bastion. Real engagements.'
+                    : f === 'goad' ? 'Vulnerable Active Directory environments. Isolated. No outbound C2.'
+                    : 'C2 + GOAD on peered VPCs. End-to-end attack chain rehearsal.';
+                const count = `${FAMILY_TYPES[f].length} types`;
+                return `<label class="journey-card-option${checked ? ' is-checked' : ''}">
+                            <input type="radio" name="journey-family" value="${esc(f)}" ${checked ? 'checked' : ''}>
+                            <span class="journey-card-option__body">
+                                <span class="journey-card-option__title">${esc(FAMILY_LABEL[f])}</span>
+                                <span class="journey-card-option__desc">${esc(desc)}</span>
+                            </span>
+                            <span class="journey-card-option__hint">${esc(count)}</span>
+                        </label>`;
+            }).join('');
+            html = `
+                <section class="journey-step is-active" style="display:flex">
+                    <span class="journey-step__eyebrow">Step 1 / 4</span>
+                    <h2 class="journey-step__title">Pick a deployment family</h2>
+                    <p class="journey-step__lede">What are you building? You can change the specific type next.</p>
+                    <div class="journey-cards" role="radiogroup" aria-label="Deployment family">${cards}</div>
+                </section>
+            `;
+        } else if (n === 2) {
+            const ids = FAMILY_TYPES[state.family] || [];
+            const cards = ids.map(id => {
+                const def = DEPLOYMENT_CONFIGS[id];
+                if (!def) return '';
+                const checked = state.type === id;
+                const desc = (def.details || '').replace(/\s+/g, ' ').slice(0, 120);
+                const hint = def.components?.find(c => /Cost/i.test(c.label))?.value || `${(def.serverCount || ids.length) || ''}`.trim();
+                return `<label class="journey-card-option${checked ? ' is-checked' : ''}">
+                            <input type="radio" name="journey-type" value="${esc(id)}" ${checked ? 'checked' : ''}>
+                            <span class="journey-card-option__body">
+                                <span class="journey-card-option__title">${esc(def.title || id)}</span>
+                                <span class="journey-card-option__desc">${esc(desc)}</span>
+                            </span>
+                            <span class="journey-card-option__hint">${esc(hint)}</span>
+                        </label>`;
+            }).join('');
+            html = `
+                <section class="journey-step is-active" style="display:flex">
+                    <span class="journey-step__eyebrow">Step 2 / 4 · ${esc(FAMILY_LABEL[state.family])}</span>
+                    <h2 class="journey-step__title">Pick the specific type</h2>
+                    <p class="journey-step__lede">Each type packages different hosts, sizes, and provisioning.</p>
+                    <div class="journey-cards" role="radiogroup" aria-label="Specific deployment type">${cards}</div>
+                </section>
+            `;
+        } else if (n === 3) {
+            const envOpts = ENV_OPTIONS.map(o => `<option value="${esc(o.val)}" ${state.environment === o.val ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
+            html = `
+                <section class="journey-step is-active" style="display:flex">
+                    <span class="journey-step__eyebrow">Step 3 / 4</span>
+                    <h2 class="journey-step__title">Name this deployment</h2>
+                    <p class="journey-step__lede">Used for tagging AWS resources and S3 state. Lowercase, underscores, no spaces.</p>
+                    <div class="journey-field">
+                        <label class="journey-field__label" for="journey-project-name">Project name</label>
+                        <input class="journey-field__input" id="journey-project-name" type="text" value="${esc(state.projectName)}" autocomplete="off" spellcheck="false">
+                        <span class="journey-field__hint">Will tag every EC2 instance, security group, and S3 key.</span>
+                    </div>
+                    <div class="journey-field">
+                        <label class="journey-field__label" for="journey-env">Environment</label>
+                        <select class="journey-field__select" id="journey-env">${envOpts}</select>
+                        <span class="journey-field__hint">Drives cost-tracking and protection flags.</span>
+                    </div>
+                </section>
+            `;
+        } else if (n === 4) {
+            const regionOpts = REGION_LIST.map(([v, h]) => `<option value="${esc(v)}" ${state.region === v ? 'selected' : ''}>${esc(v)} — ${esc(h)}</option>`).join('');
+            html = `
+                <section class="journey-step is-active" style="display:flex">
+                    <span class="journey-step__eyebrow">Step 4 / 4</span>
+                    <h2 class="journey-step__title">Network placement</h2>
+                    <p class="journey-step__lede">Region drives latency and instance availability. Management CIDR is the only IP allowed SSH/RDP.</p>
+                    <div class="journey-field--row">
+                        <div class="journey-field">
+                            <label class="journey-field__label" for="journey-region">AWS region</label>
+                            <select class="journey-field__select" id="journey-region">${regionOpts}</select>
+                            <span class="journey-field__hint">CDK/ACM features pinned to us-east-1.</span>
+                        </div>
+                        <div class="journey-field">
+                            <label class="journey-field__label" for="journey-cidr">Management CIDR</label>
+                            <input class="journey-field__input" id="journey-cidr" type="text" value="${esc(state.cidr)}" placeholder="82.35.149.127/32" autocomplete="off" spellcheck="false">
+                            <span class="journey-field__hint">Your laptop's IP. /32 = exact host.</span>
+                        </div>
+                    </div>
+                </section>
+            `;
+        }
+        host.innerHTML = html;
+        wireStepInputs(n);
+        updateDots();
+        updateCrumb();
+    }
+
+    function wireStepInputs(n) {
+        const host = $('journey-step-host');
+        if (!host) return;
+        if (n === 1) {
+            host.querySelectorAll('input[name="journey-family"]').forEach(r => {
+                r.addEventListener('change', () => {
+                    state.family = r.value;
+                    state.typeFamily = FAMILY_LABEL[state.family];
+                    // Snap type to first of family if current type doesn't fit
+                    const ids = FAMILY_TYPES[state.family] || [];
+                    if (!ids.includes(state.type) && ids.length) {
+                        state.type = ids[0];
+                        const def = DEPLOYMENT_CONFIGS[state.type];
+                        state.typeTitle = def?.title || state.type;
+                    }
+                    setDirty();
+                    host.querySelectorAll('.journey-card-option').forEach(c => {
+                        c.classList.toggle('is-checked', c.querySelector('input')?.checked);
+                    });
+                });
+            });
+        } else if (n === 2) {
+            host.querySelectorAll('input[name="journey-type"]').forEach(r => {
+                r.addEventListener('change', () => {
+                    state.type = r.value;
+                    const def = DEPLOYMENT_CONFIGS[state.type];
+                    state.typeTitle = def?.title || state.type;
+                    state.typeFamily = FAMILY_LABEL[state.family];
+                    setDirty();
+                    host.querySelectorAll('.journey-card-option').forEach(c => {
+                        c.classList.toggle('is-checked', c.querySelector('input')?.checked);
+                    });
+                });
+            });
+        } else if (n === 3) {
+            $('journey-project-name')?.addEventListener('input', e => {
+                state.projectName = e.target.value;
+                setDirty();
+            });
+            $('journey-env')?.addEventListener('change', e => {
+                state.environment = e.target.value;
+                setDirty();
+            });
+        } else if (n === 4) {
+            $('journey-region')?.addEventListener('change', e => {
+                state.region = e.target.value;
+                const found = REGION_LIST.find(([v]) => v === state.region);
+                state.regionHint = found ? found[1] : '';
+                setDirty();
+            });
+            $('journey-cidr')?.addEventListener('input', e => {
+                state.cidr = e.target.value;
+                setDirty();
+            });
+        }
+    }
+
+    function updateDots() {
+        document.querySelectorAll('#journey-takeover [data-journey-step]').forEach(d => {
+            const n = parseInt(d.dataset.journeyStep, 10);
+            d.classList.toggle('is-active', state.phase === 'wizard' && n === state.step);
+            d.classList.toggle('is-done', state.phase === 'review' || n < state.step);
+        });
+    }
+    function updateCrumb() {
+        const crumb = $('journey-crumb');
+        const back = $('journey-back');
+        const next = $('journey-next');
+        if (!crumb || !back || !next) return;
+        crumb.textContent = `Step ${state.step} of 4 — ${STEP_LABELS[state.step - 1]}`;
+        back.disabled = (state.step === 1);
+        next.textContent = (state.step === 4) ? 'Review' : 'Continue';
+    }
+
+    function goToStep(n) {
+        state.phase = 'wizard';
+        state.step = Math.max(1, Math.min(4, n));
+        $('journey-wizard').style.display = '';
+        $('journey-review').classList.remove('is-active');
+        renderStep();
+    }
+
+    function goToReview() {
+        state.phase = 'review';
+        $('journey-wizard').style.display = 'none';
+        $('journey-review').classList.add('is-active');
+        $('journey-hero-name').textContent = state.projectName || '(unnamed)';
+        $('journey-hero-type').textContent = state.typeTitle || state.type;
+        renderReviewList();
+        updateDots();
+    }
+
+    // ─── Review (spec-list / J3) ─────────────────────────────────────
+    function buildReviewRows() {
+        const def = DEPLOYMENT_CONFIGS[state.type];
+        const cost = def?.components?.find(c => /Cost/i.test(c.label))?.value || '—';
+        return [
+            { key: 'type', label: 'Deployment Type', value: state.typeTitle || state.type, hint: state.typeFamily, editable: true, fieldType: 'type' },
+            { key: 'projectName', label: 'Project Name', value: state.projectName || '—', valueMono: true, hint: `${(state.projectName || '').length} chars`, editable: true, fieldType: 'text', placeholder: 'project_name' },
+            { key: 'environment', label: 'Environment', value: state.environment.toUpperCase(), isPill: true, hint: ENV_OPTIONS.find(o => o.val === state.environment)?.label.split('—')[1]?.trim() || '', editable: true, fieldType: 'seg', options: ENV_OPTIONS.map(o => ({ val: o.val, label: o.val.toUpperCase() })) },
+            { key: 'region', label: 'AWS Region', value: state.region, valueMono: true, hint: state.regionHint, editable: true, fieldType: 'seg', options: REGION_LIST.map(([val, hint]) => ({ val, label: val, hint })) },
+            { key: 'cidr', label: 'Management CIDR', value: state.cidr || '—', valueMono: true, hint: state.cidr ? 'single host' : '', editable: true, fieldType: 'cidr' },
+            { key: 'ssh', label: 'SSH Keys', value: state.ssh, hint: 'ed25519', editable: true, fieldType: 'seg', options: [
+                { val: 'Auto-generated', label: 'Auto' },
+                { val: 'Uploaded', label: 'Upload' },
+                { val: 'From S3', label: 'S3' },
+            ] },
+            { key: 'cost', label: 'Est. Monthly Cost', value: cost, valueMono: true, valueStrong: true, hint: 'computed', editable: false },
+        ];
+    }
+
+    function renderRow(row) {
+        const valueClasses = ['spec-row__value'];
+        if (row.valueMono) valueClasses.push('spec-row__value--mono');
+        if (row.valueStrong) valueClasses.push('spec-row__value--strong');
+        let valueHtml;
+        if (row.isPill) {
+            valueHtml = `<dd class="${valueClasses.join(' ')}"><span class="spec-pill"><span class="spec-pill__dot" aria-hidden="true"></span>${esc(row.value)}</span></dd>`;
+        } else {
+            valueHtml = `<dd class="${valueClasses.join(' ')}">${esc(row.value)}</dd>`;
+        }
+        const hintHtml = row.hint ? `<dd class="spec-row__hint">${esc(row.hint)}</dd>` : '<dd class="spec-row__hint"></dd>';
+        const pencilHtml = row.editable
+            ? `<button class="spec-row__action" type="button" aria-label="Edit ${esc(row.label)}"><svg class="icon" aria-hidden="true"><use href="#icon-edit-pencil"/></svg></button>`
+            : '<span class="spec-row__action" aria-hidden="true"></span>';
+        const readonlyAttr = row.editable ? '' : ' data-readonly="true"';
+        return `
+            <div class="spec-row" data-review-row="${esc(row.key)}"${readonlyAttr}>
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">${esc(row.label)}</dt>
+                    ${valueHtml}
+                    ${hintHtml}
+                    ${pencilHtml}
+                </div>
+                <div class="spec-row__editor" data-review-editor="${esc(row.key)}"></div>
+            </div>
+        `;
+    }
+
+    function buildEditor(row) {
+        let fieldHtml = '';
+        if (row.fieldType === 'text') {
+            fieldHtml = `<input class="spec-row__editor-input" type="text" value="${esc(row.value !== '—' ? row.value : '')}" data-edit-input placeholder="${esc(row.placeholder || '')}" autocomplete="off" spellcheck="false">`;
+        } else if (row.fieldType === 'cidr') {
+            fieldHtml = `
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <input class="spec-row__editor-input" type="text" value="${esc(state.cidr)}" data-edit-input placeholder="82.35.149.127/32" autocomplete="off" spellcheck="false" style="flex:1">
+                    <button class="spec-edit-btn" type="button" data-edit-action="my-ip">Use my IP</button>
+                </div>
+                <span class="spec-row__editor-hint">/32 = exact host. Comma-separate multiple.</span>
+            `;
+        } else if (row.fieldType === 'seg') {
+            const opts = (row.options || []).map(o => {
+                const isActive = String(o.val).toLowerCase() === String(row.value).toLowerCase() || String(o.val) === String(row.value);
+                return `<button class="seg-control__option${isActive ? ' is-active' : ''}" type="button" data-seg-val="${esc(o.val)}" ${o.hint ? `data-seg-hint="${esc(o.hint)}"` : ''}>${esc(o.label)}</button>`;
+            }).join('');
+            fieldHtml = `<div class="seg-control" role="radiogroup" data-edit-seg>${opts}</div>`;
+        } else if (row.fieldType === 'type') {
+            const groups = [
+                { label: 'Red team C2', fam: 'c2' },
+                { label: 'Training lab', fam: 'goad' },
+                { label: 'Combined', fam: 'combined' },
+            ];
+            let inner = '';
+            groups.forEach(g => {
+                inner += `<div class="spec-type-grid__group">${esc(g.label)}</div>`;
+                FAMILY_TYPES[g.fam].forEach(id => {
+                    const def = DEPLOYMENT_CONFIGS[id];
+                    if (!def) return;
+                    const isActive = id === state.type;
+                    const hint = def.components?.find(c => /Cost/i.test(c.label))?.value || '';
+                    inner += `
+                        <label class="spec-type-card${isActive ? ' is-checked' : ''}" data-type-card="${esc(id)}" data-type-fam="${esc(g.fam)}">
+                            <input type="radio" name="review-type-edit" value="${esc(id)}" ${isActive ? 'checked' : ''}>
+                            <span class="spec-type-card__title">${esc(def.title || id)}</span>
+                            <span class="spec-type-card__hint">${esc(hint)}</span>
+                        </label>
+                    `;
+                });
+            });
+            fieldHtml = `<div class="spec-type-grid" data-edit-type-grid>${inner}</div>`;
+        }
+        return `
+            <div class="spec-row__editor-field">
+                <span class="spec-row__editor-label">${esc(row.label)}</span>
+                ${fieldHtml}
+            </div>
+            <div class="spec-row__editor-foot">
+                <button class="spec-edit-btn" type="button" data-edit-action="cancel">Cancel</button>
+                <button class="spec-edit-btn spec-edit-btn--save" type="button" data-edit-action="save">Save</button>
+            </div>
+        `;
+    }
+
+    function renderReviewList() {
+        const list = $('journey-spec-list');
+        if (!list) return;
+        const rows = buildReviewRows();
+        list.innerHTML = rows.map(renderRow).join('');
+        // Wire row head click
+        rows.forEach(row => {
+            if (!row.editable) return;
+            const rowEl = list.querySelector(`.spec-row[data-review-row="${row.key}"]`);
+            if (!rowEl) return;
+            rowEl.querySelector('.spec-row__head').addEventListener('click', () => {
+                if (rowEl.getAttribute('data-editing') === 'true') return;
+                openReviewRow(rowEl, row);
+            });
+        });
+        // Delegate editor interactions
+        if (!list._delegateWired) {
+            list._delegateWired = true;
+            list.addEventListener('click', (e) => {
+                const seg = e.target.closest('.seg-control__option');
+                const typeCard = e.target.closest('[data-type-card]');
+                const action = e.target.closest('[data-edit-action]');
+                if (seg) {
+                    e.stopPropagation();
+                    seg.parentElement.querySelectorAll('.seg-control__option').forEach(b => b.classList.remove('is-active'));
+                    seg.classList.add('is-active');
+                    return;
+                }
+                if (typeCard) {
+                    e.stopPropagation();
+                    typeCard.closest('[data-edit-type-grid]').querySelectorAll('.spec-type-card').forEach(c => c.classList.remove('is-checked'));
+                    typeCard.classList.add('is-checked');
+                    const radio = typeCard.querySelector('input[type="radio"]');
+                    if (radio) radio.checked = true;
+                    return;
+                }
+                if (!action) return;
+                e.stopPropagation();
+                const rowEl = action.closest('.spec-row');
+                if (!rowEl) return;
+                const key = rowEl.dataset.reviewRow;
+                if (action.dataset.editAction === 'cancel') {
+                    closeReviewRow(rowEl);
+                } else if (action.dataset.editAction === 'save') {
+                    saveReviewRow(rowEl, key);
+                } else if (action.dataset.editAction === 'my-ip') {
+                    fetch(`${API_BASE}/config/public-ip`).then(r => r.json()).then(d => {
+                        if (d.success && d.ip) {
+                            const inp = rowEl.querySelector('[data-edit-input]');
+                            if (inp) inp.value = `${d.ip}/32`;
+                        }
+                    }).catch(() => {});
+                }
+            });
+        }
+    }
+
+    function openReviewRow(rowEl, row) {
+        const list = $('journey-spec-list');
+        if (!list) return;
+        list.querySelectorAll('.spec-row[data-editing="true"]').forEach(r => closeReviewRow(r));
+        const editor = rowEl.querySelector('[data-review-editor]');
+        editor.innerHTML = buildEditor(row);
+        rowEl.setAttribute('data-editing', 'true');
+        list.setAttribute('data-editing', 'true');
+        const input = editor.querySelector('[data-edit-input]');
+        if (input) { input.focus(); input.select && input.select(); }
+    }
+
+    function closeReviewRow(rowEl) {
+        const list = $('journey-spec-list');
+        rowEl.removeAttribute('data-editing');
+        const editor = rowEl.querySelector('[data-review-editor]');
+        if (editor) editor.innerHTML = '';
+        if (list && !list.querySelector('.spec-row[data-editing="true"]')) {
+            list.removeAttribute('data-editing');
+        }
+    }
+
+    function saveReviewRow(rowEl, key) {
+        const editor = rowEl.querySelector('[data-review-editor]');
+        const inp = editor?.querySelector('[data-edit-input]');
+        const seg = editor?.querySelector('.seg-control__option.is-active');
+        const typeChecked = editor?.querySelector('input[name="review-type-edit"]:checked');
+        if (key === 'projectName') state.projectName = inp?.value.trim() || state.projectName;
+        else if (key === 'cidr') state.cidr = inp?.value.trim() || state.cidr;
+        else if (key === 'environment') state.environment = seg?.dataset.segVal || state.environment;
+        else if (key === 'region') {
+            state.region = seg?.dataset.segVal || state.region;
+            state.regionHint = seg?.dataset.segHint || state.regionHint;
+        }
+        else if (key === 'ssh') state.ssh = seg?.dataset.segVal || state.ssh;
+        else if (key === 'type' && typeChecked) {
+            state.type = typeChecked.value;
+            const card = editor.querySelector('[data-type-card="' + typeChecked.value + '"]');
+            const fam = card?.dataset.typeFam;
+            const def = DEPLOYMENT_CONFIGS[state.type];
+            if (def) { state.typeTitle = def.title || state.type; }
+            if (fam) { state.family = fam; state.typeFamily = FAMILY_LABEL[fam]; }
+        }
+        setDirty();
+        // Update hero + re-render the list
+        $('journey-hero-name').textContent = state.projectName || '(unnamed)';
+        $('journey-hero-type').textContent = state.typeTitle || state.type;
+        renderReviewList();
+    }
+
+    // ─── saveAndApply ────────────────────────────────────────────────
+    async function saveAndApply() {
+        const btn = $('journey-deploy');
+        if (btn) { btn.disabled = true; btn.textContent = 'Saving config…'; }
+        // Assemble the config payload. We keep the shape minimal — the
+        // server's ConfigValidator will fail loudly if anything is wrong,
+        // so map errors back into the breadcrumb area.
+        const config = {
+            deployment_type: state.type,
+            engagement_type: state.type,
+            project_name: state.projectName,
+            environment: state.environment,
+            aws_region: state.region,
+            management_cidr_blocks: state.cidr ? state.cidr.split(',').map(s => s.trim()).filter(Boolean) : [],
+        };
+        try {
+            const r = await fetch(`${API_BASE}/config`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config }),
+            });
+            const d = await r.json();
+            if (!d.success) {
+                console.error('Journey save failed:', d);
+                if (btn) { btn.disabled = false; btn.textContent = 'Retry — fix errors above'; }
+                const breadcrumb = document.querySelector('.journey-review__breadcrumb');
+                if (breadcrumb) {
+                    breadcrumb.style.color = 'var(--danger-text)';
+                    breadcrumb.style.borderColor = 'var(--danger-border)';
+                    breadcrumb.firstElementChild.textContent = (d.errors && d.errors.join('; ')) || d.error || 'Save failed';
+                }
+                return;
+            }
+        } catch (e) {
+            console.error('Journey save threw:', e);
+            if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+            return;
+        }
+        // Config saved — close journey and navigate to the Deploy sub-pill
+        // so the operator can review + click Apply (we deliberately don't
+        // auto-fire terraform apply from here; that's an explicit click).
+        state.dirty = false;
+        close({ confirmIfDirty: false });
+        // Briefly defer to let the takeover animate out
+        setTimeout(() => {
+            try {
+                APP.navigateTo('deployments-tab', 'deploy');
+            } catch (_) { /* noop */ }
+            // Refresh the summary spec-list with the new saved config
+            if (typeof loadConfigSummary === 'function') {
+                try { loadConfigSummary(); } catch (_) {}
+            }
+        }, 220);
+    }
+
+    // ─── Open / Close ────────────────────────────────────────────────
+    function open(opts = {}) {
+        const scrim = $('journey-scrim');
+        const card = $('journey-takeover');
+        if (!scrim || !card) return;
+        _lastTrigger = opts.trigger || document.activeElement;
+        // Fresh state every open (this is "+ New Deployment", not "edit").
+        state = defaultState();
+        // Mount DOM
+        scrim.hidden = false;
+        scrim.setAttribute('aria-hidden', 'false');
+        card.hidden = false;
+        // Render after un-hide so width/height are real
+        renderShell();
+        renderStep();
+        // Animate open on next frame so transition fires
+        requestAnimationFrame(() => {
+            scrim.setAttribute('data-open', 'true');
+            card.setAttribute('data-open', 'true');
+            document.body.setAttribute('data-journey-open', 'true');
+        });
+        // Wire scrim click + Escape
+        _scrimClickHandler = () => close({ confirmIfDirty: true });
+        scrim.addEventListener('click', _scrimClickHandler);
+        _escHandler = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                close({ confirmIfDirty: true });
+            }
+        };
+        document.addEventListener('keydown', _escHandler);
+        // Focus first focusable in the card
+        const first = card.querySelector('button, input, select, [tabindex]:not([tabindex="-1"])');
+        if (first) first.focus();
+    }
+
+    function close({ confirmIfDirty = true } = {}) {
+        if (confirmIfDirty && state.dirty) {
+            const proceed = window.confirm('Discard your in-progress new deployment?');
+            if (!proceed) return;
+        }
+        const scrim = $('journey-scrim');
+        const card = $('journey-takeover');
+        if (scrim) {
+            scrim.removeAttribute('data-open');
+            scrim.setAttribute('aria-hidden', 'true');
+            if (_scrimClickHandler) {
+                scrim.removeEventListener('click', _scrimClickHandler);
+                _scrimClickHandler = null;
+            }
+        }
+        if (card) card.removeAttribute('data-open');
+        document.body.removeAttribute('data-journey-open');
+        if (_escHandler) {
+            document.removeEventListener('keydown', _escHandler);
+            _escHandler = null;
+        }
+        // Wait for transition before unmounting DOM
+        setTimeout(() => {
+            if (scrim) scrim.hidden = true;
+            if (card) {
+                card.hidden = true;
+                const body = $('journey-takeover-body');
+                if (body) body.innerHTML = '';
+            }
+            if (_lastTrigger && typeof _lastTrigger.focus === 'function') {
+                try { _lastTrigger.focus(); } catch (_) {}
+            }
+        }, 300);
+    }
+
+    return {
+        open,
+        close,
+        goToStep,
+        goToReview,
+        saveAndApply,
+        get state() { return state; },
+    };
+})();
 
 // Explicit affordance so operators can deliberately start a fresh deployment
 // instead of accidentally overwriting an existing one. Two entry points are
@@ -9758,171 +10448,494 @@ async function clearConfig() {
 // ============================================================================
 
 /**
- * Load and display configuration summary on the Deploy page
+ * Phase 2B — Composition A spec-list summary.
+ *
+ * Live Deploy sub-pill "Configuration Summary" view. Renders the current
+ * deployment config as a V3-native spec-list (key / value / hint / pencil),
+ * each row click-to-edit inline (J3 pattern). Saving commits via the
+ * existing /api/config endpoint (operator audit attribution is handled
+ * server-side via g.operator middleware).
+ *
+ * Read-only rows: cost (computed from deployment-type cost component).
+ * Editable rows: type, project_name, environment, aws_region, cidr,
+ *                ssh_keys (auto vs custom).
+ *
+ * Status pill at top:
+ *   LIVE   — there is an active terraform deployment with state.
+ *   DRAFT  — config exists but no active deployment.
+ *   ERROR  — deployment had a failure (last apply status != ok).
  */
+
+const REGION_HINTS = {
+    'eu-central-1': 'Frankfurt',
+    'eu-west-1': 'Ireland',
+    'eu-west-2': 'London',
+    'us-east-1': 'N. Virginia',
+    'us-west-2': 'Oregon',
+    'us-east-2': 'Ohio',
+    'us-west-1': 'N. California',
+    'ap-southeast-1': 'Singapore',
+    'ap-northeast-1': 'Tokyo',
+};
+const ENV_HINTS = { dev: 'isolated', staging: 'pre-production', prod: 'production' };
+
+function _deploySummaryEscape(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _deploySummaryGetCost(deployConfig) {
+    if (!deployConfig?.components) return null;
+    const costComp = deployConfig.components.find(c => /Cost/i.test(c.label));
+    return costComp ? costComp.value : null;
+}
+
+/**
+ * Build the spec-list rows from a config object. Each row is { key, value,
+ * hint, editable, fieldType, options? } — value is the visible string, the
+ * editor is built based on fieldType.
+ */
+function _deploySummaryBuildRows(config, deployConfig) {
+    const rows = [];
+    const isGoadOnly = deployConfig?.type === 'goad';
+
+    rows.push({
+        key: 'type',
+        label: 'Deployment Type',
+        value: deployConfig?.title || config.deployment_type || '—',
+        hint: deployConfig?.type === 'goad' ? 'Training lab'
+            : deployConfig?.type === 'c2' ? 'Red team C2'
+            : 'Combined',
+        editable: true,
+        fieldType: 'type',
+    });
+
+    rows.push({
+        key: 'project_name',
+        label: 'Project Name',
+        value: config.project_name || '—',
+        valueMono: true,
+        hint: config.project_name ? `${config.project_name.length} chars` : '',
+        editable: true,
+        fieldType: 'text',
+        placeholder: 'project_name',
+    });
+
+    rows.push({
+        key: 'environment',
+        label: 'Environment',
+        value: (config.environment || 'dev').toUpperCase(),
+        isPill: true,
+        hint: ENV_HINTS[(config.environment || 'dev').toLowerCase()] || '',
+        editable: true,
+        fieldType: 'seg',
+        options: [
+            { val: 'dev', label: 'DEV' },
+            { val: 'staging', label: 'Staging' },
+            { val: 'prod', label: 'Prod' },
+        ],
+    });
+
+    rows.push({
+        key: 'aws_region',
+        label: 'AWS Region',
+        value: config.aws_region || '—',
+        valueMono: true,
+        hint: REGION_HINTS[config.aws_region] || '',
+        editable: true,
+        fieldType: 'seg',
+        options: Object.entries(REGION_HINTS).map(([val, hint]) => ({ val, label: val, hint })),
+    });
+
+    const cidrBlocks = config.management_cidr_blocks || [];
+    rows.push({
+        key: 'management_cidr',
+        label: 'Management CIDR',
+        value: cidrBlocks.length ? (cidrBlocks.length === 1 ? cidrBlocks[0] : `${cidrBlocks.length} CIDR blocks`) : '—',
+        valueMono: true,
+        hint: cidrBlocks.length === 1 ? 'single host' : (cidrBlocks.length ? `${cidrBlocks.length} blocks` : ''),
+        editable: true,
+        fieldType: 'cidr',
+        rawValue: cidrBlocks.join(', '),
+    });
+
+    if (!isGoadOnly) {
+        rows.push({
+            key: 'key_pair_name',
+            label: 'Key Pair',
+            value: config.key_pair_name || '—',
+            valueMono: true,
+            hint: 'AWS keypair',
+            editable: true,
+            fieldType: 'text',
+            placeholder: 'my-key',
+        });
+    } else {
+        rows.push({
+            key: 'ssh_keys',
+            label: 'SSH Keys',
+            value: 'Auto-generated',
+            hint: 'ed25519',
+            editable: false,
+        });
+    }
+
+    if (deployConfig?.requiresDomain) {
+        rows.push({
+            key: 'primary_domain_name',
+            label: 'Primary Domain',
+            value: config.primary_domain_name || '—',
+            valueMono: true,
+            hint: 'Route 53',
+            editable: true,
+            fieldType: 'text',
+            placeholder: 'example.com',
+        });
+    }
+
+    const cost = _deploySummaryGetCost(deployConfig);
+    if (cost) {
+        rows.push({
+            key: 'cost',
+            label: 'Est. Monthly Cost',
+            value: cost,
+            valueMono: true,
+            valueStrong: true,
+            hint: 'computed',
+            editable: false,
+        });
+    }
+
+    return rows;
+}
+
+function _deploySummaryRenderRow(row) {
+    const valueClasses = ['spec-row__value'];
+    if (row.valueMono) valueClasses.push('spec-row__value--mono');
+    if (row.valueStrong) valueClasses.push('spec-row__value--strong');
+    let valueHtml;
+    if (row.isPill) {
+        const live = String(row.value).toUpperCase() === 'PROD' ? '' : '';
+        valueHtml = `<dd class="${valueClasses.join(' ')}"><span class="spec-pill"><span class="spec-pill__dot" aria-hidden="true"></span>${_deploySummaryEscape(row.value)}</span></dd>`;
+    } else {
+        valueHtml = `<dd class="${valueClasses.join(' ')}" data-summary-value="${_deploySummaryEscape(row.key)}">${_deploySummaryEscape(row.value)}</dd>`;
+    }
+
+    const hintHtml = row.hint
+        ? `<dd class="spec-row__hint" data-summary-hint="${_deploySummaryEscape(row.key)}">${_deploySummaryEscape(row.hint)}</dd>`
+        : '<dd class="spec-row__hint" data-summary-hint=""></dd>';
+
+    const pencilHtml = row.editable
+        ? `<button class="spec-row__action" type="button" aria-label="Edit ${_deploySummaryEscape(row.label)}" data-summary-edit="${_deploySummaryEscape(row.key)}"><svg class="icon" aria-hidden="true"><use href="#icon-edit-pencil"/></svg></button>`
+        : '<span class="spec-row__action" aria-hidden="true"></span>';
+
+    const readonlyAttr = row.editable ? '' : ' data-readonly="true"';
+    return `
+        <div class="spec-row" data-summary-row="${_deploySummaryEscape(row.key)}"${readonlyAttr}>
+            <div class="spec-row__head">
+                <dt class="spec-row__key">${_deploySummaryEscape(row.label)}</dt>
+                ${valueHtml}
+                ${hintHtml}
+                ${pencilHtml}
+            </div>
+            <div class="spec-row__editor" data-summary-editor="${_deploySummaryEscape(row.key)}"></div>
+        </div>
+    `;
+}
+
+function _deploySummaryBuildEditor(row, config) {
+    let fieldHtml = '';
+    if (row.fieldType === 'text') {
+        fieldHtml = `<input class="spec-row__editor-input" type="text" value="${_deploySummaryEscape(row.value !== '—' ? row.value : '')}" data-edit-input placeholder="${_deploySummaryEscape(row.placeholder || '')}" autocomplete="off" spellcheck="false">`;
+    } else if (row.fieldType === 'cidr') {
+        const cur = row.rawValue || (row.value !== '—' ? row.value : '');
+        fieldHtml = `
+            <div style="display:flex; gap:8px; align-items:center;">
+                <input class="spec-row__editor-input" type="text" value="${_deploySummaryEscape(cur)}" data-edit-input placeholder="82.35.149.127/32" autocomplete="off" spellcheck="false" style="flex:1">
+                <button class="spec-edit-btn" type="button" data-edit-action="my-ip">Use my IP</button>
+            </div>
+            <span class="spec-row__editor-hint">Comma-separated CIDR blocks. /32 = exact host.</span>
+        `;
+    } else if (row.fieldType === 'seg') {
+        const segOptions = (row.options || []).map(o => {
+            const isActive = String(o.val).toLowerCase() === String(row.value).toLowerCase() ||
+                             String(o.val) === String(row.value);
+            return `<button class="seg-control__option${isActive ? ' is-active' : ''}" type="button" data-seg-val="${_deploySummaryEscape(o.val)}" ${o.hint ? `data-seg-hint="${_deploySummaryEscape(o.hint)}"` : ''}>${_deploySummaryEscape(o.label)}</button>`;
+        }).join('');
+        fieldHtml = `<div class="seg-control" role="radiogroup" data-edit-seg>${segOptions}</div>`;
+    } else if (row.fieldType === 'type') {
+        const groups = [
+            { label: 'Red team C2', ids: ['c2-adhoc', 'c2-purple', 'c2-full'] },
+            { label: 'Training lab', ids: ['goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha'] },
+            { label: 'Combined', ids: ['combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full'] },
+        ];
+        let inner = '';
+        groups.forEach(g => {
+            inner += `<div class="spec-type-grid__group">${_deploySummaryEscape(g.label)}</div>`;
+            g.ids.forEach(id => {
+                const def = DEPLOYMENT_CONFIGS[id];
+                if (!def) return;
+                const isActive = id === config.deployment_type;
+                const hint = def.components?.find(c => /Cost/i.test(c.label))?.value || '';
+                inner += `
+                    <label class="spec-type-card${isActive ? ' is-checked' : ''}" data-type-card="${_deploySummaryEscape(id)}">
+                        <input type="radio" name="summary-type-edit" value="${_deploySummaryEscape(id)}" ${isActive ? 'checked' : ''}>
+                        <span class="spec-type-card__title">${_deploySummaryEscape(def.title || id)}</span>
+                        <span class="spec-type-card__hint">${_deploySummaryEscape(hint)}</span>
+                    </label>
+                `;
+            });
+        });
+        fieldHtml = `<div class="spec-type-grid" data-edit-type-grid>${inner}</div>`;
+    }
+    return `
+        <div class="spec-row__editor-field">
+            <span class="spec-row__editor-label">${_deploySummaryEscape(row.label)}</span>
+            ${fieldHtml}
+        </div>
+        <div class="spec-row__editor-foot">
+            <button class="spec-edit-btn" type="button" data-edit-action="cancel">Cancel</button>
+            <button class="spec-edit-btn spec-edit-btn--save" type="button" data-edit-action="save">Save</button>
+        </div>
+    `;
+}
+
+/**
+ * Update the status pill in the summary header. Variants: live/draft/error.
+ */
+async function _deploySummaryUpdateStatus(projectName) {
+    const pill = document.getElementById('deploy-summary-status');
+    const label = document.getElementById('deploy-summary-status-label');
+    if (!pill || !label) return;
+    // default to DRAFT
+    pill.classList.remove('spec-pill--live', 'spec-pill--error', 'spec-pill--draft');
+    pill.classList.add('spec-pill--draft');
+    label.textContent = 'DRAFT';
+    if (!projectName) return;
+    try {
+        const r = await fetch(`/api/deploy/status?project=${encodeURIComponent(projectName)}`);
+        const d = await r.json();
+        if (d?.status?.deployed) {
+            pill.classList.remove('spec-pill--draft');
+            pill.classList.add('spec-pill--live');
+            label.textContent = 'LIVE';
+        } else if (d?.status?.last_error) {
+            pill.classList.remove('spec-pill--draft');
+            pill.classList.add('spec-pill--error');
+            label.textContent = 'ERROR';
+        }
+    } catch (_) { /* leave as DRAFT */ }
+}
+
+/**
+ * Open a row's inline editor. Closes any other open row first.
+ */
+function _deploySummaryOpenRow(rowEl, row, config) {
+    const list = rowEl.closest('.spec-list');
+    if (!list) return;
+    _deploySummaryCloseAll(list);
+    const editor = rowEl.querySelector('[data-summary-editor]');
+    editor.innerHTML = _deploySummaryBuildEditor(row, config);
+    rowEl.setAttribute('data-editing', 'true');
+    list.setAttribute('data-editing', 'true');
+    const input = editor.querySelector('[data-edit-input]');
+    if (input) { input.focus(); input.select && input.select(); }
+}
+
+function _deploySummaryCloseAll(list) {
+    list.querySelectorAll('.spec-row[data-editing="true"]').forEach(r => {
+        r.removeAttribute('data-editing');
+        const editor = r.querySelector('[data-summary-editor]');
+        if (editor) editor.innerHTML = '';
+    });
+    list.removeAttribute('data-editing');
+}
+
+/**
+ * Save a row's edits — patches the running config and POSTs the full
+ * (validated) config to /api/config. On success, refreshes the summary.
+ */
+async function _deploySummarySaveRow(rowEl, row, config) {
+    const editor = rowEl.querySelector('[data-summary-editor]');
+    if (!editor) return;
+
+    let patch = {};
+    if (row.fieldType === 'text') {
+        const v = editor.querySelector('[data-edit-input]')?.value.trim() || '';
+        if (row.key === 'project_name') patch.project_name = v;
+        else if (row.key === 'key_pair_name') patch.key_pair_name = v;
+        else if (row.key === 'primary_domain_name') patch.primary_domain_name = v;
+    } else if (row.fieldType === 'cidr') {
+        const v = editor.querySelector('[data-edit-input]')?.value.trim() || '';
+        patch.management_cidr_blocks = v.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (row.fieldType === 'seg') {
+        const active = editor.querySelector('.seg-control__option.is-active');
+        if (!active) return;
+        const v = active.dataset.segVal;
+        if (row.key === 'environment') patch.environment = v;
+        else if (row.key === 'aws_region') patch.aws_region = v;
+    } else if (row.fieldType === 'type') {
+        const checked = editor.querySelector('input[name="summary-type-edit"]:checked');
+        if (!checked) return;
+        patch.deployment_type = checked.value;
+        patch.engagement_type = checked.value;
+    }
+
+    const newConfig = Object.assign({}, config, patch);
+    try {
+        const r = await fetch(`${API_BASE}/config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: newConfig }),
+        });
+        const d = await r.json();
+        if (!d.success) {
+            console.error('Config save failed:', d);
+            // Show inline error
+            const hint = editor.querySelector('.spec-row__editor-hint');
+            const msg = (d.errors && d.errors.join('; ')) || d.error || 'Save failed';
+            if (hint) hint.textContent = msg;
+            return;
+        }
+    } catch (e) {
+        console.error('Config save threw:', e);
+        return;
+    }
+
+    // Re-render the entire summary with the new config.
+    await loadConfigSummary();
+}
+
 async function loadConfigSummary() {
     const summarySection = document.getElementById('config-summary-section');
-    const summaryGrid = document.getElementById('config-summary-grid');
+    const specList = document.getElementById('deploy-summary-spec-list');
     const warningsDiv = document.getElementById('config-summary-warnings');
-    
-    if (!summarySection || !summaryGrid) return;
-    
+    const heroName = document.getElementById('deploy-summary-hero-name');
+    const heroType = document.getElementById('deploy-summary-hero-type');
+    if (!summarySection || !specList) return;
+
     try {
         const response = await fetch(`${API_BASE}/config`);
         const data = await response.json();
-        
         if (!data.success || !data.config) {
             summarySection.style.display = 'none';
             return;
         }
-        
+
         const config = data.config;
         const deploymentType = config.deployment_type || config.engagement_type || '';
         const deployConfig = DEPLOYMENT_CONFIGS[deploymentType];
-        
         if (!deploymentType) {
             summarySection.style.display = 'none';
             return;
         }
-        
+
         // Show the section
         summarySection.style.display = 'block';
-        
-        // Build summary items
-        const summaryItems = [];
+
+        // Hero
+        if (heroName) heroName.textContent = config.project_name || '(unnamed)';
+        if (heroType) heroType.textContent = deployConfig?.title || deploymentType;
+
+        // Status pill
+        _deploySummaryUpdateStatus(config.project_name);
+
+        // Build + render rows
+        const rows = _deploySummaryBuildRows(config, deployConfig);
+        specList.innerHTML = rows.map(_deploySummaryRenderRow).join('');
+
+        // Validation warnings (use the same heuristics as before)
         const warnings = [];
-        
-        // Deployment Type
-        summaryItems.push({
-            icon: deployConfig?.type === 'goad' ? '🏰' : (deployConfig?.type === 'c2' ? '🎯' : '🔥'),
-            label: 'Deployment Type',
-            value: deployConfig?.title || deploymentType,
-            color: 'var(--brand)'
-        });
-
-        // Project Name
-        if (config.project_name) {
-            summaryItems.push({
-                icon: '📁',
-                label: 'Project Name',
-                value: config.project_name,
-                color: 'var(--info)'
-            });
-        } else {
-            warnings.push('Project name not set');
+        if (!config.project_name) warnings.push('Project name not set');
+        if (!config.aws_region) warnings.push('AWS region not set');
+        if (!(config.management_cidr_blocks || []).length) {
+            warnings.push("Management CIDR not set — you won't be able to access your infrastructure!");
         }
-        
-        // Environment
-        if (config.environment) {
-            summaryItems.push({
-                icon: '🏷️',
-                label: 'Environment',
-                value: config.environment.toUpperCase(),
-                color: config.environment === 'prod' ? 'var(--danger)' : (config.environment === 'staging' ? 'var(--warning)' : 'var(--success)')
-            });
-        }
-        
-        // AWS Region
-        if (config.aws_region) {
-            summaryItems.push({
-                icon: '🌍',
-                label: 'AWS Region',
-                value: config.aws_region,
-                color: 'var(--info)'
-            });
-        } else {
-            warnings.push('AWS region not set');
-        }
-        
-        // Management CIDR
-        const cidrBlocks = config.management_cidr_blocks || [];
-        if (cidrBlocks.length > 0) {
-            summaryItems.push({
-                icon: '🔒',
-                label: 'Management CIDR',
-                value: cidrBlocks.length === 1 ? cidrBlocks[0] : `${cidrBlocks.length} CIDR blocks`,
-                color: 'var(--success)',
-                tooltip: cidrBlocks.join(', ')
-            });
-        } else {
-            warnings.push('⚠️ Management CIDR not set - you won\'t be able to access your infrastructure!');
-        }
-        
-        // Key Pair (only for non-GOAD deployments)
         const isGoadOnly = deployConfig?.type === 'goad';
-        if (!isGoadOnly) {
-            if (config.key_pair_name) {
-                summaryItems.push({
-                    icon: '🔑',
-                    label: 'Key Pair',
-                    value: config.key_pair_name,
-                    color: 'var(--text-muted)'
-                });
-            } else {
-                warnings.push('Key pair name not set (required for C2/Combined)');
-            }
-        } else {
-            summaryItems.push({
-                icon: '🔑',
-                label: 'SSH Keys',
-                value: 'Auto-generated',
-                color: 'var(--success)'
-            });
+        if (!isGoadOnly && !config.key_pair_name) {
+            warnings.push('Key pair name not set (required for C2/Combined)');
         }
-
-        // Domain (only for C2/Combined)
-        if (deployConfig?.requiresDomain) {
-            if (config.primary_domain_name) {
-                summaryItems.push({
-                    icon: '🌐',
-                    label: 'Primary Domain',
-                    value: config.primary_domain_name,
-                    color: 'var(--info)'
-                });
-            } else {
-                warnings.push('Primary domain not configured (required for C2)');
-            }
+        if (deployConfig?.requiresDomain && !config.primary_domain_name) {
+            warnings.push('Primary domain not configured (required for C2)');
         }
-        
-        // Estimated Cost
-        if (deployConfig?.components) {
-            const costComp = deployConfig.components.find(c => c.label.includes('Cost'));
-            if (costComp) {
-                summaryItems.push({
-                    icon: '💰',
-                    label: 'Est. Monthly Cost',
-                    value: costComp.value,
-                    color: 'var(--warning)'
-                });
-            }
-        }
-
-        // Render summary grid
-        summaryGrid.innerHTML = summaryItems.map(item => `
-            <div style="background: var(--bg-card); padding: 12px; border-radius: 8px; border-left: 4px solid ${item.color};" ${item.tooltip ? `title="${item.tooltip}"` : ''}>
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                    <span style="font-size: 1.2em;">${item.icon}</span>
-                    <span style="font-size: 0.8em; color: var(--text-muted); text-transform: uppercase;">${item.label}</span>
-                </div>
-                <div style="font-weight: bold; color: var(--text-primary); font-size: 0.95em; word-break: break-word;">${item.value}</div>
-            </div>
-        `).join('');
-        
-        // Render warnings if any
-        if (warnings.length > 0) {
+        if (warnings.length) {
             warningsDiv.style.display = 'block';
             warningsDiv.innerHTML = `
-                <div style="background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: 6px; padding: 12px;">
-                    <div style="font-weight: bold; color: var(--warning-text); margin-bottom: 8px;">⚠️ Configuration Issues:</div>
-                    <ul style="margin: 0; padding-left: 20px; color: var(--warning-text);">
-                        ${warnings.map(w => `<li style="margin-bottom: 4px;">${w}</li>`).join('')}
-                    </ul>
-                </div>
+                <div class="deploy-summary__warnings-title">Configuration Issues</div>
+                <ul class="deploy-summary__warnings-list">
+                    ${warnings.map(w => `<li>${_deploySummaryEscape(w)}</li>`).join('')}
+                </ul>
             `;
-        } else {
+        } else if (warningsDiv) {
             warningsDiv.style.display = 'none';
+            warningsDiv.innerHTML = '';
         }
-        
+
+        // Wire row click → open editor
+        rows.forEach(row => {
+            if (!row.editable) return;
+            const rowEl = specList.querySelector(`.spec-row[data-summary-row="${row.key}"]`);
+            if (!rowEl) return;
+            const head = rowEl.querySelector('.spec-row__head');
+            head.addEventListener('click', (e) => {
+                // Don't reopen if already editing & click was on the head outside editor
+                if (rowEl.getAttribute('data-editing') === 'true') return;
+                _deploySummaryOpenRow(rowEl, row, config);
+            });
+        });
+
+        // Wire editor delegate (event delegation on the list).
+        // Cache the latest rows on the element so the delegate sees the
+        // current set after each re-render (loadConfigSummary may be called
+        // multiple times). Listener is attached once.
+        specList._summaryRows = rows;
+        specList._summaryConfig = config;
+        if (specList._summaryDelegateWired) return;
+        specList._summaryDelegateWired = true;
+        specList.addEventListener('click', (e) => {
+            const rowsRef = specList._summaryRows || [];
+            const configRef = specList._summaryConfig || {};
+            const action = e.target.closest('[data-edit-action]');
+            const segBtn = e.target.closest('.seg-control__option');
+            const typeCard = e.target.closest('[data-type-card]');
+            if (segBtn) {
+                e.stopPropagation();
+                segBtn.parentElement.querySelectorAll('.seg-control__option').forEach(b => b.classList.remove('is-active'));
+                segBtn.classList.add('is-active');
+                return;
+            }
+            if (typeCard) {
+                e.stopPropagation();
+                const grid = typeCard.closest('[data-edit-type-grid]');
+                if (grid) grid.querySelectorAll('.spec-type-card').forEach(c => c.classList.remove('is-checked'));
+                typeCard.classList.add('is-checked');
+                const radio = typeCard.querySelector('input[type="radio"]');
+                if (radio) radio.checked = true;
+                return;
+            }
+            if (!action) return;
+            e.stopPropagation();
+            const rowEl = action.closest('.spec-row');
+            if (!rowEl) return;
+            const rowKey = rowEl.dataset.summaryRow;
+            const row = rowsRef.find(r => r.key === rowKey);
+            if (!row) return;
+            if (action.dataset.editAction === 'cancel') {
+                _deploySummaryCloseAll(specList);
+            } else if (action.dataset.editAction === 'save') {
+                _deploySummarySaveRow(rowEl, row, configRef);
+            } else if (action.dataset.editAction === 'my-ip') {
+                // Fetch caller IP and stuff it into the input
+                fetch(`${API_BASE}/config/public-ip`).then(r => r.json()).then(d => {
+                    if (d.success && d.ip) {
+                        const inp = rowEl.querySelector('[data-edit-input]');
+                        if (inp) inp.value = `${d.ip}/32`;
+                    }
+                }).catch(() => {});
+            }
+        }, { once: false });
+
     } catch (error) {
         console.error('Error loading config summary:', error);
         summarySection.style.display = 'none';
