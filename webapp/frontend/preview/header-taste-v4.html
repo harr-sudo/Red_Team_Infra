@@ -49,20 +49,20 @@
             -moz-osx-font-smoothing: grayscale;
         }
 
-        /* ── COMMAND BAR — 4-zone asymmetric grid ─────────────────────
-           [number] [brand block, wide] [chip rail] [vertical rail]
-           70/30 weight bias toward brand+chips, with a 32px vertical
-           rail on the far right that holds the "LIVE OPS" marquee.
-           Taller (72px) to host the editorial brand.
+        /* ── COMMAND BAR — 3-zone asymmetric grid ─────────────────────
+           [brand block, wide] [chip rail] [vertical rail]
+           Brand+chips share the bulk; a 32px vertical rail on the
+           right edge holds the "LIVE OPS" marquee.
+           Trimmed height (64px) for tighter editorial feel.
            ──────────────────────────────────────────────────────────── */
         .global-header {
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
-            height: 72px;
+            height: 64px;
             display: grid;
-            grid-template-columns: 56px minmax(280px, 1fr) auto 32px;
+            grid-template-columns: minmax(280px, 1fr) auto 32px;
             align-items: stretch;
             background: var(--bg-container);
             border-bottom: 1px solid var(--border);
@@ -71,30 +71,11 @@
             z-index: 100;
             font-size: 13px;
             letter-spacing: 0.01em;
-            overflow: hidden;
+            /* overflow visible so the floating combobox listbox (fixed-
+               positioned) doesn't get clipped by the header bounds. */
+            overflow: visible;
         }
 
-        /* Diagonal accent stripe — VARIANCE signature element.
-           A thin off-axis line that crosses the header behind chips.
-           Tinted so it's perceptible but never compete with text. */
-        .global-header::before {
-            content: "";
-            position: absolute;
-            top: 0;
-            left: 50%;
-            width: 220%;
-            height: 1px;
-            background: linear-gradient(90deg,
-                transparent 0%,
-                var(--brand) 30%,
-                var(--brand-light) 50%,
-                var(--brand) 70%,
-                transparent 100%);
-            transform: translate(-50%, 0) rotate(-1.6deg);
-            transform-origin: center;
-            opacity: 0.18;
-            pointer-events: none;
-        }
         /* Particle field — animated radial gradients. Sits behind
            everything. ≤3s loop, very low opacity. */
         .global-header::after {
@@ -114,54 +95,10 @@
             100% { background-position: 4% -3%, -3% 2%, 2% 3%; opacity: 0.10; }
         }
 
-        /* ── ZONE 1 — NUMBERED LEADER CHIP "01" ───────────────────────
-           Editorial manifesto signature: massive numeral that
-           anchors the left edge. Sits in its own cell with a
-           hairline right divider.
-           ──────────────────────────────────────────────────────────── */
-        .gh-numeral {
-            position: relative;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-right: 1px solid var(--border-subtle);
-            background: var(--bg-card);
-            overflow: hidden;
-        }
-        .gh-numeral-digit {
-            position: relative;
-            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
-            font-size: 28px;
-            font-weight: 700;
-            color: var(--text-primary);
-            letter-spacing: -0.03em;
-            line-height: 1;
-            animation: gh-numeral-bob 2600ms ease-in-out infinite;
-            will-change: transform;
-        }
-        @keyframes gh-numeral-bob {
-            0%, 100% { transform: translateY(0); }
-            50%      { transform: translateY(-2px); }
-        }
-        /* Tiny caps kicker under the numeral */
-        .gh-numeral-kicker {
-            position: absolute;
-            bottom: 8px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-family: ui-monospace, "SF Mono", Menlo, monospace;
-            font-size: 7.5px;
-            font-weight: 600;
-            color: var(--text-muted);
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-            white-space: nowrap;
-        }
-
-        /* ── ZONE 2 — BRAND BLOCK (massive, editorial) ────────────────
-           Hero-style typography. 22px name + 8.5px caps caption.
-           A custom-drawn scribble underline that draws on hover.
-           Animated brand mark with continuous slow rotation + shimmer.
+        /* ── ZONE 1 — BRAND BLOCK (editorial) ─────────────────────────
+           Hero-style typography compressed for the 64px header.
+           19px name + 8.5px caps caption. Animated brand mark with
+           continuous slow rotation + shimmer.
            ──────────────────────────────────────────────────────────── */
         .gh-brand {
             display: flex;
@@ -230,7 +167,7 @@
             min-width: 0;
         }
         .gh-brand-name {
-            font-size: 22px;
+            font-size: 19px;
             font-weight: 800;
             color: var(--text-primary);
             letter-spacing: -0.022em;
@@ -238,41 +175,15 @@
             display: inline-block;
             white-space: nowrap;
         }
-        /* Scribble underline — drawn on hover via scaleX from 0 → 1.
-           Three stacked offsets give it a hand-drawn wobble feel. */
-        .gh-brand-name::after {
-            content: "";
-            position: absolute;
-            left: 0;
-            right: 0;
-            bottom: -3px;
-            height: 4px;
-            background:
-                linear-gradient(90deg, transparent 0%, var(--brand-light) 50%, transparent 100%),
-                linear-gradient(90deg, transparent 10%, var(--brand) 50%, transparent 90%);
-            background-size: 100% 1.5px, 100% 1.2px;
-            background-position: 0 0, 0 100%;
-            background-repeat: no-repeat;
-            transform: scaleX(0);
-            transform-origin: left center;
-            opacity: 0;
-            transition: transform 360ms cubic-bezier(0.34, 1.4, 0.64, 1),
-                        opacity 200ms ease;
-        }
-        .gh-brand:hover .gh-brand-name::after,
-        .gh-brand:focus-within .gh-brand-name::after {
-            transform: scaleX(1);
-            opacity: 1;
-        }
 
         .gh-brand-kicker {
             font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
             font-size: 8.5px;
             font-weight: 600;
             color: var(--text-muted);
-            letter-spacing: 0.28em;
+            letter-spacing: 0.26em;
             text-transform: uppercase;
-            margin-top: 8px;
+            margin-top: 5px;
             display: flex;
             align-items: center;
             gap: 8px;
@@ -451,12 +362,16 @@
             border-color: var(--brand-light);
         }
 
-        /* Listbox panel — spring open with overshoot */
+        /* Listbox panel — spring open with overshoot.
+           Uses position:fixed (set by JS) so it floats above the
+           header instead of being clipped by header bounds. The
+           --gh-lb-top/--gh-lb-left/--gh-lb-width vars are written
+           by JS on open from the combobox's bounding rect. */
         .gh-listbox {
-            position: absolute;
-            top: calc(100% + 8px);
-            left: 0;
-            right: 0;
+            position: fixed;
+            top: var(--gh-lb-top, 64px);
+            left: var(--gh-lb-left, 0);
+            width: var(--gh-lb-width, 280px);
             min-width: 280px;
             margin: 0;
             padding: 5px;
@@ -466,7 +381,7 @@
             border-radius: 8px;
             box-shadow: 0 14px 32px -10px rgba(0, 0, 0, 0.45),
                         0 4px 10px -3px rgba(0, 0, 0, 0.3);
-            z-index: 200;
+            z-index: 1100;
             opacity: 0;
             transform: translateY(-8px) scale(0.96);
             transform-origin: top center;
@@ -574,17 +489,22 @@
         }
         .gh-operator-name {
             font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
-            font-size: 12.5px;
+            font-size: 13px;
             font-weight: 700;
             color: var(--text-primary);
             letter-spacing: -0.005em;
         }
+        /* V2's op:// URL-style prefix — muted mono caps lead-in,
+           name itself sits in --text-primary at slightly larger size. */
         .gh-operator-name::before {
-            content: "operator/";
+            content: "op://";
             color: var(--text-muted);
-            font-weight: 400;
-            margin-right: 4px;
-            letter-spacing: 0.04em;
+            font-weight: 500;
+            font-size: 9px;
+            margin-right: 3px;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            vertical-align: 1px;
         }
 
         /* ── THEME TOGGLE ──────────────────────────────────────────────
@@ -712,8 +632,8 @@
 
         /* ── DEMO BODY ─────────────────────────────────────────────── */
         .demo-main {
-            padding: 120px 40px 48px;
-            max-width: 780px;
+            padding: 96px 40px 80px;
+            max-width: 1180px;
             margin: 0 auto;
         }
         .demo-main h2 {
@@ -783,6 +703,669 @@
             box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 32%, transparent);
         }
 
+        /* ============================================================
+           DEMO BODY — DASHBOARD LAYOUT
+           V4's MOTION=10 / VARIANCE=10 / DENSITY=7 manifesto applied
+           to the page body: stacked nav row with spring-overshoot
+           hover + animated underline, sub-pills with border-sweep,
+           asymmetric 3-tile dashboard (1.5fr · 1fr · 1.05fr) with
+           editorial-numeral prefixes, magnetic deploy rows, drawn-in
+           sparkline + bobbing delta arrow, sticky spec badge with
+           shimmer border. Every loop ≤ 3000ms, palette tokens only.
+           ============================================================ */
+
+        /* ── PRIMARY NAV ROW ──────────────────────────────────────── */
+        .layout-nav {
+            display: flex;
+            align-items: stretch;
+            gap: 2px;
+            margin: 6px 0 0;
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border-subtle);
+            position: relative;
+        }
+        .layout-nav__item {
+            position: relative;
+            padding: 10px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.005em;
+            color: var(--text-secondary);
+            text-decoration: none;
+            border-radius: 4px 4px 0 0;
+            /* spring hover */
+            transition: color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        background-color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            /* magnetic vars (driven by JS, fall back to 0) */
+            transform: translate(var(--mx, 0), var(--my, 0));
+        }
+        .layout-nav__item::after {
+            /* animated underline — scaleX(0) → scaleX(1) on hover/active */
+            content: "";
+            position: absolute;
+            left: 12px;
+            right: 12px;
+            bottom: -1px;
+            height: 2px;
+            background: var(--brand-light);
+            transform: scaleX(0);
+            transform-origin: left center;
+            transition: transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .layout-nav__item:hover {
+            color: var(--text-primary);
+            background: var(--bg-card-hover);
+        }
+        .layout-nav__item:hover::after {
+            transform: scaleX(0.6);
+        }
+        .layout-nav__item:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 36%, transparent);
+        }
+        .layout-nav__item.is-active {
+            color: var(--text-primary);
+            font-weight: 800;
+        }
+        .layout-nav__item.is-active::after {
+            animation: gh-nav-underline-in 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+            transform: scaleX(1);
+        }
+        @keyframes gh-nav-underline-in {
+            0%   { transform: scaleX(0); }
+            70%  { transform: scaleX(1.12); }
+            100% { transform: scaleX(1); }
+        }
+        /* Rotating dot ornament next to the active nav item */
+        .layout-nav__item.is-active::before {
+            content: "";
+            position: absolute;
+            left: 4px;
+            top: 50%;
+            width: 4px;
+            height: 4px;
+            margin-top: -2px;
+            border-radius: 1px;
+            background: var(--brand-light);
+            animation: gh-nav-dot-rotate 2400ms linear infinite;
+        }
+        @keyframes gh-nav-dot-rotate {
+            0%   { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .layout-nav__item.is-active { padding-left: 18px; }
+
+        /* ── SUB-PILLS ROW ────────────────────────────────────────── */
+        .layout-subpills {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 10px 0 26px;
+            font-size: 12px;
+        }
+        .layout-subpills__hint {
+            color: var(--text-muted);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-right: 4px;
+        }
+        .layout-subpills__pill {
+            position: relative;
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            color: var(--text-secondary);
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            cursor: pointer;
+            transition: color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        background-color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        border-color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            transform: translate(var(--mx, 0), var(--my, 0));
+            overflow: hidden;
+        }
+        .layout-subpills__pill:hover {
+            color: var(--text-primary);
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+        .layout-subpills__pill:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 28%, transparent);
+        }
+        .layout-subpills__pill.is-active {
+            color: var(--text-primary);
+            background: linear-gradient(135deg,
+                color-mix(in srgb, var(--brand) 14%, var(--bg-card)) 0%,
+                var(--bg-card-hover) 100%);
+            border-color: var(--brand);
+            font-weight: 700;
+        }
+        .layout-subpills__pill.is-active::before {
+            /* re-use the border-sweep aesthetic from the combobox open state */
+            content: "";
+            position: absolute;
+            inset: -1px;
+            border-radius: inherit;
+            padding: 1px;
+            background: linear-gradient(135deg,
+                var(--brand-light) 0%,
+                transparent 30%,
+                transparent 70%,
+                var(--brand-light) 100%);
+            background-size: 200% 200%;
+            -webkit-mask:
+                linear-gradient(#000 0 0) content-box,
+                linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+                    mask-composite: exclude;
+            pointer-events: none;
+            animation: gh-pill-sweep 2400ms linear infinite;
+        }
+        @keyframes gh-pill-sweep {
+            0%   { background-position: 0% 0%; }
+            100% { background-position: 200% 0%; }
+        }
+
+        /* ── DASHBOARD ROW — ASYMMETRIC 3-TILE GRID ───────────────── */
+        .v4-dashboard {
+            display: grid;
+            grid-template-columns: 1.5fr 1fr 1.05fr;
+            gap: 18px;
+            margin: 0 0 28px;
+            align-items: stretch;
+        }
+        @media (max-width: 980px) {
+            .v4-dashboard { grid-template-columns: 1fr; }
+        }
+        .v4-tile {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px 18px;
+            overflow: hidden;
+            transition: border-color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        background-color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        box-shadow 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            transform: translate(var(--mx, 0), var(--my, 0));
+        }
+        .v4-tile:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            box-shadow: 0 10px 28px -18px rgba(0, 0, 0, 0.4);
+        }
+        .v4-tile__head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            margin: 0 0 12px;
+        }
+        .v4-tile__eyebrow {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+        .v4-tile__title {
+            font-size: 15px;
+            font-weight: 800;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            margin: 2px 0 0;
+        }
+        .v4-tile__meta {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+        }
+
+        /* DEPLOYMENTS TILE — featured (col 1, takes 1.5fr) */
+        .v4-deploys__list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .v4-deploy-row {
+            position: relative;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 12px;
+            align-items: center;
+            padding: 11px 12px;
+            background: var(--bg-input);
+            border: 1px solid var(--border-subtle);
+            border-radius: 6px;
+            text-decoration: none;
+            color: inherit;
+            overflow: hidden;
+            transition: border-color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        background-color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            transform: translate(var(--mx, 0), var(--my, 0));
+        }
+        .v4-deploy-row:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--brand-light);
+        }
+        .v4-deploy-row__numeral {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            min-width: 22px;
+        }
+        .v4-deploy-row__main {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            min-width: 0;
+        }
+        .v4-deploy-row__name {
+            position: relative;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            /* shimmer overlay (subtle, every ~2800ms) */
+            background: linear-gradient(90deg,
+                var(--text-primary) 0%,
+                var(--text-primary) 38%,
+                var(--brand-light) 50%,
+                var(--text-primary) 62%,
+                var(--text-primary) 100%);
+            background-size: 220% 100%;
+            background-position: 0% 0%;
+            -webkit-background-clip: text;
+                    background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: gh-name-shimmer 2800ms ease-in-out infinite;
+        }
+        @keyframes gh-name-shimmer {
+            0%   { background-position: 100% 0%; }
+            55%  { background-position: -40% 0%; }
+            100% { background-position: -40% 0%; }
+        }
+        .v4-deploy-row__caption {
+            display: flex;
+            gap: 10px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            letter-spacing: 0.04em;
+            color: var(--text-muted);
+        }
+        .v4-deploy-row__caption span + span::before {
+            content: "·";
+            margin-right: 10px;
+            color: var(--border-light);
+        }
+        .v4-deploy-row__uptime {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 0.02em;
+        }
+        /* Rotating corner ornament — small kinetic accent */
+        .v4-deploy-row::after {
+            content: "";
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            width: 10px;
+            height: 10px;
+            border-top: 1px solid var(--brand-light);
+            border-right: 1px solid var(--brand-light);
+            opacity: 0.55;
+            animation: gh-corner-rotate 2800ms linear infinite;
+            transform-origin: 30% 70%;
+        }
+        @keyframes gh-corner-rotate {
+            0%   { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* "+ New deployment" CTA card */
+        .v4-deploy-cta {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 13px 12px;
+            background: transparent;
+            border: 1px dashed var(--border-light);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+            letter-spacing: 0.01em;
+            transition: color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        border-color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        background-color 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            transform: translate(var(--mx, 0), var(--my, 0));
+        }
+        .v4-deploy-cta__plus {
+            display: inline-block;
+            font-weight: 800;
+            color: var(--brand-light);
+            transition: transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .v4-deploy-cta:hover {
+            color: var(--text-primary);
+            border-color: var(--brand);
+            background: var(--bg-card-hover);
+        }
+        .v4-deploy-cta:hover .v4-deploy-cta__plus {
+            transform: rotate(90deg) scale(1.1);
+        }
+
+        /* ACTIVITY TILE — col 2 (1fr) */
+        .v4-activity {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .v4-activity__row {
+            position: relative;
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 12px;
+            align-items: baseline;
+            padding: 9px 4px;
+            transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        color 240ms ease;
+            transform: translate(var(--mx, 0), var(--my, 0));
+        }
+        .v4-activity__row + .v4-activity__row {
+            border-top: 1px solid transparent;
+            /* moving gradient divider — paused unless row is hovered */
+            background-image: linear-gradient(90deg,
+                transparent 0%,
+                var(--border) 20%,
+                var(--border-light) 50%,
+                var(--border) 80%,
+                transparent 100%);
+            background-size: 200% 1px;
+            background-position: 0% 0%;
+            background-repeat: no-repeat;
+            background-position-y: 0;
+            animation: gh-divider-drift 2800ms linear infinite;
+            animation-play-state: paused;
+        }
+        .v4-activity__row + .v4-activity__row:hover,
+        .v4-activity__row:hover + .v4-activity__row {
+            animation-play-state: running;
+        }
+        @keyframes gh-divider-drift {
+            0%   { background-position: 0% 0%; }
+            100% { background-position: 200% 0%; }
+        }
+        .v4-activity__row:hover .v4-activity__time {
+            color: var(--text-primary);
+        }
+        .v4-activity__time {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+            min-width: 38px;
+        }
+        .v4-activity__what {
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            line-height: 1.45;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .v4-activity__op {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            letter-spacing: 0.01em;
+        }
+        .v4-activity__verb {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin: 0 4px 0 6px;
+        }
+
+        /* COST TILE — col 3 (1.05fr) */
+        .v4-cost {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .v4-cost__value-wrap {
+            position: relative;
+            display: inline-flex;
+            align-items: baseline;
+            gap: 2px;
+            margin-top: 4px;
+        }
+        .v4-cost__currency {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            margin-right: 2px;
+            position: relative;
+            top: -8px;
+        }
+        .v4-cost__value {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-size: 42px;
+            font-weight: 800;
+            letter-spacing: -0.025em;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+            line-height: 1;
+        }
+        /* drawing-in underline beneath the big number (NOT diagonal) */
+        .v4-cost__value-wrap::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: -6px;
+            height: 2px;
+            background: var(--brand-light);
+            transform-origin: left center;
+            animation: gh-cost-draw 1200ms cubic-bezier(0.34, 1.56, 0.64, 1) 200ms both;
+        }
+        @keyframes gh-cost-draw {
+            0%   { transform: scaleX(0); }
+            80%  { transform: scaleX(1.04); }
+            100% { transform: scaleX(1); }
+        }
+        .v4-cost__caption {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-top: 12px;
+        }
+        .v4-cost__delta {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+            margin-top: 2px;
+        }
+        .v4-cost__delta-arrow {
+            display: inline-block;
+            color: var(--brand-light);
+            animation: gh-delta-bob 2200ms ease-in-out infinite;
+        }
+        @keyframes gh-delta-bob {
+            0%, 100% { transform: translateY(0); }
+            50%      { transform: translateY(-1px); }
+        }
+        .v4-cost__spark {
+            display: block;
+            width: 100%;
+            height: 44px;
+            margin-top: 12px;
+        }
+        .v4-cost__spark polyline {
+            fill: none;
+            stroke: var(--brand-light);
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            stroke-dasharray: 220;
+            stroke-dashoffset: 220;
+            animation: gh-spark-draw 1200ms cubic-bezier(0.34, 1.56, 0.64, 1) 320ms forwards;
+        }
+        @keyframes gh-spark-draw {
+            0%   { stroke-dashoffset: 220; }
+            100% { stroke-dashoffset: 0; }
+        }
+        .v4-cost__foot {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+        .v4-cost__live-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+            animation: gh-live-pulse 1800ms ease-in-out infinite;
+        }
+        @keyframes gh-live-pulse {
+            0%, 100% { opacity: 0.4; transform: scale(0.85); }
+            50%      { opacity: 1;   transform: scale(1.05); }
+        }
+
+        /* ── SPEC BADGE — sticky top-right ───────────────────────── */
+        .v4-spec-wrap {
+            position: relative;
+            margin: -8px 0 24px;
+        }
+        .v4-spec {
+            position: sticky;
+            top: 80px;
+            float: right;
+            width: 240px;
+            margin-left: 22px;
+            padding: 14px 16px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            transition: transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        border-color 260ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        box-shadow 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            transform: translate(var(--mx, 0), var(--my, 0)) scale(1);
+        }
+        .v4-spec:hover {
+            transform: translate(var(--mx, 0), var(--my, 0)) scale(1.02);
+            border-color: var(--brand-light);
+            box-shadow: 0 14px 36px -22px rgba(0, 0, 0, 0.4);
+        }
+        /* Shimmer border — paint a gradient inside, mask to ring */
+        .v4-spec::before {
+            content: "";
+            position: absolute;
+            inset: -1px;
+            border-radius: inherit;
+            padding: 1px;
+            background: linear-gradient(135deg,
+                var(--brand-light) 0%,
+                transparent 25%,
+                transparent 75%,
+                var(--brand-light) 100%);
+            background-size: 220% 220%;
+            -webkit-mask:
+                linear-gradient(#000 0 0) content-box,
+                linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+                    mask-composite: exclude;
+            pointer-events: none;
+            opacity: 0.55;
+            animation: gh-spec-border-sweep 2800ms linear infinite;
+        }
+        @keyframes gh-spec-border-sweep {
+            0%   { background-position: 0% 0%; }
+            100% { background-position: 220% 0%; }
+        }
+        /* CSS-drawn diagonal accent INSIDE the card (not header-spanning) */
+        .v4-spec::after {
+            content: "";
+            position: absolute;
+            top: 8px;
+            right: -28px;
+            width: 90px;
+            height: 1px;
+            background: var(--brand-light);
+            opacity: 0.35;
+            transform: rotate(-22deg);
+            transform-origin: left center;
+            pointer-events: none;
+        }
+        .v4-spec__title {
+            display: block;
+            font-size: 16px;
+            font-weight: 800;
+            letter-spacing: -0.015em;
+            color: var(--text-primary);
+            margin: 0 0 4px;
+            font-variant-numeric: tabular-nums;
+        }
+        .v4-spec__sublabel {
+            display: block;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin: 0 0 10px;
+        }
+        .v4-spec__feel {
+            display: block;
+            font-size: 11.5px;
+            line-height: 1.5;
+            color: var(--text-secondary);
+        }
+        .v4-spec__feel em {
+            font-style: normal;
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
         /* ── PREFERS-REDUCED-MOTION — calmer rendition ────────────────
            Kill all continuous loops, kill spring overshoots, kill
            magnetic translate, kill marquee, kill particle drift,
@@ -791,14 +1374,8 @@
            ──────────────────────────────────────────────────────────── */
         @media (prefers-reduced-motion: reduce) {
             .global-header::after { animation: none; }
-            .gh-numeral-digit { animation: none; }
             .gh-brand-mark::before { animation: none; }
             .gh-brand-mark::after { animation: none; }
-            .gh-brand-name::after {
-                transform: scaleX(1);
-                opacity: 0.4;
-                transition: none;
-            }
             .gh-operator-dot::before,
             .gh-operator-dot::after { animation: none; opacity: 0; }
             .gh-combobox[aria-expanded="true"]::before { animation: none; }
@@ -818,6 +1395,45 @@
                             background-color 150ms ease,
                             color 150ms ease;
                 transform: none !important;
+            }
+            /* V4 body — strip every new continuous loop / spring / draw-in */
+            .layout-nav__item,
+            .layout-nav__item::after,
+            .layout-nav__item.is-active::after,
+            .layout-nav__item.is-active::before,
+            .layout-subpills__pill,
+            .layout-subpills__pill.is-active::before,
+            .v4-tile,
+            .v4-deploy-row,
+            .v4-deploy-row::after,
+            .v4-deploy-row__name,
+            .v4-deploy-cta,
+            .v4-deploy-cta__plus,
+            .v4-activity__row,
+            .v4-activity__row + .v4-activity__row,
+            .v4-cost__value-wrap::after,
+            .v4-cost__delta-arrow,
+            .v4-cost__spark polyline,
+            .v4-cost__live-dot,
+            .v4-spec,
+            .v4-spec::before {
+                animation: none !important;
+                transition: border-color 150ms ease,
+                            background-color 150ms ease,
+                            color 150ms ease;
+                transform: none !important;
+            }
+            /* keep the underline visible (no draw-in animation) */
+            .layout-nav__item.is-active::after { transform: scaleX(1) !important; }
+            /* keep the sparkline drawn fully */
+            .v4-cost__spark polyline { stroke-dashoffset: 0 !important; }
+            /* keep cost underline visible */
+            .v4-cost__value-wrap::after { transform: scaleX(1) !important; }
+            /* solid name colour (no shimmer gradient) */
+            .v4-deploy-row__name {
+                background: none !important;
+                -webkit-text-fill-color: var(--text-primary) !important;
+                color: var(--text-primary) !important;
             }
         }
 
@@ -898,13 +1514,7 @@
 </head>
 <body>
     <header class="global-header" role="banner">
-        <!-- ZONE 1: numbered leader chip -->
-        <div class="gh-numeral" aria-hidden="true">
-            <span class="gh-numeral-digit">01</span>
-            <span class="gh-numeral-kicker">cell</span>
-        </div>
-
-        <!-- ZONE 2: brand block -->
+        <!-- ZONE 1: brand block (leftmost) -->
         <div class="gh-brand" tabindex="0">
             <span class="gh-brand-mark" aria-hidden="true"></span>
             <div class="gh-brand-text">
@@ -913,7 +1523,7 @@
             </div>
         </div>
 
-        <!-- ZONE 3: chip rail -->
+        <!-- ZONE 2: chip rail -->
         <div class="gh-rail">
             <!-- Deployment selector -->
             <div class="gh-chip gh-deploy" data-magnetic>
@@ -977,7 +1587,7 @@
             </button>
         </div>
 
-        <!-- ZONE 4: vertical rail marquee -->
+        <!-- ZONE 3: vertical rail marquee -->
         <div class="gh-vrail" aria-hidden="true">
             <div class="gh-vrail-track">
                 <span class="gh-vrail-text">live ops // live ops // live ops //</span>
@@ -987,10 +1597,132 @@
     </header>
 
     <main class="demo-main">
-        <h2>Header preview &mdash; TASTE-SKILL V4</h2>
-        <span class="demo-dials"><strong>VARIANCE</strong> 10 &middot; <strong>MOTION</strong> 10 &middot; <strong>DENSITY</strong> 7</span>
-        <p>Variant V4 &mdash; dials 10/10/7 &mdash; everything maxed except density. This is the statement-piece variant. Most expressive, most kinetic. The header is split into four zones with deliberately asymmetric weighting: a numbered leader chip (<code>01</code>), an editorial brand block with a 22px name and hand-drawn scribble underline, a dense chip rail, and a vertical "live ops" marquee on the right edge.</p>
-        <p>Motion is layered: the brand mark rotates and shimmers continuously, the numeral bobs, the operator dot fires a multi-ring pulse, the chip rail responds to mouse position via magnetic translate (event-driven CSS variables, no 60fps JS loop), and the combobox opens with a spring overshoot. Prefers-reduced-motion users see a calmer rendition with all loops and springs disabled.</p>
+        <!-- Primary navigation row -->
+        <nav class="layout-nav" role="navigation" aria-label="Primary">
+            <a href="#" class="layout-nav__item is-active" data-magnetic>Dashboard</a>
+            <a href="#" class="layout-nav__item" data-magnetic>Deployments</a>
+            <a href="#" class="layout-nav__item" data-magnetic>Operations</a>
+            <a href="#" class="layout-nav__item" data-magnetic>Architecture</a>
+            <a href="#" class="layout-nav__item" data-magnetic>Settings</a>
+        </nav>
+        <!-- Sub-pills row -->
+        <div class="layout-subpills" role="tablist" aria-label="Deployments sub-views">
+            <span class="layout-subpills__hint">Active when on a merged tab:</span>
+            <button role="tab" type="button" class="layout-subpills__pill is-active" aria-selected="true" data-magnetic>Configure</button>
+            <button role="tab" type="button" class="layout-subpills__pill" aria-selected="false" data-magnetic>Deploy</button>
+            <button role="tab" type="button" class="layout-subpills__pill" aria-selected="false" data-magnetic>Manage</button>
+        </div>
+
+        <!-- Spec badge — sticky, floats to the right -->
+        <div class="v4-spec-wrap">
+            <aside class="v4-spec" aria-label="Variant specification" data-magnetic>
+                <span class="v4-spec__title">V4 &middot; 10 &middot; 10 &middot; 7</span>
+                <span class="v4-spec__sublabel">VARIANCE &middot; MOTION &middot; DENSITY</span>
+                <span class="v4-spec__feel"><em>Manifesto cover</em> &mdash; the header is the page, kinetic and editorial.</span>
+            </aside>
+
+            <h2>Header preview &mdash; TASTE-SKILL V4</h2>
+            <span class="demo-dials"><strong>VARIANCE</strong> 10 &middot; <strong>MOTION</strong> 10 &middot; <strong>DENSITY</strong> 7</span>
+            <p>Variant V4 &mdash; dials 10/10/7 &mdash; everything maxed except density. The header is split into three zones: an editorial brand block, a dense chip rail with deployment / cost / operator stacks, and a vertical &ldquo;live ops&rdquo; marquee on the right edge.</p>
+            <p>Motion is layered: the brand mark rotates and shimmers continuously, the operator dot fires a multi-ring pulse, the chip rail responds to mouse position via magnetic translate, and the combobox opens with a spring overshoot. Prefers-reduced-motion users see a calmer rendition with all loops and springs disabled.</p>
+        </div>
+
+        <!-- Dashboard row — asymmetric 1.5fr / 1fr / 1.05fr grid -->
+        <section class="v4-dashboard" aria-label="Dashboard widgets">
+
+            <!-- Tile 1 — Live deployments (featured, 1.5fr) -->
+            <article class="v4-tile v4-tile--deploys" aria-labelledby="v4-tile-deploys-title">
+                <header class="v4-tile__head">
+                    <div>
+                        <span class="v4-tile__eyebrow">01 &middot; live</span>
+                        <span class="v4-tile__title" id="v4-tile-deploys-title">Deployments</span>
+                    </div>
+                    <span class="v4-tile__meta">2 active</span>
+                </header>
+                <div class="v4-deploys__list">
+                    <a href="#" class="v4-deploy-row" data-magnetic>
+                        <span class="v4-deploy-row__numeral">01</span>
+                        <span class="v4-deploy-row__main">
+                            <span class="v4-deploy-row__name">c2_adhoc_dev_harriss_macbook_pro_01</span>
+                            <span class="v4-deploy-row__caption">
+                                <span>C2 Ad-hoc</span><span>4 inst</span><span>eu-central-1</span>
+                            </span>
+                        </span>
+                        <span class="v4-deploy-row__uptime">24d</span>
+                    </a>
+                    <a href="#" class="v4-deploy-row" data-magnetic>
+                        <span class="v4-deploy-row__numeral">02</span>
+                        <span class="v4-deploy-row__main">
+                            <span class="v4-deploy-row__name">goad_mini_dev_harriss_macbook_pro</span>
+                            <span class="v4-deploy-row__caption">
+                                <span>GOAD Mini</span><span>5 inst</span><span>eu-central-1</span>
+                            </span>
+                        </span>
+                        <span class="v4-deploy-row__uptime">19d</span>
+                    </a>
+                    <button type="button" class="v4-deploy-cta" data-magnetic>
+                        <span class="v4-deploy-cta__plus" aria-hidden="true">+</span>
+                        <span>New deployment</span>
+                    </button>
+                </div>
+            </article>
+
+            <!-- Tile 2 — Recent activity (1fr) -->
+            <article class="v4-tile v4-tile--activity" aria-labelledby="v4-tile-activity-title">
+                <header class="v4-tile__head">
+                    <div>
+                        <span class="v4-tile__eyebrow">02 &middot; recent</span>
+                        <span class="v4-tile__title" id="v4-tile-activity-title">Activity</span>
+                    </div>
+                    <span class="v4-tile__meta">today</span>
+                </header>
+                <ul class="v4-activity">
+                    <li class="v4-activity__row" data-magnetic>
+                        <span class="v4-activity__time">12:32</span>
+                        <span class="v4-activity__what"><span class="v4-activity__op">op://harriss</span><span class="v4-activity__verb">GET</span>/api/version</span>
+                    </li>
+                    <li class="v4-activity__row" data-magnetic>
+                        <span class="v4-activity__time">12:30</span>
+                        <span class="v4-activity__what"><span class="v4-activity__op">op://harriss</span><span class="v4-activity__verb">opened</span>/preview/header</span>
+                    </li>
+                    <li class="v4-activity__row" data-magnetic>
+                        <span class="v4-activity__time">12:15</span>
+                        <span class="v4-activity__what"><span class="v4-activity__op">op://harriss</span><span class="v4-activity__verb">tagged</span>v1.0.0</span>
+                    </li>
+                    <li class="v4-activity__row" data-magnetic>
+                        <span class="v4-activity__time">11:45</span>
+                        <span class="v4-activity__what"><span class="v4-activity__op">op://harriss</span><span class="v4-activity__verb">merged</span>refactor/test-framework</span>
+                    </li>
+                    <li class="v4-activity__row" data-magnetic>
+                        <span class="v4-activity__time">10:20</span>
+                        <span class="v4-activity__what"><span class="v4-activity__op">op://harriss</span><span class="v4-activity__verb">passed</span>pre-flight checks</span>
+                    </li>
+                </ul>
+            </article>
+
+            <!-- Tile 3 — Cost trend (1.05fr) -->
+            <article class="v4-tile v4-tile--cost" aria-labelledby="v4-tile-cost-title">
+                <header class="v4-tile__head">
+                    <div>
+                        <span class="v4-tile__eyebrow">03 &middot; burn</span>
+                        <span class="v4-tile__title" id="v4-tile-cost-title">Cost trend</span>
+                    </div>
+                    <span class="v4-tile__meta">14d</span>
+                </header>
+                <div class="v4-cost">
+                    <span class="v4-cost__value-wrap">
+                        <span class="v4-cost__currency">$</span><span class="v4-cost__value">407</span>
+                    </span>
+                    <span class="v4-cost__caption">Monthly burn</span>
+                    <span class="v4-cost__delta"><span class="v4-cost__delta-arrow" aria-hidden="true">&uarr;</span>+3% vs last week</span>
+                    <svg class="v4-cost__spark" viewBox="0 0 140 42" preserveAspectRatio="none" aria-hidden="true">
+                        <polyline points="0,30 10,28 20,29 30,25 40,26 50,22 60,24 70,19 80,21 90,17 100,19 110,15 120,16 130,12 140,11"></polyline>
+                    </svg>
+                    <span class="v4-cost__foot"><span class="v4-cost__live-dot" aria-hidden="true"></span>Last 14 days &middot; live</span>
+                </div>
+            </article>
+        </section>
+
         <p>The deployment selector keeps the same custom listbox combobox pattern as V1/V2/V3 &mdash; <code>Tab</code> to focus, <code>Enter</code> / <code>Space</code> / <code>Down</code> to open, <code>Up</code> / <code>Down</code> / <code>Home</code> / <code>End</code> to navigate, <code>Enter</code> to select, <code>Esc</code> to close, click-outside to dismiss.</p>
         <button class="demo-toggle-btn" type="button"
                 onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
@@ -1025,7 +1757,17 @@
             activeIndex = idx;
         }
 
+        /* Position the fixed-position listbox just below the combobox
+           trigger so it floats above (not clipped by) the header. */
+        function positionListbox() {
+            const rect = combobox.getBoundingClientRect();
+            listbox.style.setProperty('--gh-lb-top',   (rect.bottom + 8) + 'px');
+            listbox.style.setProperty('--gh-lb-left',  rect.left + 'px');
+            listbox.style.setProperty('--gh-lb-width', rect.width + 'px');
+        }
+
         function openListbox() {
+            positionListbox();
             listbox.setAttribute('data-open', 'true');
             combobox.setAttribute('aria-expanded', 'true');
             setActive(activeIndex);
@@ -1038,6 +1780,15 @@
             options.forEach(o => o.removeAttribute('data-active'));
             if (returnFocus) combobox.focus();
         }
+
+        /* Reposition on scroll/resize while open so the panel stays
+           glued to the trigger. */
+        window.addEventListener('scroll', () => {
+            if (combobox.getAttribute('aria-expanded') === 'true') positionListbox();
+        }, true);
+        window.addEventListener('resize', () => {
+            if (combobox.getAttribute('aria-expanded') === 'true') positionListbox();
+        });
 
         function selectOption(idx) {
             options.forEach((o, i) => {

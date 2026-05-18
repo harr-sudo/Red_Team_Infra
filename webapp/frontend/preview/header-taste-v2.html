@@ -576,6 +576,532 @@
             }
         }
 
+        /* ============================================================
+           V2 — FULL DASHBOARD BODY (flight-deck treatment)
+           Surgically still. Hairline borders. Monospace dominant.
+           Motion budget: opacity + border-color + color, 80-120ms only.
+           Token-only colors. Dual-theme verified.
+           ============================================================ */
+
+        /* Widen the demo container so the dashboard grid breathes
+           without bloating typographic margins. */
+        .demo-main.demo-main--full {
+            max-width: 1240px;
+            padding: 84px 28px 48px;
+            position: relative;
+        }
+
+        /* ── SECTION 1A: STACKED NAV ROW ─────────────────────────────
+           Vertical rail dividers between nav items (V2 signature).
+           Active = bold weight + left-border accent rail.
+           ──────────────────────────────────────────────────────────── */
+        .layout-nav {
+            display: flex;
+            align-items: stretch;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            padding: 0;
+            margin: 0 0 8px;
+            overflow: hidden;
+        }
+        .layout-nav__item {
+            position: relative;
+            padding: 9px 18px 9px 16px;
+            font-size: 12.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-decoration: none;
+            border-left: 2px solid transparent;
+            border-right: 1px solid var(--border-subtle);
+            letter-spacing: 0.005em;
+            line-height: 1.2;
+            transition: color 100ms ease, border-color 100ms ease,
+                        background-color 100ms ease;
+        }
+        .layout-nav__item:last-child {
+            border-right: none;
+        }
+        .layout-nav__item:hover {
+            color: var(--text-primary);
+            background: var(--bg-card-hover);
+        }
+        .layout-nav__item.is-active {
+            color: var(--text-primary);
+            font-weight: 700;
+            border-left-color: var(--brand-light);
+            background: var(--bg-card-hover);
+        }
+        .layout-nav__item:focus-visible {
+            outline: none;
+            color: var(--text-primary);
+            box-shadow: inset 0 0 0 1px var(--brand);
+        }
+
+        /* ── SECTION 1B: SUB-PILLS ───────────────────────────────────
+           Smaller, denser than nav. Hint label sits inline.
+           ──────────────────────────────────────────────────────────── */
+        .layout-subpills {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            margin: 0 0 18px;
+        }
+        .layout-subpills__hint {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 0 8px 0 4px;
+            border-right: 1px solid var(--border-subtle);
+            margin-right: 4px;
+        }
+        .layout-subpills__pill {
+            padding: 4px 12px;
+            font-size: 11.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            border-radius: 3px;
+            cursor: pointer;
+            font-family: inherit;
+            letter-spacing: 0.01em;
+            line-height: 1.3;
+            transition: color 100ms ease, border-color 100ms ease,
+                        background-color 100ms ease;
+        }
+        .layout-subpills__pill:hover {
+            color: var(--text-primary);
+            border-color: var(--border-light);
+        }
+        .layout-subpills__pill.is-active {
+            color: var(--text-primary);
+            font-weight: 700;
+            border-color: var(--brand-light);
+            background: var(--bg-card-hover);
+        }
+        .layout-subpills__pill:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+        }
+
+        /* ── SECTION 2: ASYMMETRIC DASHBOARD GRID ────────────────────
+           BOLD VARIANCE: deployments span the full top row (3 cards),
+           then activity (1.6fr) + cost (1fr) on the second row.
+           This is the asymmetric flight-deck rhythm.
+           ──────────────────────────────────────────────────────────── */
+        .deck {
+            display: grid;
+            grid-template-columns: 1.6fr 1fr;
+            gap: 14px;
+            align-items: start;
+        }
+        .deck__row-top {
+            grid-column: 1 / -1;
+        }
+
+        /* Deployments row: 3 columns, equal-width cards. */
+        .deck__deploys {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .deck-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            padding: 12px 14px;
+            transition: border-color 100ms ease, background-color 100ms ease;
+        }
+        .deck-card:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+        }
+
+        .deck-card__header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .deck-card__name {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 12.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+            line-height: 1.25;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .deck-card__kind {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 2px 6px;
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+
+        /* Metadata rows separated by 1px hairlines (V2 density). */
+        .deck-card__meta {
+            display: flex;
+            flex-direction: column;
+            margin-top: 8px;
+        }
+        .deck-card__meta-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 6px 0;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .deck-card__meta-row:first-child {
+            border-top: none;
+            padding-top: 2px;
+        }
+        .deck-card__meta-key {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .deck-card__meta-val {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.005em;
+        }
+        .deck-card__status-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--success);
+            margin-right: 6px;
+            vertical-align: middle;
+            box-shadow: 0 0 0 1px var(--success-border);
+        }
+
+        /* "+ New deployment" CTA card — dashed border, centered. */
+        .deck-card--cta {
+            border-style: dashed;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100%;
+            padding: 18px 14px;
+            cursor: pointer;
+        }
+        .deck-card--cta .deck-card__cta-glyph {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 22px;
+            font-weight: 400;
+            color: var(--text-muted);
+            line-height: 1;
+            margin-bottom: 6px;
+            letter-spacing: -0.01em;
+            transition: color 100ms ease;
+        }
+        .deck-card--cta .deck-card__cta-label {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .deck-card--cta:hover .deck-card__cta-glyph,
+        .deck-card--cta:hover .deck-card__cta-label {
+            color: var(--text-primary);
+        }
+        .deck-card--cta:hover {
+            border-color: var(--brand-light);
+        }
+
+        /* ── ACTIVITY TABLE ──────────────────────────────────────────
+           Dense rows, ~24px tall, monospace throughout, hairline only.
+           Override global table-header bg per project light-mode note.
+           ──────────────────────────────────────────────────────────── */
+        .deck-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            padding: 12px 14px;
+        }
+        .deck-panel__head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 6px;
+        }
+        .deck-panel__title {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .deck-panel__count {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 10px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+
+        .deck-activity {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 11.5px;
+            font-variant-numeric: tabular-nums;
+        }
+        /* Disable the global burgundy table-header rule on this table. */
+        .deck-activity thead tr {
+            background: transparent;
+        }
+        .deck-activity__row {
+            border-top: 1px solid var(--border-subtle);
+            transition: background-color 100ms ease;
+        }
+        .deck-activity__row:first-child {
+            border-top: none;
+        }
+        .deck-activity__row:hover {
+            background: var(--bg-card-hover);
+        }
+        .deck-activity__cell {
+            padding: 5px 8px 5px 0;
+            height: 24px;
+            line-height: 1.2;
+            color: var(--text-secondary);
+            vertical-align: middle;
+            white-space: nowrap;
+        }
+        .deck-activity__cell--time {
+            color: var(--text-muted);
+            width: 56px;
+            letter-spacing: 0.01em;
+        }
+        .deck-activity__cell--op {
+            width: 130px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            letter-spacing: 0.01em;
+        }
+        .deck-activity__cell--ev {
+            color: var(--text-primary);
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ── COST TILE ───────────────────────────────────────────────
+           Tabular-nums, negative letter-spacing on the big number,
+           tiny chip delta, hairline sparkline. Plus a secondary metric
+           below — exploiting DENSITY=7.
+           ──────────────────────────────────────────────────────────── */
+        .deck-cost {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+        }
+        .deck-cost__head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 10px;
+        }
+        .deck-cost__caption {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .deck-cost__delta {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+            padding: 2px 6px;
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+        }
+        .deck-cost__primary {
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+            line-height: 1.0;
+        }
+        .deck-cost__currency {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: -0.005em;
+        }
+        .deck-cost__number {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 34px;
+            font-weight: 700;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.025em;
+            line-height: 1.0;
+        }
+        .deck-cost__period {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.04em;
+        }
+        .deck-cost__spark {
+            display: block;
+            margin: 10px 0 8px;
+            width: 100%;
+            height: 36px;
+        }
+        .deck-cost__secondary {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            padding-top: 8px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .deck-cost__sec-caption {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .deck-cost__sec-value {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 12.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.005em;
+        }
+
+        /* ── SECTION 3: DIAL SPEC CARD (sticky right rail) ──────────
+           Lifted from the header chip rail. Pinned to the top-right
+           of <main>, follows scroll under the fixed header.
+           ──────────────────────────────────────────────────────────── */
+        .deck-spec {
+            position: sticky;
+            top: 80px;
+            float: right;
+            width: 220px;
+            margin: 0 0 12px 16px;
+            padding: 10px 12px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-left: 2px solid var(--brand-light);
+            border-radius: 4px;
+            z-index: 5;
+            transition: border-color 100ms ease;
+        }
+        .deck-spec:hover {
+            border-color: var(--border-light);
+            border-left-color: var(--brand-light);
+        }
+        .deck-spec__dials {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 0.02em;
+        }
+        .deck-spec__caption {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 8.5px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+        .deck-spec__feel {
+            font-size: 11px;
+            line-height: 1.45;
+            color: var(--text-secondary);
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        /* Section dividers between dashboard regions. */
+        .deck-section-rule {
+            height: 1px;
+            background: var(--border-subtle);
+            margin: 18px 0;
+            border: none;
+        }
+
+        /* Responsive collapse — keep the asymmetry until it would crush. */
+        @media (max-width: 880px) {
+            .deck {
+                grid-template-columns: 1fr;
+            }
+            .deck__deploys {
+                grid-template-columns: 1fr;
+            }
+            .deck-spec {
+                position: static;
+                float: none;
+                width: auto;
+                margin: 0 0 14px;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .layout-nav__item, .layout-subpills__pill,
+            .deck-card, .deck-card--cta,
+            .deck-activity__row, .deck-spec,
+            .deck-card__cta-glyph, .deck-card__cta-label {
+                transition: none;
+            }
+        }
+
         /* ── FLOATING VARIANT SWITCHER ────────────────────────────────
            Fixed bottom-right pill that lets the viewer jump between
            taste-skill variants without returning to the compare page.
@@ -761,7 +1287,14 @@
         </div>
     </header>
 
-    <main class="demo-main">
+    <main class="demo-main demo-main--full">
+        <!-- ── SECTION 3: Dial spec card (sticky top-right) ── -->
+        <aside class="deck-spec" aria-label="Variant specification">
+            <div class="deck-spec__dials">V2 &middot; 8 &middot; 2 &middot; 7</div>
+            <div class="deck-spec__caption">Variance &middot; Motion &middot; Density</div>
+            <p class="deck-spec__feel">flight-deck command bar &mdash; denser, authoritative, asymmetric, surgically still</p>
+        </aside>
+
         <h2>Header preview &mdash; TASTE-SKILL V2</h2>
         <div class="demo-dial-row">
             <span class="demo-dial">VARIANCE <strong>8</strong></span>
@@ -769,6 +1302,158 @@
             <span class="demo-dial">DENSITY <strong>7</strong></span>
         </div>
         <p><strong>Variant V2 &mdash; dials 8/2/7 &mdash; punchy command bar.</strong> Try the deployment dropdown &mdash; it&rsquo;s a custom listbox, not a native <code>&lt;select&gt;</code>, so it renders identically across browsers and platforms.</p>
+
+        <!-- ── SECTION 1: Stacked nav + sub-pills ── -->
+        <nav class="layout-nav" role="navigation" aria-label="Primary">
+            <a href="#" class="layout-nav__item is-active">Dashboard</a>
+            <a href="#" class="layout-nav__item">Deployments</a>
+            <a href="#" class="layout-nav__item">Operations</a>
+            <a href="#" class="layout-nav__item">Architecture</a>
+            <a href="#" class="layout-nav__item">Settings</a>
+        </nav>
+        <div class="layout-subpills" role="tablist" aria-label="Deployments sub-views">
+            <span class="layout-subpills__hint">Active when on a merged tab:</span>
+            <button role="tab" class="layout-subpills__pill is-active" type="button">Configure</button>
+            <button role="tab" class="layout-subpills__pill" type="button">Deploy</button>
+            <button role="tab" class="layout-subpills__pill" type="button">Manage</button>
+        </div>
+
+        <!-- ── SECTION 2: Asymmetric dashboard deck ── -->
+        <div class="deck" role="region" aria-label="Dashboard overview">
+            <!-- TOP ROW: 3 deployment cards spanning full width -->
+            <div class="deck__row-top">
+                <div class="deck__deploys">
+                    <!-- Card 1 — C2 Ad-hoc -->
+                    <article class="deck-card" tabindex="0">
+                        <header class="deck-card__header">
+                            <span class="deck-card__name">c2_adhoc_dev_harriss_macbook_pro_01</span>
+                            <span class="deck-card__kind">C2 Ad-hoc</span>
+                        </header>
+                        <div class="deck-card__meta">
+                            <div class="deck-card__meta-row">
+                                <span class="deck-card__meta-key">Status</span>
+                                <span class="deck-card__meta-val">
+                                    <span class="deck-card__status-dot" aria-hidden="true"></span>RUNNING
+                                </span>
+                            </div>
+                            <div class="deck-card__meta-row">
+                                <span class="deck-card__meta-key">Instances</span>
+                                <span class="deck-card__meta-val">4</span>
+                            </div>
+                            <div class="deck-card__meta-row">
+                                <span class="deck-card__meta-key">Uptime</span>
+                                <span class="deck-card__meta-val">24d</span>
+                            </div>
+                            <div class="deck-card__meta-row">
+                                <span class="deck-card__meta-key">Region</span>
+                                <span class="deck-card__meta-val">eu-central-1</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <!-- Card 2 — GOAD Mini -->
+                    <article class="deck-card" tabindex="0">
+                        <header class="deck-card__header">
+                            <span class="deck-card__name">goad_mini_dev_harriss_macbook_pro</span>
+                            <span class="deck-card__kind">GOAD Mini</span>
+                        </header>
+                        <div class="deck-card__meta">
+                            <div class="deck-card__meta-row">
+                                <span class="deck-card__meta-key">Status</span>
+                                <span class="deck-card__meta-val">
+                                    <span class="deck-card__status-dot" aria-hidden="true"></span>RUNNING
+                                </span>
+                            </div>
+                            <div class="deck-card__meta-row">
+                                <span class="deck-card__meta-key">Instances</span>
+                                <span class="deck-card__meta-val">5</span>
+                            </div>
+                            <div class="deck-card__meta-row">
+                                <span class="deck-card__meta-key">Uptime</span>
+                                <span class="deck-card__meta-val">19d</span>
+                            </div>
+                            <div class="deck-card__meta-row">
+                                <span class="deck-card__meta-key">Region</span>
+                                <span class="deck-card__meta-val">eu-central-1</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <!-- Card 3 — CTA -->
+                    <button class="deck-card deck-card--cta" type="button" aria-label="Create new deployment">
+                        <span class="deck-card__cta-glyph" aria-hidden="true">+</span>
+                        <span class="deck-card__cta-label">New deployment</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- BOTTOM-LEFT: Activity (1.6fr) -->
+            <section class="deck-panel" aria-label="Recent activity">
+                <header class="deck-panel__head">
+                    <span class="deck-panel__title">Recent activity</span>
+                    <span class="deck-panel__count">5 entries</span>
+                </header>
+                <table class="deck-activity">
+                    <tbody>
+                        <tr class="deck-activity__row">
+                            <td class="deck-activity__cell deck-activity__cell--time">12:32</td>
+                            <td class="deck-activity__cell deck-activity__cell--op">op://harriss</td>
+                            <td class="deck-activity__cell deck-activity__cell--ev">GET /api/version</td>
+                        </tr>
+                        <tr class="deck-activity__row">
+                            <td class="deck-activity__cell deck-activity__cell--time">12:30</td>
+                            <td class="deck-activity__cell deck-activity__cell--op">op://harriss</td>
+                            <td class="deck-activity__cell deck-activity__cell--ev">/preview/header opened</td>
+                        </tr>
+                        <tr class="deck-activity__row">
+                            <td class="deck-activity__cell deck-activity__cell--time">12:15</td>
+                            <td class="deck-activity__cell deck-activity__cell--op">op://harriss</td>
+                            <td class="deck-activity__cell deck-activity__cell--ev">v1.0.0 tagged</td>
+                        </tr>
+                        <tr class="deck-activity__row">
+                            <td class="deck-activity__cell deck-activity__cell--time">11:45</td>
+                            <td class="deck-activity__cell deck-activity__cell--op">op://harriss</td>
+                            <td class="deck-activity__cell deck-activity__cell--ev">refactor/test-framework merged</td>
+                        </tr>
+                        <tr class="deck-activity__row">
+                            <td class="deck-activity__cell deck-activity__cell--time">10:20</td>
+                            <td class="deck-activity__cell deck-activity__cell--op">op://harriss</td>
+                            <td class="deck-activity__cell deck-activity__cell--ev">pre-flight checks passed</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- BOTTOM-RIGHT: Cost trend (1fr) -->
+            <section class="deck-cost" aria-label="Cost trend">
+                <header class="deck-cost__head">
+                    <span class="deck-cost__caption">Monthly burn</span>
+                    <span class="deck-cost__delta">+3%</span>
+                </header>
+                <div class="deck-cost__primary">
+                    <span class="deck-cost__currency">$</span>
+                    <span class="deck-cost__number">407</span>
+                    <span class="deck-cost__period">/ mo</span>
+                </div>
+                <svg class="deck-cost__spark" viewBox="0 0 140 36" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline
+                        fill="none"
+                        stroke="var(--brand-light)"
+                        stroke-width="1"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        points="0,26 10,24 20,27 30,22 40,23 50,20 60,21 70,18 80,19 90,16 100,17 110,14 120,13 130,11 140,9"
+                    />
+                </svg>
+                <div class="deck-cost__secondary">
+                    <span class="deck-cost__sec-caption">Daily avg</span>
+                    <span class="deck-cost__sec-value">$13.57</span>
+                </div>
+            </section>
+        </div>
+
+        <hr class="deck-section-rule" aria-hidden="true">
+
         <p>V2 pushes asymmetric weight harder than V1: a narrow brand-mark cell, a wide identity column with a region pill, and a dense chip rail with a dual-metric &ldquo;beacons / targets&rdquo; readout and a cost delta. Motion is pulled back to hover-only (no pulse, no rotation). All colors resolve through palette tokens; dual-theme verified; contrast &ge; 4.5:1 in both modes.</p>
         <p>Keyboard nav on the dropdown: <code>Tab</code> to focus, <code>Enter</code> / <code>Space</code> / <code>Down</code> opens, <code>Up</code>/<code>Down</code> navigates, <code>Enter</code> selects, <code>Esc</code> closes, <code>Tab</code> moves out.</p>
         <button class="demo-toggle-btn" type="button" id="demoThemeBtn">

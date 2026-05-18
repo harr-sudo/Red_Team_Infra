@@ -473,9 +473,424 @@
         @media (prefers-reduced-motion: reduce) {
             .gh-operator-dot::after { animation: none; }
             .gh-chip, .gh-brand-mark, .gh-select-wrap, .gh-theme-toggle,
-            .demo-toggle-btn {
+            .demo-toggle-btn,
+            .layout-nav__item, .layout-subpills__pill,
+            .widget-card, .deploy-card, .deploy-card--cta {
                 transition: none;
             }
+        }
+
+        /* ============================================================
+           LAYOUT EXTENSION — full dashboard mock under header
+           Same V1 grammar: chip borders, mono captions, transform-only
+           hover lifts, palette tokens only, ≤200ms transitions.
+           ============================================================ */
+
+        /* Widen the demo body for the dashboard layout (was 880px). */
+        .demo-main { max-width: 1180px; }
+
+        /* ── PRIMARY NAVIGATION ──────────────────────────────────────
+           Stacked under the header. Chip-style underline on active,
+           border-bottom hairline matches the command-bar's divider.
+           ──────────────────────────────────────────────────────────── */
+        .layout-nav {
+            display: flex;
+            align-items: stretch;
+            gap: 0;
+            border-bottom: 1px solid var(--border-subtle);
+            margin: 0 0 14px;
+            font-size: 13px;
+        }
+        .layout-nav__item {
+            position: relative;
+            padding: 10px 16px 11px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+            transition: color 160ms ease, border-color 160ms ease,
+                        background-color 160ms ease;
+        }
+        .layout-nav__item:hover {
+            color: var(--text-primary);
+            background: var(--bg-card);
+        }
+        .layout-nav__item:focus-visible {
+            outline: none;
+            color: var(--text-primary);
+            box-shadow: inset 0 0 0 2px var(--brand);
+            border-radius: 3px;
+        }
+        .layout-nav__item.is-active {
+            color: var(--text-primary);
+            border-bottom-color: var(--brand-light);
+        }
+
+        /* ── SUB-PILLS ROW ───────────────────────────────────────────
+           Mirrors chip-rail rhythm. Recessed bg on active = same
+           treatment the variant-switcher uses for its active state.
+           ──────────────────────────────────────────────────────────── */
+        .layout-subpills {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin: 0 0 22px;
+            padding: 0;
+            flex-wrap: wrap;
+        }
+        .layout-subpills__hint {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 400;
+            color: var(--text-muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-right: 8px;
+        }
+        .layout-subpills__pill {
+            appearance: none;
+            -webkit-appearance: none;
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 5px 12px;
+            font: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            cursor: pointer;
+            transition: background-color 160ms ease, border-color 160ms ease,
+                        color 160ms ease;
+        }
+        .layout-subpills__pill:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            color: var(--text-primary);
+        }
+        .layout-subpills__pill:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 2px var(--bg-body),
+                        0 0 0 3px var(--brand);
+        }
+        .layout-subpills__pill.is-active {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+
+        /* ── DASHBOARD GRID ──────────────────────────────────────────
+           Asymmetric tri-grid: deployments wider, activity medium,
+           cost narrower. Matches V1's "calmer left, denser right"
+           rhythm at the section scale. Collapses on narrow viewports.
+           ──────────────────────────────────────────────────────────── */
+        .layout-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 0.85fr);
+            gap: 14px;
+            margin-top: 18px;
+        }
+        @media (max-width: 960px) {
+            .layout-grid {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        /* ── WIDGET CARD (shared shell) ──────────────────────────────
+           Same border / radius / hover-bg as the chip rail components.
+           Header strip uses a hairline divider, not a heavy bar.
+           ──────────────────────────────────────────────────────────── */
+        .widget-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            transition: border-color 160ms ease, background-color 160ms ease;
+        }
+        .widget-card:hover {
+            border-color: var(--border-light);
+        }
+        .widget-card__head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 11px 14px 10px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .widget-card__title {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .widget-card__meta {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 10px;
+            color: var(--text-muted);
+            letter-spacing: 0.06em;
+        }
+        .widget-card__body {
+            padding: 12px 14px 14px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        /* ── DEPLOYMENT CARDS (inside widget 1) ──────────────────────
+           Stacked rows. Left-rail bullet uses the operator-dot pattern
+           (solid CSS circle, no glyph). Hover lifts via transform only.
+           ──────────────────────────────────────────────────────────── */
+        .deploy-card {
+            display: grid;
+            grid-template-columns: 10px 1fr auto;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 11px;
+            background: var(--bg-input);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            text-decoration: none;
+            color: inherit;
+            transition: border-color 160ms ease, background-color 160ms ease,
+                        transform 160ms ease;
+        }
+        .deploy-card:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+            transform: translateY(-1px);
+        }
+        .deploy-card__dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 0 1px var(--success-border);
+        }
+        .deploy-card__main {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.2;
+            min-width: 0;
+        }
+        .deploy-card__name {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .deploy-card__meta {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 3px;
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .deploy-card__meta span + span::before {
+            content: "·";
+            color: var(--text-muted);
+            margin-right: 6px;
+        }
+        .deploy-card__uptime {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 10.5px;
+            color: var(--text-muted);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .deploy-card--cta {
+            grid-template-columns: 1fr;
+            justify-items: center;
+            padding: 12px;
+            background: transparent;
+            border: 1px dashed var(--border);
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+        }
+        .deploy-card--cta:hover {
+            border-color: var(--brand-light);
+            color: var(--text-primary);
+            background: var(--bg-card-hover);
+        }
+        .deploy-card--cta__plus {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            margin-right: 6px;
+            color: var(--text-muted);
+        }
+        .deploy-card--cta:hover .deploy-card--cta__plus {
+            color: var(--brand-light);
+        }
+
+        /* ── ACTIVITY LIST (inside widget 2) ─────────────────────────
+           Compact rows. Monospace timestamps on the left, action text
+           on the right. Subtle hairline between rows.
+           ──────────────────────────────────────────────────────────── */
+        .activity-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .activity-list__row {
+            display: grid;
+            grid-template-columns: 42px 1fr;
+            gap: 12px;
+            padding: 7px 0;
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            line-height: 1.35;
+        }
+        .activity-list__row:last-child { border-bottom: none; }
+        .activity-list__time {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-variant-numeric: tabular-nums;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        .activity-list__what {
+            color: var(--text-secondary);
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .activity-list__op {
+            color: var(--text-muted);
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 11px;
+            margin-right: 6px;
+        }
+        .activity-list__verb {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        /* ── COST TILE (inside widget 3) ─────────────────────────────
+           Big tabular number + sparkline + delta caption.
+           Sparkline stroke uses --brand-light; fill is transparent.
+           ──────────────────────────────────────────────────────────── */
+        .cost-tile {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex: 1;
+        }
+        .cost-tile__value {
+            font-variant-numeric: tabular-nums;
+            font-size: 30px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.015em;
+            line-height: 1;
+        }
+        .cost-tile__currency {
+            color: var(--text-muted);
+            font-weight: 400;
+            font-size: 18px;
+            margin-right: 2px;
+        }
+        .cost-tile__caption {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 400;
+            color: var(--text-muted);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+        .cost-tile__spark {
+            display: block;
+            width: 100%;
+            height: 42px;
+            margin-top: 2px;
+        }
+        .cost-tile__spark polyline {
+            fill: none;
+            stroke: var(--brand-light);
+            stroke-width: 1.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+        .cost-tile__delta {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 11px;
+            color: var(--warning-text);
+            letter-spacing: 0.04em;
+        }
+        .cost-tile__delta-arrow {
+            display: inline-block;
+            margin-right: 4px;
+            color: var(--warning-text);
+            font-weight: 700;
+        }
+
+        /* ── SPEC BADGE ──────────────────────────────────────────────
+           Small reference card pinned at the top-right of the main
+           content. Intentionally muted so it doesn't compete with the
+           dashboard widgets — same tokens as widget head, but no body.
+           ──────────────────────────────────────────────────────────── */
+        .layout-header-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+            margin-top: 4px;
+        }
+        .layout-header-row__intro {
+            flex: 1;
+            min-width: 0;
+        }
+        .spec-badge {
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 10px 14px 11px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-left: 2px solid var(--brand-light);
+            border-radius: 4px;
+            max-width: 260px;
+        }
+        .spec-badge__title {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 0.08em;
+        }
+        .spec-badge__sublabel {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9px;
+            font-weight: 400;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .spec-badge__feel {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            line-height: 1.45;
+            margin-top: 4px;
+        }
+        @media (max-width: 720px) {
+            .layout-header-row { flex-direction: column; }
+            .spec-badge { max-width: none; }
         }
 
         /* ── FLOATING VARIANT SWITCHER ────────────────────────────────
@@ -637,9 +1052,122 @@
     </header>
 
     <main class="demo-main">
-        <h2>Header preview &mdash; TASTE-SKILL</h2>
-        <p>Dials: <code>VARIANCE=6</code>, <code>MOTION=3</code>, <code>DENSITY=6</code>. Vanilla HTML/CSS, palette.css only, dual-theme verified.</p>
-        <p>This arm treats the header as a <strong>command bar</strong>: asymmetric weight (calm brand cluster on the left, denser chip rail on the right), monospace micro-captions under primary values, a CSS-drawn pulsing operator dot, custom select caret, and hover lifts via <code>transform</code> only (no width/top animations). All colors resolve through palette tokens, so the bar inverts cleanly between dark and light themes.</p>
+        <!-- Primary navigation row (stacked beneath the command bar) -->
+        <nav class="layout-nav" role="navigation" aria-label="Primary">
+            <a href="#" class="layout-nav__item is-active">Dashboard</a>
+            <a href="#" class="layout-nav__item">Deployments</a>
+            <a href="#" class="layout-nav__item">Operations</a>
+            <a href="#" class="layout-nav__item">Architecture</a>
+            <a href="#" class="layout-nav__item">Settings</a>
+        </nav>
+        <div class="layout-subpills" role="tablist" aria-label="Deployments sub-views">
+            <span class="layout-subpills__hint">Active when on a merged tab:</span>
+            <button role="tab" type="button" class="layout-subpills__pill is-active" aria-selected="true">Configure</button>
+            <button role="tab" type="button" class="layout-subpills__pill" aria-selected="false">Deploy</button>
+            <button role="tab" type="button" class="layout-subpills__pill" aria-selected="false">Manage</button>
+        </div>
+
+        <!-- Title row + spec badge pinned to the right -->
+        <div class="layout-header-row">
+            <div class="layout-header-row__intro">
+                <h2>Header preview &mdash; TASTE-SKILL</h2>
+                <p>Dials: <code>VARIANCE=6</code>, <code>MOTION=3</code>, <code>DENSITY=6</code>. Vanilla HTML/CSS, palette.css only, dual-theme verified.</p>
+                <p>This arm treats the header as a <strong>command bar</strong>: asymmetric weight (calm brand cluster on the left, denser chip rail on the right), monospace micro-captions under primary values, a CSS-drawn pulsing operator dot, custom select caret, and hover lifts via <code>transform</code> only (no width/top animations). All colors resolve through palette tokens, so the bar inverts cleanly between dark and light themes.</p>
+            </div>
+            <aside class="spec-badge" aria-label="Variant specification">
+                <span class="spec-badge__title">V1 / 6 &middot; 3 &middot; 6</span>
+                <span class="spec-badge__sublabel">VARIANCE &middot; MOTION &middot; DENSITY</span>
+                <span class="spec-badge__feel">Operator&rsquo;s command bar &mdash; quiet on the left, instrumented on the right.</span>
+            </aside>
+        </div>
+
+        <!-- Dashboard mock — three side-by-side widgets -->
+        <section class="layout-grid" aria-label="Dashboard widgets">
+
+            <!-- Widget 1: Live deployments -->
+            <article class="widget-card" aria-labelledby="widget-deploys-title">
+                <header class="widget-card__head">
+                    <span class="widget-card__title" id="widget-deploys-title">Live deployments</span>
+                    <span class="widget-card__meta">2 active</span>
+                </header>
+                <div class="widget-card__body">
+                    <a href="#" class="deploy-card">
+                        <span class="deploy-card__dot" aria-hidden="true"></span>
+                        <div class="deploy-card__main">
+                            <span class="deploy-card__name">c2_adhoc_dev_harriss_macbook_pro_01</span>
+                            <span class="deploy-card__meta">
+                                <span>C2 Ad-hoc</span><span>4 inst</span><span>eu-central-1</span>
+                            </span>
+                        </div>
+                        <span class="deploy-card__uptime">24d</span>
+                    </a>
+                    <a href="#" class="deploy-card">
+                        <span class="deploy-card__dot" aria-hidden="true"></span>
+                        <div class="deploy-card__main">
+                            <span class="deploy-card__name">goad_mini_dev_harriss_macbook_pro</span>
+                            <span class="deploy-card__meta">
+                                <span>GOAD Mini</span><span>5 inst</span><span>eu-central-1</span>
+                            </span>
+                        </div>
+                        <span class="deploy-card__uptime">19d</span>
+                    </a>
+                    <button type="button" class="deploy-card deploy-card--cta">
+                        <span><span class="deploy-card--cta__plus">+</span>Create new deployment</span>
+                    </button>
+                </div>
+            </article>
+
+            <!-- Widget 2: Recent activity -->
+            <article class="widget-card" aria-labelledby="widget-activity-title">
+                <header class="widget-card__head">
+                    <span class="widget-card__title" id="widget-activity-title">Recent activity</span>
+                    <span class="widget-card__meta">today</span>
+                </header>
+                <div class="widget-card__body">
+                    <ul class="activity-list">
+                        <li class="activity-list__row">
+                            <span class="activity-list__time">12:32</span>
+                            <span class="activity-list__what"><span class="activity-list__op">harriss</span><span class="activity-list__verb">GET</span> /api/version</span>
+                        </li>
+                        <li class="activity-list__row">
+                            <span class="activity-list__time">12:30</span>
+                            <span class="activity-list__what"><span class="activity-list__op">harriss</span><span class="activity-list__verb">opened</span> /preview/header</span>
+                        </li>
+                        <li class="activity-list__row">
+                            <span class="activity-list__time">12:15</span>
+                            <span class="activity-list__what"><span class="activity-list__op">harriss</span><span class="activity-list__verb">tagged</span> v1.0.0</span>
+                        </li>
+                        <li class="activity-list__row">
+                            <span class="activity-list__time">11:45</span>
+                            <span class="activity-list__what"><span class="activity-list__op">harriss</span><span class="activity-list__verb">merged</span> refactor/test-framework</span>
+                        </li>
+                        <li class="activity-list__row">
+                            <span class="activity-list__time">10:20</span>
+                            <span class="activity-list__what"><span class="activity-list__op">harriss</span><span class="activity-list__verb">passed</span> pre-flight checks</span>
+                        </li>
+                    </ul>
+                </div>
+            </article>
+
+            <!-- Widget 3: Cost trend (14d) -->
+            <article class="widget-card" aria-labelledby="widget-cost-title">
+                <header class="widget-card__head">
+                    <span class="widget-card__title" id="widget-cost-title">Cost trend</span>
+                    <span class="widget-card__meta">14d</span>
+                </header>
+                <div class="widget-card__body">
+                    <div class="cost-tile">
+                        <span class="cost-tile__value"><span class="cost-tile__currency">$</span>407</span>
+                        <span class="cost-tile__caption">monthly burn</span>
+                        <svg class="cost-tile__spark" viewBox="0 0 140 42" preserveAspectRatio="none" aria-hidden="true">
+                            <polyline points="0,30 10,28 20,29 30,25 40,26 50,22 60,24 70,19 80,21 90,17 100,19 110,15 120,16 130,12 140,11"></polyline>
+                        </svg>
+                        <span class="cost-tile__delta"><span class="cost-tile__delta-arrow">&uarr;</span>3% vs last week</span>
+                    </div>
+                </div>
+            </article>
+        </section>
+
         <button class="demo-toggle-btn" type="button"
                 onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
             Toggle theme
