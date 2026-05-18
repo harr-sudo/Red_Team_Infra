@@ -96,15 +96,12 @@
                  are still routed here via NAVIGATE_ALIASES in app.js. -->
             <button class="tab-btn" data-target="deployments-tab">Deployments</button>
             <!-- D4.1/D4.6 — Merged Operations tab (Beacons / Terminal / Payloads sub-pills).
-                 D4.1: scaffold only. The 3 legacy buttons (Tools / Beacon / Terminal) are
-                 hidden by default via the data-legacy attribute applied at runtime in
-                 app.js APP.init(); ?legacyTabs=1 keeps them visible for A/B comparison
-                 during the D4 refactor. D4.6 retires them entirely (DOM removal). -->
+                 D4.6 retired the 3 legacy buttons (Beacon / Terminal / Tools) and the
+                 ?legacyTabs=1 feature flag. Legacy navigateTo() callers are still
+                 routed here via NAVIGATE_ALIASES in app.js. Final 5-tab layout:
+                 Dashboard / Deployments / Operations / Architecture / Settings. -->
             <button class="tab-btn" data-target="operations-tab">Operations</button>
-            <button class="tab-btn" data-target="tools">Tools</button>
             <button class="tab-btn" data-target="architecture">Architecture</button>
-            <button class="tab-btn" data-target="beacon">Beacon</button>
-            <button class="tab-btn" data-target="terminal">Terminal</button>
             <button class="tab-btn" data-target="settings">Settings</button>
         </nav>
 
@@ -1584,7 +1581,7 @@ ns-143.awsdns-17.org
                 <!-- No Deployment -->
                 <div id="beacon-no-deployment" class="section-card" style="display: none;">
                     <div style="text-align: center; padding: 40px 20px;">
-                        <h3 style="color: var(--gold-muted); margin-bottom: 16px;">No Active Deployments</h3>
+                        <h3 style="margin-bottom: 16px;">No Active Deployments</h3>
                         <p style="color: var(--text-muted); max-width: 500px; margin: 0 auto; line-height: 1.6;">
                             Deploy infrastructure with REST API enabled to manage beacons. Enable it in the <strong>Configuration</strong> tab under Cobalt Strike settings.
                         </p>
@@ -1678,7 +1675,7 @@ ns-143.awsdns-17.org
                         <div class="interact-drag-bar" id="interact-drag-bar"></div>
                         <div style="display: flex; align-items: center; gap: 12px; padding-top: 8px;">
                             <h3 style="margin: 0;">
-                                Interact — <span id="interact-beacon-label" style="color: var(--gold-muted);"></span>
+                                Interact — <span id="interact-beacon-label" class="interact-beacon-label"></span>
                             </h3>
                             <button class="btn btn-danger" onclick="BEACON.closeInteract()">Close</button>
                         </div>
@@ -2202,7 +2199,7 @@ ns-143.awsdns-17.org
                 </div>
                     </div>
                     <div class="subpill-pane" data-subpill-pane="payloads" id="subpill-pane-payloads" hidden>
-                <h2 style="color: var(--accent); margin-bottom: 20px; font-size: 1.7em;">Tools Upload</h2>
+                <h2 class="page-title">Tools Upload</h2>
                 <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
                     Upload files to the Windows Attack Box via SCP through the bastion host. Use this for Outflank tools, custom loaders, or any binaries your operators need.
                 </div>
@@ -2217,7 +2214,7 @@ ns-143.awsdns-17.org
 
                 <!-- Connection Status -->
                 <div class="section-card" id="tools-connection-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--gold-muted); margin-bottom: 12px; font-size: 1.1em;">Connection Status</h3>
+                    <h3 style="margin-bottom: 12px; font-size: 1.1em;">Connection Status</h3>
                     <div id="tools-connection-status">
                         <p class="t-muted">Select a deployment above</p>
                     </div>
@@ -2255,7 +2252,7 @@ ns-143.awsdns-17.org
 
                 <!-- Destination Picker -->
                 <div class="section-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--gold-muted); margin-bottom: 12px; font-size: 1.1em;">Destination</h3>
+                    <h3 style="margin-bottom: 12px; font-size: 1.1em;">Destination</h3>
                     <div style="display: flex; flex-direction: column; gap: 8px;">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
                             <input type="radio" name="tools-dest" value="C:\Outflank\" checked style="accent-color: var(--gold);">
@@ -2276,7 +2273,7 @@ ns-143.awsdns-17.org
 
                 <!-- Command Preview -->
                 <div class="section-card" id="tools-command-preview-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--accent-muted); margin-bottom: 10px; font-size: 1.1em;">Command Preview</h3>
+                    <h3 style="margin-bottom: 10px; font-size: 1.1em;">Command Preview</h3>
                     <div id="tools-command-preview" style="background: var(--bg-terminal); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font-family: monospace; font-size: 0.82em; white-space: pre-wrap; word-break: break-all; color: var(--text-terminal);">Select a deployment and stage files to see the SCP command</div>
                 </div>
 

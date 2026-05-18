@@ -170,10 +170,11 @@ const APP = {
     // live pages list; the alias entries in NAVIGATE_ALIASES redirect legacy
     // callers to {parent: 'deployments-tab', subPill: …}. The aliases stay
     // forever as the supported "legacy name → new home" mapping.
-    // D4.1 — 'operations-tab' added as the new merged parent for Beacon /
-    // Terminal / Tools. The 3 legacy entries stay in this list during the
-    // D4 transition (so direct hash deep-links keep working); D4.6 removes
-    // them and retargets the NAVIGATE_ALIASES entries above.
+    // D4.1/D4.6 — 'operations-tab' is the merged parent for Beacons /
+    // Terminal / Payloads. The 3 legacy flat-tab names ('beacon' / 'terminal'
+    // / 'tools') were never in this list; their NAVIGATE_ALIASES entries
+    // redirect them to {parent: 'operations-tab', subPill: ...} as the
+    // supported "legacy name → new home" mapping.
     pages: ['dashboard', 'deployments-tab', 'operations-tab', 'architecture', 'settings'],
     // P1 #7.6 — cached /api/version response so the modal doesn't re-fetch
     versionInfo: null,
@@ -189,20 +190,10 @@ const APP = {
         // merged Deployments tab is now the only entry point; legacy
         // APP.navigateTo('configuration' | 'deployment' | 'deployments')
         // callers continue to work via NAVIGATE_ALIASES (top of this file).
-
-        // D4.1 — Temporary feature flag for the Operations transition.
-        // Hides legacy Beacon/Terminal/Tools nav buttons by default; the
-        // ?legacyTabs=1 query param keeps them visible for A/B comparison
-        // during the refactor. Removed at D4.6 when the legacy buttons are
-        // deleted from the DOM entirely.
-        (function () {
-            const params = new URLSearchParams(window.location.search);
-            if (params.has('legacyTabs')) return;
-            ['beacon', 'terminal', 'tools'].forEach(target => {
-                const btn = document.querySelector(`.tab-btn[data-target="${target}"]`);
-                if (btn) btn.setAttribute('data-legacy', 'true');
-            });
-        })();
+        // D4.6 — The matching Operations-tab cleanup: the ?legacyTabs=1 IIFE
+        // (Beacon / Terminal / Tools data-legacy flag) was deleted along with
+        // the 3 legacy nav buttons. Legacy navigateTo('beacon'|'terminal'|'tools')
+        // callers continue to work via NAVIGATE_ALIASES (top of this file).
 
         // Apply saved theme
         this.initTheme();
@@ -421,14 +412,10 @@ const APP = {
             return;
         }
 
-        // Stop beacon polling when leaving beacon page
-        if (this.currentPage === 'beacon') {
-            BEACON.stopHealthPoll();
-        }
-        // Stop terminal background refresh when leaving terminal page
-        if (this.currentPage === 'terminal') {
-            TERMINAL.stopBackgroundRefresh();
-        }
+        // D4.5 — The legacy `this.currentPage === 'beacon'` / 'terminal'
+        // leave hooks became dead code after D4.2/D4.3 re-parented those
+        // subtrees as sub-pills of 'operations-tab'. They are now handled
+        // by the operations-tab leave block below + APP._runSubPillCleanup.
 
         // D3.6 — When leaving the merged Deployments tab, run cleanup for
         // whichever sub-pill is currently active. This kills the deployment-
@@ -438,6 +425,15 @@ const APP = {
         if (this.currentPage === 'deployments-tab' && pageName !== 'deployments-tab') {
             if (this.currentSubPill) {
                 APP._runSubPillCleanup('deployments-tab', this.currentSubPill);
+            }
+        }
+
+        // D4.5 — Same pattern for Operations: when leaving the merged tab,
+        // run cleanup for the active sub-pill so beacon health poll +
+        // terminal background refresh don't keep firing in the background.
+        if (this.currentPage === 'operations-tab' && pageName !== 'operations-tab') {
+            if (this.currentSubPill) {
+                APP._runSubPillCleanup('operations-tab', this.currentSubPill);
             }
         }
 
@@ -505,6 +501,16 @@ const APP = {
             APP.setActiveSubPill(pageName, target.subPill);
         } else if (pageName === 'deployments-tab' && !target.subPill && !APP.currentSubPill) {
             APP.setActiveSubPill('deployments-tab', 'configure');
+        }
+
+        // D4.5 — Operations tab mirrors the Deployments default-sub-pill
+        // behavior. If a sub-pill was specified in the alias, activate it;
+        // otherwise default to 'beacons' on first entry so init hooks fire
+        // and a pane is always visible.
+        if (target.subPill && pageName === 'operations-tab') {
+            APP.setActiveSubPill(pageName, target.subPill);
+        } else if (pageName === 'operations-tab' && !target.subPill && !APP.currentSubPill) {
+            APP.setActiveSubPill('operations-tab', 'beacons');
         }
     },
     
@@ -1939,21 +1945,35 @@ APP.setActiveSubPill = function (parentTabName, subPillName) {
  * after the sub-pill they belong to has been hidden.
  */
 APP._runSubPillCleanup = function (parentTabName, subPillName) {
-    if (parentTabName !== 'deployments-tab') return;
-    APP._closeAttachedModals();  // D3.7 — close any stuck modals
-    if (subPillName === 'deploy') {
-        if (typeof deploymentPollInterval !== 'undefined' && deploymentPollInterval) {
-            clearInterval(deploymentPollInterval);
-            deploymentPollInterval = null;
+    if (parentTabName === 'deployments-tab') {
+        APP._closeAttachedModals();  // D3.7 — close any stuck modals
+        if (subPillName === 'deploy') {
+            if (typeof deploymentPollInterval !== 'undefined' && deploymentPollInterval) {
+                clearInterval(deploymentPollInterval);
+                deploymentPollInterval = null;
+            }
+        } else if (subPillName === 'manage') {
+            if (typeof stopAutoRefresh === 'function') stopAutoRefresh();
+            if (window._destroyPollInterval) {
+                clearInterval(window._destroyPollInterval);
+                window._destroyPollInterval = null;
+            }
         }
-    } else if (subPillName === 'manage') {
-        if (typeof stopAutoRefresh === 'function') stopAutoRefresh();
-        if (window._destroyPollInterval) {
-            clearInterval(window._destroyPollInterval);
-            window._destroyPollInterval = null;
+        // 'configure' has no polling, no cleanup needed
+    } else if (parentTabName === 'operations-tab') {
+        // D4.5 — Operations sub-pill cleanup. Mirrors the legacy flat-tab
+        // leave hooks (lines ~424-431 of navigateTo) which became dead code
+        // once Beacon / Terminal / Tools were re-parented as sub-pills.
+        // Stops the beacon health poll + terminal background refresh so
+        // they don't keep firing after the sub-pill is hidden.
+        APP._closeAttachedModals();  // §26.4 #1 — close any stuck modals
+        if (subPillName === 'beacons') {
+            if (typeof BEACON !== 'undefined' && BEACON.stopHealthPoll) BEACON.stopHealthPoll();
+        } else if (subPillName === 'terminal') {
+            if (typeof TERMINAL !== 'undefined' && TERMINAL.stopBackgroundRefresh) TERMINAL.stopBackgroundRefresh();
         }
+        // 'payloads' has no pollers, no cleanup needed
     }
-    // 'configure' has no polling, no cleanup needed
 };
 
 /**
@@ -1964,23 +1984,40 @@ APP._runSubPillCleanup = function (parentTabName, subPillName) {
  * hot-reload / partial-module loading doesn't crash.
  */
 APP._runSubPillInit = function (parentTabName, subPillName) {
-    if (parentTabName !== 'deployments-tab') return;
-    if (subPillName === 'configure') {
-        if (typeof loadConfig === 'function') loadConfig();
-    } else if (subPillName === 'deploy') {
-        // Same 6 init functions that loadPageContent ran for the
-        // legacy 'deployment' flat tab.
-        if (typeof isPlanRunning !== 'undefined') isPlanRunning = false;
-        if (typeof resetDeployValidation === 'function') resetDeployValidation();
-        if (typeof loadConfigSummary === 'function') loadConfigSummary();
-        if (typeof checkDeploymentStatus === 'function') checkDeploymentStatus();
-        if (typeof checkDomainConfig === 'function') checkDomainConfig();
-        if (typeof checkCobaltStrikeFile === 'function') checkCobaltStrikeFile();
-        if (typeof checkCSClientFile === 'function') checkCSClientFile();
-        if (typeof checkSSHPublicKey === 'function') checkSSHPublicKey();
-    } else if (subPillName === 'manage') {
-        if (typeof loadDeploymentsPage === 'function') loadDeploymentsPage();
-        if (typeof startAutoRefresh === 'function') startAutoRefresh();
+    if (parentTabName === 'deployments-tab') {
+        if (subPillName === 'configure') {
+            if (typeof loadConfig === 'function') loadConfig();
+        } else if (subPillName === 'deploy') {
+            // Same 6 init functions that loadPageContent ran for the
+            // legacy 'deployment' flat tab.
+            if (typeof isPlanRunning !== 'undefined') isPlanRunning = false;
+            if (typeof resetDeployValidation === 'function') resetDeployValidation();
+            if (typeof loadConfigSummary === 'function') loadConfigSummary();
+            if (typeof checkDeploymentStatus === 'function') checkDeploymentStatus();
+            if (typeof checkDomainConfig === 'function') checkDomainConfig();
+            if (typeof checkCobaltStrikeFile === 'function') checkCobaltStrikeFile();
+            if (typeof checkCSClientFile === 'function') checkCSClientFile();
+            if (typeof checkSSHPublicKey === 'function') checkSSHPublicKey();
+        } else if (subPillName === 'manage') {
+            if (typeof loadDeploymentsPage === 'function') loadDeploymentsPage();
+            if (typeof startAutoRefresh === 'function') startAutoRefresh();
+        }
+    } else if (parentTabName === 'operations-tab') {
+        // D4.5 — Operations sub-pill init. Mirrors the legacy flat-tab
+        // loadPageContent() switch cases (beacon / terminal / tools) which
+        // were removed in D4.2-D4.4 when the subtrees were re-parented.
+        // Each branch is feature-detected so partial module loads don't crash.
+        // D4.5 — Wire the per-sub-pill selectors to APP.activeDeployment with
+        // override semantics. Idempotent — first call wins, subsequent calls
+        // are no-ops (guarded by APP._operationsSelectorSubscriptionsReady).
+        APP._setupOperationsSelectorSubscriptions();
+        if (subPillName === 'beacons') {
+            if (typeof BEACON !== 'undefined' && BEACON.init) BEACON.init();
+        } else if (subPillName === 'terminal') {
+            if (typeof TERMINAL !== 'undefined' && TERMINAL.init) TERMINAL.init();
+        } else if (subPillName === 'payloads') {
+            if (typeof loadToolsPage === 'function') loadToolsPage();
+        }
     }
 };
 
@@ -2014,6 +2051,58 @@ APP._closeAttachedModals = function () {
             }
         }
     });
+};
+
+/**
+ * D4.5 — Wire each per-sub-pill deployment selector (Beacons / Terminal /
+ * Payloads) to APP.activeDeployment with OVERRIDE semantics (Decision #9).
+ *
+ * Behavior:
+ *   - When the global header active-deployment changes AND the per-sub-pill
+ *     selector has NOT been locally overridden, the per-sub-pill selector
+ *     mirrors the global value and fires its onchange handler.
+ *   - When the operator manually changes a per-sub-pill selector to a
+ *     different value than the global, the selector is marked
+ *     data-localOverride="true" — future global changes leave it alone.
+ *   - If the operator re-selects the same value as the global, the override
+ *     flag is cleared and the selector resumes following the global.
+ *
+ * Idempotent: gated by APP._operationsSelectorSubscriptionsReady so the
+ * three subscribers are only registered once even if the Operations tab
+ * is entered multiple times.
+ */
+APP._setupOperationsSelectorSubscriptions = function () {
+    if (APP._operationsSelectorSubscriptionsReady) return;
+    const selectors = [
+        { id: 'beacon-deployment-select',   handler: () => (typeof BEACON   !== 'undefined' && BEACON.onDeploymentSelected)   && BEACON.onDeploymentSelected() },
+        { id: 'terminal-deployment-select', handler: () => (typeof TERMINAL !== 'undefined' && TERMINAL.onDeploymentSelected) && TERMINAL.onDeploymentSelected() },
+        { id: 'tools-project-select',       handler: () => (typeof loadToolsConnectionInfo === 'function') && loadToolsConnectionInfo(document.getElementById('tools-project-select')?.value) }
+    ];
+    selectors.forEach(sel => {
+        const el = document.getElementById(sel.id);
+        if (!el) return;
+        // Subscribe: when global changes AND this selector has no local
+        // override, sync the value + fire its handler.
+        APP.activeDeployment.subscribe(name => {
+            if (!name) return;
+            if (el.dataset.localOverride === 'true') return;
+            // Only sync if the new value is selectable in this <select>'s
+            // options (otherwise we'd set a phantom value).
+            const hasOption = Array.from(el.options).some(o => o.value === name);
+            if (!hasOption) return;
+            if (el.value === name) return;
+            el.value = name;
+            try { sel.handler(); } catch (e) { console.error(`[D4.5] ${sel.id} handler error`, e); }
+        });
+        // Mark as locally overridden when the operator manually changes
+        // it to something other than the current global.
+        el.addEventListener('change', () => {
+            const userValue = el.value;
+            const globalValue = APP.activeDeployment.current;
+            el.dataset.localOverride = (userValue && userValue !== globalValue) ? 'true' : 'false';
+        });
+    });
+    APP._operationsSelectorSubscriptionsReady = true;
 };
 
 // D3.3 — Inline "Edit Config" collapse toggle. Lives next to the Configuration
