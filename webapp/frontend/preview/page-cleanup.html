@@ -1,0 +1,1435 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TASTE Demo — Cleanup sub-pill</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           TASTE DEMO — Cleanup sub-pill (Set B / Demo 2)
+           Standalone composition. 4 stat tiles + per-resource-group
+           spec-lists + per-row Adopt/Destroy/Mark-known actions +
+           marked-known attribution state.
+           Dials: 5/6/5 — orphan-resource catalog.
+           ============================================================ */
+
+        :root {
+            /* Preview-only tokens. */
+            --temp-confirm-tint: color-mix(in srgb, var(--danger) 7%, transparent);
+        }
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: var(--font-size-base);
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP (preview chrome) ─────────────────────── */
+        .preview-strip {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .preview-strip__text strong {
+            display: inline-block;
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+        .preview-strip__toggle {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .preview-strip__toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── PAGE FRAME ─────────────────────────────────────────────── */
+        .pc-shell {
+            max-width: 980px;
+            margin: 0 auto;
+            padding: 40px 32px 64px;
+            animation: pc-fade-in 320ms var(--motion-easing-standard) both;
+        }
+
+        /* ── EYEBROW: title + description + refresh ────────────────── */
+        .pc-eyebrow {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 24px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 24px;
+        }
+        .pc-eyebrow__text { flex: 1; min-width: 0; }
+        .pc-eyebrow__label {
+            display: inline-block;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .pc-eyebrow__title {
+            font-size: 22px;
+            font-weight: var(--font-weight-bold);
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            margin: 0 0 6px;
+            line-height: 1.2;
+        }
+        .pc-eyebrow__description {
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+            margin: 0;
+            line-height: 1.55;
+            max-width: 680px;
+        }
+        .pc-eyebrow__actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+        .pc-eyebrow__refreshed-at {
+            font-family: var(--font-family-mono);
+            font-size: 10px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .pc-refresh-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .pc-refresh-btn .icon { vertical-align: 0; }
+        .pc-refresh-btn[data-loading="true"] .icon {
+            animation: pc-spin 900ms linear infinite;
+        }
+
+        /* ── SUMMARY STAT TILES ─────────────────────────────────────── */
+        .pc-summary {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-bottom: 28px;
+        }
+        .pc-summary__tile {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+            padding: 18px 16px 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 6px;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .pc-summary__tile:hover { border-color: var(--border-light); }
+        .pc-summary__num {
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-2xl);
+            font-weight: var(--font-weight-bold);
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+            line-height: 1.05;
+            letter-spacing: -0.015em;
+        }
+        .pc-summary__label {
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-xs);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+
+        /* ── GROUP CARDS ────────────────────────────────────────────── */
+        .pc-groups {
+            display: flex;
+            flex-direction: column;
+            gap: 22px;
+        }
+        .pc-group {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+        }
+        .pc-group__header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 14px 18px 12px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .pc-group__title {
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-xs);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin: 0;
+        }
+        .pc-group__count {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            font-variant-numeric: tabular-nums;
+        }
+        .pc-group__list { padding: 0; }
+
+        /* ── ROW EXTENSIONS over .spec-row ──────────────────────────── */
+        /* The Phase 2b .spec-row__head grid has a 22px action column.
+           Cleanup needs three text buttons inline, so we widen + adjust. */
+        .pc-row .spec-row__head {
+            grid-template-columns: 180px 1fr auto;
+            align-items: center;
+            cursor: default;
+        }
+        .pc-row:hover .spec-row__head { transform: none; }
+        .pc-row:hover .spec-row__head::before { opacity: 0.45; }
+
+        .pc-row__actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: nowrap;
+            align-items: center;
+            opacity: 0.6;
+            transition: opacity var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .pc-row:hover .pc-row__actions,
+        .pc-row:focus-within .pc-row__actions {
+            opacity: 1;
+        }
+        .pc-row__action {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 10px;
+            font-size: 10.5px;
+            letter-spacing: 0.02em;
+            text-transform: none;
+            white-space: nowrap;
+        }
+        .pc-row__action .icon { vertical-align: 0; }
+
+        /* ── MARKED-KNOWN ROW STATE ─────────────────────────────────── */
+        .pc-row[data-marked-known="true"] .spec-row__head {
+            opacity: 0.78;
+        }
+        .pc-row[data-marked-known="true"] .spec-row__value {
+            text-decoration: line-through;
+            text-decoration-color: color-mix(in srgb, var(--text-muted) 60%, transparent);
+            text-decoration-thickness: 1px;
+        }
+        .pc-row__value-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 0;
+        }
+        .pc-row__value-meta-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .pc-row__attribution {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-sm);
+            /* On --bg-card / --bg-card-hover — --text-secondary required
+               (--text-muted fails AA on bg-card-hover, see Phase 2b note). */
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+            white-space: nowrap;
+        }
+        .pc-row__attribution-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* ── DESTROY CONFIRM STRIP (per-row, inline) ────────────────── */
+        .pc-row__confirm {
+            display: none;
+            padding: 10px 18px 14px;
+            background: var(--temp-confirm-tint);
+            border-top: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border-subtle));
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .pc-row__confirm[data-open="true"] { display: flex; }
+        .pc-row__confirm-text {
+            font-size: 12px;
+            color: var(--text-primary);
+            font-family: var(--font-family-mono);
+        }
+        .pc-row__confirm-text strong { color: var(--danger-text, var(--danger)); font-weight: var(--font-weight-bold); }
+        .pc-row__confirm-buttons {
+            display: inline-flex;
+            gap: 8px;
+        }
+
+        /* ── ANIMATIONS ─────────────────────────────────────────────── */
+        @keyframes pc-spin {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+        @keyframes pc-fade-in {
+            from { opacity: 0; transform: translateY(2px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .pc-shell, .pc-summary__tile, .pc-row__actions,
+            .pc-refresh-btn[data-loading="true"] .icon {
+                animation: none;
+                transition: none;
+            }
+        }
+
+        @media (max-width: 720px) {
+            .pc-summary { grid-template-columns: repeat(2, 1fr); }
+            .pc-eyebrow { flex-direction: column; align-items: stretch; }
+            .pc-eyebrow__actions { justify-content: flex-end; }
+            .pc-row .spec-row__head {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto auto auto;
+            }
+            .pc-row__actions { justify-content: flex-end; }
+        }
+    
+        /* ── DEMO LEFT-RAIL (vertical app-level nav stub) ───────────── */
+        :root {
+            --demo-rail-w: 220px;
+            --hypothesis-strip-height: 47px;
+            --top-utility-bar-height: 48px;
+            --demo-rail-top: calc(var(--hypothesis-strip-height) + var(--top-utility-bar-height));
+        }
+        main {
+            margin-left: var(--demo-rail-w);
+        }
+        .demo-rail {
+            position: fixed;
+            top: var(--demo-rail-top);
+            left: 0;
+            bottom: 0;
+            width: var(--demo-rail-w);
+            background: var(--bg-section);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 16px 12px 12px;
+            gap: 2px;
+            z-index: 90;
+            overflow-y: auto;
+            font-family: var(--font-family-base);
+        }
+        .demo-rail__brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 8px 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 10px;
+        }
+        .demo-rail__brand-mark {
+            width: 22px;
+            height: 22px;
+            border: 1.5px solid var(--brand-light);
+            border-radius: 5px;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .demo-rail__brand-mark::after {
+            content: "";
+            position: absolute;
+            inset: 5px;
+            background: var(--brand-light);
+            border-radius: 2px;
+        }
+        .demo-rail__brand-text {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.2;
+            min-width: 0;
+        }
+        .demo-rail__brand-eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .demo-rail__brand-sub {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+        .demo-rail__group-label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 10px 10px 6px;
+        }
+        .demo-rail__item {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 12px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            text-align: left;
+            width: 100%;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__item:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .demo-rail__item.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__item.is-active::before {
+            content: "";
+            position: absolute;
+            left: -12px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__item:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px var(--brand-light);
+        }
+        .demo-rail__icon {
+            width: 16px;
+            height: 16px;
+            display: inline-flex;
+            color: currentColor;
+            flex-shrink: 0;
+        }
+        .demo-rail__icon svg { display: block; }
+        .demo-rail__label {
+            flex: 1;
+            white-space: nowrap;
+        }
+        .demo-rail__caret {
+            width: 6px;
+            height: 6px;
+            border-right: 1.4px solid currentColor;
+            border-bottom: 1.4px solid currentColor;
+            transform: rotate(-45deg);
+            opacity: 0.55;
+            transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__item.is-expanded .demo-rail__caret {
+            transform: rotate(45deg);
+        }
+        .demo-rail__children {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__children > div { overflow: hidden; }
+        .demo-rail__children.is-open {
+            grid-template-rows: 1fr;
+        }
+        .demo-rail__child {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 2px 0 2px 0;
+            padding: 7px 12px 7px 36px;
+            font-family: inherit;
+            font-size: 12.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            text-align: left;
+            position: relative;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__child:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .demo-rail__child.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__child.is-active::before {
+            content: "";
+            position: absolute;
+            left: 16px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__child:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px var(--brand-light);
+        }
+        .demo-rail__footer {
+            margin-top: auto;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-subtle);
+            display: flex;
+            justify-content: center;
+        }
+        .demo-rail__version {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        /* ── TOP UTILITY BAR ───────────────────────────────────────── */
+        .top-utility-bar {
+            position: sticky;
+            top: var(--hypothesis-strip-height);
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 16px; height: var(--top-utility-bar-height);
+            padding: 0 24px;
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--border);
+            z-index: 95; font-family: var(--font-family-base);
+        }
+        .top-utility-bar__left,
+        .top-utility-bar__right { display: flex; align-items: center; gap: 14px; min-width: 0; }
+        .top-utility-bar__right { gap: 16px; }
+        .deployment-selector {
+            appearance: none; display: inline-flex; align-items: center; gap: 10px;
+            padding: 6px 12px; border-radius: 6px;
+            background: var(--bg-card); border: 1px solid var(--border-subtle);
+            color: var(--text-primary); font-family: var(--font-family-mono);
+            font-size: 12.5px; font-weight: 600; cursor: pointer;
+            min-width: 0; max-width: 420px;
+            transition: border-color 200ms cubic-bezier(0.4,0,0.2,1),
+                        background-color 200ms cubic-bezier(0.4,0,0.2,1);
+        }
+        .deployment-selector:hover { border-color: var(--border-light); background: var(--bg-card-hover); }
+        .deployment-selector__eyebrow {
+            font-family: var(--font-family-mono); font-size: 9.5px; font-weight: 700;
+            color: var(--text-secondary); letter-spacing: 0.14em; text-transform: uppercase;
+            flex-shrink: 0;
+        }
+        .deployment-selector__name { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .deployment-selector__caret { width: 7px; height: 7px; flex-shrink: 0; color: var(--text-secondary); }
+        .deployment-selector__caret svg { display: block; }
+        .deployment-selector[aria-expanded="true"] .deployment-selector__caret { transform: rotate(180deg); }
+        .deployment-menu {
+            position: fixed;
+            top: calc(var(--hypothesis-strip-height) + var(--top-utility-bar-height) - 4px);
+            left: 24px; min-width: 320px; padding: 6px;
+            background: var(--bg-elevated); border: 1px solid var(--border);
+            border-radius: 8px; box-shadow: 0 12px 28px -10px rgba(0,0,0,0.35);
+            opacity: 0; transform: translateY(-4px); pointer-events: none;
+            transition: opacity 220ms cubic-bezier(0.4,0,0.2,1),
+                        transform 220ms cubic-bezier(0.4,0,0.2,1);
+            z-index: 110;
+        }
+        .deployment-menu[data-open="true"] { opacity: 1; transform: translateY(0); pointer-events: auto; }
+        .deployment-menu__item {
+            appearance: none; background: transparent; border: 0;
+            display: flex; align-items: center; gap: 10px; width: 100%;
+            padding: 8px 10px; border-radius: 5px;
+            font-family: var(--font-family-mono); font-size: 12px; font-weight: 500;
+            color: var(--text-primary); cursor: pointer; text-align: left;
+            transition: background-color 180ms cubic-bezier(0.4,0,0.2,1);
+        }
+        .deployment-menu__item:hover { background: var(--bg-card-hover); }
+        .deployment-menu__item.is-current { color: var(--text-primary); font-weight: 700; }
+        .deployment-menu__item.is-current::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--brand-light); flex-shrink: 0; }
+        .deployment-menu__item:not(.is-current)::before { content: ""; width: 6px; height: 6px; flex-shrink: 0; }
+        .top-cost { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 1px; font-family: var(--font-family-mono); line-height: 1.1; }
+        .top-cost__value { font-size: 12.5px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+        .top-cost__caption { font-size: 8.5px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.14em; text-transform: uppercase; }
+        .top-operator {
+            appearance: none; display: inline-flex; align-items: center; gap: 8px;
+            padding: 5px 10px; border-radius: 999px;
+            background: var(--bg-card); border: 1px solid var(--border-subtle);
+            font-family: var(--font-family-mono); font-size: 12px;
+            color: var(--text-primary); cursor: pointer;
+            transition: border-color 200ms cubic-bezier(0.4,0,0.2,1),
+                        background-color 200ms cubic-bezier(0.4,0,0.2,1);
+        }
+        .top-operator:hover { border-color: var(--border-light); background: var(--bg-card-hover); }
+        .top-operator__name { font-weight: 600; color: var(--text-primary); }
+        .top-operator__caret { width: 7px; height: 7px; color: var(--text-secondary); }
+        .top-operator__caret svg { display: block; }
+        .top-theme {
+            appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+            background: var(--bg-card); border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono); font-size: 10.5px; font-weight: 600;
+            letter-spacing: 0.1em; text-transform: uppercase;
+            padding: 5px 10px; border-radius: 999px; cursor: pointer;
+            transition: border-color 200ms cubic-bezier(0.4,0,0.2,1),
+                        color 200ms cubic-bezier(0.4,0,0.2,1),
+                        background-color 200ms cubic-bezier(0.4,0,0.2,1);
+        }
+        .top-theme:hover { border-color: var(--brand-light); color: var(--text-primary); background: var(--bg-card-hover); }
+        .top-theme__glyph { width: 13px; height: 13px; display: inline-flex; }
+        .top-theme__glyph svg { display: block; }
+        @media (max-width: 720px) {
+            .top-utility-bar { padding: 0 14px; }
+            .deployment-selector { max-width: 220px; }
+            .deployment-selector__eyebrow { display: none; }
+            .top-cost__caption { display: none; }
+            .top-operator__name { display: none; }
+        }
+        .demo-rail-toast {
+            position: fixed;
+            top: 18px;
+            right: 18px;
+            padding: 10px 14px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 12.5px;
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-6px);
+            transition: opacity 240ms, transform 240ms;
+            z-index: 1000;
+        }
+        .demo-rail-toast[data-show="true"] {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        @media (max-width: 880px) {
+            :root { --demo-rail-w: 64px; }
+            .demo-rail__label,
+            .demo-rail__caret,
+            .demo-rail__group-label,
+            .demo-rail__brand-text,
+            .demo-rail__children,
+            .demo-rail__version {
+                display: none;
+            }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .demo-rail__item,
+            .demo-rail__child,
+            .demo-rail__caret,
+            .demo-rail__children {
+                transition-duration: 0.01ms !important;
+            }
+        }
+</style>
+</head>
+<body>
+    <!-- Inline icon library — same pattern Phase 2b established. -->
+    <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="icon-refresh" viewBox="0 0 14 14"
+                    fill="none" stroke="currentColor" stroke-width="1.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11.5 3.5 A4.5 4.5 0 1 0 12 8"/>
+                <path d="M11.5 1.5 V4 H9"/>
+            </symbol>
+            <symbol id="icon-link" viewBox="0 0 14 14"
+                    fill="none" stroke="currentColor" stroke-width="1.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5.5 8.5 L8.5 5.5"/>
+                <path d="M6 4.5 L7.5 3 A2.12 2.12 0 0 1 10.5 6 L9 7.5"/>
+                <path d="M8 9.5 L6.5 11 A2.12 2.12 0 0 1 3.5 8 L5 6.5"/>
+            </symbol>
+            <symbol id="icon-trash" viewBox="0 0 14 14"
+                    fill="none" stroke="currentColor" stroke-width="1.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2.5 4 H11.5"/>
+                <path d="M3.5 4 L4 12 H10 L10.5 4"/>
+                <path d="M5.5 4 V2.5 H8.5 V4"/>
+                <path d="M6 6.5 V10 M8 6.5 V10"/>
+            </symbol>
+            <symbol id="icon-check" viewBox="0 0 14 14"
+                    fill="none" stroke="currentColor" stroke-width="1.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 7.5 L5.5 11 L12 3.5"/>
+            </symbol>
+        </defs>
+    </svg>
+
+    <header class="preview-strip">
+        <span class="preview-strip__text">
+            <strong>Cleanup demo</strong>
+            Cleanup catalogs AWS resources nothing currently owns — spec-list rhythm for orphans, per-row Adopt/Destroy/Mark-known actions, marked entries persist with attribution.
+        </span>
+        <button class="preview-strip__toggle" type="button"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+            Toggle theme
+        </button>
+    </header>
+
+    <!-- TOP UTILITY BAR — deployment selector + cost + operator + theme -->
+    <div class="top-utility-bar" role="toolbar" aria-label="Workspace utilities">
+        <div class="top-utility-bar__left">
+            <button class="deployment-selector" type="button" id="deployment-selector" aria-haspopup="menu" aria-expanded="false" aria-controls="deployment-menu">
+                <span class="deployment-selector__eyebrow">Scope</span>
+                <span class="deployment-selector__name" id="deployment-selector-name">All deployments</span>
+                <span class="deployment-selector__caret" aria-hidden="true">
+                    <svg width="7" height="7" viewBox="0 0 8 8" fill="none">
+                        <path d="M1 2.5 L4 5.5 L7 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+            </button>
+        </div>
+        <div class="top-utility-bar__right">
+            <span class="top-cost" title="Estimated monthly cost (demo)">
+                <span class="top-cost__value">~$340/mo</span>
+                <span class="top-cost__caption">est / mo</span>
+            </span>
+            <button class="top-operator" type="button" data-demo-nav="operator menu" aria-haspopup="menu">
+                <span class="operator-dot" style="background: #3b82f6;" aria-hidden="true"></span>
+                <span class="top-operator__name">alice</span>
+                <span class="top-operator__caret" aria-hidden="true">
+                    <svg width="7" height="7" viewBox="0 0 8 8" fill="none">
+                        <path d="M1 2.5 L4 5.5 L7 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+            </button>
+            <button class="top-theme" type="button" data-demo-theme aria-label="Toggle theme">
+                <span class="top-theme__glyph" aria-hidden="true">
+                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                        <circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.3"/>
+                        <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.6 2.6l1.05 1.05M10.35 10.35l1.05 1.05M2.6 11.4l1.05-1.05M10.35 3.65l1.05-1.05" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    </svg>
+                </span>
+                <span>Theme</span>
+            </button>
+        </div>
+    </div>
+    <div class="deployment-menu" id="deployment-menu" role="menu" aria-labelledby="deployment-selector">
+        <button class="deployment-menu__item is-current" type="button" role="menuitem" data-project="All deployments">All deployments</button>
+        <button class="deployment-menu__item" type="button" role="menuitem" data-project="goad_mini_dev_harriss_macbook_pro">goad_mini_dev_harriss_macbook_pro</button>
+        <button class="deployment-menu__item" type="button" role="menuitem" data-project="c2_adhoc_dev_harriss_macbook_pro_01">c2_adhoc_dev_harriss_macbook_pro_01</button>
+        <button class="deployment-menu__item" type="button" role="menuitem" data-project="goad_full_stage_redteam_lab">goad_full_stage_redteam_lab</button>
+    </div>
+
+    <!-- Demo left rail (vertical app-level nav stub) — see demo-rail init script below. -->
+    <nav class="demo-rail" aria-label="App navigation (demo)">
+        <div class="demo-rail__brand">
+            <span class="demo-rail__brand-mark" aria-hidden="true"></span>
+            <span class="demo-rail__brand-text">
+                <span class="demo-rail__brand-eyebrow">RED TEAM INFRA</span>
+                <span class="demo-rail__brand-sub">v3 · demo</span>
+            </span>
+        </div>
+
+        <span class="demo-rail__group-label">Workspace</span>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="dashboard" data-demo-nav="Dashboard">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="8.5" y="1.5" width="6" height="3" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="8.5" y="5.5" width="6" height="9" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="1.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                </svg></span>
+            <span class="demo-rail__label">Dashboard</span>
+        </button>
+
+        <button class="demo-rail__item is-active is-expanded" type="button" data-demo-parent="deployments" aria-expanded="true">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.5" y="1.5" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="1.5" y="10" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <circle cx="4" cy="3.75" r="0.7" fill="currentColor"/>
+                    <circle cx="4" cy="12.25" r="0.7" fill="currentColor"/>
+                </svg></span>
+            <span class="demo-rail__label">Deployments</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="demo-rail__children is-open" data-children-of="deployments">
+            <div>
+                <button class="demo-rail__child" type="button" data-demo-sub="configure" data-demo-nav="Configure">Configure</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="deploy" data-demo-nav="Deploy">Deploy</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="manage" data-demo-nav="Manage">Manage</button>
+                <button class="demo-rail__child is-active" type="button" data-demo-sub="cleanup" data-demo-nav="Cleanup">Cleanup</button>
+            </div>
+        </div>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="operations" aria-expanded="false">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4M12.6 12.6l-1.4-1.4M4.8 4.8L3.4 3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg></span>
+            <span class="demo-rail__label">Operations</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="demo-rail__children" data-children-of="operations">
+            <div>
+                <button class="demo-rail__child" type="button" data-demo-sub="beacons" data-demo-nav="Beacons">Beacons</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="terminal" data-demo-nav="Terminal">Terminal</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="payloads" data-demo-nav="Payloads">Payloads</button>
+            </div>
+        </div>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="settings" data-demo-nav="Settings">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M2.5 8 a5.5 5.5 0 0 1 0.5 -2.3 L1.8 4.6 L3.6 2.8 L4.7 3.5 a5.5 5.5 0 0 1 2.3 -1 L7.4 1.3 H8.6 L9 2.5 a5.5 5.5 0 0 1 2.3 1 L12.4 2.8 L14.2 4.6 L13.5 5.7 a5.5 5.5 0 0 1 0.5 2.3 a5.5 5.5 0 0 1 -0.5 2.3 L14.2 11.4 L12.4 13.2 L11.3 12.5 a5.5 5.5 0 0 1 -2.3 1 L8.6 14.7 H7.4 L7 13.5 a5.5 5.5 0 0 1 -2.3 -1 L3.6 13.2 L1.8 11.4 L2.5 10.3 a5.5 5.5 0 0 1 -0.5 -2.3 Z" stroke="currentColor" stroke-width="1.1" fill="none"/>
+                </svg></span>
+            <span class="demo-rail__label">Settings</span>
+        </button>
+
+        <div class="demo-rail__footer">
+            <span class="demo-rail__version">v2.5.5</span>
+        </div>
+    </nav>
+    <div class="demo-rail-toast" id="demo-rail-toast" role="status" aria-live="polite"></div>
+
+
+    <main class="pc-shell">
+        <!-- Eyebrow strip -->
+        <div class="pc-eyebrow">
+            <div class="pc-eyebrow__text">
+                <span class="pc-eyebrow__label">UNTRACKED RESOURCES</span>
+                <h1 class="pc-eyebrow__title">Cleanup</h1>
+                <p class="pc-eyebrow__description">
+                    AWS resources NOT tied to any current Terraform state. Includes orphan
+                    EIPs, unattached EBS snapshots, stale ACM certs (eu-central-1 + us-east-1),
+                    and S3 buckets outside the project naming convention.
+                </p>
+            </div>
+            <div class="pc-eyebrow__actions">
+                <span class="pc-eyebrow__refreshed-at" id="pc-refreshed-at">last scan · 4m ago</span>
+                <button class="spec-edit-btn pc-refresh-btn" type="button" id="pc-refresh-btn" onclick="pcRefresh(this)">
+                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                    Refresh
+                </button>
+            </div>
+        </div>
+
+        <!-- Summary stat tiles -->
+        <div class="pc-summary" role="group" aria-label="Orphan resource counts">
+            <div class="pc-summary__tile">
+                <span class="pc-summary__num">10</span>
+                <span class="pc-summary__label">orphans found</span>
+            </div>
+            <div class="pc-summary__tile">
+                <span class="pc-summary__num">3</span>
+                <span class="pc-summary__label">unattached EIPs</span>
+            </div>
+            <div class="pc-summary__tile">
+                <span class="pc-summary__num">2</span>
+                <span class="pc-summary__label">orphan ACM certs</span>
+            </div>
+            <div class="pc-summary__tile">
+                <span class="pc-summary__num">4</span>
+                <span class="pc-summary__label">untagged S3 buckets</span>
+            </div>
+        </div>
+
+        <!-- Resource groups -->
+        <div class="pc-groups">
+
+            <!-- ── EIPs ──────────────────────────────────────────── -->
+            <section class="pc-group" data-group-kind="eip">
+                <header class="pc-group__header">
+                    <h2 class="pc-group__title">Unattached Elastic IPs</h2>
+                    <span class="pc-group__count">3 found</span>
+                </header>
+                <div class="spec-list pc-group__list" role="list" aria-label="Unattached Elastic IPs">
+
+                    <div class="spec-row pc-row" data-resource-id="eip-1">
+                        <div class="spec-row__head">
+                            <div class="spec-row__key">eu-central-1</div>
+                            <div class="spec-row__value spec-row__value--mono">52.59.84.201</div>
+                            <div class="pc-row__actions">
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcAdopt('eip-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                                    Adopt
+                                </button>
+                                <button class="spec-edit-btn spec-edit-btn--danger pc-row__action" type="button" onclick="pcDestroyStage1('eip-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                    Destroy
+                                </button>
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcMarkKnown('eip-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg>
+                                    Mark known
+                                </button>
+                            </div>
+                        </div>
+                        <div class="pc-row__confirm" id="pc-confirm-eip-1" data-open="false">
+                            <span class="pc-row__confirm-text"><strong>Confirm: release this EIP.</strong> Permanent.</span>
+                            <span class="pc-row__confirm-buttons">
+                                <button class="spec-edit-btn" type="button" onclick="pcDestroyCancel('eip-1')">Cancel</button>
+                                <button class="spec-edit-btn spec-edit-btn--danger" type="button" onclick="pcDestroyStage2(this,'eip-1')">Yes, release</button>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="spec-row pc-row" data-resource-id="eip-2">
+                        <div class="spec-row__head">
+                            <div class="spec-row__key">eu-central-1</div>
+                            <div class="spec-row__value spec-row__value--mono">18.197.220.144</div>
+                            <div class="pc-row__actions">
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcAdopt('eip-2')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                                    Adopt
+                                </button>
+                                <button class="spec-edit-btn spec-edit-btn--danger pc-row__action" type="button" onclick="pcDestroyStage1('eip-2')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                    Destroy
+                                </button>
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcMarkKnown('eip-2')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg>
+                                    Mark known
+                                </button>
+                            </div>
+                        </div>
+                        <div class="pc-row__confirm" id="pc-confirm-eip-2" data-open="false">
+                            <span class="pc-row__confirm-text"><strong>Confirm: release this EIP.</strong> Permanent.</span>
+                            <span class="pc-row__confirm-buttons">
+                                <button class="spec-edit-btn" type="button" onclick="pcDestroyCancel('eip-2')">Cancel</button>
+                                <button class="spec-edit-btn spec-edit-btn--danger" type="button" onclick="pcDestroyStage2(this,'eip-2')">Yes, release</button>
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- One row in MARKED state with attribution -->
+                    <div class="spec-row pc-row" data-resource-id="eip-3" data-marked-known="true">
+                        <div class="spec-row__head">
+                            <div class="spec-row__key">us-east-1</div>
+                            <div class="pc-row__value-meta">
+                                <div class="pc-row__value-meta-row">
+                                    <span class="spec-row__value spec-row__value--mono">54.86.115.42</span>
+                                    <span class="spec-pill spec-pill--draft" data-state="marked-known">
+                                        <span class="spec-pill__dot" aria-hidden="true"></span>KNOWN
+                                    </span>
+                                </div>
+                                <span class="pc-row__attribution" data-attribution>
+                                    <span class="pc-row__attribution-dot" style="background: #3b82f6;" aria-hidden="true"></span>
+                                    marked-known-external by alice · 3d ago
+                                </span>
+                            </div>
+                            <div class="pc-row__actions">
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcAdopt('eip-3')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                                    Adopt
+                                </button>
+                                <button class="spec-edit-btn spec-edit-btn--danger pc-row__action" type="button" onclick="pcDestroyStage1('eip-3')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                    Destroy
+                                </button>
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcMarkKnown('eip-3')">
+                                    Re-mark
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- ── ACM certs ─────────────────────────────────────── -->
+            <section class="pc-group" data-group-kind="acm">
+                <header class="pc-group__header">
+                    <h2 class="pc-group__title">Orphan ACM Certificates</h2>
+                    <span class="pc-group__count">2 found</span>
+                </header>
+                <div class="spec-list pc-group__list" role="list" aria-label="Orphan ACM certificates">
+
+                    <div class="spec-row pc-row" data-resource-id="acm-1">
+                        <div class="spec-row__head">
+                            <div class="spec-row__key">eu-central-1</div>
+                            <div class="spec-row__value">
+                                <span class="spec-row__value spec-row__value--mono" style="display:inline">*.redteamlab.example.com</span>
+                            </div>
+                            <div class="pc-row__actions">
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcAdopt('acm-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                                    Adopt
+                                </button>
+                                <button class="spec-edit-btn spec-edit-btn--danger pc-row__action" type="button" onclick="pcDestroyStage1('acm-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                    Destroy
+                                </button>
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcMarkKnown('acm-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg>
+                                    Mark known
+                                </button>
+                            </div>
+                        </div>
+                        <div class="pc-row__confirm" id="pc-confirm-acm-1" data-open="false">
+                            <span class="pc-row__confirm-text"><strong>Confirm: delete this certificate.</strong> Cannot be reversed.</span>
+                            <span class="pc-row__confirm-buttons">
+                                <button class="spec-edit-btn" type="button" onclick="pcDestroyCancel('acm-1')">Cancel</button>
+                                <button class="spec-edit-btn spec-edit-btn--danger" type="button" onclick="pcDestroyStage2(this,'acm-1')">Yes, delete</button>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="spec-row pc-row" data-resource-id="acm-2">
+                        <div class="spec-row__head">
+                            <div class="spec-row__key">us-east-1</div>
+                            <div class="spec-row__value spec-row__value--mono">cdn.opphq.example.com</div>
+                            <div class="pc-row__actions">
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcAdopt('acm-2')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                                    Adopt
+                                </button>
+                                <button class="spec-edit-btn spec-edit-btn--danger pc-row__action" type="button" onclick="pcDestroyStage1('acm-2')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                    Destroy
+                                </button>
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcMarkKnown('acm-2')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg>
+                                    Mark known
+                                </button>
+                            </div>
+                        </div>
+                        <div class="pc-row__confirm" id="pc-confirm-acm-2" data-open="false">
+                            <span class="pc-row__confirm-text"><strong>Confirm: delete this certificate.</strong> Cannot be reversed.</span>
+                            <span class="pc-row__confirm-buttons">
+                                <button class="spec-edit-btn" type="button" onclick="pcDestroyCancel('acm-2')">Cancel</button>
+                                <button class="spec-edit-btn spec-edit-btn--danger" type="button" onclick="pcDestroyStage2(this,'acm-2')">Yes, delete</button>
+                            </span>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- ── S3 buckets ────────────────────────────────────── -->
+            <section class="pc-group" data-group-kind="s3">
+                <header class="pc-group__header">
+                    <h2 class="pc-group__title">Untagged S3 Buckets</h2>
+                    <span class="pc-group__count">4 found</span>
+                </header>
+                <div class="spec-list pc-group__list" role="list" aria-label="Untagged S3 buckets">
+
+                    <div class="spec-row pc-row" data-resource-id="s3-1">
+                        <div class="spec-row__head">
+                            <div class="spec-row__key">eu-central-1</div>
+                            <div class="spec-row__value spec-row__value--mono">redteam-archive-2024</div>
+                            <div class="pc-row__actions">
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcAdopt('s3-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                                    Adopt
+                                </button>
+                                <button class="spec-edit-btn spec-edit-btn--danger pc-row__action" type="button" onclick="pcDestroyStage1('s3-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                    Destroy
+                                </button>
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcMarkKnown('s3-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg>
+                                    Mark known
+                                </button>
+                            </div>
+                        </div>
+                        <div class="pc-row__confirm" id="pc-confirm-s3-1" data-open="false">
+                            <span class="pc-row__confirm-text"><strong>Confirm: empty + delete this bucket.</strong> All objects lost.</span>
+                            <span class="pc-row__confirm-buttons">
+                                <button class="spec-edit-btn" type="button" onclick="pcDestroyCancel('s3-1')">Cancel</button>
+                                <button class="spec-edit-btn spec-edit-btn--danger" type="button" onclick="pcDestroyStage2(this,'s3-1')">Yes, delete</button>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="spec-row pc-row" data-resource-id="s3-2">
+                        <div class="spec-row__head">
+                            <div class="spec-row__key">us-east-1</div>
+                            <div class="spec-row__value spec-row__value--mono">cf-templates-1n5lq8rk-eu-central-1</div>
+                            <div class="pc-row__actions">
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcAdopt('s3-2')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                                    Adopt
+                                </button>
+                                <button class="spec-edit-btn spec-edit-btn--danger pc-row__action" type="button" onclick="pcDestroyStage1('s3-2')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                    Destroy
+                                </button>
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcMarkKnown('s3-2')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg>
+                                    Mark known
+                                </button>
+                            </div>
+                        </div>
+                        <div class="pc-row__confirm" id="pc-confirm-s3-2" data-open="false">
+                            <span class="pc-row__confirm-text"><strong>Confirm: empty + delete this bucket.</strong> All objects lost.</span>
+                            <span class="pc-row__confirm-buttons">
+                                <button class="spec-edit-btn" type="button" onclick="pcDestroyCancel('s3-2')">Cancel</button>
+                                <button class="spec-edit-btn spec-edit-btn--danger" type="button" onclick="pcDestroyStage2(this,'s3-2')">Yes, delete</button>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="spec-row pc-row" data-resource-id="s3-3">
+                        <div class="spec-row__head">
+                            <div class="spec-row__key">eu-central-1</div>
+                            <div class="spec-row__value spec-row__value--mono">tmp-payload-staging-9f4a</div>
+                            <div class="pc-row__actions">
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcAdopt('s3-3')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                                    Adopt
+                                </button>
+                                <button class="spec-edit-btn spec-edit-btn--danger pc-row__action" type="button" onclick="pcDestroyStage1('s3-3')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                    Destroy
+                                </button>
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcMarkKnown('s3-3')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg>
+                                    Mark known
+                                </button>
+                            </div>
+                        </div>
+                        <div class="pc-row__confirm" id="pc-confirm-s3-3" data-open="false">
+                            <span class="pc-row__confirm-text"><strong>Confirm: empty + delete this bucket.</strong> All objects lost.</span>
+                            <span class="pc-row__confirm-buttons">
+                                <button class="spec-edit-btn" type="button" onclick="pcDestroyCancel('s3-3')">Cancel</button>
+                                <button class="spec-edit-btn spec-edit-btn--danger" type="button" onclick="pcDestroyStage2(this,'s3-3')">Yes, delete</button>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="spec-row pc-row" data-resource-id="s3-4">
+                        <div class="spec-row__head">
+                            <div class="spec-row__key">eu-central-1</div>
+                            <div class="spec-row__value spec-row__value--mono">terraform-state-legacy-2023</div>
+                            <div class="pc-row__actions">
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcAdopt('s3-4')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                                    Adopt
+                                </button>
+                                <button class="spec-edit-btn spec-edit-btn--danger pc-row__action" type="button" onclick="pcDestroyStage1('s3-4')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                    Destroy
+                                </button>
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcMarkKnown('s3-4')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg>
+                                    Mark known
+                                </button>
+                            </div>
+                        </div>
+                        <div class="pc-row__confirm" id="pc-confirm-s3-4" data-open="false">
+                            <span class="pc-row__confirm-text"><strong>Confirm: empty + delete this bucket.</strong> All objects lost.</span>
+                            <span class="pc-row__confirm-buttons">
+                                <button class="spec-edit-btn" type="button" onclick="pcDestroyCancel('s3-4')">Cancel</button>
+                                <button class="spec-edit-btn spec-edit-btn--danger" type="button" onclick="pcDestroyStage2(this,'s3-4')">Yes, delete</button>
+                            </span>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- ── EBS snapshots ────────────────────────────────── -->
+            <section class="pc-group" data-group-kind="ebs">
+                <header class="pc-group__header">
+                    <h2 class="pc-group__title">Orphan EBS Snapshots</h2>
+                    <span class="pc-group__count">1 found</span>
+                </header>
+                <div class="spec-list pc-group__list" role="list" aria-label="Orphan EBS snapshots">
+
+                    <div class="spec-row pc-row" data-resource-id="ebs-1">
+                        <div class="spec-row__head">
+                            <div class="spec-row__key">eu-central-1</div>
+                            <div class="spec-row__value spec-row__value--mono">snap-0e7c4a3b2d1f9a8b</div>
+                            <div class="pc-row__actions">
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcAdopt('ebs-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                                    Adopt
+                                </button>
+                                <button class="spec-edit-btn spec-edit-btn--danger pc-row__action" type="button" onclick="pcDestroyStage1('ebs-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                    Destroy
+                                </button>
+                                <button class="spec-edit-btn pc-row__action" type="button" onclick="pcMarkKnown('ebs-1')">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg>
+                                    Mark known
+                                </button>
+                            </div>
+                        </div>
+                        <div class="pc-row__confirm" id="pc-confirm-ebs-1" data-open="false">
+                            <span class="pc-row__confirm-text"><strong>Confirm: delete this snapshot.</strong> Cannot restore.</span>
+                            <span class="pc-row__confirm-buttons">
+                                <button class="spec-edit-btn" type="button" onclick="pcDestroyCancel('ebs-1')">Cancel</button>
+                                <button class="spec-edit-btn spec-edit-btn--danger" type="button" onclick="pcDestroyStage2(this,'ebs-1')">Yes, delete</button>
+                            </span>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+        </div>
+    </main>
+
+    <script>
+        // ── Interactivity: refresh spin + mark-known flip + destroy confirm ──
+
+        // Current logged-in operator (demo): "harris" with brand red.
+        // Marking flips the row in-place with attribution.
+        var CURRENT_OPERATOR = { name: 'harris', color: '#a31621' };
+
+        function pcRefresh(btn) {
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                return;
+            }
+            btn.setAttribute('data-loading', 'true');
+            window.setTimeout(function () {
+                btn.removeAttribute('data-loading');
+                var label = document.getElementById('pc-refreshed-at');
+                if (label) label.textContent = 'last scan · just now';
+            }, 1400);
+        }
+
+        function pcAdopt(id) {
+            // Demo: surface a transient inline note via the confirm strip's text style
+            // For simplicity, just disable the row's adopt button.
+            var row = document.querySelector('.pc-row[data-resource-id="' + id + '"]');
+            if (!row) return;
+            var btn = row.querySelector('.pc-row__actions .spec-edit-btn:nth-child(1)');
+            if (btn) {
+                btn.textContent = 'Adopted (demo)';
+                btn.disabled = true;
+            }
+        }
+
+        function pcMarkKnown(id) {
+            var row = document.querySelector('.pc-row[data-resource-id="' + id + '"]');
+            if (!row) return;
+            var head = row.querySelector('.spec-row__head');
+            if (!head) return;
+
+            // Already marked — toggle re-mark (just refresh attribution time)
+            if (row.getAttribute('data-marked-known') === 'true') {
+                var existingAttr = row.querySelector('.pc-row__attribution');
+                if (existingAttr) {
+                    existingAttr.lastChild.textContent =
+                        ' marked-known-external by ' + CURRENT_OPERATOR.name + ' · just now';
+                    var dotEl = existingAttr.querySelector('.pc-row__attribution-dot');
+                    if (dotEl) dotEl.style.background = CURRENT_OPERATOR.color;
+                }
+                return;
+            }
+
+            // Read existing value text + key column so we can rebuild structure.
+            var keyEl = head.querySelector('.spec-row__key');
+            var valueEl = head.querySelector('.spec-row__value');
+            var actionsEl = head.querySelector('.pc-row__actions');
+            if (!valueEl || !actionsEl) return;
+
+            var valueText = valueEl.textContent.trim();
+
+            // Build new value-meta cluster
+            var meta = document.createElement('div');
+            meta.className = 'pc-row__value-meta';
+            meta.innerHTML =
+                '<div class="pc-row__value-meta-row">' +
+                  '<span class="spec-row__value spec-row__value--mono">' + valueText + '</span>' +
+                  '<span class="spec-pill spec-pill--draft" data-state="marked-known">' +
+                    '<span class="spec-pill__dot" aria-hidden="true"></span>KNOWN' +
+                  '</span>' +
+                '</div>' +
+                '<span class="pc-row__attribution" data-attribution>' +
+                  '<span class="pc-row__attribution-dot" style="background: ' + CURRENT_OPERATOR.color + ';" aria-hidden="true"></span>' +
+                  ' marked-known-external by ' + CURRENT_OPERATOR.name + ' · just now' +
+                '</span>';
+
+            // Replace value with meta block
+            head.replaceChild(meta, valueEl);
+            row.setAttribute('data-marked-known', 'true');
+
+            // Flip the Mark-known button label to Re-mark
+            var markBtn = actionsEl.querySelector('.pc-row__action:last-child');
+            if (markBtn) {
+                markBtn.innerHTML = 'Re-mark';
+            }
+        }
+
+        function pcDestroyStage1(id) {
+            var strip = document.getElementById('pc-confirm-' + id);
+            if (strip) strip.setAttribute('data-open', 'true');
+        }
+
+        function pcDestroyStage2(btn, id) {
+            btn.textContent = 'Deleting...';
+            btn.disabled = true;
+            window.setTimeout(function () {
+                btn.textContent = 'Deleted (demo)';
+            }, 1100);
+        }
+
+        function pcDestroyCancel(id) {
+            var strip = document.getElementById('pc-confirm-' + id);
+            if (strip) strip.setAttribute('data-open', 'false');
+        }
+    
+        // ── Demo left rail — non-routing nav + theme toggle + toast ────
+        (function demoRailInit() {
+            const toast = document.getElementById('demo-rail-toast');
+            let toastTimer = null;
+            function showToast(label) {
+                if (!toast || !label) return;
+                toast.textContent = 'Navigating to ' + label + ' — open the standalone demo to view';
+                toast.setAttribute('data-show', 'true');
+                window.clearTimeout(toastTimer);
+                toastTimer = window.setTimeout(() => toast.setAttribute('data-show', 'false'), 2400);
+            }
+            // Parent items — clicking a non-active parent expands its children (if any)
+            document.querySelectorAll('.demo-rail__item[data-demo-parent]').forEach(btn => {
+                btn.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    const parent = btn.dataset.demoParent;
+                    const children = document.querySelector('[data-children-of="' + parent + '"]');
+                    if (children) {
+                        // Toggle expand for this parent; collapse others (only one open at a time)
+                        const willOpen = !children.classList.contains('is-open');
+                        document.querySelectorAll('.demo-rail__children').forEach(c => c.classList.remove('is-open'));
+                        document.querySelectorAll('.demo-rail__item[data-demo-parent]').forEach(i => {
+                            if (i !== btn) i.classList.remove('is-expanded');
+                        });
+                        if (willOpen) {
+                            children.classList.add('is-open');
+                            btn.classList.add('is-expanded');
+                            btn.setAttribute('aria-expanded', 'true');
+                        } else {
+                            btn.classList.remove('is-expanded');
+                            btn.setAttribute('aria-expanded', 'false');
+                        }
+                        return;
+                    }
+                    // Leaf parent (no children) — emit nav toast
+                    if (btn.classList.contains('is-active')) return;
+                    showToast(btn.dataset.demoNav);
+                });
+            });
+            // Sub-pills (children) — emit nav toast for non-active
+            document.querySelectorAll('.demo-rail__child').forEach(btn => {
+                btn.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    if (btn.classList.contains('is-active')) return;
+                    showToast(btn.dataset.demoNav);
+                });
+            });
+            // Theme toggle (top utility bar)
+            const themeBtn = document.querySelector('.top-utility-bar [data-demo-theme]');
+            if (themeBtn) {
+                themeBtn.addEventListener('click', () => {
+                    const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+                    document.documentElement.setAttribute('data-theme', cur === 'light' ? 'dark' : 'light');
+                });
+            }
+            const opBtn = document.querySelector('.top-operator');
+            if (opBtn) opBtn.addEventListener('click', () => showToast('operator menu'));
+            const dsBtn = document.getElementById('deployment-selector');
+            const dsMenu = document.getElementById('deployment-menu');
+            const dsName = document.getElementById('deployment-selector-name');
+            if (dsBtn && dsMenu) {
+                const closeMenu = () => {
+                    dsMenu.setAttribute('data-open', 'false');
+                    dsBtn.setAttribute('aria-expanded', 'false');
+                };
+                dsBtn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    const open = dsMenu.getAttribute('data-open') === 'true';
+                    dsMenu.setAttribute('data-open', open ? 'false' : 'true');
+                    dsBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+                });
+                dsMenu.querySelectorAll('.deployment-menu__item').forEach(item => {
+                    item.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        const proj = item.dataset.project || '';
+                        dsMenu.querySelectorAll('.deployment-menu__item').forEach(i => i.classList.remove('is-current'));
+                        item.classList.add('is-current');
+                        if (dsName) dsName.textContent = proj;
+                        closeMenu();
+                        showToast('Switched to ' + proj);
+                    });
+                });
+                document.addEventListener('click', (ev) => {
+                    if (!dsMenu.contains(ev.target) && ev.target !== dsBtn) closeMenu();
+                });
+                document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeMenu(); });
+            }
+        })();
+    </script>
+</body>
+</html>

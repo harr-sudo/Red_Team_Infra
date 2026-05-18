@@ -1,0 +1,256 @@
+# Bolt-on: PrintNightmare — Print Spooler RCE
+# --------------------------------------------
+# CVE-2021-34527 + CVE-2021-1675. Install reverts the Point-and-Print
+# restrictions and re-enables the Print Spooler. Patch applies KB5005010
+# (or current cumulative rollup) and sets
+# RestrictDriverInstallationToAdministrators = 1.
+#
+# MITRE: T1068 (Exploitation for PE) + T1574.001 (DLL Search Order Hijacking).
+# Multi-technique mapping captured in the `tags` field; the primary `mitre`
+# block holds T1068, with T1574.001 surfaced in notes per master plan §2.3
+# example 2 (multi-technique). Phase 2 schema-v2 may split this into a list;
+# v1 captures the secondary technique as a note.
+#
+# Elastic rule UUIDs are real, sampled from the Research repo.
+
+id: bolton.known-cve.printnightmare
+slug: printnightmare
+name: "PrintNightmare — Print Spooler RCE (CVE-2021-34527 + 1675)"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-18
+
+category: known-cve
+subcategory: print-spooler
+tags:
+  - cve-2021-34527
+  - cve-2021-1675
+  - print-spooler
+  - rce
+  - privilege-escalation
+description: >
+  Re-exposes the Print Spooler RCE primitive on a domain controller or
+  member server. Removes the Point-and-Print policy gate
+  (NoWarningNoElevationOnInstall = 1, RestrictDriverInstallationToAdministrators
+  cleared) and ensures the Print Spooler service is running. Any authenticated
+  domain user can then call RpcAddPrinterDriverEx to load an attacker-supplied
+  DLL as SYSTEM. Patch applies KB5005010 + the policy gate and verifies the
+  spooler is hardened.
+
+cve:
+  - "CVE-2021-34527"
+  - "CVE-2021-1675"
+references:
+  - "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2021-34527"
+  - "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2021-1675"
+  - "https://support.microsoft.com/en-us/topic/kb5005010"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1068
+    name: "Exploitation for Privilege Escalation"
+  notes: >
+    Secondary technique T1574.001 (DLL Search Order Hijacking) — the spooler
+    loads the dropped DLL out of a writable path. Tracked in `tags`.
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "bd7eefee-f671-494e-98df-f01daf9e5f17"
+      rule_name: "Suspicious Print Spooler Point and Print DLL"
+      rule_filename: "windows/privilege_escalation_printspooler_registry_copyfiles.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Catches the registry-write variant of PrintNightmare."
+    - rule_uuid: "c4818812-d44f-47be-aaef-4cfb2f9cc799"
+      rule_name: "Suspicious Print Spooler File Deletion"
+      rule_filename: "windows/privilege_escalation_printspooler_suspicious_file_deletion.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Fires on the post-exploit driver-file cleanup pattern."
+    - rule_uuid: "ee5300a7-7e31-4a72-a258-250abb8b3aa1"
+      rule_name: "Unusual Print Spooler Child Process"
+      rule_filename: "windows/privilege_escalation_unusual_printspooler_childprocess.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Catches spoolsv.exe -> cmd/powershell chains; misses DLL-only payloads."
+    - rule_uuid: "a7ccae7b-9d2c-44b2-a061-98e5946971fa"
+      rule_name: "Suspicious .SPL File Created in Spooler Path"
+      rule_filename: "windows/privilege_escalation_printspooler_suspicious_spl_file.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Heuristic on .spl files; high false-positive in print-heavy envs."
+  signal_sources:
+    - "Sysmon Event 7 (Image loaded — spoolsv.exe)"
+    - "Sysmon Event 11 (File Create — C:\\Windows\\System32\\spool\\drivers)"
+    - "Windows Event 808 (Print spooler — driver install failure)"
+    - "Windows Event 4688 (Process create — spoolsv.exe child)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2012"
+      max_version: "2022"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+    - member_server
+  required_services: []   # spooler is checked at install-time, not target-time
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true   # exposes RPC interface on 135 + dynamic
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: ansible.windows.win_service
+      description: "Ensure the Print Spooler service is running."
+      role_vars:
+        name: Spooler
+        state: started
+        start_mode: auto
+    - ansible_role: ansible.windows.win_regedit
+      description: "Set NoWarningNoElevationOnInstall = 1 (Point-and-Print)."
+      role_vars:
+        path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint'
+        name: NoWarningNoElevationOnInstall
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_regedit
+      description: "Clear RestrictDriverInstallationToAdministrators (re-enables non-admin driver install)."
+      role_vars:
+        path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint'
+        name: RestrictDriverInstallationToAdministrators
+        state: absent
+    - ansible_role: ansible.windows.win_service
+      description: "Restart the Spooler to pick up the policy changes."
+      role_vars:
+        name: Spooler
+        state: restarted
+  verify:
+    probe: |
+      $svc = Get-Service -Name Spooler
+      $reg = Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint' `
+              -Name NoWarningNoElevationOnInstall -ErrorAction SilentlyContinue
+      if ($svc.Status -eq 'Running' -and $reg.NoWarningNoElevationOnInstall -eq 1) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Restore the bolt-on registry tweaks; do not touch hotfix state (KB is left as-is)."
+  estimated_time_seconds: 25
+  steps:
+    - ansible_role: ansible.windows.win_regedit
+      description: "Remove the NoWarningNoElevationOnInstall override."
+      role_vars:
+        path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint'
+        name: NoWarningNoElevationOnInstall
+        state: absent
+    - ansible_role: ansible.windows.win_service
+      description: "Restart the Spooler to apply policy revert."
+      role_vars:
+        name: Spooler
+        state: restarted
+  verify:
+    probe: |
+      (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint' `
+        -Name NoWarningNoElevationOnInstall -ErrorAction SilentlyContinue).NoWarningNoElevationOnInstall
+    timeout_seconds: 30
+    expect_stdout_empty: true
+
+patch:
+  description: >
+    Install KB5005010 (or current cumulative rollup) and set
+    RestrictDriverInstallationToAdministrators = 1 in the Point-and-Print
+    policy. Non-admin users can no longer install printer drivers from
+    network shares.
+  patch_reference:
+    - "https://support.microsoft.com/en-us/topic/kb5005010"
+    - "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2021-34527"
+  complexity: medium
+  side_effects:
+    - "Installs KB5005010 (or successor cumulative rollup) — reboot recommended"
+    - "Sets RestrictDriverInstallationToAdministrators = 1 in Point-and-Print policy"
+    - "Restarts Print Spooler service — 3-5 second interruption to active jobs"
+    - "Non-admin users can no longer install printer drivers from network shares"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.windows.win_updates
+      description: "Install the August 2021 security cumulative containing the Spooler fix."
+      role_vars:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+        accept_list:
+          - "KB5005010"
+          - "KB5005039"      # newer supersede in Windows Server 2019
+        reboot: false
+    - ansible_role: ansible.windows.win_regedit
+      description: "Set the policy gate that closes the auth bypass."
+      role_vars:
+        path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint'
+        name: RestrictDriverInstallationToAdministrators
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_service
+      description: "Restart the Spooler so the new policy is in effect immediately."
+      role_vars:
+        name: Spooler
+        state: restarted
+  verify:
+    probe: |
+      $kb  = Get-HotFix -Id KB5005010 -ErrorAction SilentlyContinue
+      $kb2 = Get-HotFix -Id KB5005039 -ErrorAction SilentlyContinue
+      $reg = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint' `
+              -Name RestrictDriverInstallationToAdministrators).RestrictDriverInstallationToAdministrators
+      if (($kb -or $kb2) -and $reg -eq 1) { exit 0 } else { exit 1 }
+    timeout_seconds: 120
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/printnightmare_check.sh"
+
+patch_revert:
+  description: "Set RestrictDriverInstallationToAdministrators = 0. KB remains installed (realistic misconfig pattern)."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.windows.win_regedit
+      description: "Disable the policy gate."
+      role_vars:
+        path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint'
+        name: RestrictDriverInstallationToAdministrators
+        data: 0
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_service
+      description: "Restart Spooler to refresh policy state."
+      role_vars:
+        name: Spooler
+        state: restarted
+  verify:
+    probe: |
+      (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint' `
+        -Name RestrictDriverInstallationToAdministrators).RestrictDriverInstallationToAdministrators
+    timeout_seconds: 30
+    expect_stdout_contains: "0"
+  warning: "Lab is exploitable via PrintNightmare again. Detection rules will fire on next exploit attempt."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: loud
+
+status: stable

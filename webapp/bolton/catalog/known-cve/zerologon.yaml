@@ -1,0 +1,192 @@
+# Bolt-on: ZeroLogon — Netlogon Elevation (CVE-2020-1472)
+# --------------------------------------------------------
+# Install removes the Netlogon enforcement registry key so a DC accepts the
+# Netlogon-AES-CFB8 attack pattern. Patch re-applies KB4577668 +
+# KB4601345 monthly rollups and sets FullSecureChannelProtection = 1.
+#
+# patch_revert is INTENTIONALLY NULL — KBs cannot be cleanly removed and
+# rolling back the registry key alone leaves the KB-enforced check in place.
+# Per BOLTON_REFINEMENT_patch.md §3.2 ZeroLogon section, the descriptor
+# declares rollback_supported = false. The installed-vuln view will show
+# patch_revert as unavailable; operators wanting repeated cycles must
+# rebuild the DC from a snapshot.
+#
+# No published Elastic rule with a stable UUID maps directly to ZeroLogon
+# at time of authoring — coverage_status is no-rule with a fallback template.
+
+id: bolton.known-cve.zerologon
+slug: zerologon
+name: "ZeroLogon — Netlogon Elevation (CVE-2020-1472)"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-18
+
+category: known-cve
+subcategory: netlogon
+tags:
+  - cve-2020-1472
+  - netlogon
+  - domain-takeover
+  - privilege-escalation
+description: >
+  Re-exposes the Netlogon Elevation of Privilege primitive on a domain
+  controller. Removes the enforcement-mode registry key
+  (HKLM\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters\FullSecureChannelProtection)
+  so the DC accepts the AES-CFB8 all-zero ClientCredential / Authenticator
+  pattern. Any network-reachable attacker can reset the machine account
+  password of the DC itself, then DCSync via the empty password.
+
+cve:
+  - "CVE-2020-1472"
+references:
+  - "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2020-1472"
+  - "https://support.microsoft.com/en-us/topic/kb4557222"
+  - "https://www.secura.com/uploads/whitepapers/Zerologon.pdf"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1068
+    name: "Exploitation for Privilege Escalation"
+  notes: "ZeroLogon is the canonical TA0004/T1068 chain on Netlogon RPC."
+
+detection:
+  # No published Elastic rule has a stable UUID that maps cleanly to the
+  # Netlogon AES-CFB8 brute-force pattern at time of authoring. The rules
+  # repo carries `credential_access_kerberos_coerce.toml` for coerced
+  # auth but it doesn't fire on ZeroLogon's Netlogon-direct path. Phase 4
+  # will materialize the fallback template.
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/zerologon-netlogon.j2.yml"
+  signal_sources:
+    - "Windows Event 5805 (NETLOGON — RPC machine account credentials failed)"
+    - "Windows Event 4742 (Computer account changed — DC machine account)"
+    - "Windows Event 4624 logon type 3 from anonymous LUID with elevated token"
+    - "Sysmon Event 3 (Network connection — repeated 135/RPC from same source)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2012"
+      max_version: "2019"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+  required_services: []
+  required_domain_function_level: "2012"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # affects forest-wide Netlogon trust
+  network_visible: true
+  reboot_required: true
+
+install:
+  estimated_time_seconds: 90
+  steps:
+    - ansible_role: ansible.windows.win_regedit
+      description: "Remove the enforcement-mode policy gate."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters'
+        name: FullSecureChannelProtection
+        state: absent
+    - ansible_role: ansible.windows.win_service
+      description: "Restart the Netlogon service so the policy revert takes hold."
+      role_vars:
+        name: Netlogon
+        state: restarted
+  verify:
+    probe: |
+      $r = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters' `
+            -Name FullSecureChannelProtection -ErrorAction SilentlyContinue
+      if ($null -eq $r) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Restore FullSecureChannelProtection = 1 so the DC enforces secure Netlogon again."
+  estimated_time_seconds: 45
+  steps:
+    - ansible_role: ansible.windows.win_regedit
+      description: "Re-set the enforcement key."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters'
+        name: FullSecureChannelProtection
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_service
+      description: "Restart Netlogon to enforce."
+      role_vars:
+        name: Netlogon
+        state: restarted
+  verify:
+    probe: |
+      (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters' `
+        -Name FullSecureChannelProtection).FullSecureChannelProtection
+    timeout_seconds: 30
+    expect_stdout_contains: "1"
+
+patch:
+  description: >
+    Apply the August 2020 (KB4577668) + February 2021 (KB4601345) monthly
+    rollups and set FullSecureChannelProtection = 1 to enforce secure
+    Netlogon for ALL machine accounts. The Feb 2021 update enables
+    enforcement mode automatically; the earlier KB is a hard prerequisite.
+  patch_reference:
+    - "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2020-1472"
+    - "https://support.microsoft.com/en-us/topic/kb4557222"
+  complexity: high
+  side_effects:
+    - "Installs KB4577668 (August 2020 monthly rollup) — DC reboot required"
+    - "Installs KB4601345 (February 2021 rollup) — enforcement mode auto-enabled"
+    - "Sets FullSecureChannelProtection = 1 under Netlogon\\Parameters"
+    - "Pre-Windows 2000 and non-Windows machine accounts may lose secure channel — must be added to 'Allow vulnerable Netlogon secure channel connections' GPO BEFORE patch"
+    - "DC reboot required — schedule outside lab exercise window"
+  rollback_supported: false   # ZeroLogon KB cannot be cleanly uninstalled
+  steps:
+    - ansible_role: ansible.windows.win_updates
+      description: "Install the August 2020 + February 2021 cumulative rollups."
+      role_vars:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+        accept_list:
+          - "KB4577668"
+          - "KB4601345"
+        reboot: true
+        reboot_timeout: 1800
+    - ansible_role: ansible.windows.win_regedit
+      description: "Force enforcement mode."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters'
+        name: FullSecureChannelProtection
+        data: 1
+        type: dword
+        state: present
+  verify:
+    probe: |
+      $kb = Get-HotFix -Id KB4601345 -ErrorAction SilentlyContinue
+      $kb2 = Get-HotFix -Id KB5003646 -ErrorAction SilentlyContinue   # superseded successor
+      $reg = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters' `
+              -Name FullSecureChannelProtection).FullSecureChannelProtection
+      if (($kb -or $kb2) -and $reg -eq 1) { exit 0 } else { exit 1 }
+    timeout_seconds: 300
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/zerologon_tester.sh"
+
+# patch_revert intentionally omitted: ZeroLogon KBs cannot be cleanly removed.
+# Operators who need repeat install/exploit/patch cycles must rebuild the DC
+# from a pre-patch snapshot. See BOLTON_REFINEMENT_patch.md §3.2 commentary.
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: loud
+
+status: stable

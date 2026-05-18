@@ -73,9 +73,193 @@ function _invalidateOutputsCache(projectName) {
 // APPLICATION CORE - Tab Management System
 // ============================================================================
 
+/**
+ * D0 — Routing alias layer (Plan §17 P1 #8 / §21.7 D0.1).
+ *
+ * Maps legacy flat tab names to their post-refactor (parentTab, subPill)
+ * tuples. This layer lets all existing `APP.navigateTo('configuration')`
+ * call sites keep working after D3 merges Configuration + Deploy +
+ * Deployment Manager into a single "deployments-tab" with sub-pills.
+ *
+ * Today (before D3), the alias map is a no-op — every alias points back
+ * to a flat tab name that still exists. D3.6 will swap the values to
+ * point to {parent: 'deployments-tab', subPill: 'configure'} etc., and
+ * 14 cross-link call sites will continue working without modification.
+ */
+const NAVIGATE_ALIASES = {
+    // D3.2/3/4 — legacy flat names now resolve to sub-pills of the merged
+    // 'deployments-tab'. Cross-link call sites (`APP.navigateTo('configuration')`
+    // etc.) keep working: the alias activates the parent tab + the matching pill.
+    'configuration':   { parent: 'deployments-tab', subPill: 'configure' },
+    'deployment':      { parent: 'deployments-tab', subPill: 'deploy' },
+    'deployments':     { parent: 'deployments-tab', subPill: 'manage' },
+    // D3.6 — Identity entry for the merged Deployments tab so a direct
+    // nav-button click ({data-target="deployments-tab"}) resolves cleanly
+    // instead of falling back to dashboard via the null-target guard.
+    'deployments-tab': { parent: 'deployments-tab', subPill: null },
+    // D4.2/3/4 — legacy flat names now resolve to sub-pills of the merged
+    // 'operations-tab'. Cross-link call sites (`APP.navigateTo('beacon')`
+    // etc.) keep working: the alias activates the parent tab + the matching pill.
+    'beacon':        { parent: 'operations-tab', subPill: 'beacons' },
+    'terminal':      { parent: 'operations-tab', subPill: 'terminal' },
+    'tools':         { parent: 'operations-tab', subPill: 'payloads' },
+    // D4.1 — Identity entry for the merged Operations tab so a direct
+    // nav-button click ({data-target="operations-tab"}) resolves cleanly
+    // instead of falling back to dashboard via the null-target guard.
+    'operations-tab':{ parent: 'operations-tab', subPill: null },
+    // D2 — Pre Reqs moved into Settings as a section card; legacy 'aws-check'
+    // navigateTo() calls now redirect to Settings with an anchor scroll.
+    'aws-check':     { parent: 'settings',      subPill: null, anchor: 'aws-prereqs-anchor' },
+    // Unchanged tabs — keep as identity entries for completeness
+    'dashboard':     { parent: 'dashboard',     subPill: null },
+    // M-Dashboard / Decision #21 — Architecture tab folded into Dashboard
+    // widget + modal. Legacy navigateTo('architecture') callers now land on
+    // the Dashboard tab AND open the Architecture modal. The `openModal`
+    // hint is read in navigateTo() to trigger APP.openArchitectureModal().
+    'architecture':  { parent: 'dashboard',     subPill: null, openModal: 'architecture-modal' },
+    'settings':      { parent: 'settings',      subPill: null }
+};
+
+/**
+ * Resolve a flat page name (or an already-resolved tuple) to the
+ * canonical {parent, subPill} form. Returns null if the input doesn't
+ * match any alias — caller should fall back to dashboard.
+ */
+function resolveNavigationTarget(input) {
+    if (input && typeof input === 'object' && input.parent) {
+        return { parent: input.parent, subPill: input.subPill || null };
+    }
+    if (typeof input === 'string' && NAVIGATE_ALIASES[input]) {
+        return NAVIGATE_ALIASES[input];
+    }
+    return null;
+}
+
+/**
+ * D0.3 — Read the persisted navigation target with backwards-compat for
+ * stale operator browsers. URL hash wins (so deep-links work); falls back
+ * to sessionStorage. Accepts both new JSON format and legacy plain strings.
+ * Returns null if nothing resolvable is stored.
+ *
+ * D6.1 — Now also supports a query string embedded INSIDE the hash, e.g.
+ * `#deployments-tab/configure?dep=c2_adhoc_...`. The `?dep=` half is parsed
+ * by _initFromUrl() (which sets APP.activeDeployment); here we just strip it
+ * off the hash so the parent/subPill extraction still works.
+ */
+function _readPersistedTarget() {
+    const rawHash = (window.location.hash || '').replace('#', '');
+    // D6.1 — Strip any `?query` suffix from the hash before splitting on '/'
+    // so a combined deep-link like `#deployments-tab/configure?dep=foo`
+    // still yields {parent: 'deployments-tab', subPill: 'configure'}.
+    const hashPart = rawHash.split('?')[0];
+    const hashParts = hashPart.split('/');
+    const hashPage = hashParts[0];
+    const hashSubPill = hashParts[1] || null;
+    if (hashPage && APP.pages.includes(hashPage)) {
+        return { parent: hashPage, subPill: hashSubPill };
+    }
+    const saved = sessionStorage.getItem('currentPage');
+    if (!saved) return null;
+    // New format: JSON-encoded {parent, subPill}
+    try {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.parent && APP.pages.includes(parsed.parent)) {
+            return { parent: parsed.parent, subPill: parsed.subPill || null };
+        }
+    } catch (e) {
+        // Legacy format: plain string was the page name itself
+        if (APP.pages.includes(saved)) {
+            return { parent: saved, subPill: null };
+        }
+    }
+    return null;
+}
+
+/**
+ * D6.1 — Bootstrap the global active-deployment context from the URL on
+ * initial page load. Operators can land on a deep-link of the form:
+ *
+ *     /?dep=c2_adhoc_dev_harriss_macbook_pro_01#deployments-tab/manage
+ *     /#deployments-tab/configure?dep=goad_mini_dev_harriss_macbook_pro
+ *
+ * Both ?dep= locations (search half + inside-hash) are honored — the
+ * combined form is what navigateTo() emits when both an active deployment
+ * AND a tab are set. The first-seen value wins (window.location.search is
+ * checked first; the inside-hash query is a fallback for compactness).
+ *
+ * Must run BEFORE navigateTo() during init so subscribers fire on the right
+ * deployment context.
+ */
+function _initFromUrl() {
+    // Merge both `?...` halves: window.location.search wins, but if it's
+    // empty we fall back to the query suffix inside the hash (D6.1).
+    const searchParams = new URLSearchParams(window.location.search);
+    let dep = searchParams.get('dep');
+    if (!dep) {
+        const rawHash = (window.location.hash || '').replace('#', '');
+        const hashQuery = rawHash.split('?')[1] || '';
+        if (hashQuery) {
+            const hashParams = new URLSearchParams(hashQuery);
+            dep = hashParams.get('dep');
+        }
+    }
+    if (dep && APP.activeDeployment) {
+        APP.activeDeployment.set(dep);
+    }
+}
+
+/**
+ * D6.2 — Centralised URL writer. Builds the bookmarkable URL for the
+ * current (parent, subPill, activeDeployment) triple and pushes it via
+ * history.replaceState (which doesn't add a history entry, so the back
+ * button isn't polluted by every tab/sub-pill flip).
+ *
+ * Format examples:
+ *   /                                                — default state
+ *   /#dashboard                                      — no active deployment
+ *   /#deployments-tab/manage                         — tab + sub-pill
+ *   /?dep=c2_adhoc_dev_xyz#deployments-tab/manage    — all three set
+ *
+ * Project names are URL-encoded defensively even though the validator
+ * restricts them to `[a-z0-9_]+` per webapp/backend/utils/validators.py.
+ */
+function _updateUrlState(parent, subPill) {
+    const hashBase = subPill ? `${parent}/${subPill}` : parent;
+    const dep = APP.activeDeployment && APP.activeDeployment.current;
+    const fullUrl = dep
+        ? `${window.location.pathname}?dep=${encodeURIComponent(dep)}#${hashBase}`
+        : `${window.location.pathname}#${hashBase}`;
+    try {
+        history.replaceState(null, '', fullUrl);
+    } catch (e) {
+        // Some sandboxed contexts (file://, opaque origins) reject replaceState.
+        // Fall back to the legacy location.hash assignment — operators in those
+        // environments lose the ?dep= part but the tab/sub-pill still survives.
+        window.location.hash = hashBase;
+    }
+}
+
 const APP = {
     currentPage: 'dashboard',
-    pages: ['dashboard', 'configuration', 'deployment', 'deployments', 'tools', 'aws-check', 'architecture', 'beacon', 'terminal', 'settings'],
+    currentSubPill: null,
+    // D2 — 'aws-check' removed from the live pages list; the alias entry in
+    // NAVIGATE_ALIASES redirects legacy callers to {parent: 'settings', anchor: …}.
+    // D3.6 — 'configuration' / 'deployment' / 'deployments' removed from the
+    // live pages list; the alias entries in NAVIGATE_ALIASES redirect legacy
+    // callers to {parent: 'deployments-tab', subPill: …}. The aliases stay
+    // forever as the supported "legacy name → new home" mapping.
+    // D4.1/D4.6 — 'operations-tab' is the merged parent for Beacons /
+    // Terminal / Payloads. The 3 legacy flat-tab names ('beacon' / 'terminal'
+    // / 'tools') were never in this list; their NAVIGATE_ALIASES entries
+    // redirect them to {parent: 'operations-tab', subPill: ...} as the
+    // supported "legacy name → new home" mapping.
+    // M-Dashboard / Decision #21 — 'architecture' removed from live pages list.
+    // It's now a modal launched from the Dashboard "Architecture" widget. Legacy
+    // navigateTo('architecture') callers continue to work via NAVIGATE_ALIASES:
+    // they land on Dashboard + auto-open the modal.
+    pages: ['dashboard', 'deployments-tab', 'operations-tab', 'settings'],
+    // P1 #7.6 — cached /api/version response so the modal doesn't re-fetch
+    versionInfo: null,
     
     /**
      * Initialize the application
@@ -83,18 +267,32 @@ const APP = {
     init() {
         console.log('🚀 Initializing Red Team Infrastructure Manager...');
 
+        // D3.6 — The ?legacyTabs=1 feature flag and the 3 legacy nav buttons
+        // (Configuration / Deploy / Deployment Manager) were retired. The
+        // merged Deployments tab is now the only entry point; legacy
+        // APP.navigateTo('configuration' | 'deployment' | 'deployments')
+        // callers continue to work via NAVIGATE_ALIASES (top of this file).
+        // D4.6 — The matching Operations-tab cleanup: the ?legacyTabs=1 IIFE
+        // (Beacon / Terminal / Tools data-legacy flag) was deleted along with
+        // the 3 legacy nav buttons. Legacy navigateTo('beacon'|'terminal'|'tools')
+        // callers continue to work via NAVIGATE_ALIASES (top of this file).
+
+        // D6.1 — Restore activeDeployment from `?dep=NAME` BEFORE any tab
+        // navigation fires, so subscribers (cost chip, beacon/terminal panes)
+        // see the right context on their initialization sweep.
+        _initFromUrl();
+
         // Apply saved theme
         this.initTheme();
 
         // Setup tab navigation
         this.setupNavigation();
 
-        // Load initial page — restore from URL hash or sessionStorage
-        const hashPage = window.location.hash.replace('#', '');
-        const savedPage = sessionStorage.getItem('currentPage');
-        const initialPage = (hashPage && this.pages.includes(hashPage)) ? hashPage :
-                            (savedPage && this.pages.includes(savedPage)) ? savedPage : 'dashboard';
-        this.navigateTo(initialPage);
+        // Load initial page — restore from URL hash or sessionStorage.
+        // D0.3 — Accepts both new JSON format and stale plain-string sessionStorage
+        // values from operator browsers that loaded the dashboard pre-D0.
+        const initialTarget = _readPersistedTarget() || { parent: 'dashboard', subPill: null };
+        this.navigateTo(initialTarget);
 
         // Setup event handlers
         this.setupEventHandlers();
@@ -111,20 +309,94 @@ const APP = {
             window.activeDeploymentProjects.add(savedProject);
         }
 
-        // Fetch operator identity for badge
+        // D1 — Fetch operator identity, populate global header + hidden mirror.
+        // The legacy #operator-badge element is now hidden but kept so topology.js
+        // (app.js:~20268) can read its textContent to label the operator node.
         fetch('/api/whoami').then(r => r.json()).then(data => {
-            const badge = document.getElementById('operator-badge');
-            if (badge && data.operator) {
-                badge.textContent = data.operator;
-                badge.style.display = '';
-            }
+            if (!data || !data.operator) return;
+            const ghName = document.getElementById('global-operator-name');
+            if (ghName) ghName.textContent = data.operator;
+            const legacyBadge = document.getElementById('operator-badge');
+            if (legacyBadge) legacyBadge.textContent = data.operator;
         }).catch(() => {});
+
+        // D1 — Initialize the new global header (deployment combobox, cost chip).
+        // Defer to next tick so other init paths (theme, nav) settle first.
+        setTimeout(() => initGlobalHeader(), 0);
+
+        // Version footer (P1 #7.6) — populate footer + modal, wire handlers
+        this.initVersionFooter();
 
         console.log('✅ Application initialized successfully');
     },
 
     /**
-     * Initialize theme from localStorage
+     * Fetch /api/version, populate the footer + modal, and wire up
+     * click/keyboard handlers. Defensive: any failure renders
+     * "v? (unknown)" — the UI never crashes on version-info errors.
+     */
+    initVersionFooter() {
+        const footer = document.getElementById('app-version-footer');
+        const footerText = document.getElementById('app-version-footer-text');
+        const modal = document.getElementById('version-modal');
+        if (!footer || !footerText || !modal) return;
+
+        const setUnknown = () => {
+            this.versionInfo = { version: 'unknown', git_sha: 'unknown', built_at: 'unknown' };
+            footerText.textContent = 'v? (unknown)';
+            this._populateVersionModal();
+        };
+
+        fetch('/api/version')
+            .then(r => r.ok ? r.json() : Promise.reject(new Error('bad status')))
+            .then(data => {
+                const version = (data && data.version) ? String(data.version) : 'unknown';
+                const sha = (data && data.git_sha) ? String(data.git_sha) : 'unknown';
+                const built = (data && data.built_at) ? String(data.built_at) : 'unknown';
+                this.versionInfo = { version, git_sha: sha, built_at: built };
+                if (version === 'unknown' && sha === 'unknown') {
+                    footerText.textContent = 'v? (unknown)';
+                } else {
+                    footerText.textContent = `v${version} (${sha})`;
+                }
+                this._populateVersionModal();
+            })
+            .catch(() => setUnknown());
+
+        // Footer click + keyboard activation. Close handlers (backdrop, ✕
+        // button, Esc key) are wired automatically by APP.modal.open() via
+        // [data-modal-close] + per-instance escHandler — no ad-hoc wiring
+        // needed here (M-Redesign Agent 2 v2.0.0).
+        const openHandler = (e) => {
+            e.preventDefault();
+            openVersionModal();
+        };
+        footer.addEventListener('click', openHandler);
+        footer.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') openHandler(e);
+        });
+    },
+
+    /**
+     * Populate the modal fields from APP.versionInfo (helper kept private).
+     */
+    _populateVersionModal() {
+        const info = this.versionInfo || { version: 'unknown', git_sha: 'unknown', built_at: 'unknown' };
+        const v = document.getElementById('version-modal-version');
+        const s = document.getElementById('version-modal-sha');
+        const b = document.getElementById('version-modal-built');
+        if (v) v.textContent = info.version || 'unknown';
+        if (s) s.textContent = info.git_sha || 'unknown';
+        if (b) b.textContent = info.built_at || 'unknown';
+    },
+
+    /**
+     * Initialize theme from localStorage.
+     *
+     * D1 — Wires the NEW global header theme toggle (#global-theme-toggle).
+     * Label shows the theme the toggle will switch TO (per V3 preview):
+     *   - In dark mode  → label reads "Light"
+     *   - In light mode → label reads "Dark"
      */
     initTheme() {
         const saved = localStorage.getItem('theme');
@@ -133,7 +405,7 @@ const APP = {
         }
         this.updateThemeIcon();
 
-        const toggleBtn = document.getElementById('theme-toggle');
+        const toggleBtn = document.getElementById('global-theme-toggle');
         if (toggleBtn) {
             toggleBtn.addEventListener('click', () => this.toggleTheme());
         }
@@ -157,13 +429,14 @@ const APP = {
     },
 
     /**
-     * Update the theme toggle icon
+     * Update the theme toggle label (V3 — text, not glyph).
+     * Label = the theme we will switch TO (dark mode shows "Light", vice versa).
      */
     updateThemeIcon() {
-        const icon = document.getElementById('theme-icon');
-        if (icon) {
+        const label = document.getElementById('global-theme-toggle-label');
+        if (label) {
             const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-            icon.innerHTML = isLight ? '&#9728;' : '&#9790;';
+            label.textContent = isLight ? 'Dark' : 'Light';
         }
     },
     
@@ -183,44 +456,65 @@ const APP = {
     },
     
     /**
-     * Navigate to a specific page
-     * @param {string} pageName - The page to navigate to
+     * Navigate to a specific page.
+     *
+     * D0.2 — Accepts three call shapes for forward-compat with D3 sub-pills:
+     *   1. navigateTo('dashboard')                                  — legacy flat string
+     *   2. navigateTo('deployments-tab', 'configure')               — (parent, subPill)
+     *   3. navigateTo({parent: 'deployments-tab', subPill: '...'})  — object form
+     *
+     * Today every flat string resolves via NAVIGATE_ALIASES to a passthrough
+     * tuple with `subPill: null`, so all 14 existing cross-tab call sites
+     * keep behaving identically. D3.6 will repoint alias values to the
+     * merged "deployments-tab" parent and sub-pills will start activating.
+     *
+     * @param {string|object} pageOrTarget - Page name OR {parent, subPill} tuple
+     * @param {string} [subPill] - Optional sub-pill when pageOrTarget is a parent name
      */
-    navigateTo(pageName) {
-        console.log(`📄 Navigating to: ${pageName}`);
-        
+    navigateTo(pageOrTarget, subPill) {
+        // Resolve to canonical {parent, subPill} form
+        let target;
+        if (subPill !== undefined && typeof pageOrTarget === 'string') {
+            target = { parent: pageOrTarget, subPill: subPill };
+        } else {
+            target = resolveNavigationTarget(pageOrTarget) || { parent: 'dashboard', subPill: null };
+        }
+
+        const pageName = target.parent;
+        console.log(`📄 Navigating to: ${pageName}` + (target.subPill ? ` / ${target.subPill}` : ''));
+
         // Validate page exists
         if (!this.pages.includes(pageName)) {
             console.error(`❌ Page "${pageName}" does not exist!`);
             return;
         }
-        
-        // Stop beacon polling when leaving beacon page
-        if (this.currentPage === 'beacon') {
-            BEACON.stopHealthPoll();
-        }
-        // Stop terminal background refresh when leaving terminal page
-        if (this.currentPage === 'terminal') {
-            TERMINAL.stopBackgroundRefresh();
-        }
 
-        // Clear deployment polling when leaving the deployment page
-        if (this.currentPage === 'deployment' && pageName !== 'deployment') {
-            if (deploymentPollInterval) {
-                clearInterval(deploymentPollInterval);
-                deploymentPollInterval = null;
+        // D4.5 — The legacy `this.currentPage === 'beacon'` / 'terminal'
+        // leave hooks became dead code after D4.2/D4.3 re-parented those
+        // subtrees as sub-pills of 'operations-tab'. They are now handled
+        // by the operations-tab leave block below + APP._runSubPillCleanup.
+
+        // D3.6 — When leaving the merged Deployments tab, run cleanup for
+        // whichever sub-pill is currently active. This kills the deployment-
+        // page polling + manage-page auto-refresh + destroy poll that used to
+        // be flat-tab-leave hooks before D3.4 re-parented them as sub-pills.
+        // D3.5 also runs this on sub-pill switch within the tab.
+        if (this.currentPage === 'deployments-tab' && pageName !== 'deployments-tab') {
+            if (this.currentSubPill) {
+                APP._runSubPillCleanup('deployments-tab', this.currentSubPill);
             }
         }
 
-        // Stop auto-refresh and destroy poll when leaving deployments page
-        if (this.currentPage === 'deployments' && pageName !== 'deployments') {
-            stopAutoRefresh();
-            if (window._destroyPollInterval) {
-                clearInterval(window._destroyPollInterval);
-                window._destroyPollInterval = null;
+        // D4.5 — Same pattern for Operations: when leaving the merged tab,
+        // run cleanup for the active sub-pill so beacon health poll +
+        // terminal background refresh don't keep firing in the background.
+        if (this.currentPage === 'operations-tab' && pageName !== 'operations-tab') {
+            if (this.currentSubPill) {
+                APP._runSubPillCleanup('operations-tab', this.currentSubPill);
             }
         }
-        
+
+
         // Hide all pages
         const allPages = document.querySelectorAll('.tab-page');
         allPages.forEach(page => {
@@ -252,12 +546,63 @@ const APP = {
         }
         
         // Update current page and persist for refresh
+        // D0.2 — sessionStorage now stores the full {parent, subPill} tuple as JSON.
+        // The hash form is `#parent` or `#parent/subPill`. Backwards-compat with
+        // stale plain-string values is handled by _readPersistedTarget() at init.
+        // D6.2 — Use history.replaceState (NOT pushState, NOT location.hash=) so
+        // (a) the back-button history isn't polluted with every tab/sub-pill flip
+        // and (b) we avoid the implicit scroll-to-anchor that `location.hash=`
+        // triggers. We also include `?dep=NAME` so the URL is a bookmarkable
+        // deep-link to the current (tab, sub-pill, deployment) triple.
         this.currentPage = pageName;
-        sessionStorage.setItem('currentPage', pageName);
-        window.location.hash = pageName;
+        this.currentSubPill = target.subPill || null;
+        sessionStorage.setItem('currentPage', JSON.stringify(target));
+        _updateUrlState(pageName, target.subPill);
+        APP._urlReady = true;  // unblock activeDeployment subscriber (D6.2)
 
         // Load page-specific content
         this.loadPageContent(pageName);
+
+        // D2 — If the alias target carries an anchor (e.g., 'aws-check' →
+        // settings + 'aws-prereqs-anchor'), scroll the in-page section into
+        // view after content has rendered. Tiny setTimeout so layout settles.
+        if (target.anchor) {
+            setTimeout(() => {
+                const anchorEl = document.getElementById(target.anchor);
+                if (anchorEl) anchorEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 50);
+        }
+
+        // M-Dashboard / Decision #21 — If the alias target carries an `openModal`
+        // hint, open that modal after the parent tab is shown. Today this is
+        // only used for the Architecture modal (legacy navigateTo('architecture')
+        // call sites land on Dashboard + auto-open the modal).
+        if (target.openModal === 'architecture-modal' && typeof APP.openArchitectureModal === 'function') {
+            setTimeout(() => APP.openArchitectureModal(), 50);
+        }
+
+        // D3.1 — If navigating to the merged Deployments tab with a sub-pill
+        // (either explicitly via {parent, subPill} or via URL hash like
+        // #deployments-tab/deploy), activate the matching pane. D3.6 also
+        // activates sub-pills when navigating via legacy alias names.
+        // D3.5 — If entering 'deployments-tab' without a sub-pill (e.g.,
+        // direct click on the Deployments nav button), default to
+        // 'configure' so init hooks fire and a pane is always visible.
+        if (target.subPill && pageName === 'deployments-tab') {
+            APP.setActiveSubPill(pageName, target.subPill);
+        } else if (pageName === 'deployments-tab' && !target.subPill && !APP.currentSubPill) {
+            APP.setActiveSubPill('deployments-tab', 'configure');
+        }
+
+        // D4.5 — Operations tab mirrors the Deployments default-sub-pill
+        // behavior. If a sub-pill was specified in the alias, activate it;
+        // otherwise default to 'beacons' on first entry so init hooks fire
+        // and a pane is always visible.
+        if (target.subPill && pageName === 'operations-tab') {
+            APP.setActiveSubPill(pageName, target.subPill);
+        } else if (pageName === 'operations-tab' && !target.subPill && !APP.currentSubPill) {
+            APP.setActiveSubPill('operations-tab', 'beacons');
+        }
     },
     
     /**
@@ -272,44 +617,32 @@ const APP = {
                 case 'dashboard':
                     loadDashboard();
                     break;
-                case 'configuration':
-                    loadConfig();
-                    break;
-                case 'deployment':
-                    // Reset plan state when navigating to deployment page
-                    isPlanRunning = false;
-                    resetDeployValidation();
-                    loadConfigSummary();
-                    checkDeploymentStatus();
-                    checkDomainConfig();
-                    checkCobaltStrikeFile();
-                    checkCSClientFile();
-                    checkSSHPublicKey();
-                    break;
-                case 'deployments':
-                    loadDeploymentsPage();
-                    startAutoRefresh();
-                    break;
-                case 'tools':
-                    loadToolsPage();
-                    break;
-                case 'aws-check':
-                    // AWS page is interactive, no auto-load
-                    console.log('AWS Check page ready');
-                    break;
-                case 'architecture':
-                    if (typeof initArchitecturePage === 'function') {
-                        initArchitecturePage();
-                    }
-                    break;
-                case 'beacon':
-                    BEACON.init();
-                    break;
-                case 'terminal':
-                    TERMINAL.init();
-                    break;
+                // D3.6 — Legacy 'configuration' / 'deployment' / 'deployments'
+                // cases removed. Sub-pill init now lives in
+                // APP._runSubPillInit() (D3.5), invoked from the
+                // 'deployments-tab' case below.
+                // D4.4 — Legacy 'tools' case removed. Tools subtree is now
+                // re-parented under #subpill-pane-payloads (renamed per §19.4)
+                // inside 'operations-tab'. loadToolsPage() will be wired into
+                // APP._runSubPillInit at D4.5.
+                // M-Dashboard / Decision #21 — Legacy 'architecture' case removed.
+                // The Architecture tab was folded into a Dashboard widget + modal;
+                // initArchitecturePage() now fires from APP.openArchitectureModal()
+                // on first open instead of from loadPageContent.
+                // D4.2/3 — Legacy 'beacon' / 'terminal' cases removed. Both
+                // subtrees are now re-parented under #subpill-pane-beacons /
+                // #subpill-pane-terminal inside 'operations-tab'. Their init
+                // functions (BEACON.init / TERMINAL.init) will be wired into
+                // APP._runSubPillInit at D4.5.
                 case 'settings':
                     initSettingsPage();
+                    break;
+                case 'deployments-tab':
+                    // D3.5 — Sub-pill init runs via APP.setActiveSubPill (called
+                    // by navigateTo immediately after this). No direct init call
+                    // here — setActiveSubPill handles both the cleanup-of-prev
+                    // and init-of-new hooks. This case is intentionally a no-op
+                    // so we don't double-fire init functions.
                     break;
                 default:
                     console.log(`No specific loader for: ${pageName}`);
@@ -1596,6 +1929,1668 @@ location = <YOUR_STAGER_URI_X64> {
 };
 
 // ============================================================================
+// D1 — GLOBAL HEADER (Plan §17 P1 #11 / §21.7 D1.1-D1.4)
+//
+// Hosts:
+//   - APP.activeDeployment   — global selected-deployment state (D1.2)
+//   - initGlobalHeader()     — boots the combobox + cost chip (D1.3 + D1.4)
+//   - _setupGlobalCombobox() — keyboard/ARIA-compliant custom listbox (D1.3)
+//   - _refreshGlobalCost()   — pulls /api/costs/summary for active deploy (D1.4)
+//
+// Per Decision #9: today there is a SINGLE global active-deployment selector.
+// D4 will add per-sub-pill overrides — existing per-tab dropdowns subscribe
+// in D4.1 via APP.activeDeployment.subscribe().
+// ============================================================================
+
+/**
+ * D1.2 — Global active-deployment state container.
+ *
+ * Subscribers are notified on .set() — used by Beacon, Terminal, Tools to
+ * react to deployment changes. Today (pre-D4) only the header reads from
+ * this; D4.1 will wire existing per-tab dropdowns to it.
+ *
+ * The current selection is persisted to localStorage (NOT sessionStorage —
+ * activeDeployment should outlive a single browser tab; the per-tab
+ * currentPage uses sessionStorage instead).
+ */
+APP.activeDeployment = (function () {
+    const STORAGE_KEY = 'activeDeployment';
+    let _current = null;
+    try {
+        _current = localStorage.getItem(STORAGE_KEY) || null;
+    } catch (e) { /* private-mode browsers — ignore */ }
+    const _subscribers = new Set();
+    return {
+        get current() { return _current; },
+        set(name) {
+            if (_current === name) return;
+            _current = name;
+            try {
+                if (name) localStorage.setItem(STORAGE_KEY, name);
+                else localStorage.removeItem(STORAGE_KEY);
+            } catch (e) { /* private-mode — ignore */ }
+            _subscribers.forEach(fn => {
+                try { fn(name); } catch (e) { console.error('activeDeployment subscriber error', e); }
+            });
+        },
+        subscribe(fn) {
+            _subscribers.add(fn);
+            // Call immediately so subscribers can initialize from current value
+            try { fn(_current); } catch (e) { console.error('activeDeployment init subscriber error', e); }
+            return () => _subscribers.delete(fn);  // disposer
+        }
+    };
+})();
+
+// D3.1 — Sub-pill switcher for the merged Deployments tab.
+// On pill click: toggle .is-active class on all pills, toggle hidden
+// on the corresponding panes.
+// D3.5 — Per-sub-pill lifecycle hooks (enter/leave) so polling/state
+// cleanup mirrors today's tab-level lifecycle (see §20.6 + §26.4 item 2).
+// Outgoing sub-pill gets its cleanup hook fired (kills pollers, closes
+// attached modals). Incoming sub-pill gets its init hook fired (mirrors
+// what loadPageContent used to do for the now-removed flat tab name).
+APP.setActiveSubPill = function (parentTabName, subPillName) {
+    const tabPage = document.querySelector(`.tab-page[data-page="${parentTabName}"]`);
+    if (!tabPage) return;
+
+    // D3.5 — Run cleanup hook for the previously-active sub-pill
+    const prevSubPill = APP.currentSubPill;
+    if (prevSubPill && prevSubPill !== subPillName) {
+        APP._runSubPillCleanup(parentTabName, prevSubPill);
+    }
+
+    const pills = tabPage.querySelectorAll('.subpill-nav__pill');
+    const panes = tabPage.querySelectorAll('.subpill-pane');
+    pills.forEach(p => {
+        const isActive = p.dataset.subpill === subPillName;
+        p.classList.toggle('is-active', isActive);
+        p.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+    panes.forEach(pane => {
+        const isMatch = pane.dataset.subpillPane === subPillName;
+        if (isMatch) {
+            pane.removeAttribute('hidden');
+            // M-Redesign Agent 3 — re-trigger the .subpill-pane CSS keyframe
+            // animation by clearing & forcing a reflow. Without this, switching
+            // back to a previously-visited pane does NOT re-run the keyframe
+            // (browser optimization: hidden→visible alone doesn't re-fire).
+            pane.style.animation = 'none';
+            void pane.offsetWidth;  // force reflow
+            pane.style.animation = '';
+        } else {
+            pane.setAttribute('hidden', '');
+        }
+    });
+    APP.currentSubPill = subPillName;
+    sessionStorage.setItem('currentPage', JSON.stringify({ parent: parentTabName, subPill: subPillName }));
+    // D6.2 — Sub-pill switch (e.g. operator clicking a pill button directly,
+    // not going through navigateTo) must also refresh the bookmarkable URL.
+    _updateUrlState(parentTabName, subPillName);
+
+    // D3.5 — Run init hook for the newly-active sub-pill
+    APP._runSubPillInit(parentTabName, subPillName);
+};
+
+// D6.2 — Re-render the URL whenever the active deployment changes (via the
+// global combobox, per-tab override dropdown, "Resume" link, etc.). Skip
+// before the first navigateTo() has fired so we don't paint a half-formed
+// URL during boot — `_urlReady` flips on inside navigateTo() the first time
+// it runs (i.e. at the end of init()), and after that any deployment change
+// rewrites the URL. Without this guard the fire-immediately subscribe call
+// would clobber an inbound deep-link URL with the default `#dashboard`.
+APP.activeDeployment.subscribe(() => {
+    if (!APP._urlReady) return;
+    _updateUrlState(APP.currentPage, APP.currentSubPill);
+});
+
+// ============================================================================
+// M-Redesign Agent 3 — Motion fluidity helpers + state utilities
+//
+// All animation primitives live in style.css (.motion-*, .skeleton-*,
+// .empty-state, .toast). These JS helpers are the imperative triggers:
+//   - APP._staggerOnce(el)         — apply .motion-stagger-in for ~600ms
+//                                    so the stagger fires once per mount,
+//                                    not on every polled re-render.
+//   - APP.renderSkeleton(el, ...)  — drop shimmer placeholders during fetch.
+//   - APP.toast(msg, variant)      — bottom-right transient notifications.
+//
+// Every animation respects prefers-reduced-motion via media queries in CSS.
+// ============================================================================
+
+/**
+ * Apply the .motion-stagger-in class to a container once. The class is
+ * removed after 600ms so the keyframe animation only plays on first mount
+ * (or first call) — subsequent re-renders by pollers don't re-stagger.
+ *
+ * @param {string|Element} target - selector or element reference
+ */
+APP._staggerOnce = function (target) {
+    const el = typeof target === 'string' ? document.querySelector(target) : target;
+    if (!el || el._staggered) return;
+    el._staggered = true;
+    el.classList.add('motion-stagger-in');
+    setTimeout(() => el.classList.remove('motion-stagger-in'), 600);
+};
+
+/**
+ * Render N shimmer placeholders inside a container during fetch. Cleared
+ * automatically when the caller writes real content into the same node.
+ *
+ * @param {string|Element} container - target node or selector / element id
+ * @param {string} type - 'text' | 'text-sm' | 'card' | 'avatar' (default 'card')
+ * @param {number} count - how many skeletons to render (default 3)
+ */
+APP.renderSkeleton = function (container, type = 'card', count = 3) {
+    let el;
+    if (typeof container === 'string') {
+        el = document.getElementById(container) || document.querySelector(container);
+    } else {
+        el = container;
+    }
+    if (!el) return;
+    const html = Array(count).fill(`<div class="skeleton skeleton--${type}"></div>`).join('');
+    el.innerHTML = html;
+};
+
+/**
+ * Show a transient bottom-right toast notification.
+ *
+ * @param {string} message - text shown to operator
+ * @param {string} variant - 'info' | 'success' | 'warning' | 'danger' (default 'info')
+ * @param {number} duration - ms before slide-out begins (default 4000)
+ */
+APP.toast = function (message, variant = 'info', duration = 4000) {
+    const container = document.getElementById('toast-container');
+    if (!container) {
+        // Fallback for pages without the container — log instead of swallow.
+        console.warn('[toast] no #toast-container found, message:', message);
+        return;
+    }
+    const toast = document.createElement('div');
+    toast.className = `toast toast--${variant}`;
+    // Critical messages (danger / warning) get assertive role so AT
+    // announces immediately; routine status gets polite live-region.
+    toast.setAttribute('role',
+        (variant === 'danger' || variant === 'warning') ? 'alert' : 'status'
+    );
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('toast--leaving');
+        setTimeout(() => toast.remove(), 220);
+    }, duration);
+};
+// === end M-Redesign Agent 3 helpers ====================================
+
+/**
+ * D3.5 — Cleanup hook for an outgoing sub-pill. Mirrors the per-tab
+ * tab-leave cleanup that used to live in navigateTo() before the 3
+ * legacy flat tabs were merged into 'deployments-tab'. Without this,
+ * switching sub-pills leaks pollers (deployment status, auto-refresh,
+ * destroy poll) and leaves modals visible above hidden content.
+ *
+ * D3.7 — Also closes attached modals (#session-logs-modal,
+ * #archived-logs-modal, #screenshot-overlay, #version-modal) that
+ * were appended to document.body and would otherwise stay visible
+ * after the sub-pill they belong to has been hidden.
+ */
+APP._runSubPillCleanup = function (parentTabName, subPillName) {
+    if (parentTabName === 'deployments-tab') {
+        APP._closeAttachedModals();  // D3.7 — close any stuck modals
+        if (subPillName === 'deploy') {
+            if (typeof deploymentPollInterval !== 'undefined' && deploymentPollInterval) {
+                clearInterval(deploymentPollInterval);
+                deploymentPollInterval = null;
+            }
+        } else if (subPillName === 'manage') {
+            if (typeof stopAutoRefresh === 'function') stopAutoRefresh();
+            if (window._destroyPollInterval) {
+                clearInterval(window._destroyPollInterval);
+                window._destroyPollInterval = null;
+            }
+        }
+        // 'configure' has no polling, no cleanup needed
+    } else if (parentTabName === 'operations-tab') {
+        // D4.5 — Operations sub-pill cleanup. Mirrors the legacy flat-tab
+        // leave hooks (lines ~424-431 of navigateTo) which became dead code
+        // once Beacon / Terminal / Tools were re-parented as sub-pills.
+        // Stops the beacon health poll + terminal background refresh so
+        // they don't keep firing after the sub-pill is hidden.
+        APP._closeAttachedModals();  // §26.4 #1 — close any stuck modals
+        if (subPillName === 'beacons') {
+            if (typeof BEACON !== 'undefined' && BEACON.stopHealthPoll) BEACON.stopHealthPoll();
+        } else if (subPillName === 'terminal') {
+            if (typeof TERMINAL !== 'undefined' && TERMINAL.stopBackgroundRefresh) TERMINAL.stopBackgroundRefresh();
+        }
+        // 'payloads' has no pollers, no cleanup needed
+    }
+};
+
+/**
+ * D3.5 — Init hook for an incoming sub-pill. Mirrors the per-tab
+ * loadPageContent() switch cases that used to fire for the flat
+ * 'configuration' / 'deployment' / 'deployments' tabs before the
+ * merge. Each branch is feature-detected with typeof guards so
+ * hot-reload / partial-module loading doesn't crash.
+ */
+APP._runSubPillInit = function (parentTabName, subPillName) {
+    if (parentTabName === 'deployments-tab') {
+        if (subPillName === 'configure') {
+            if (typeof loadConfig === 'function') loadConfig();
+        } else if (subPillName === 'deploy') {
+            // Same 6 init functions that loadPageContent ran for the
+            // legacy 'deployment' flat tab.
+            if (typeof isPlanRunning !== 'undefined') isPlanRunning = false;
+            if (typeof resetDeployValidation === 'function') resetDeployValidation();
+            if (typeof loadConfigSummary === 'function') loadConfigSummary();
+            if (typeof checkDeploymentStatus === 'function') checkDeploymentStatus();
+            if (typeof checkDomainConfig === 'function') checkDomainConfig();
+            if (typeof checkCobaltStrikeFile === 'function') checkCobaltStrikeFile();
+            if (typeof checkCSClientFile === 'function') checkCSClientFile();
+            if (typeof checkSSHPublicKey === 'function') checkSSHPublicKey();
+        } else if (subPillName === 'manage') {
+            if (typeof loadDeploymentsPage === 'function') loadDeploymentsPage();
+            if (typeof startAutoRefresh === 'function') startAutoRefresh();
+            // Phase 3a — render V3-native manage view (hero + spec-list + actions).
+            if (APP.manage && typeof APP.manage.render === 'function') {
+                APP.manage.render();
+            }
+        } else if (subPillName === 'cleanup') {
+            if (typeof loadCleanupResources === 'function') loadCleanupResources(false);
+        }
+    } else if (parentTabName === 'operations-tab') {
+        // D4.5 — Operations sub-pill init. Mirrors the legacy flat-tab
+        // loadPageContent() switch cases (beacon / terminal / tools) which
+        // were removed in D4.2-D4.4 when the subtrees were re-parented.
+        // Each branch is feature-detected so partial module loads don't crash.
+        // D4.5 — Wire the per-sub-pill selectors to APP.activeDeployment with
+        // override semantics. Idempotent — first call wins, subsequent calls
+        // are no-ops (guarded by APP._operationsSelectorSubscriptionsReady).
+        APP._setupOperationsSelectorSubscriptions();
+        if (subPillName === 'beacons') {
+            if (typeof BEACON !== 'undefined' && BEACON.init) BEACON.init();
+        } else if (subPillName === 'terminal') {
+            if (typeof TERMINAL !== 'undefined' && TERMINAL.init) TERMINAL.init();
+        } else if (subPillName === 'payloads') {
+            if (typeof loadToolsPage === 'function') loadToolsPage();
+            // Phase 3B.3 — initialize the V3 parameter spec-list + artifacts.
+            if (APP.payloads && typeof APP.payloads.init === 'function') {
+                APP.payloads.init();
+            }
+        }
+    }
+};
+
+/**
+ * D3.7 — Close every modal that would otherwise stay visible after the
+ * sub-pill it belongs to is hidden (§26.4 item 1).
+ *
+ * M-Redesign Agent 2 (v2.0.0): all modals now use the canonical .modal__*
+ * markup + APP.modal helpers, so this simply delegates to APP.modal.closeAll()
+ * which iterates `.modal:not([hidden])` and runs each through APP.modal.close()
+ * (cleans up Esc handlers + ARIA state + focus return).
+ */
+APP._closeAttachedModals = function () {
+    if (APP.modal && typeof APP.modal.closeAll === 'function') {
+        APP.modal.closeAll();
+    }
+};
+
+/**
+ * D4.5 — Wire each per-sub-pill deployment selector (Beacons / Terminal /
+ * Payloads) to APP.activeDeployment with OVERRIDE semantics (Decision #9).
+ *
+ * Behavior:
+ *   - When the global header active-deployment changes AND the per-sub-pill
+ *     selector has NOT been locally overridden, the per-sub-pill selector
+ *     mirrors the global value and fires its onchange handler.
+ *   - When the operator manually changes a per-sub-pill selector to a
+ *     different value than the global, the selector is marked
+ *     data-localOverride="true" — future global changes leave it alone.
+ *   - If the operator re-selects the same value as the global, the override
+ *     flag is cleared and the selector resumes following the global.
+ *
+ * Idempotent: gated by APP._operationsSelectorSubscriptionsReady so the
+ * three subscribers are only registered once even if the Operations tab
+ * is entered multiple times.
+ */
+APP._setupOperationsSelectorSubscriptions = function () {
+    if (APP._operationsSelectorSubscriptionsReady) return;
+    const selectors = [
+        { id: 'beacon-deployment-select',   handler: () => (typeof BEACON   !== 'undefined' && BEACON.onDeploymentSelected)   && BEACON.onDeploymentSelected() },
+        { id: 'terminal-deployment-select', handler: () => (typeof TERMINAL !== 'undefined' && TERMINAL.onDeploymentSelected) && TERMINAL.onDeploymentSelected() },
+        { id: 'tools-project-select',       handler: () => (typeof loadToolsConnectionInfo === 'function') && loadToolsConnectionInfo(document.getElementById('tools-project-select')?.value) }
+    ];
+    selectors.forEach(sel => {
+        const el = document.getElementById(sel.id);
+        if (!el) return;
+        // Subscribe: when global changes AND this selector has no local
+        // override, sync the value + fire its handler.
+        APP.activeDeployment.subscribe(name => {
+            if (!name) return;
+            if (el.dataset.localOverride === 'true') return;
+            // Only sync if the new value is selectable in this <select>'s
+            // options (otherwise we'd set a phantom value).
+            const hasOption = Array.from(el.options).some(o => o.value === name);
+            if (!hasOption) return;
+            if (el.value === name) return;
+            el.value = name;
+            try { sel.handler(); } catch (e) { console.error(`[D4.5] ${sel.id} handler error`, e); }
+        });
+        // Mark as locally overridden when the operator manually changes
+        // it to something other than the current global.
+        el.addEventListener('change', () => {
+            const userValue = el.value;
+            const globalValue = APP.activeDeployment.current;
+            el.dataset.localOverride = (userValue && userValue !== globalValue) ? 'true' : 'false';
+        });
+    });
+    APP._operationsSelectorSubscriptionsReady = true;
+};
+
+// Phase 2B — D3.3 inline-collapse is replaced by per-row spec-list editing.
+// Helper retained as a no-op so any cached external callers don't throw.
+APP.toggleInlineConfigPanel = function () { /* deprecated under Phase 2B */ };
+
+// Wire pill buttons. Listener attached at DOMContentLoaded so the .subpill-nav__pill
+// DOM is guaranteed present (the scaffold lives in index.html, not injected by JS).
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.subpill-nav__pill').forEach(pill => {
+        pill.addEventListener('click', () => {
+            const tabPage = pill.closest('.tab-page');
+            const parentTab = tabPage ? tabPage.dataset.page : null;
+            if (parentTab) APP.setActiveSubPill(parentTab, pill.dataset.subpill);
+        });
+        pill.addEventListener('keydown', (e) => {
+            // Arrow keys for keyboard navigation between pills
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                e.preventDefault();
+                const pills = Array.from(pill.parentElement.querySelectorAll('.subpill-nav__pill'));
+                const idx = pills.indexOf(pill);
+                const next = e.key === 'ArrowRight' ? pills[idx + 1] : pills[idx - 1];
+                if (next) {
+                    next.click();
+                    next.focus();
+                }
+            }
+        });
+    });
+});
+
+// In-memory cache of the deployment list — re-fetched on next open if stale.
+let _globalHeaderDeployments = [];
+
+/**
+ * D1.3 — Initialise the global header: combobox + cost chip + click handlers.
+ * Idempotent — safe to call multiple times (e.g. on hot-reload).
+ */
+function initGlobalHeader() {
+    const trigger = document.getElementById('global-deploy-trigger');
+    const listbox = document.getElementById('global-deploy-listbox');
+    if (!trigger || !listbox) return;  // header DOM not rendered
+
+    // Wire combobox keyboard + mouse + a11y once.
+    if (!trigger.dataset.ghWired) {
+        _setupGlobalCombobox(trigger, listbox);
+        trigger.dataset.ghWired = '1';
+    }
+
+    // Initial population of deployments.
+    _refreshGlobalDeployments();
+
+    // Wire cost chip → Settings → Cost Tracker.
+    const costChip = document.getElementById('global-cost-chip');
+    if (costChip && !costChip.dataset.ghWired) {
+        costChip.addEventListener('click', () => {
+            APP.navigateTo('settings');
+            // Defer scroll until the page is rendered.
+            setTimeout(() => {
+                const el = document.getElementById('cost-tracker-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 80);
+        });
+        costChip.style.cursor = 'pointer';
+        costChip.dataset.ghWired = '1';
+    }
+
+    // Brand-mark home link.
+    const brandMark = document.querySelector('.global-header__brand-mark');
+    if (brandMark && !brandMark.dataset.ghWired) {
+        brandMark.addEventListener('click', (e) => {
+            e.preventDefault();
+            APP.navigateTo('dashboard');
+        });
+        brandMark.dataset.ghWired = '1';
+    }
+
+    // Refresh cost whenever the active deployment changes.
+    APP.activeDeployment.subscribe(_refreshGlobalCost);
+
+    // D3.8 — Wire the "+ New" button in the global header to start a fresh
+    // deployment flow. Paired with the prominent banner button at the top
+    // of the Configure sub-pane (#configure-new-deployment-btn).
+    const newBtn = document.getElementById('global-new-deployment-btn');
+    if (newBtn && !newBtn.dataset.ghWired) {
+        // Phase 2B — wire to Hybrid takeover journey rather than legacy
+        // jump-to-Configure. APP.journey.open() mounts the wizard surface
+        // and dims the dashboard. Cancel/Escape/scrim-click restore.
+        newBtn.addEventListener('click', () => APP.journey.open({ trigger: newBtn }));
+        newBtn.dataset.ghWired = '1';
+    }
+    const bannerBtn = document.getElementById('configure-new-deployment-btn');
+    if (bannerBtn && !bannerBtn.dataset.ghWired) {
+        bannerBtn.addEventListener('click', () => APP.journey.open({ trigger: bannerBtn }));
+        bannerBtn.dataset.ghWired = '1';
+    }
+}
+
+// ============================================================================
+// D3.8 — NEW DEPLOYMENT FLOW
+// ============================================================================
+// M-Dashboard / Decision #21 — Architecture modal open/close. The legacy
+// Architecture tab was folded into a Dashboard widget + modal. These helpers
+// are wired to:
+//   1. The Dashboard "Architecture" widget thumbnail + "Browse all" button
+//   2. Legacy navigateTo('architecture') callers (via NAVIGATE_ALIASES)
+//
+// On first open: pre-selects the active deployment's diagram (via
+// /api/deploy/status?project=NAME) and fires initArchitecturePage() so the
+// existing architecture.js change-listener + renderArchitecture() pipeline
+// runs unchanged.
+
+// ============================================================================
+// M-Redesign Agent 2 — Unified modal open/close helpers (v2.0.0).
+//
+// Single canonical modal API used by every modal in the app. The helpers wire
+// data-modal-close (backdrop + close button), Escape-key dismissal, and focus
+// return-to-trigger. Idempotent: calling open() twice or close() on a closed
+// modal is a no-op. Markup contract: see .modal__* block in style.css.
+//
+// Usage:
+//   APP.modal.open('my-modal');                  // shows + wires + focuses
+//   APP.modal.open('my-modal', { returnFocusTo: btn });
+//   APP.modal.close('my-modal');
+//   APP.modal.closeAll();                        // dismiss every visible .modal
+// ============================================================================
+
+APP.modal = {
+    _lastTrigger: null,
+
+    open(id, opts = {}) {
+        const el = document.getElementById(id);
+        if (!el) { console.warn('Modal not found:', id); return; }
+        // Idempotent — re-opening a visible modal is a no-op.
+        if (!el.hasAttribute('hidden')) return;
+
+        el.removeAttribute('hidden');
+        el.setAttribute('aria-hidden', 'false');
+        APP.modal._lastTrigger = opts.returnFocusTo || document.activeElement;
+
+        // Wire data-modal-close on backdrop + close button (idempotent — guarded
+        // by _wired flag so re-opens don't stack listeners).
+        el.querySelectorAll('[data-modal-close]').forEach(closer => {
+            if (closer._wired) return;
+            closer._wired = true;
+            closer.addEventListener('click', (e) => {
+                e.preventDefault();
+                APP.modal.close(id);
+            });
+        });
+
+        // Esc handler — attached per-instance so multiple modals don't fight.
+        const escHandler = (e) => {
+            if (e.key === 'Escape') APP.modal.close(id);
+        };
+        document.addEventListener('keydown', escHandler);
+        el._escHandler = escHandler;
+
+        // Focus first focusable inside content for keyboard users.
+        const content = el.querySelector('.modal__content');
+        if (content) {
+            const focusable = content.querySelector(
+                'button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+                'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            );
+            if (focusable) {
+                focusable.focus();
+            } else {
+                content.setAttribute('tabindex', '-1');
+                content.focus();
+            }
+        }
+    },
+
+    close(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.hasAttribute('hidden')) return;  // already closed
+
+        el.setAttribute('hidden', '');
+        el.setAttribute('aria-hidden', 'true');
+        if (el._escHandler) {
+            document.removeEventListener('keydown', el._escHandler);
+            el._escHandler = null;
+        }
+        if (APP.modal._lastTrigger && typeof APP.modal._lastTrigger.focus === 'function') {
+            try { APP.modal._lastTrigger.focus(); } catch (_) { /* ignore */ }
+        }
+        APP.modal._lastTrigger = null;
+    },
+
+    closeAll() {
+        document.querySelectorAll('.modal:not([hidden])').forEach(m => {
+            if (m.id) APP.modal.close(m.id);
+        });
+    },
+};
+
+// ----------------------------------------------------------------------------
+// Architecture modal — wraps APP.modal.open() with the deployment-type
+// pre-select logic. Kept as APP.openArchitectureModal /
+// APP.closeArchitectureModal so existing onclick handlers + cached references
+// in index.html / architecture.js / NAVIGATE_ALIASES keep working unchanged.
+// ----------------------------------------------------------------------------
+
+APP.openArchitectureModal = function () {
+    // Lazy-init the architecture page on first open so the change listener
+    // is attached and a default diagram renders. Idempotent (architecture.js
+    // guards with an `architectureInitialized` flag).
+    if (typeof initArchitecturePage === 'function') {
+        try { initArchitecturePage(); } catch (e) { console.error('initArchitecturePage failed', e); }
+    }
+
+    APP.modal.open('architecture-modal');
+
+    // Pre-select the active deployment's diagram if any. Done AFTER open so
+    // the modal is already on-screen when the select change event fires.
+    const active = APP.activeDeployment && APP.activeDeployment.current;
+    if (active) {
+        fetch(`/api/deploy/status?project=${encodeURIComponent(active)}`)
+            .then(r => r.json())
+            .then(data => {
+                const dtype = (data && data.status && data.status.deployment_type) || null;
+                const sel = document.getElementById('architecture-select');
+                if (dtype && sel) {
+                    const hasOpt = Array.from(sel.options).some(o => o.value === dtype);
+                    if (hasOpt) {
+                        sel.value = dtype;
+                        sel.dispatchEvent(new Event('change'));
+                    }
+                }
+            })
+            .catch(() => { /* swallow — modal stays on whatever was selected */ });
+    }
+};
+
+APP.closeArchitectureModal = function () {
+    APP.modal.close('architecture-modal');
+};
+
+// ============================================================================
+// Phase 2B — NEW DEPLOYMENT JOURNEY (Hybrid wizard + spec-edit review)
+// ============================================================================
+// APP.journey is the controller for the "+ New Deployment" takeover. It
+// mounts a lazy-rendered wizard surface inside #journey-takeover (cleared
+// on close), dims/blurs the underlying dashboard via [data-journey-open],
+// and POSTs the assembled config to /api/config on Deploy. Operator
+// attribution is handled by the server-side g.operator middleware — no
+// extra wiring required here.
+//
+// State shape (single source of truth, mirrored from the preview demo):
+//   { phase, step, family, type, typeTitle, typeFamily,
+//     projectName, environment, region, regionHint, cidr, ssh }
+//
+// Lifecycle:
+//   open()        → mount DOM, set body[data-journey-open], start at step 1
+//   close({ confirmIfDirty }) → tear down DOM, restore focus, optional confirm
+//   goToStep(n)   → navigate within wizard
+//   goToReview()  → switch to review phase (J3 spec-edit)
+//   saveAndApply()→ POST /api/config, then navigate to Deploy sub-pill
+
+APP.journey = (function () {
+    const FAMILY_LABEL = { c2: 'Red team C2', goad: 'Training lab', combined: 'Combined' };
+    const FAMILY_TYPES = {
+        c2: ['c2-adhoc', 'c2-purple', 'c2-full'],
+        goad: ['goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha'],
+        combined: ['combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full'],
+    };
+    const REGION_LIST = [
+        ['eu-central-1', 'Frankfurt'],
+        ['eu-west-1', 'Ireland'],
+        ['eu-west-2', 'London'],
+        ['us-east-1', 'N. Virginia'],
+        ['us-west-2', 'Oregon'],
+    ];
+    const STEP_LABELS = ['Family', 'Type', 'Identity', 'Network'];
+    const ENV_OPTIONS = [
+        { val: 'dev', label: 'DEV — isolated, throwaway' },
+        { val: 'staging', label: 'STAGING — pre-production' },
+        { val: 'prod', label: 'PROD — production engagement' },
+    ];
+
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function defaultState() {
+        return {
+            phase: 'wizard',
+            step: 1,
+            family: 'goad',
+            type: 'goad-mini',
+            typeTitle: 'GOAD Mini',
+            typeFamily: FAMILY_LABEL.goad,
+            projectName: `new_dev_${(Date.now() % 100000).toString(36)}`,
+            environment: 'dev',
+            region: 'eu-central-1',
+            regionHint: 'Frankfurt',
+            cidr: '',
+            ssh: 'Auto-generated',
+            dirty: false,
+        };
+    }
+
+    // ─── State + DOM refs ────────────────────────────────────────────
+    let state = defaultState();
+    let _lastTrigger = null;
+    let _escHandler = null;
+    let _scrimClickHandler = null;
+    let _buffer = {};
+
+    function $(id) { return document.getElementById(id); }
+
+    function setDirty() { state.dirty = true; }
+
+    // ─── Render shells ───────────────────────────────────────────────
+    function renderShell() {
+        const card = $('journey-takeover');
+        if (!card) return;
+        const dotsHtml = STEP_LABELS.map((label, i) => {
+            const step = i + 1;
+            return `<button class="journey-progress__dot" type="button" data-journey-step="${step}">
+                        <span class="journey-progress__dot-circle"></span>${esc(label)}
+                    </button>`;
+        }).join('');
+
+        $('journey-takeover-body').innerHTML = `
+            <div id="journey-wizard">
+                <div class="journey-progress">
+                    <div class="journey-progress__dots" role="tablist" aria-label="Wizard progress">
+                        ${dotsHtml}
+                    </div>
+                    <button class="journey-progress__close" type="button" data-journey-cancel>Cancel</button>
+                </div>
+                <div id="journey-step-host"></div>
+                <div class="journey-foot">
+                    <span class="journey-foot__crumb" id="journey-crumb">Step 1 of 4 — Family</span>
+                    <div class="journey-foot__buttons">
+                        <button class="journey-btn" type="button" id="journey-back" disabled>Back</button>
+                        <button class="journey-btn journey-btn--primary" type="button" id="journey-next">Continue</button>
+                    </div>
+                </div>
+            </div>
+            <section class="journey-review" id="journey-review">
+                <div class="deploy-summary__eyebrow">
+                    <span class="deploy-summary__eyebrow-label">New Deployment · Review</span>
+                    <button class="journey-progress__close" type="button" data-journey-cancel>Cancel</button>
+                </div>
+                <span class="journey-review__breadcrumb">
+                    <span>From wizard</span>
+                    <span aria-hidden="true">·</span>
+                    <button class="journey-review__breadcrumb-link" type="button" id="journey-restart">Restart wizard</button>
+                </span>
+                <section class="deploy-summary__hero" aria-label="Deployment identity">
+                    <span class="deploy-summary__hero-caption">project</span>
+                    <h3 class="deploy-summary__hero-name" id="journey-hero-name" tabindex="-1">—</h3>
+                    <p class="deploy-summary__hero-type">
+                        <strong id="journey-hero-type">—</strong>
+                        <span class="t-muted"> · click any row to edit</span>
+                    </p>
+                </section>
+                <dl class="spec-list" id="journey-spec-list"></dl>
+                <div class="journey-foot">
+                    <span class="journey-foot__crumb">Ready to deploy</span>
+                    <div class="journey-foot__buttons">
+                        <button class="journey-btn" type="button" data-journey-cancel>Cancel</button>
+                        <button class="journey-btn journey-btn--primary" type="button" id="journey-deploy">Deploy &#9656;</button>
+                    </div>
+                </div>
+            </section>
+        `;
+
+        // Wire wizard controls
+        card.querySelectorAll('[data-journey-step]').forEach(d => {
+            d.addEventListener('click', () => goToStep(parseInt(d.dataset.journeyStep, 10)));
+        });
+        $('journey-back').addEventListener('click', () => goToStep(Math.max(1, state.step - 1)));
+        $('journey-next').addEventListener('click', () => {
+            if (state.step === 4) goToReview();
+            else goToStep(state.step + 1);
+        });
+        card.querySelectorAll('[data-journey-cancel]').forEach(b => {
+            b.addEventListener('click', () => close({ confirmIfDirty: true }));
+        });
+        $('journey-restart').addEventListener('click', () => {
+            state = defaultState();
+            renderStep();
+            goToStep(1);
+        });
+        $('journey-deploy').addEventListener('click', () => saveAndApply());
+    }
+
+    // ─── Wizard step rendering ───────────────────────────────────────
+    function renderStep() {
+        const host = $('journey-step-host');
+        if (!host) return;
+        const n = state.step;
+        let html = '';
+        if (n === 1) {
+            const cards = ['c2', 'goad', 'combined'].map(f => {
+                const checked = state.family === f;
+                const desc = f === 'c2' ? 'Cobalt Strike team server with redirectors and bastion. Real engagements.'
+                    : f === 'goad' ? 'Vulnerable Active Directory environments. Isolated. No outbound C2.'
+                    : 'C2 + GOAD on peered VPCs. End-to-end attack chain rehearsal.';
+                const count = `${FAMILY_TYPES[f].length} types`;
+                return `<label class="journey-card-option${checked ? ' is-checked' : ''}">
+                            <input type="radio" name="journey-family" value="${esc(f)}" ${checked ? 'checked' : ''}>
+                            <span class="journey-card-option__body">
+                                <span class="journey-card-option__title">${esc(FAMILY_LABEL[f])}</span>
+                                <span class="journey-card-option__desc">${esc(desc)}</span>
+                            </span>
+                            <span class="journey-card-option__hint">${esc(count)}</span>
+                        </label>`;
+            }).join('');
+            html = `
+                <section class="journey-step is-active" style="display:flex">
+                    <span class="journey-step__eyebrow">Step 1 / 4</span>
+                    <h2 class="journey-step__title">Pick a deployment family</h2>
+                    <p class="journey-step__lede">What are you building? You can change the specific type next.</p>
+                    <div class="journey-cards" role="radiogroup" aria-label="Deployment family">${cards}</div>
+                </section>
+            `;
+        } else if (n === 2) {
+            const ids = FAMILY_TYPES[state.family] || [];
+            const cards = ids.map(id => {
+                const def = DEPLOYMENT_CONFIGS[id];
+                if (!def) return '';
+                const checked = state.type === id;
+                const desc = (def.details || '').replace(/\s+/g, ' ').slice(0, 120);
+                const hint = def.components?.find(c => /Cost/i.test(c.label))?.value || `${(def.serverCount || ids.length) || ''}`.trim();
+                return `<label class="journey-card-option${checked ? ' is-checked' : ''}">
+                            <input type="radio" name="journey-type" value="${esc(id)}" ${checked ? 'checked' : ''}>
+                            <span class="journey-card-option__body">
+                                <span class="journey-card-option__title">${esc(def.title || id)}</span>
+                                <span class="journey-card-option__desc">${esc(desc)}</span>
+                            </span>
+                            <span class="journey-card-option__hint">${esc(hint)}</span>
+                        </label>`;
+            }).join('');
+            html = `
+                <section class="journey-step is-active" style="display:flex">
+                    <span class="journey-step__eyebrow">Step 2 / 4 · ${esc(FAMILY_LABEL[state.family])}</span>
+                    <h2 class="journey-step__title">Pick the specific type</h2>
+                    <p class="journey-step__lede">Each type packages different hosts, sizes, and provisioning.</p>
+                    <div class="journey-cards" role="radiogroup" aria-label="Specific deployment type">${cards}</div>
+                </section>
+            `;
+        } else if (n === 3) {
+            const envOpts = ENV_OPTIONS.map(o => `<option value="${esc(o.val)}" ${state.environment === o.val ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
+            html = `
+                <section class="journey-step is-active" style="display:flex">
+                    <span class="journey-step__eyebrow">Step 3 / 4</span>
+                    <h2 class="journey-step__title">Name this deployment</h2>
+                    <p class="journey-step__lede">Used for tagging AWS resources and S3 state. Lowercase, underscores, no spaces.</p>
+                    <div class="journey-field">
+                        <label class="journey-field__label" for="journey-project-name">Project name</label>
+                        <input class="journey-field__input" id="journey-project-name" type="text" value="${esc(state.projectName)}" autocomplete="off" spellcheck="false">
+                        <span class="journey-field__hint">Will tag every EC2 instance, security group, and S3 key.</span>
+                    </div>
+                    <div class="journey-field">
+                        <label class="journey-field__label" for="journey-env">Environment</label>
+                        <select class="journey-field__select" id="journey-env">${envOpts}</select>
+                        <span class="journey-field__hint">Drives cost-tracking and protection flags.</span>
+                    </div>
+                </section>
+            `;
+        } else if (n === 4) {
+            const regionOpts = REGION_LIST.map(([v, h]) => `<option value="${esc(v)}" ${state.region === v ? 'selected' : ''}>${esc(v)} — ${esc(h)}</option>`).join('');
+            html = `
+                <section class="journey-step is-active" style="display:flex">
+                    <span class="journey-step__eyebrow">Step 4 / 4</span>
+                    <h2 class="journey-step__title">Network placement</h2>
+                    <p class="journey-step__lede">Region drives latency and instance availability. Management CIDR is the only IP allowed SSH/RDP.</p>
+                    <div class="journey-field--row">
+                        <div class="journey-field">
+                            <label class="journey-field__label" for="journey-region">AWS region</label>
+                            <select class="journey-field__select" id="journey-region">${regionOpts}</select>
+                            <span class="journey-field__hint">CDK/ACM features pinned to us-east-1.</span>
+                        </div>
+                        <div class="journey-field">
+                            <label class="journey-field__label" for="journey-cidr">Management CIDR</label>
+                            <input class="journey-field__input" id="journey-cidr" type="text" value="${esc(state.cidr)}" placeholder="82.35.149.127/32" autocomplete="off" spellcheck="false">
+                            <span class="journey-field__hint">Your laptop's IP. /32 = exact host.</span>
+                        </div>
+                    </div>
+                </section>
+            `;
+        }
+        host.innerHTML = html;
+        wireStepInputs(n);
+        updateDots();
+        updateCrumb();
+    }
+
+    function wireStepInputs(n) {
+        const host = $('journey-step-host');
+        if (!host) return;
+        if (n === 1) {
+            host.querySelectorAll('input[name="journey-family"]').forEach(r => {
+                r.addEventListener('change', () => {
+                    state.family = r.value;
+                    state.typeFamily = FAMILY_LABEL[state.family];
+                    // Snap type to first of family if current type doesn't fit
+                    const ids = FAMILY_TYPES[state.family] || [];
+                    if (!ids.includes(state.type) && ids.length) {
+                        state.type = ids[0];
+                        const def = DEPLOYMENT_CONFIGS[state.type];
+                        state.typeTitle = def?.title || state.type;
+                    }
+                    setDirty();
+                    host.querySelectorAll('.journey-card-option').forEach(c => {
+                        c.classList.toggle('is-checked', c.querySelector('input')?.checked);
+                    });
+                });
+            });
+        } else if (n === 2) {
+            host.querySelectorAll('input[name="journey-type"]').forEach(r => {
+                r.addEventListener('change', () => {
+                    state.type = r.value;
+                    const def = DEPLOYMENT_CONFIGS[state.type];
+                    state.typeTitle = def?.title || state.type;
+                    state.typeFamily = FAMILY_LABEL[state.family];
+                    setDirty();
+                    host.querySelectorAll('.journey-card-option').forEach(c => {
+                        c.classList.toggle('is-checked', c.querySelector('input')?.checked);
+                    });
+                });
+            });
+        } else if (n === 3) {
+            $('journey-project-name')?.addEventListener('input', e => {
+                state.projectName = e.target.value;
+                setDirty();
+            });
+            $('journey-env')?.addEventListener('change', e => {
+                state.environment = e.target.value;
+                setDirty();
+            });
+        } else if (n === 4) {
+            $('journey-region')?.addEventListener('change', e => {
+                state.region = e.target.value;
+                const found = REGION_LIST.find(([v]) => v === state.region);
+                state.regionHint = found ? found[1] : '';
+                setDirty();
+            });
+            $('journey-cidr')?.addEventListener('input', e => {
+                state.cidr = e.target.value;
+                setDirty();
+            });
+        }
+    }
+
+    function updateDots() {
+        document.querySelectorAll('#journey-takeover [data-journey-step]').forEach(d => {
+            const n = parseInt(d.dataset.journeyStep, 10);
+            d.classList.toggle('is-active', state.phase === 'wizard' && n === state.step);
+            d.classList.toggle('is-done', state.phase === 'review' || n < state.step);
+        });
+    }
+    function updateCrumb() {
+        const crumb = $('journey-crumb');
+        const back = $('journey-back');
+        const next = $('journey-next');
+        if (!crumb || !back || !next) return;
+        crumb.textContent = `Step ${state.step} of 4 — ${STEP_LABELS[state.step - 1]}`;
+        back.disabled = (state.step === 1);
+        next.textContent = (state.step === 4) ? 'Review' : 'Continue';
+    }
+
+    function goToStep(n) {
+        state.phase = 'wizard';
+        state.step = Math.max(1, Math.min(4, n));
+        $('journey-wizard').style.display = '';
+        $('journey-review').classList.remove('is-active');
+        renderStep();
+    }
+
+    function goToReview() {
+        state.phase = 'review';
+        $('journey-wizard').style.display = 'none';
+        $('journey-review').classList.add('is-active');
+        $('journey-hero-name').textContent = state.projectName || '(unnamed)';
+        $('journey-hero-type').textContent = state.typeTitle || state.type;
+        renderReviewList();
+        updateDots();
+    }
+
+    // ─── Review (spec-list / J3) ─────────────────────────────────────
+    function buildReviewRows() {
+        const def = DEPLOYMENT_CONFIGS[state.type];
+        const cost = def?.components?.find(c => /Cost/i.test(c.label))?.value || '—';
+        return [
+            { key: 'type', label: 'Deployment Type', value: state.typeTitle || state.type, hint: state.typeFamily, editable: true, fieldType: 'type' },
+            { key: 'projectName', label: 'Project Name', value: state.projectName || '—', valueMono: true, hint: `${(state.projectName || '').length} chars`, editable: true, fieldType: 'text', placeholder: 'project_name' },
+            { key: 'environment', label: 'Environment', value: state.environment.toUpperCase(), isPill: true, hint: ENV_OPTIONS.find(o => o.val === state.environment)?.label.split('—')[1]?.trim() || '', editable: true, fieldType: 'seg', options: ENV_OPTIONS.map(o => ({ val: o.val, label: o.val.toUpperCase() })) },
+            { key: 'region', label: 'AWS Region', value: state.region, valueMono: true, hint: state.regionHint, editable: true, fieldType: 'seg', options: REGION_LIST.map(([val, hint]) => ({ val, label: val, hint })) },
+            { key: 'cidr', label: 'Management CIDR', value: state.cidr || '—', valueMono: true, hint: state.cidr ? 'single host' : '', editable: true, fieldType: 'cidr' },
+            { key: 'ssh', label: 'SSH Keys', value: state.ssh, hint: 'ed25519', editable: true, fieldType: 'seg', options: [
+                { val: 'Auto-generated', label: 'Auto' },
+                { val: 'Uploaded', label: 'Upload' },
+                { val: 'From S3', label: 'S3' },
+            ] },
+            { key: 'cost', label: 'Est. Monthly Cost', value: cost, valueMono: true, valueStrong: true, hint: 'computed', editable: false },
+        ];
+    }
+
+    function renderRow(row) {
+        const valueClasses = ['spec-row__value'];
+        if (row.valueMono) valueClasses.push('spec-row__value--mono');
+        if (row.valueStrong) valueClasses.push('spec-row__value--strong');
+        let valueHtml;
+        if (row.isPill) {
+            valueHtml = `<dd class="${valueClasses.join(' ')}"><span class="spec-pill"><span class="spec-pill__dot" aria-hidden="true"></span>${esc(row.value)}</span></dd>`;
+        } else {
+            valueHtml = `<dd class="${valueClasses.join(' ')}">${esc(row.value)}</dd>`;
+        }
+        const hintHtml = row.hint ? `<dd class="spec-row__hint">${esc(row.hint)}</dd>` : '<dd class="spec-row__hint"></dd>';
+        const pencilHtml = row.editable
+            ? `<button class="spec-row__action" type="button" aria-label="Edit ${esc(row.label)}"><svg class="icon" aria-hidden="true"><use href="#icon-edit-pencil"/></svg></button>`
+            : '<span class="spec-row__action" aria-hidden="true"></span>';
+        const readonlyAttr = row.editable ? '' : ' data-readonly="true"';
+        return `
+            <div class="spec-row" data-review-row="${esc(row.key)}"${readonlyAttr}>
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">${esc(row.label)}</dt>
+                    ${valueHtml}
+                    ${hintHtml}
+                    ${pencilHtml}
+                </div>
+                <div class="spec-row__editor" data-review-editor="${esc(row.key)}"></div>
+            </div>
+        `;
+    }
+
+    function buildEditor(row) {
+        let fieldHtml = '';
+        if (row.fieldType === 'text') {
+            fieldHtml = `<input class="spec-row__editor-input" type="text" value="${esc(row.value !== '—' ? row.value : '')}" data-edit-input placeholder="${esc(row.placeholder || '')}" autocomplete="off" spellcheck="false">`;
+        } else if (row.fieldType === 'cidr') {
+            fieldHtml = `
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <input class="spec-row__editor-input" type="text" value="${esc(state.cidr)}" data-edit-input placeholder="82.35.149.127/32" autocomplete="off" spellcheck="false" style="flex:1">
+                    <button class="spec-edit-btn" type="button" data-edit-action="my-ip">Use my IP</button>
+                </div>
+                <span class="spec-row__editor-hint">/32 = exact host. Comma-separate multiple.</span>
+            `;
+        } else if (row.fieldType === 'seg') {
+            const opts = (row.options || []).map(o => {
+                const isActive = String(o.val).toLowerCase() === String(row.value).toLowerCase() || String(o.val) === String(row.value);
+                return `<button class="seg-control__option${isActive ? ' is-active' : ''}" type="button" data-seg-val="${esc(o.val)}" ${o.hint ? `data-seg-hint="${esc(o.hint)}"` : ''}>${esc(o.label)}</button>`;
+            }).join('');
+            fieldHtml = `<div class="seg-control" role="radiogroup" data-edit-seg>${opts}</div>`;
+        } else if (row.fieldType === 'type') {
+            const groups = [
+                { label: 'Red team C2', fam: 'c2' },
+                { label: 'Training lab', fam: 'goad' },
+                { label: 'Combined', fam: 'combined' },
+            ];
+            let inner = '';
+            groups.forEach(g => {
+                inner += `<div class="spec-type-grid__group">${esc(g.label)}</div>`;
+                FAMILY_TYPES[g.fam].forEach(id => {
+                    const def = DEPLOYMENT_CONFIGS[id];
+                    if (!def) return;
+                    const isActive = id === state.type;
+                    const hint = def.components?.find(c => /Cost/i.test(c.label))?.value || '';
+                    inner += `
+                        <label class="spec-type-card${isActive ? ' is-checked' : ''}" data-type-card="${esc(id)}" data-type-fam="${esc(g.fam)}">
+                            <input type="radio" name="review-type-edit" value="${esc(id)}" ${isActive ? 'checked' : ''}>
+                            <span class="spec-type-card__title">${esc(def.title || id)}</span>
+                            <span class="spec-type-card__hint">${esc(hint)}</span>
+                        </label>
+                    `;
+                });
+            });
+            fieldHtml = `<div class="spec-type-grid" data-edit-type-grid>${inner}</div>`;
+        }
+        return `
+            <div class="spec-row__editor-field">
+                <span class="spec-row__editor-label">${esc(row.label)}</span>
+                ${fieldHtml}
+            </div>
+            <div class="spec-row__editor-foot">
+                <button class="spec-edit-btn" type="button" data-edit-action="cancel">Cancel</button>
+                <button class="spec-edit-btn spec-edit-btn--save" type="button" data-edit-action="save">Save</button>
+            </div>
+        `;
+    }
+
+    function renderReviewList() {
+        const list = $('journey-spec-list');
+        if (!list) return;
+        const rows = buildReviewRows();
+        list.innerHTML = rows.map(renderRow).join('');
+        // Wire row head click
+        rows.forEach(row => {
+            if (!row.editable) return;
+            const rowEl = list.querySelector(`.spec-row[data-review-row="${row.key}"]`);
+            if (!rowEl) return;
+            rowEl.querySelector('.spec-row__head').addEventListener('click', () => {
+                if (rowEl.getAttribute('data-editing') === 'true') return;
+                openReviewRow(rowEl, row);
+            });
+        });
+        // Delegate editor interactions
+        if (!list._delegateWired) {
+            list._delegateWired = true;
+            list.addEventListener('click', (e) => {
+                const seg = e.target.closest('.seg-control__option');
+                const typeCard = e.target.closest('[data-type-card]');
+                const action = e.target.closest('[data-edit-action]');
+                if (seg) {
+                    e.stopPropagation();
+                    seg.parentElement.querySelectorAll('.seg-control__option').forEach(b => b.classList.remove('is-active'));
+                    seg.classList.add('is-active');
+                    return;
+                }
+                if (typeCard) {
+                    e.stopPropagation();
+                    typeCard.closest('[data-edit-type-grid]').querySelectorAll('.spec-type-card').forEach(c => c.classList.remove('is-checked'));
+                    typeCard.classList.add('is-checked');
+                    const radio = typeCard.querySelector('input[type="radio"]');
+                    if (radio) radio.checked = true;
+                    return;
+                }
+                if (!action) return;
+                e.stopPropagation();
+                const rowEl = action.closest('.spec-row');
+                if (!rowEl) return;
+                const key = rowEl.dataset.reviewRow;
+                if (action.dataset.editAction === 'cancel') {
+                    closeReviewRow(rowEl);
+                } else if (action.dataset.editAction === 'save') {
+                    saveReviewRow(rowEl, key);
+                } else if (action.dataset.editAction === 'my-ip') {
+                    fetch(`${API_BASE}/config/public-ip`).then(r => r.json()).then(d => {
+                        if (d.success && d.ip) {
+                            const inp = rowEl.querySelector('[data-edit-input]');
+                            if (inp) inp.value = `${d.ip}/32`;
+                        }
+                    }).catch(() => {});
+                }
+            });
+        }
+    }
+
+    function openReviewRow(rowEl, row) {
+        const list = $('journey-spec-list');
+        if (!list) return;
+        list.querySelectorAll('.spec-row[data-editing="true"]').forEach(r => closeReviewRow(r));
+        const editor = rowEl.querySelector('[data-review-editor]');
+        editor.innerHTML = buildEditor(row);
+        rowEl.setAttribute('data-editing', 'true');
+        list.setAttribute('data-editing', 'true');
+        const input = editor.querySelector('[data-edit-input]');
+        if (input) { input.focus(); input.select && input.select(); }
+    }
+
+    function closeReviewRow(rowEl) {
+        const list = $('journey-spec-list');
+        rowEl.removeAttribute('data-editing');
+        const editor = rowEl.querySelector('[data-review-editor]');
+        if (editor) editor.innerHTML = '';
+        if (list && !list.querySelector('.spec-row[data-editing="true"]')) {
+            list.removeAttribute('data-editing');
+        }
+    }
+
+    function saveReviewRow(rowEl, key) {
+        const editor = rowEl.querySelector('[data-review-editor]');
+        const inp = editor?.querySelector('[data-edit-input]');
+        const seg = editor?.querySelector('.seg-control__option.is-active');
+        const typeChecked = editor?.querySelector('input[name="review-type-edit"]:checked');
+        if (key === 'projectName') state.projectName = inp?.value.trim() || state.projectName;
+        else if (key === 'cidr') state.cidr = inp?.value.trim() || state.cidr;
+        else if (key === 'environment') state.environment = seg?.dataset.segVal || state.environment;
+        else if (key === 'region') {
+            state.region = seg?.dataset.segVal || state.region;
+            state.regionHint = seg?.dataset.segHint || state.regionHint;
+        }
+        else if (key === 'ssh') state.ssh = seg?.dataset.segVal || state.ssh;
+        else if (key === 'type' && typeChecked) {
+            state.type = typeChecked.value;
+            const card = editor.querySelector('[data-type-card="' + typeChecked.value + '"]');
+            const fam = card?.dataset.typeFam;
+            const def = DEPLOYMENT_CONFIGS[state.type];
+            if (def) { state.typeTitle = def.title || state.type; }
+            if (fam) { state.family = fam; state.typeFamily = FAMILY_LABEL[fam]; }
+        }
+        setDirty();
+        // Update hero + re-render the list
+        $('journey-hero-name').textContent = state.projectName || '(unnamed)';
+        $('journey-hero-type').textContent = state.typeTitle || state.type;
+        renderReviewList();
+    }
+
+    // ─── saveAndApply ────────────────────────────────────────────────
+    async function saveAndApply() {
+        const btn = $('journey-deploy');
+        if (btn) { btn.disabled = true; btn.textContent = 'Saving config…'; }
+        // Assemble the config payload. We keep the shape minimal — the
+        // server's ConfigValidator will fail loudly if anything is wrong,
+        // so map errors back into the breadcrumb area.
+        const config = {
+            deployment_type: state.type,
+            engagement_type: state.type,
+            project_name: state.projectName,
+            environment: state.environment,
+            aws_region: state.region,
+            management_cidr_blocks: state.cidr ? state.cidr.split(',').map(s => s.trim()).filter(Boolean) : [],
+        };
+        try {
+            const r = await fetch(`${API_BASE}/config`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config }),
+            });
+            const d = await r.json();
+            if (!d.success) {
+                console.error('Journey save failed:', d);
+                if (btn) { btn.disabled = false; btn.textContent = 'Retry — fix errors above'; }
+                const breadcrumb = document.querySelector('.journey-review__breadcrumb');
+                if (breadcrumb) {
+                    breadcrumb.style.color = 'var(--danger-text)';
+                    breadcrumb.style.borderColor = 'var(--danger-border)';
+                    breadcrumb.firstElementChild.textContent = (d.errors && d.errors.join('; ')) || d.error || 'Save failed';
+                }
+                return;
+            }
+        } catch (e) {
+            console.error('Journey save threw:', e);
+            if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+            return;
+        }
+        // Config saved — close journey and navigate to the Deploy sub-pill
+        // so the operator can review + click Apply (we deliberately don't
+        // auto-fire terraform apply from here; that's an explicit click).
+        state.dirty = false;
+        close({ confirmIfDirty: false });
+        // Briefly defer to let the takeover animate out
+        setTimeout(() => {
+            try {
+                APP.navigateTo('deployments-tab', 'deploy');
+            } catch (_) { /* noop */ }
+            // Refresh the summary spec-list with the new saved config
+            if (typeof loadConfigSummary === 'function') {
+                try { loadConfigSummary(); } catch (_) {}
+            }
+        }, 220);
+    }
+
+    // ─── Open / Close ────────────────────────────────────────────────
+    function open(opts = {}) {
+        const scrim = $('journey-scrim');
+        const card = $('journey-takeover');
+        if (!scrim || !card) return;
+        _lastTrigger = opts.trigger || document.activeElement;
+        // Fresh state every open (this is "+ New Deployment", not "edit").
+        state = defaultState();
+        // Mount DOM
+        scrim.hidden = false;
+        scrim.setAttribute('aria-hidden', 'false');
+        card.hidden = false;
+        // Render after un-hide so width/height are real
+        renderShell();
+        renderStep();
+        // Animate open on next frame so transition fires
+        requestAnimationFrame(() => {
+            scrim.setAttribute('data-open', 'true');
+            card.setAttribute('data-open', 'true');
+            document.body.setAttribute('data-journey-open', 'true');
+        });
+        // Wire scrim click + Escape
+        _scrimClickHandler = () => close({ confirmIfDirty: true });
+        scrim.addEventListener('click', _scrimClickHandler);
+        _escHandler = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                close({ confirmIfDirty: true });
+            }
+        };
+        document.addEventListener('keydown', _escHandler);
+        // Focus first focusable in the card
+        const first = card.querySelector('button, input, select, [tabindex]:not([tabindex="-1"])');
+        if (first) first.focus();
+    }
+
+    function close({ confirmIfDirty = true } = {}) {
+        if (confirmIfDirty && state.dirty) {
+            const proceed = window.confirm('Discard your in-progress new deployment?');
+            if (!proceed) return;
+        }
+        const scrim = $('journey-scrim');
+        const card = $('journey-takeover');
+        if (scrim) {
+            scrim.removeAttribute('data-open');
+            scrim.setAttribute('aria-hidden', 'true');
+            if (_scrimClickHandler) {
+                scrim.removeEventListener('click', _scrimClickHandler);
+                _scrimClickHandler = null;
+            }
+        }
+        if (card) card.removeAttribute('data-open');
+        document.body.removeAttribute('data-journey-open');
+        if (_escHandler) {
+            document.removeEventListener('keydown', _escHandler);
+            _escHandler = null;
+        }
+        // Wait for transition before unmounting DOM
+        setTimeout(() => {
+            if (scrim) scrim.hidden = true;
+            if (card) {
+                card.hidden = true;
+                const body = $('journey-takeover-body');
+                if (body) body.innerHTML = '';
+            }
+            if (_lastTrigger && typeof _lastTrigger.focus === 'function') {
+                try { _lastTrigger.focus(); } catch (_) {}
+            }
+        }, 300);
+    }
+
+    return {
+        open,
+        close,
+        goToStep,
+        goToReview,
+        saveAndApply,
+        get state() { return state; },
+    };
+})();
+
+// Explicit affordance so operators can deliberately start a fresh deployment
+// instead of accidentally overwriting an existing one. Two entry points are
+// wired to this:
+//   1. Global header "+ New" button (#global-new-deployment-btn)
+//   2. Banner at the top of the Configure sub-pane (#configure-new-deployment-btn)
+//
+// Navigates to Deployments > Configure, blanks the form, pre-fills a sensible
+// project_name default, focuses + selects the project_name input, and clears
+// the active deployment in the global picker (form is no longer tied to one).
+
+APP.startNewDeployment = function () {
+    // 1. Navigate to the Configure sub-pill (forces tab + sub-pill activation).
+    APP.navigateTo('deployments-tab', 'configure');
+
+    // 2. Clear the form to a fresh state (lightweight blanking — no backend
+    //    DELETE, no confirm dialog; that's what clearConfig() is for).
+    APP.resetConfigForm();
+
+    // 3. Pre-fill project_name with a recognizable placeholder so the operator
+    //    sees a fresh value to overwrite. Format: new_<env>_<short-suffix>.
+    const projectInput = document.getElementById('project-name');
+    if (projectInput) {
+        const env = document.getElementById('environment')?.value || 'dev';
+        const suffix = (Date.now() % 100000).toString(36);
+        projectInput.value = `new_${env}_${suffix}`;
+        projectInput.focus();
+        projectInput.select();
+    }
+
+    // 4. Clear the global active-deployment picker so the form isn't tied to
+    //    an existing deployment.
+    APP.activeDeployment.set(null);
+};
+
+/**
+ * D3.8 — Lightweight form reset. Unlike clearConfig() (which prompts +
+ * DELETEs the saved terraform.tfvars on the backend), this just blanks the
+ * user-editable fields in memory so the operator can start fresh.
+ */
+APP.resetConfigForm = function () {
+    // Reset deployment-type to its default (c2-adhoc) and cascade visibility
+    // changes via the existing onchange handler.
+    const dt = document.getElementById('deployment-type');
+    if (dt) {
+        dt.value = 'c2-adhoc';
+        dt.dispatchEvent(new Event('change'));
+    }
+    // Clear project name — startNewDeployment will re-set it immediately after.
+    const pn = document.getElementById('project-name');
+    if (pn) pn.value = '';
+    // Reset environment to 'dev'.
+    const env = document.getElementById('environment');
+    if (env) env.value = 'dev';
+    // Blank obvious credential/identifier fields that may have stale state.
+    ['primary-domain', 'admin-email', 'attack-box-password', 'cs-teamserver-password']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+};
+
+/**
+ * D1.3 — Fetch deployments from /api/deploy/active and populate the listbox.
+ *
+ * Endpoint returns {success, deployments: [...]} where each deployment is a
+ * state JSON object. The project name lives at _filename (the state file
+ * stem); state.project_name may exist as a fallback. Status lives at
+ * state.status (typically "success" because the endpoint filters for it).
+ *
+ * Empty state: show a single non-selectable "No active deployments" item
+ * that, when clicked, navigates to the Deploy tab.
+ */
+async function _refreshGlobalDeployments() {
+    const listbox = document.getElementById('global-deploy-listbox');
+    const valueEl = document.getElementById('global-deploy-value');
+    if (!listbox || !valueEl) return;
+
+    let deployments = [];
+    try {
+        const resp = await fetch('/api/deploy/active');
+        const json = await resp.json();
+        const raw = Array.isArray(json)
+            ? json
+            : (json && Array.isArray(json.deployments) ? json.deployments
+              : (json && Array.isArray(json.active_deployments) ? json.active_deployments : []));
+        // Normalize: ensure each deployment has a project_name field for
+        // downstream consumers. Falls back to _filename (state file stem),
+        // then name, then a stable placeholder.
+        deployments = raw.map(d => ({
+            ...d,
+            project_name: d.project_name || d._filename || d.name || 'unknown',
+        }));
+    } catch (e) {
+        // Endpoint unreachable — render empty state below.
+    }
+    _globalHeaderDeployments = deployments;
+
+    listbox.innerHTML = '';
+
+    if (deployments.length === 0) {
+        const empty = document.createElement('li');
+        empty.className = 'global-header__combobox-empty';
+        empty.setAttribute('role', 'option');
+        empty.setAttribute('aria-disabled', 'true');
+        empty.textContent = 'No active deployments — click to deploy';
+        empty.addEventListener('click', () => {
+            _closeGlobalListbox();
+            APP.navigateTo('deployment');
+        });
+        listbox.appendChild(empty);
+        valueEl.textContent = 'No deployment';
+        APP.activeDeployment.set(null);
+        return;
+    }
+
+    // Pick initial selection: persisted active OR first deployment.
+    let selected = APP.activeDeployment.current;
+    if (!selected || !deployments.find(d => d.project_name === selected)) {
+        selected = deployments[0].project_name;
+    }
+
+    deployments.forEach((d, idx) => {
+        const li = document.createElement('li');
+        li.className = 'global-header__combobox-option';
+        li.setAttribute('role', 'option');
+        li.id = `global-deploy-option-${idx}`;
+        li.dataset.value = d.project_name;
+        const isSelected = d.project_name === selected;
+        li.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'global-header__combobox-option-name';
+        nameSpan.textContent = d.project_name;
+        li.appendChild(nameSpan);
+
+        const status = (d.status || 'unknown').toLowerCase();
+        const badge = document.createElement('span');
+        badge.className = `global-header__combobox-option-status global-header__combobox-option-status--${status}`;
+        // Active in /api/deploy/active means status === 'success' — treat as running.
+        badge.textContent = status === 'success' ? 'running' : status;
+        li.appendChild(badge);
+
+        li.addEventListener('mouseenter', () => _setActiveOption(li));
+        li.addEventListener('click', (e) => {
+            e.preventDefault();
+            _selectGlobalOption(li);
+        });
+
+        listbox.appendChild(li);
+    });
+
+    valueEl.textContent = selected;
+    APP.activeDeployment.set(selected);
+}
+
+/**
+ * D1.3 — Wire combobox trigger keyboard + click handlers.
+ */
+function _setupGlobalCombobox(trigger, listbox) {
+    const openListbox = () => {
+        listbox.hidden = false;
+        // Force reflow so the transition starts from the hidden state.
+        // eslint-disable-next-line no-unused-expressions
+        listbox.offsetHeight;
+        listbox.setAttribute('data-open', 'true');
+        trigger.setAttribute('aria-expanded', 'true');
+        // Activate the currently-selected option.
+        const sel = listbox.querySelector('[aria-selected="true"]')
+                 || listbox.querySelector('[role="option"]');
+        if (sel) _setActiveOption(sel);
+        // Defer focus so the transition reads correctly.
+        requestAnimationFrame(() => {
+            const target = listbox.querySelector('.global-header__combobox-option--active')
+                        || listbox.querySelector('[role="option"]');
+            if (target) target.focus({ preventScroll: true });
+        });
+    };
+
+    const _closeFn = (returnFocus) => {
+        listbox.setAttribute('data-open', 'false');
+        trigger.setAttribute('aria-expanded', 'false');
+        // Allow transition to play out before hiding (200ms).
+        setTimeout(() => {
+            if (listbox.getAttribute('data-open') !== 'true') listbox.hidden = true;
+        }, 220);
+        listbox.querySelectorAll('.global-header__combobox-option--active').forEach(o => {
+            o.classList.remove('global-header__combobox-option--active');
+        });
+        if (returnFocus) trigger.focus();
+    };
+    // Expose for _refreshGlobalDeployments empty-state handler.
+    window._closeGlobalListbox = () => _closeFn(false);
+
+    trigger.addEventListener('click', (e) => {
+        e.preventDefault();
+        const isOpen = trigger.getAttribute('aria-expanded') === 'true';
+        isOpen ? _closeFn(false) : openListbox();
+    });
+
+    trigger.addEventListener('keydown', (e) => {
+        switch (e.key) {
+            case 'Enter':
+            case ' ':
+            case 'ArrowDown':
+                e.preventDefault();
+                openListbox();
+                break;
+            case 'ArrowUp': {
+                e.preventDefault();
+                openListbox();
+                const opts = listbox.querySelectorAll('[role="option"]');
+                if (opts.length) _setActiveOption(opts[opts.length - 1]);
+                break;
+            }
+        }
+    });
+
+    listbox.addEventListener('keydown', (e) => {
+        const opts = Array.from(listbox.querySelectorAll('[role="option"]:not([aria-disabled="true"])'));
+        if (opts.length === 0 && e.key !== 'Escape' && e.key !== 'Tab') return;
+        const currentIdx = opts.findIndex(o => o.classList.contains('global-header__combobox-option--active'));
+        switch (e.key) {
+            case 'ArrowDown':
+                e.preventDefault();
+                _setActiveOption(opts[(currentIdx + 1 + opts.length) % opts.length]);
+                break;
+            case 'ArrowUp':
+                e.preventDefault();
+                _setActiveOption(opts[(currentIdx - 1 + opts.length) % opts.length]);
+                break;
+            case 'Home':
+                e.preventDefault();
+                _setActiveOption(opts[0]);
+                break;
+            case 'End':
+                e.preventDefault();
+                _setActiveOption(opts[opts.length - 1]);
+                break;
+            case 'Enter':
+            case ' ': {
+                e.preventDefault();
+                const active = opts[currentIdx >= 0 ? currentIdx : 0];
+                if (active) _selectGlobalOption(active);
+                break;
+            }
+            case 'Escape':
+                e.preventDefault();
+                _closeFn(true);
+                break;
+            case 'Tab':
+                _closeFn(false);
+                break;
+        }
+    });
+
+    // Click-outside closes.
+    document.addEventListener('mousedown', (e) => {
+        if (trigger.getAttribute('aria-expanded') !== 'true') return;
+        if (trigger.contains(e.target) || listbox.contains(e.target)) return;
+        _closeFn(false);
+    });
+}
+
+/**
+ * D1.3 — Mark a single option as active (keyboard nav). Visual highlight
+ * only — aria-selected is reserved for the persistent selection.
+ */
+function _setActiveOption(target) {
+    if (!target) return;
+    const listbox = target.parentElement;
+    if (!listbox) return;
+    listbox.querySelectorAll('.global-header__combobox-option--active').forEach(o => {
+        o.classList.remove('global-header__combobox-option--active');
+    });
+    target.classList.add('global-header__combobox-option--active');
+    listbox.setAttribute('aria-activedescendant', target.id || '');
+    if (typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+/**
+ * D1.3 — Commit a listbox selection: update aria-selected, persist, notify
+ * subscribers, close listbox.
+ */
+function _selectGlobalOption(li) {
+    if (!li || li.getAttribute('aria-disabled') === 'true') return;
+    const listbox = li.parentElement;
+    const trigger = document.getElementById('global-deploy-trigger');
+    const valueEl = document.getElementById('global-deploy-value');
+    if (!listbox || !trigger || !valueEl) return;
+
+    listbox.querySelectorAll('[role="option"]').forEach(o => {
+        o.setAttribute('aria-selected', o === li ? 'true' : 'false');
+    });
+    const value = li.dataset.value || '';
+    valueEl.textContent = value;
+    APP.activeDeployment.set(value);
+
+    // Close listbox.
+    listbox.setAttribute('data-open', 'false');
+    trigger.setAttribute('aria-expanded', 'false');
+    setTimeout(() => {
+        if (listbox.getAttribute('data-open') !== 'true') listbox.hidden = true;
+    }, 220);
+    trigger.focus();
+}
+
+/**
+ * D1.4 — Pull cost summary for the active deployment and render the chip.
+ *
+ * Uses /api/costs/summary?project=NAME — response.estimated_costs.estimated_monthly
+ * is the field we render. 5-minute sessionStorage cache keyed by project name.
+ *
+ * Defensive: any failure → "—" + a title tooltip. Never throws.
+ */
+async function _refreshGlobalCost(projectName) {
+    const amount = document.getElementById('global-cost-amount');
+    const chip = document.getElementById('global-cost-chip');
+    if (!amount) return;
+
+    if (!projectName) {
+        amount.textContent = '—';
+        if (chip) chip.title = 'No active deployment selected';
+        return;
+    }
+
+    // Cache check.
+    const CACHE_TTL_MS = 5 * 60 * 1000;
+    const CACHE_KEY = `globalCost:${projectName}`;
+    try {
+        const raw = sessionStorage.getItem(CACHE_KEY);
+        if (raw) {
+            const entry = JSON.parse(raw);
+            if (entry && (Date.now() - entry.ts) < CACHE_TTL_MS) {
+                _renderCostAmount(entry.value);
+                if (chip) chip.title = `Monthly burn for ${projectName} (cached). Click to view Cost Tracker.`;
+                return;
+            }
+        }
+    } catch (e) { /* ignore cache errors */ }
+
+    try {
+        const resp = await fetch(`/api/costs/summary?project=${encodeURIComponent(projectName)}`);
+        const json = await resp.json();
+        const monthly = json && json.success
+            && json.estimated_costs && json.estimated_costs.available
+            ? json.estimated_costs.estimated_monthly
+            : null;
+        if (typeof monthly === 'number' && Number.isFinite(monthly)) {
+            _renderCostAmount(monthly);
+            if (chip) chip.title = `Monthly burn for ${projectName}. Click to view Cost Tracker.`;
+            try {
+                sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), value: monthly }));
+            } catch (e) { /* ignore quota errors */ }
+        } else {
+            amount.textContent = '—';
+            if (chip) chip.title = 'Cost data unavailable';
+        }
+    } catch (e) {
+        amount.textContent = '—';
+        if (chip) chip.title = 'Cost data unavailable';
+    }
+}
+
+function _renderCostAmount(monthly) {
+    const amount = document.getElementById('global-cost-amount');
+    if (!amount) return;
+    // Round to whole dollars for the chip — full precision lives in Cost Tracker.
+    const rounded = Math.round(monthly);
+    amount.textContent = `$${rounded}/mo`;
+}
+
+// ============================================================================
 // MALLEABLE C2 PROFILE PARSER
 // ============================================================================
 
@@ -1969,34 +3964,331 @@ function validateMalleableProfile(profileText) {
 // ============================================================================
 
 /**
- * Load Dashboard content
+ * Load Dashboard content — M-Dashboard launchpad (Decisions #19, #20, #21).
+ *
+ * Replaces the legacy "welcome" status card with an action-dense 12-widget
+ * overview: hero CTAs, alerts row, live deployments grid, beacons/cost/
+ * architecture trio, recent activity feed, Elastic Detection Rules card.
+ *
+ * Each widget is rendered by its own _renderDashboard*() helper that fails
+ * gracefully if its backing endpoint isn't ready yet (e.g. D5.0
+ * /api/costs/aggregate, which lands in a parallel agent's commit).
  */
 async function loadDashboard() {
-    console.log('Loading Dashboard...');
-    const statusDiv = document.getElementById('dashboard-status');
-    if (!statusDiv) return;
-    
-    statusDiv.innerHTML = '<div class="spinner"></div>Loading dashboard...';
-    
-    try {
-        statusDiv.innerHTML = `
-            <div class="status-display info">
-                <p><strong>Welcome to Red Team Infrastructure Manager</strong></p>
-                <p>Use the Configuration tab to set up your infrastructure, then deploy from the Deploy tab.</p>
-                <p style="margin-top: 10px;"><strong>Quick Start:</strong></p>
-                <ul style="margin-left: 20px;">
-                    <li>Verify AWS credentials and permissions in Pre Reqs tab</li>
-                    <li>Set up your infrastructure parameters in Configuration</li>
-                    <li>Upload Cobalt Strike and deploy from the Deploy tab</li>
-                </ul>
-            </div>
-        `;
-    } catch (error) {
-        statusDiv.innerHTML = '<p>Error loading dashboard: ' + error.message + '</p>';
-    }
+    console.log('Loading Dashboard launchpad...');
 
-    // Populate Elastic Rules card from the loaded JS data
+    // 1. First-run prereqs banner (existing D2.3 logic, lifted into helper)
+    _refreshPrereqsBanner();
+
+    // 2. Hero "Resume" button — visible only when localStorage.activeDeployment is set
+    try {
+        const lastDep = localStorage.getItem('activeDeployment');
+        const resumeBtn = document.getElementById('dashboard-resume-btn');
+        const resumeName = document.getElementById('dashboard-resume-name');
+        if (resumeBtn && resumeName) {
+            if (lastDep) {
+                resumeBtn.style.display = '';
+                resumeName.textContent = lastDep;
+                resumeBtn.onclick = () => APP.navigateTo('deployments-tab', 'manage');
+            } else {
+                resumeBtn.style.display = 'none';
+            }
+        }
+    } catch (e) { /* private-mode browsers — ignore */ }
+
+    // M-Redesign Agent 3 — stagger the 3-col widget row once on dashboard mount.
+    // Fires once across the page's lifetime thanks to el._staggered guard.
+    APP._staggerOnce(document.querySelector('.dashboard-widget-row'));
+
+    // 3-8. Populate each widget — all use graceful-fallback semantics.
+    await _renderDashboardDeploymentsGrid();
+    await _renderDashboardBeaconsWidget();
+    await _renderDashboardCostWidget();
+    await _renderDashboardArchitectureWidget();
+    await _renderDashboardBudgetAlert();
+    await _renderDashboardFailedAlert();
+
+    // 9. Elastic Detection Rules card — preserved from pre-M-Dashboard layout
     refreshElasticRulesCard();
+}
+
+/**
+ * D2.3 — First-run prereqs banner toggle. Hidden once any prereq check has
+ * passed (writes localStorage.prereqs-verified-at).
+ */
+function _refreshPrereqsBanner() {
+    try {
+        const prereqsVerified = localStorage.getItem('prereqs-verified-at');
+        const banner = document.getElementById('prereqs-first-run-banner');
+        if (banner) banner.style.display = prereqsVerified ? 'none' : '';
+    } catch (e) { /* ignore */ }
+}
+
+/**
+ * Renders up to 6 active deployment cards from /api/deploy/active.
+ * Empty state nudges operators toward the "+ New Deployment" hero CTA.
+ */
+async function _renderDashboardDeploymentsGrid() {
+    const grid = document.getElementById('dashboard-deployments-grid');
+    if (!grid) return;
+    // M-Redesign Agent 3 — shimmer skeleton while we wait for /api/deploy/active
+    // Only on the very first render; refreshes don't re-skeleton (would flash).
+    if (!grid._everRendered) {
+        APP.renderSkeleton(grid, 'card', 3);
+    }
+    try {
+        const res = await fetch('/api/deploy/active');
+        const data = await res.json();
+        const deps = (data && data.deployments) || [];
+        if (deps.length === 0) {
+            // M-Redesign Agent 3 — unified empty-state component
+            grid.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state__icon" aria-hidden="true">
+                        <span class="empty-state__icon-inner"></span>
+                    </div>
+                    <h3 class="empty-state__title">No active deployments</h3>
+                    <p class="empty-state__description">Click "+ New Deployment" above to configure your first one.</p>
+                    <button class="btn btn-primary empty-state__cta" type="button" onclick="APP.startNewDeployment()">+ New Deployment</button>
+                </div>`;
+            grid._everRendered = true;
+            return;
+        }
+        grid.innerHTML = deps.slice(0, 6).map(d => {
+            // Phase 3e — richer card body: kicker (project name, mono caps),
+            // title (deployment type), status pill (.spec-pill--live/draft/error),
+            // attribution row (operator dot if available), cost line.
+            const name = d._filename || d.project_name || 'unknown';
+            const type = d.deployment_type || '—';
+            const status = (d.status || 'unknown').toLowerCase();
+            const cost = d.estimated_cost || d.cost || '';
+            const owner = d.owner || d.operator || d.created_by || '';
+            const safeName = String(name).replace(/'/g, "\\'");
+            // Map deploy status to one of the three .spec-pill variants.
+            const pillVariant = (
+                status === 'deployed' || status === 'running' || status === 'live' || status === 'active'
+                    ? 'live'
+                    : (status === 'error' || status === 'failed' ? 'error' : 'draft')
+            );
+            const pillLabel = (
+                pillVariant === 'live' ? 'Live'
+                    : pillVariant === 'error' ? 'Error'
+                    : status === 'unknown' ? 'Draft' : (status[0].toUpperCase() + status.slice(1))
+            );
+            // Owner dot (if we can resolve the operator color from APP.operator.all).
+            let ownerHtml = '';
+            if (owner && APP.operator && Array.isArray(APP.operator.all)) {
+                const op = APP.operator.all.find(o => o.id === owner || o.display === owner);
+                const opColor = (op && op.color) || '#7A849E';
+                const opDisplay = (op && op.display) || owner;
+                ownerHtml = `<span class="operator-dot operator-dot--sm" style="background: ${escapeHtml(opColor)}" aria-hidden="true"></span><span>${escapeHtml(opDisplay)}</span>`;
+            }
+            const costHtml = cost
+                ? `<div class="dashboard-deployment-card__cost">${escapeHtml(String(cost))}</div>`
+                : '';
+            const metaHtml = ownerHtml
+                ? `<div class="dashboard-deployment-card__meta-row">${ownerHtml}</div>`
+                : '';
+            return `<a href="#" class="dashboard-deployment-card"
+                       data-project="${escapeHtml(name)}"
+                       data-status="${escapeHtml(status)}"
+                       onclick="APP.activeDeployment.set('${safeName}'); APP.navigateTo('deployments-tab', 'manage'); return false;">
+                <div class="dashboard-deployment-card__head">
+                    <span class="dashboard-deployment-card__kicker">${escapeHtml(name)}</span>
+                    <span class="spec-pill spec-pill--${pillVariant}">
+                        <span class="spec-pill__dot"></span>${escapeHtml(pillLabel)}
+                    </span>
+                </div>
+                <div class="dashboard-deployment-card__title">${escapeHtml(type)}</div>
+                ${metaHtml}
+                ${costHtml}
+            </a>`;
+        }).join('');
+        // M-Redesign Agent 3 — one-shot stagger on initial mount; pollers
+        // calling this fn again hit the early-return inside _staggerOnce.
+        APP._staggerOnce(grid);
+        grid._everRendered = true;
+    } catch (e) {
+        grid.innerHTML = '<p class="t-muted">Unable to load deployments.</p>';
+    }
+}
+
+/**
+ * Active beacons widget — surfaces BEACON.cachedBeacons.length when the
+ * operator is currently on the Operations tab; otherwise placeholder.
+ */
+async function _renderDashboardBeaconsWidget() {
+    try {
+        const countEl = document.getElementById('dashboard-beacons-count');
+        const lastEl = document.getElementById('dashboard-beacons-last');
+        let count = 0;
+        if (typeof BEACON !== 'undefined' && Array.isArray(BEACON.cachedBeacons)) {
+            count = BEACON.cachedBeacons.length;
+        }
+        if (countEl) countEl.textContent = count;
+        if (lastEl) lastEl.textContent = count > 0 ? 'recent' : '—';
+    } catch (e) { /* placeholder */ }
+}
+
+/**
+ * Cost trend widget — fetches /api/costs/aggregate (D5.0). Renders a 14-pt
+ * sparkline + monthly burn estimate. Graceful fallback to "$—/mo" if the
+ * backend agent's endpoint isn't ready when this fires.
+ */
+async function _renderDashboardCostWidget() {
+    const totalEl = document.getElementById('dashboard-cost-total');
+    const sparkEl = document.getElementById('dashboard-cost-sparkline');
+    const deltaEl = document.getElementById('dashboard-cost-delta');
+    // M-Redesign Agent 3 — flash skeleton on the headline number once.
+    if (totalEl && !totalEl._everRendered) {
+        totalEl._everRendered = true;
+        totalEl.innerHTML = '<span class="skeleton skeleton--text" style="display:inline-block; width: 96px;"></span>';
+    }
+    try {
+        const res = await fetch('/api/costs/aggregate');
+        if (!res.ok) throw new Error('aggregate endpoint not ready');
+        const data = await res.json();
+        if (totalEl) totalEl.textContent = `$${Math.round(data.monthly_total || 0)}/mo`;
+        // Phase 3e — derive a delta % so we can pick the badge variant.
+        // Backend may surface .delta_pct directly; otherwise default to +3
+        // (placeholder, matches the prior fixed string).
+        const deltaPct = (typeof data.delta_pct === 'number')
+            ? data.delta_pct
+            : 3;
+        if (sparkEl) {
+            // 14-point sparkline. D5 will swap to real daily data once available.
+            // Layered: a soft area fill behind the polyline (helps the eye
+            // group the trend on bg-card-hover) plus the brand-light line.
+            const points = Array.from({length: 14}, (_, i) => {
+                const y = 30 - i * 0.6 - Math.random() * 4;
+                return `${(i / 13 * 200).toFixed(1)},${y.toFixed(1)}`;
+            });
+            const pointStr = points.join(' ');
+            const fillPath = `M 0,40 L ${points.join(' L ')} L 200,40 Z`;
+            sparkEl.innerHTML = `
+                <path class="spark-fill" d="${fillPath}" />
+                <polyline points="${pointStr}" />
+            `;
+        }
+        if (deltaEl) {
+            // Phase 3e — render as a colored .dashboard-cost-delta-badge. Up
+            // is danger (burn rate climbing); down is success.
+            const arrow = deltaPct > 0 ? '▲' : (deltaPct < 0 ? '▼' : '→');
+            const variant = deltaPct > 0 ? 'up' : (deltaPct < 0 ? 'down' : 'flat');
+            const sign = deltaPct > 0 ? '+' : '';
+            deltaEl.innerHTML = `
+                <span class="dashboard-cost-delta-badge dashboard-cost-delta-badge--${variant}">
+                    ${arrow} ${sign}${deltaPct}%
+                </span>
+                <span class="dashboard-cost-delta__caption" style="margin-left: 8px; color: var(--text-secondary); font-size: 10.5px;">vs last week</span>
+            `;
+        }
+    } catch (e) {
+        if (totalEl) totalEl.textContent = '$—/mo';
+        if (deltaEl) {
+            deltaEl.innerHTML = `<span class="dashboard-cost-delta-badge dashboard-cost-delta-badge--flat">awaiting backend</span>`;
+        }
+    }
+}
+
+/**
+ * Architecture widget — pulls deployment_type for the active deployment via
+ * /api/deploy/status?project=NAME, then loads /api/architecture/diagram/<type>.
+ * Modal opens on thumbnail or "Browse all" click.
+ */
+async function _renderDashboardArchitectureWidget() {
+    const active = (APP.activeDeployment && APP.activeDeployment.current) || null;
+    const currentEl = document.getElementById('dashboard-architecture-current');
+    const imgEl = document.getElementById('dashboard-architecture-img');
+    const placeholderEl = document.getElementById('dashboard-architecture-placeholder');
+    if (!active) {
+        if (placeholderEl) placeholderEl.style.display = '';
+        if (imgEl) imgEl.style.display = 'none';
+        if (currentEl) currentEl.textContent = '—';
+        return;
+    }
+    try {
+        const res = await fetch(`/api/deploy/status?project=${encodeURIComponent(active)}`);
+        const data = await res.json();
+        const dtype = (data && data.status && data.status.deployment_type) || null;
+        if (!dtype) {
+            if (placeholderEl) placeholderEl.style.display = '';
+            if (imgEl) imgEl.style.display = 'none';
+            if (currentEl) currentEl.textContent = active;
+            return;
+        }
+        if (currentEl) currentEl.textContent = dtype;
+        if (imgEl) {
+            // Diagram filenames live under generated-diagrams/ keyed by type.
+            imgEl.src = `/api/architecture/diagram/${encodeURIComponent(dtype)}.png`;
+            imgEl.onerror = () => {
+                imgEl.style.display = 'none';
+                if (placeholderEl) placeholderEl.style.display = '';
+            };
+            imgEl.style.display = '';
+        }
+        if (placeholderEl) placeholderEl.style.display = 'none';
+    } catch (e) { /* placeholder remains */ }
+}
+
+/**
+ * Budget alert banner — pulls /api/costs/budget-alert. Shows banner only
+ * when level === 'warning' or 'danger'.
+ */
+async function _renderDashboardBudgetAlert() {
+    const banner = document.getElementById('budget-alert-banner');
+    if (!banner) return;
+    try {
+        const res = await fetch('/api/costs/budget-alert');
+        if (!res.ok) { banner.style.display = 'none'; return; }
+        const data = await res.json();
+        if (data.level === 'warning' || data.level === 'danger') {
+            banner.style.display = '';
+            const pct = data.used_percent != null ? data.used_percent : '?';
+            const thr = data.threshold != null ? data.threshold : '?';
+            banner.innerHTML = `<strong>Budget at ${pct}% of $${thr}.</strong>
+                <a href="#" onclick="APP.navigateTo('settings'); return false;">View cost tracker &rarr;</a>`;
+            banner.classList.toggle('dashboard-alert--danger', data.level === 'danger');
+            banner.classList.toggle('dashboard-alert--warning', data.level !== 'danger');
+        } else {
+            banner.style.display = 'none';
+        }
+    } catch (e) { banner.style.display = 'none'; }
+}
+
+/**
+ * Failed-deployment banner — surfaces any deployment with status 'error'
+ * or 'failed' from /api/deploy/active.
+ */
+async function _renderDashboardFailedAlert() {
+    const banner = document.getElementById('failed-deployments-alert');
+    if (!banner) return;
+    try {
+        const res = await fetch('/api/deploy/active');
+        const data = await res.json();
+        const failed = ((data && data.deployments) || []).filter(d => d.status === 'error' || d.status === 'failed');
+        if (failed.length > 0) {
+            banner.style.display = '';
+            const names = failed.map(f => f._filename || f.project_name || 'unknown').join(', ');
+            banner.innerHTML = `<strong>${failed.length} deployment(s) in error state:</strong> ${names}.
+                <a href="#" onclick="APP.navigateTo('deployments-tab', 'manage'); return false;">View manage &rarr;</a>`;
+        } else {
+            banner.style.display = 'none';
+        }
+    } catch (e) { banner.style.display = 'none'; }
+}
+
+// Re-render the architecture + cost widgets when the active deployment changes.
+// Guard: only fires when these helpers are defined (i.e., after this module's
+// init has run); the subscribe callback is fire-immediately and would
+// otherwise NPE on the very first call.
+if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function') {
+    APP.activeDeployment.subscribe(() => {
+        try {
+            if (typeof _renderDashboardArchitectureWidget === 'function') _renderDashboardArchitectureWidget();
+            if (typeof _renderDashboardCostWidget === 'function') _renderDashboardCostWidget();
+        } catch (e) { /* ignore — widgets re-render on next dashboard load */ }
+    });
 }
 
 function refreshElasticRulesCard() {
@@ -2794,10 +5086,17 @@ const BEACON = {
             });
             this.cachedBeacons = beacons;
             this.renderBeaconTable(beacons);
+            // Phase 3B.1 — V3 spec-list render runs alongside the legacy table.
+            if (typeof this.renderBeaconSpecList === 'function') {
+                this.renderBeaconSpecList(beacons);
+            }
             // Update process context bar if a beacon is selected
             if (this.selectedBid) {
                 this.renderProcessContext(this.selectedBid);
                 this.renderMetaBadges(this.selectedBid);
+                if (typeof this.renderDetailSpec === 'function') {
+                    this.renderDetailSpec(this.selectedBid);
+                }
             }
         } catch (e) {
             this.checkHealth();
@@ -2868,6 +5167,234 @@ const BEACON = {
             const btn = tr.querySelector('.beacon-interact-btn');
             if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); this.selectBeacon(bid, label); });
         });
+
+        // M-Redesign Agent 3 — one-shot stagger on the first non-empty render
+        // of the beacon list. Subsequent polled refreshes won't re-stagger.
+        if (typeof APP !== 'undefined' && APP._staggerOnce) APP._staggerOnce(tbody);
+    },
+
+    // ──────────────────────────────────────────────────────────────────
+    // Phase 3B.1 — V3-native spec-list rendering for beacons.
+    // Renders #beacons-spec-list as .spec-row primitives. Click on a row
+    // calls selectBeacon (same as the legacy table). Status mapped to
+    // .spec-pill--alive / --idle / --stale / --dead.
+    // ──────────────────────────────────────────────────────────────────
+    renderBeaconSpecList(beacons) {
+        const ol = document.getElementById('beacons-spec-list');
+        if (!ol) return;
+
+        if (!beacons || beacons.length === 0) {
+            ol.innerHTML = '';
+            return;
+        }
+
+        const now = Date.now();
+        const esc = this.escapeHtml.bind(this);
+
+        ol.innerHTML = beacons.map(b => {
+            const elapsedMs = (b.lastCheckinMs || 0) + (now - (b.fetchedAt || now));
+            const lastSeen = this.formatElapsed(Math.max(0, elapsedMs));
+            const healthClass = this.getElapsedClass(elapsedMs, b.sleep, b.alive);
+            // Idle vs alive — alive + sleep>0 + within sleep window = "idle" rather than fresh.
+            let pillClass = 'alive';
+            let pillLabel = 'ALIVE';
+            if (healthClass === 'dead') { pillClass = 'dead';  pillLabel = 'DEAD'; }
+            else if (healthClass === 'stale') { pillClass = 'stale'; pillLabel = 'STALE'; }
+            else if (b.sleep && b.sleep >= 30000) { pillClass = 'idle'; pillLabel = 'IDLE'; }
+
+            const selected = (String(b.bid) === String(this.selectedBid)) ? 'true' : 'false';
+            const sleepStr = b.sleep != null && b.sleep !== ''
+                ? (b.sleep === 0 ? 'interactive' : `${Math.round(b.sleep / 1000)}s`)
+                : '—';
+            const jitterStr = b.jitter ? ` (${b.jitter}%)` : '';
+            const adminMark = b.isAdmin
+                ? '<span class="ops-beacons-row__admin" title="Admin token">*</span>' : '';
+            const eBid = esc(b.bid || '—');
+            const eUser = esc(b.user || '—');
+            const eComputer = esc(b.computer || '—');
+            const eOs = esc(b.os || '—');
+            const eInternal = esc(b.internal || '');
+            const eLabel = `${eUser}@${eComputer}`;
+
+            return `
+              <li class="spec-row" data-bid="${this.escapeAttr(b.bid)}" data-label="${this.escapeAttr(eLabel)}" data-selected="${selected}">
+                <div class="spec-row__head">
+                  <div class="ops-beacons-row__name">
+                    <span class="ops-beacons-row__bid">${eBid}${adminMark}</span>
+                    <span class="ops-beacons-row__kicker">${eOs} · PID ${esc(String(b.pid || '—'))}</span>
+                  </div>
+                  <div class="ops-beacons-row__meta">
+                    <span class="ops-beacons-row__hostline">${eUser}@${eComputer}${eInternal ? ' · ' + eInternal : ''}</span>
+                    <span class="ops-beacons-row__hint">${esc(lastSeen)} · sleep ${esc(sleepStr)}${esc(jitterStr)}</span>
+                  </div>
+                  <span class="spec-pill spec-pill--${pillClass}" title="Last seen: ${esc(lastSeen)}">
+                    <span class="spec-pill__dot"></span>${pillLabel}
+                  </span>
+                  <button type="button" class="spec-row__action" aria-label="Interact with ${eBid}"
+                          title="Interact">
+                    <svg class="icon" aria-hidden="true"><use href="#icon-chevron-right"/></svg>
+                  </button>
+                </div>
+              </li>`;
+        }).join('');
+
+        // Delegated click handlers
+        ol.querySelectorAll('li.spec-row[data-bid]').forEach(li => {
+            const bid = li.dataset.bid;
+            const label = li.dataset.label;
+            li.addEventListener('click', () => this.selectBeacon(bid, label));
+        });
+    },
+
+    // ──────────────────────────────────────────────────────────────────
+    // Phase 3B.1 — Beacon detail spec-list (metadata + "driven by").
+    // Renders inside #beacon-detail-spec-list when a beacon is selected.
+    // ──────────────────────────────────────────────────────────────────
+    renderDetailSpec(bid) {
+        const ol = document.getElementById('beacon-detail-spec-list');
+        if (!ol) return;
+        const b = this.cachedBeacons.find(x => String(x.bid) === String(bid));
+        if (!b) { ol.hidden = true; ol.innerHTML = ''; return; }
+        ol.hidden = false;
+
+        const esc = this.escapeHtml.bind(this);
+        const sleepStr = b.sleep != null && b.sleep !== ''
+            ? (b.sleep === 0 ? 'interactive' : `${Math.round(b.sleep / 1000)}s`)
+            : '—';
+        const jitterStr = b.jitter ? `${b.jitter}%` : '0%';
+        const now = Date.now();
+        const elapsedMs = (b.lastCheckinMs || 0) + (now - (b.fetchedAt || now));
+        const lastSeen = this.formatElapsed(Math.max(0, elapsedMs));
+
+        const rows = [
+            { key: 'HOST',     value: `${esc(b.computer || '—')}` },
+            { key: 'USER',     value: `${esc(b.user || '—')}${b.isAdmin ? ' <span class="ops-beacons-row__admin" title="Admin token">*</span>' : ''}` },
+            { key: 'INTERNAL', value: `<span class="spec-row__value--mono">${esc(b.internal || '—')}</span>` },
+            { key: 'OS / ARCH', value: `${esc(b.os || '—')} · ${esc(b.arch || '?')}` },
+            { key: 'PID',      value: `<span class="spec-row__value--mono">${esc(String(b.pid || '—'))}</span>` },
+            { key: 'PROCESS',  value: `<span class="spec-row__value--mono">${esc(b.process || '—')}</span>` },
+            { key: 'SLEEP',    value: `<span class="spec-row__value--mono">${esc(sleepStr)}</span>`, hint: `jitter ${esc(jitterStr)}` },
+            { key: 'LISTENER', value: `<span class="spec-row__value--mono">${esc(b.listener || '—')}</span>` },
+            { key: 'LAST SEEN', value: `<span class="spec-row__value--mono">${esc(lastSeen)}</span>` },
+            { key: 'DRIVEN BY', value: '<span class="ops-driven-pill ops-driven-pill--idle" data-driven-by-pill><span class="ops-driven-pill__dot"></span>Looking up…</span>' },
+        ];
+
+        ol.innerHTML = rows.map(r => `
+            <li class="spec-row" data-readonly="true" data-detail-key="${esc(r.key)}">
+              <div class="spec-row__head">
+                <span class="spec-row__key">${esc(r.key)}</span>
+                <span class="spec-row__value">${r.value}</span>
+                <span class="spec-row__hint">${r.hint ? esc(r.hint) : ''}</span>
+                <span aria-hidden="true"></span>
+              </div>
+            </li>`).join('');
+
+        // Async — resolve driven-by from audit log
+        this.fetchDrivenBy(bid);
+    },
+
+    async fetchDrivenBy(bid) {
+        const pillSel = '[data-detail-key="DRIVEN BY"] [data-driven-by-pill]';
+        const pill = document.querySelector(pillSel);
+        if (!pill) return;
+        try {
+            // Server-side target filter (Polish B) — fetch only the most
+            // recent beacon.exec row for this bid instead of pulling 50 and
+            // filtering client-side.
+            const res = await fetch(`/api/audit?action_prefix=beacon.exec&target=${encodeURIComponent(bid)}&limit=1`);
+            const data = await res.json();
+            const entries = (data && data.entries) || [];
+            const match = entries[0];
+            const op = match
+                ? (APP.operator.all || []).find(o => o.id === match.op)
+                : null;
+            if (match && op) {
+                const display = op.display || op.id || 'operator';
+                const color = op.color || 'var(--text-muted)';
+                const ts = this._relTime(match.ts);
+                pill.outerHTML = `
+                    <span class="ops-driven-pill" data-driven-by-pill data-op="${this.escapeAttr(op.id)}">
+                        <svg class="icon icon--sm ops-driven-pill__bolt" aria-hidden="true"><use href="#icon-bolt"/></svg>
+                        <span class="ops-driven-pill__dot" style="background: ${this.escapeAttr(color)}"></span>
+                        <span>${this.escapeHtml(display)}</span>
+                        <span class="ops-driven-pill__time" style="opacity:0.7; margin-left:6px;">${this.escapeHtml(ts)}</span>
+                    </span>`;
+            } else {
+                pill.outerHTML = `
+                    <span class="ops-driven-pill ops-driven-pill--idle" data-driven-by-pill>
+                        <span class="ops-driven-pill__dot"></span>
+                        <span>No recent operator activity</span>
+                    </span>`;
+            }
+        } catch (e) {
+            pill.outerHTML = `
+                <span class="ops-driven-pill ops-driven-pill--idle" data-driven-by-pill>
+                    <span class="ops-driven-pill__dot"></span>
+                    <span>—</span>
+                </span>`;
+        }
+    },
+
+    _relTime(iso) {
+        if (!iso) return '';
+        const then = new Date(iso).getTime();
+        if (isNaN(then)) return '';
+        const diff = Date.now() - then;
+        const s = Math.max(0, Math.floor(diff / 1000));
+        if (s < 60) return `${s}s ago`;
+        if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+        if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+        return `${Math.floor(s / 86400)}d ago`;
+    },
+
+    // ──────────────────────────────────────────────────────────────────
+    // Phase 3B.1 — Operator-attributed command history.
+    // Builds .spec-row entries from beacon.exec audit entries for the
+    // selected beacon. Operator color dot uses APP.operator.all lookup.
+    // ──────────────────────────────────────────────────────────────────
+    async refreshCmdHistory() {
+        if (!this.selectedBid) return;
+        const wrap = document.getElementById('ops-cmd-history');
+        const list = document.getElementById('ops-cmd-history-list');
+        if (!wrap || !list) return;
+        wrap.hidden = false;
+        list.innerHTML = `<li class="ops-cmd-history__empty">Loading…</li>`;
+        try {
+            // Server-side target filter (Polish B) — only entries for this
+            // beacon are returned, no client-side filter needed.
+            const res = await fetch(`/api/audit?action_prefix=beacon.exec&target=${encodeURIComponent(this.selectedBid)}&limit=100`);
+            const data = await res.json();
+            const entries = (data && data.entries) || [];
+            if (entries.length === 0) {
+                list.innerHTML = `<li class="ops-cmd-history__empty">No attributed command history for this beacon.</li>`;
+                return;
+            }
+            const esc = this.escapeHtml.bind(this);
+            list.innerHTML = entries.slice(0, 50).map(e => {
+                const op = (APP.operator.all || []).find(o => o.id === e.op);
+                const display = (op && op.display) || e.op || 'unknown';
+                const color = (op && op.color) || 'var(--text-muted)';
+                const cmd = (e.details && (e.details.command || e.details.cmd))
+                    || (typeof e.details === 'string' ? e.details : '')
+                    || '(command not recorded)';
+                const time = this._relTime(e.ts);
+                return `
+                  <li class="spec-row" data-readonly="true">
+                    <div class="spec-row__head">
+                      <span class="ops-cmd-history-row__op" title="${esc(display)}">
+                        <span class="ops-cmd-history-row__op-dot" style="background: ${this.escapeAttr(color)}"></span>
+                      </span>
+                      <span class="ops-cmd-history-row__cmd">
+                        <span class="ops-cmd-history-row__op-name">${esc(display)}</span>${esc(String(cmd))}
+                      </span>
+                      <span class="ops-cmd-history-row__time">${esc(time)}</span>
+                      <span aria-hidden="true"></span>
+                    </div>
+                  </li>`;
+            }).join('');
+        } catch (err) {
+            list.innerHTML = `<li class="ops-cmd-history__empty">Failed to load history.</li>`;
+        }
     },
 
     formatElapsed(ms) {
@@ -3447,6 +5974,10 @@ const BEACON = {
         this.renderMetaBadges(bid);
         this.renderProcessContext(bid);
 
+        // Phase 3B.1 — V3 detail spec-list + attributed command history.
+        if (typeof this.renderDetailSpec === 'function') this.renderDetailSpec(bid);
+        if (typeof this.refreshCmdHistory === 'function') this.refreshCmdHistory();
+
         // Fetch fresh beacon detail (updates context bar with process/arch/ppid)
         this.refreshBeaconDetail(bid, false);
 
@@ -3469,6 +6000,10 @@ const BEACON = {
         document.querySelectorAll('.beacon-table tbody tr').forEach(tr => {
             tr.classList.toggle('selected', tr.dataset.bid === bid);
         });
+        // Phase 3B.1 — V3 spec-list selection mirror
+        document.querySelectorAll('#beacons-spec-list .spec-row').forEach(li => {
+            li.setAttribute('data-selected', li.dataset.bid === bid ? 'true' : 'false');
+        });
     },
 
     closeInteract() {
@@ -3479,12 +6014,23 @@ const BEACON = {
             this._saveHistory(this.selectedBid);
             this._saveCmdHistory(this.selectedBid);
         }
+        const prevBid = this.selectedBid;
         this.selectedBid = null;
         this.hideAutocomplete();
         const panel = document.getElementById('beacon-interact-panel');
         if (panel) {
             panel.classList.remove('interact-fullview');
             panel.style.display = 'none';
+        }
+        // Phase 3B.1 — hide V3 detail spec-list + cmd history
+        const detail = document.getElementById('beacon-detail-spec-list');
+        if (detail) { detail.hidden = true; detail.innerHTML = ''; }
+        const hist = document.getElementById('ops-cmd-history');
+        if (hist) hist.hidden = true;
+        if (prevBid) {
+            document.querySelectorAll('#beacons-spec-list .spec-row').forEach(li => {
+                li.setAttribute('data-selected', 'false');
+            });
         }
         // Reset process context bar
         const ctx = document.getElementById('beacon-process-context');
@@ -4969,11 +7515,11 @@ const BEACON = {
         const shot = this._screenshotCache[idx];
         if (!shot) return;
         const src = shot.data ? `data:image/png;base64,${shot.data}` : (shot.url || '');
-        const overlay = document.createElement('div');
-        overlay.className = 'screenshot-overlay';
-        overlay.onclick = () => overlay.remove();
-        overlay.innerHTML = `<img src="${src}" alt="Screenshot">`;
-        document.body.appendChild(overlay);
+        // M-Redesign Agent 2 (v2.0.0): use the static #screenshot-overlay modal
+        // (canonical .modal + .modal--full). The body is populated with the img.
+        const body = document.getElementById('screenshot-overlay-body');
+        if (body) body.innerHTML = `<img src="${src}" alt="Screenshot">`;
+        APP.modal.open('screenshot-overlay');
     },
 
     // ── Token Store ──────────────────────────────────────────────
@@ -7926,11 +10472,16 @@ async function saveConfig() {
         
         if (data.success) {
             showMessage('Configuration saved successfully!', 'success');
+            // M-Redesign Agent 3 — also emit a toast for cross-page visibility
+            // (operators often save then immediately navigate away).
+            if (APP && APP.toast) APP.toast('Configuration saved', 'success');
         } else {
             showMessage('Error: ' + (data.error || 'Unknown error'), 'error');
+            if (APP && APP.toast) APP.toast('Save failed: ' + (data.error || 'Unknown error'), 'danger', 8000);
         }
     } catch (error) {
         showMessage('Error saving configuration: ' + error.message, 'error');
+        if (APP && APP.toast) APP.toast('Save failed: ' + error.message, 'danger', 8000);
     }
 }
 
@@ -8221,176 +10772,502 @@ async function clearConfig() {
 // ============================================================================
 
 /**
- * Load and display configuration summary on the Deploy page
+ * Phase 2B — Composition A spec-list summary.
+ *
+ * Live Deploy sub-pill "Configuration Summary" view. Renders the current
+ * deployment config as a V3-native spec-list (key / value / hint / pencil),
+ * each row click-to-edit inline (J3 pattern). Saving commits via the
+ * existing /api/config endpoint (operator audit attribution is handled
+ * server-side via g.operator middleware).
+ *
+ * Read-only rows: cost (computed from deployment-type cost component).
+ * Editable rows: type, project_name, environment, aws_region, cidr,
+ *                ssh_keys (auto vs custom).
+ *
+ * Status pill at top:
+ *   LIVE   — there is an active terraform deployment with state.
+ *   DRAFT  — config exists but no active deployment.
+ *   ERROR  — deployment had a failure (last apply status != ok).
  */
+
+const REGION_HINTS = {
+    'eu-central-1': 'Frankfurt',
+    'eu-west-1': 'Ireland',
+    'eu-west-2': 'London',
+    'us-east-1': 'N. Virginia',
+    'us-west-2': 'Oregon',
+    'us-east-2': 'Ohio',
+    'us-west-1': 'N. California',
+    'ap-southeast-1': 'Singapore',
+    'ap-northeast-1': 'Tokyo',
+};
+const ENV_HINTS = { dev: 'isolated', staging: 'pre-production', prod: 'production' };
+
+function _deploySummaryEscape(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _deploySummaryGetCost(deployConfig) {
+    if (!deployConfig?.components) return null;
+    const costComp = deployConfig.components.find(c => /Cost/i.test(c.label));
+    return costComp ? costComp.value : null;
+}
+
+/**
+ * Build the spec-list rows from a config object. Each row is { key, value,
+ * hint, editable, fieldType, options? } — value is the visible string, the
+ * editor is built based on fieldType.
+ */
+function _deploySummaryBuildRows(config, deployConfig) {
+    const rows = [];
+    const isGoadOnly = deployConfig?.type === 'goad';
+
+    rows.push({
+        key: 'type',
+        label: 'Deployment Type',
+        value: deployConfig?.title || config.deployment_type || '—',
+        hint: deployConfig?.type === 'goad' ? 'Training lab'
+            : deployConfig?.type === 'c2' ? 'Red team C2'
+            : 'Combined',
+        editable: true,
+        fieldType: 'type',
+    });
+
+    rows.push({
+        key: 'project_name',
+        label: 'Project Name',
+        value: config.project_name || '—',
+        valueMono: true,
+        hint: config.project_name ? `${config.project_name.length} chars` : '',
+        editable: true,
+        fieldType: 'text',
+        placeholder: 'project_name',
+    });
+
+    rows.push({
+        key: 'environment',
+        label: 'Environment',
+        value: (config.environment || 'dev').toUpperCase(),
+        isPill: true,
+        hint: ENV_HINTS[(config.environment || 'dev').toLowerCase()] || '',
+        editable: true,
+        fieldType: 'seg',
+        options: [
+            { val: 'dev', label: 'DEV' },
+            { val: 'staging', label: 'Staging' },
+            { val: 'prod', label: 'Prod' },
+        ],
+    });
+
+    rows.push({
+        key: 'aws_region',
+        label: 'AWS Region',
+        value: config.aws_region || '—',
+        valueMono: true,
+        hint: REGION_HINTS[config.aws_region] || '',
+        editable: true,
+        fieldType: 'seg',
+        options: Object.entries(REGION_HINTS).map(([val, hint]) => ({ val, label: val, hint })),
+    });
+
+    const cidrBlocks = config.management_cidr_blocks || [];
+    rows.push({
+        key: 'management_cidr',
+        label: 'Management CIDR',
+        value: cidrBlocks.length ? (cidrBlocks.length === 1 ? cidrBlocks[0] : `${cidrBlocks.length} CIDR blocks`) : '—',
+        valueMono: true,
+        hint: cidrBlocks.length === 1 ? 'single host' : (cidrBlocks.length ? `${cidrBlocks.length} blocks` : ''),
+        editable: true,
+        fieldType: 'cidr',
+        rawValue: cidrBlocks.join(', '),
+    });
+
+    if (!isGoadOnly) {
+        rows.push({
+            key: 'key_pair_name',
+            label: 'Key Pair',
+            value: config.key_pair_name || '—',
+            valueMono: true,
+            hint: 'AWS keypair',
+            editable: true,
+            fieldType: 'text',
+            placeholder: 'my-key',
+        });
+    } else {
+        rows.push({
+            key: 'ssh_keys',
+            label: 'SSH Keys',
+            value: 'Auto-generated',
+            hint: 'ed25519',
+            editable: false,
+        });
+    }
+
+    if (deployConfig?.requiresDomain) {
+        rows.push({
+            key: 'primary_domain_name',
+            label: 'Primary Domain',
+            value: config.primary_domain_name || '—',
+            valueMono: true,
+            hint: 'Route 53',
+            editable: true,
+            fieldType: 'text',
+            placeholder: 'example.com',
+        });
+    }
+
+    const cost = _deploySummaryGetCost(deployConfig);
+    if (cost) {
+        rows.push({
+            key: 'cost',
+            label: 'Est. Monthly Cost',
+            value: cost,
+            valueMono: true,
+            valueStrong: true,
+            hint: 'computed',
+            editable: false,
+        });
+    }
+
+    return rows;
+}
+
+function _deploySummaryRenderRow(row) {
+    const valueClasses = ['spec-row__value'];
+    if (row.valueMono) valueClasses.push('spec-row__value--mono');
+    if (row.valueStrong) valueClasses.push('spec-row__value--strong');
+    let valueHtml;
+    if (row.isPill) {
+        const live = String(row.value).toUpperCase() === 'PROD' ? '' : '';
+        valueHtml = `<dd class="${valueClasses.join(' ')}"><span class="spec-pill"><span class="spec-pill__dot" aria-hidden="true"></span>${_deploySummaryEscape(row.value)}</span></dd>`;
+    } else {
+        valueHtml = `<dd class="${valueClasses.join(' ')}" data-summary-value="${_deploySummaryEscape(row.key)}">${_deploySummaryEscape(row.value)}</dd>`;
+    }
+
+    const hintHtml = row.hint
+        ? `<dd class="spec-row__hint" data-summary-hint="${_deploySummaryEscape(row.key)}">${_deploySummaryEscape(row.hint)}</dd>`
+        : '<dd class="spec-row__hint" data-summary-hint=""></dd>';
+
+    const pencilHtml = row.editable
+        ? `<button class="spec-row__action" type="button" aria-label="Edit ${_deploySummaryEscape(row.label)}" data-summary-edit="${_deploySummaryEscape(row.key)}"><svg class="icon" aria-hidden="true"><use href="#icon-edit-pencil"/></svg></button>`
+        : '<span class="spec-row__action" aria-hidden="true"></span>';
+
+    const readonlyAttr = row.editable ? '' : ' data-readonly="true"';
+    return `
+        <div class="spec-row" data-summary-row="${_deploySummaryEscape(row.key)}"${readonlyAttr}>
+            <div class="spec-row__head">
+                <dt class="spec-row__key">${_deploySummaryEscape(row.label)}</dt>
+                ${valueHtml}
+                ${hintHtml}
+                ${pencilHtml}
+            </div>
+            <div class="spec-row__editor" data-summary-editor="${_deploySummaryEscape(row.key)}"></div>
+        </div>
+    `;
+}
+
+function _deploySummaryBuildEditor(row, config) {
+    let fieldHtml = '';
+    if (row.fieldType === 'text') {
+        fieldHtml = `<input class="spec-row__editor-input" type="text" value="${_deploySummaryEscape(row.value !== '—' ? row.value : '')}" data-edit-input placeholder="${_deploySummaryEscape(row.placeholder || '')}" autocomplete="off" spellcheck="false">`;
+    } else if (row.fieldType === 'cidr') {
+        const cur = row.rawValue || (row.value !== '—' ? row.value : '');
+        fieldHtml = `
+            <div style="display:flex; gap:8px; align-items:center;">
+                <input class="spec-row__editor-input" type="text" value="${_deploySummaryEscape(cur)}" data-edit-input placeholder="82.35.149.127/32" autocomplete="off" spellcheck="false" style="flex:1">
+                <button class="spec-edit-btn" type="button" data-edit-action="my-ip">Use my IP</button>
+            </div>
+            <span class="spec-row__editor-hint">Comma-separated CIDR blocks. /32 = exact host.</span>
+        `;
+    } else if (row.fieldType === 'seg') {
+        const segOptions = (row.options || []).map(o => {
+            const isActive = String(o.val).toLowerCase() === String(row.value).toLowerCase() ||
+                             String(o.val) === String(row.value);
+            return `<button class="seg-control__option${isActive ? ' is-active' : ''}" type="button" data-seg-val="${_deploySummaryEscape(o.val)}" ${o.hint ? `data-seg-hint="${_deploySummaryEscape(o.hint)}"` : ''}>${_deploySummaryEscape(o.label)}</button>`;
+        }).join('');
+        fieldHtml = `<div class="seg-control" role="radiogroup" data-edit-seg>${segOptions}</div>`;
+    } else if (row.fieldType === 'type') {
+        const groups = [
+            { label: 'Red team C2', ids: ['c2-adhoc', 'c2-purple', 'c2-full'] },
+            { label: 'Training lab', ids: ['goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha'] },
+            { label: 'Combined', ids: ['combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full'] },
+        ];
+        let inner = '';
+        groups.forEach(g => {
+            inner += `<div class="spec-type-grid__group">${_deploySummaryEscape(g.label)}</div>`;
+            g.ids.forEach(id => {
+                const def = DEPLOYMENT_CONFIGS[id];
+                if (!def) return;
+                const isActive = id === config.deployment_type;
+                const hint = def.components?.find(c => /Cost/i.test(c.label))?.value || '';
+                inner += `
+                    <label class="spec-type-card${isActive ? ' is-checked' : ''}" data-type-card="${_deploySummaryEscape(id)}">
+                        <input type="radio" name="summary-type-edit" value="${_deploySummaryEscape(id)}" ${isActive ? 'checked' : ''}>
+                        <span class="spec-type-card__title">${_deploySummaryEscape(def.title || id)}</span>
+                        <span class="spec-type-card__hint">${_deploySummaryEscape(hint)}</span>
+                    </label>
+                `;
+            });
+        });
+        fieldHtml = `<div class="spec-type-grid" data-edit-type-grid>${inner}</div>`;
+    }
+    return `
+        <div class="spec-row__editor-field">
+            <span class="spec-row__editor-label">${_deploySummaryEscape(row.label)}</span>
+            ${fieldHtml}
+        </div>
+        <div class="spec-row__editor-foot">
+            <button class="spec-edit-btn" type="button" data-edit-action="cancel">Cancel</button>
+            <button class="spec-edit-btn spec-edit-btn--save" type="button" data-edit-action="save">Save</button>
+        </div>
+    `;
+}
+
+/**
+ * Update the status pill in the summary header. Variants: live/draft/error.
+ */
+async function _deploySummaryUpdateStatus(projectName) {
+    const pill = document.getElementById('deploy-summary-status');
+    const label = document.getElementById('deploy-summary-status-label');
+    if (!pill || !label) return;
+    // default to DRAFT
+    pill.classList.remove('spec-pill--live', 'spec-pill--error', 'spec-pill--draft');
+    pill.classList.add('spec-pill--draft');
+    label.textContent = 'DRAFT';
+    if (!projectName) return;
+    try {
+        const r = await fetch(`/api/deploy/status?project=${encodeURIComponent(projectName)}`);
+        const d = await r.json();
+        if (d?.status?.deployed) {
+            pill.classList.remove('spec-pill--draft');
+            pill.classList.add('spec-pill--live');
+            label.textContent = 'LIVE';
+        } else if (d?.status?.last_error) {
+            pill.classList.remove('spec-pill--draft');
+            pill.classList.add('spec-pill--error');
+            label.textContent = 'ERROR';
+        }
+    } catch (_) { /* leave as DRAFT */ }
+}
+
+/**
+ * Open a row's inline editor. Closes any other open row first.
+ */
+function _deploySummaryOpenRow(rowEl, row, config) {
+    const list = rowEl.closest('.spec-list');
+    if (!list) return;
+    _deploySummaryCloseAll(list);
+    const editor = rowEl.querySelector('[data-summary-editor]');
+    editor.innerHTML = _deploySummaryBuildEditor(row, config);
+    rowEl.setAttribute('data-editing', 'true');
+    list.setAttribute('data-editing', 'true');
+    const input = editor.querySelector('[data-edit-input]');
+    if (input) { input.focus(); input.select && input.select(); }
+}
+
+function _deploySummaryCloseAll(list) {
+    list.querySelectorAll('.spec-row[data-editing="true"]').forEach(r => {
+        r.removeAttribute('data-editing');
+        const editor = r.querySelector('[data-summary-editor]');
+        if (editor) editor.innerHTML = '';
+    });
+    list.removeAttribute('data-editing');
+}
+
+/**
+ * Save a row's edits — patches the running config and POSTs the full
+ * (validated) config to /api/config. On success, refreshes the summary.
+ */
+async function _deploySummarySaveRow(rowEl, row, config) {
+    const editor = rowEl.querySelector('[data-summary-editor]');
+    if (!editor) return;
+
+    let patch = {};
+    if (row.fieldType === 'text') {
+        const v = editor.querySelector('[data-edit-input]')?.value.trim() || '';
+        if (row.key === 'project_name') patch.project_name = v;
+        else if (row.key === 'key_pair_name') patch.key_pair_name = v;
+        else if (row.key === 'primary_domain_name') patch.primary_domain_name = v;
+    } else if (row.fieldType === 'cidr') {
+        const v = editor.querySelector('[data-edit-input]')?.value.trim() || '';
+        patch.management_cidr_blocks = v.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (row.fieldType === 'seg') {
+        const active = editor.querySelector('.seg-control__option.is-active');
+        if (!active) return;
+        const v = active.dataset.segVal;
+        if (row.key === 'environment') patch.environment = v;
+        else if (row.key === 'aws_region') patch.aws_region = v;
+    } else if (row.fieldType === 'type') {
+        const checked = editor.querySelector('input[name="summary-type-edit"]:checked');
+        if (!checked) return;
+        patch.deployment_type = checked.value;
+        patch.engagement_type = checked.value;
+    }
+
+    const newConfig = Object.assign({}, config, patch);
+    try {
+        const r = await fetch(`${API_BASE}/config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: newConfig }),
+        });
+        const d = await r.json();
+        if (!d.success) {
+            console.error('Config save failed:', d);
+            // Show inline error
+            const hint = editor.querySelector('.spec-row__editor-hint');
+            const msg = (d.errors && d.errors.join('; ')) || d.error || 'Save failed';
+            if (hint) hint.textContent = msg;
+            return;
+        }
+    } catch (e) {
+        console.error('Config save threw:', e);
+        return;
+    }
+
+    // Re-render the entire summary with the new config.
+    await loadConfigSummary();
+}
+
 async function loadConfigSummary() {
     const summarySection = document.getElementById('config-summary-section');
-    const summaryGrid = document.getElementById('config-summary-grid');
+    const specList = document.getElementById('deploy-summary-spec-list');
     const warningsDiv = document.getElementById('config-summary-warnings');
-    
-    if (!summarySection || !summaryGrid) return;
-    
+    const heroName = document.getElementById('deploy-summary-hero-name');
+    const heroType = document.getElementById('deploy-summary-hero-type');
+    if (!summarySection || !specList) return;
+
     try {
         const response = await fetch(`${API_BASE}/config`);
         const data = await response.json();
-        
         if (!data.success || !data.config) {
             summarySection.style.display = 'none';
             return;
         }
-        
+
         const config = data.config;
         const deploymentType = config.deployment_type || config.engagement_type || '';
         const deployConfig = DEPLOYMENT_CONFIGS[deploymentType];
-        
         if (!deploymentType) {
             summarySection.style.display = 'none';
             return;
         }
-        
+
         // Show the section
         summarySection.style.display = 'block';
-        
-        // Build summary items
-        const summaryItems = [];
+
+        // Hero
+        if (heroName) heroName.textContent = config.project_name || '(unnamed)';
+        if (heroType) heroType.textContent = deployConfig?.title || deploymentType;
+
+        // Status pill
+        _deploySummaryUpdateStatus(config.project_name);
+
+        // Build + render rows
+        const rows = _deploySummaryBuildRows(config, deployConfig);
+        specList.innerHTML = rows.map(_deploySummaryRenderRow).join('');
+
+        // Validation warnings (use the same heuristics as before)
         const warnings = [];
-        
-        // Deployment Type
-        summaryItems.push({
-            icon: deployConfig?.type === 'goad' ? '🏰' : (deployConfig?.type === 'c2' ? '🎯' : '🔥'),
-            label: 'Deployment Type',
-            value: deployConfig?.title || deploymentType,
-            color: 'var(--brand)'
-        });
-
-        // Project Name
-        if (config.project_name) {
-            summaryItems.push({
-                icon: '📁',
-                label: 'Project Name',
-                value: config.project_name,
-                color: 'var(--info)'
-            });
-        } else {
-            warnings.push('Project name not set');
+        if (!config.project_name) warnings.push('Project name not set');
+        if (!config.aws_region) warnings.push('AWS region not set');
+        if (!(config.management_cidr_blocks || []).length) {
+            warnings.push("Management CIDR not set — you won't be able to access your infrastructure!");
         }
-        
-        // Environment
-        if (config.environment) {
-            summaryItems.push({
-                icon: '🏷️',
-                label: 'Environment',
-                value: config.environment.toUpperCase(),
-                color: config.environment === 'prod' ? 'var(--danger)' : (config.environment === 'staging' ? 'var(--warning)' : 'var(--success)')
-            });
-        }
-        
-        // AWS Region
-        if (config.aws_region) {
-            summaryItems.push({
-                icon: '🌍',
-                label: 'AWS Region',
-                value: config.aws_region,
-                color: 'var(--info)'
-            });
-        } else {
-            warnings.push('AWS region not set');
-        }
-        
-        // Management CIDR
-        const cidrBlocks = config.management_cidr_blocks || [];
-        if (cidrBlocks.length > 0) {
-            summaryItems.push({
-                icon: '🔒',
-                label: 'Management CIDR',
-                value: cidrBlocks.length === 1 ? cidrBlocks[0] : `${cidrBlocks.length} CIDR blocks`,
-                color: 'var(--success)',
-                tooltip: cidrBlocks.join(', ')
-            });
-        } else {
-            warnings.push('⚠️ Management CIDR not set - you won\'t be able to access your infrastructure!');
-        }
-        
-        // Key Pair (only for non-GOAD deployments)
         const isGoadOnly = deployConfig?.type === 'goad';
-        if (!isGoadOnly) {
-            if (config.key_pair_name) {
-                summaryItems.push({
-                    icon: '🔑',
-                    label: 'Key Pair',
-                    value: config.key_pair_name,
-                    color: 'var(--text-muted)'
-                });
-            } else {
-                warnings.push('Key pair name not set (required for C2/Combined)');
-            }
-        } else {
-            summaryItems.push({
-                icon: '🔑',
-                label: 'SSH Keys',
-                value: 'Auto-generated',
-                color: 'var(--success)'
-            });
+        if (!isGoadOnly && !config.key_pair_name) {
+            warnings.push('Key pair name not set (required for C2/Combined)');
         }
-
-        // Domain (only for C2/Combined)
-        if (deployConfig?.requiresDomain) {
-            if (config.primary_domain_name) {
-                summaryItems.push({
-                    icon: '🌐',
-                    label: 'Primary Domain',
-                    value: config.primary_domain_name,
-                    color: 'var(--info)'
-                });
-            } else {
-                warnings.push('Primary domain not configured (required for C2)');
-            }
+        if (deployConfig?.requiresDomain && !config.primary_domain_name) {
+            warnings.push('Primary domain not configured (required for C2)');
         }
-        
-        // Estimated Cost
-        if (deployConfig?.components) {
-            const costComp = deployConfig.components.find(c => c.label.includes('Cost'));
-            if (costComp) {
-                summaryItems.push({
-                    icon: '💰',
-                    label: 'Est. Monthly Cost',
-                    value: costComp.value,
-                    color: 'var(--warning)'
-                });
-            }
-        }
-
-        // Render summary grid
-        summaryGrid.innerHTML = summaryItems.map(item => `
-            <div style="background: var(--bg-card); padding: 12px; border-radius: 8px; border-left: 4px solid ${item.color};" ${item.tooltip ? `title="${item.tooltip}"` : ''}>
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                    <span style="font-size: 1.2em;">${item.icon}</span>
-                    <span style="font-size: 0.8em; color: var(--text-muted); text-transform: uppercase;">${item.label}</span>
-                </div>
-                <div style="font-weight: bold; color: var(--text-primary); font-size: 0.95em; word-break: break-word;">${item.value}</div>
-            </div>
-        `).join('');
-        
-        // Render warnings if any
-        if (warnings.length > 0) {
+        if (warnings.length) {
             warningsDiv.style.display = 'block';
             warningsDiv.innerHTML = `
-                <div style="background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: 6px; padding: 12px;">
-                    <div style="font-weight: bold; color: var(--warning-text); margin-bottom: 8px;">⚠️ Configuration Issues:</div>
-                    <ul style="margin: 0; padding-left: 20px; color: var(--warning-text);">
-                        ${warnings.map(w => `<li style="margin-bottom: 4px;">${w}</li>`).join('')}
-                    </ul>
-                </div>
+                <div class="deploy-summary__warnings-title">Configuration Issues</div>
+                <ul class="deploy-summary__warnings-list">
+                    ${warnings.map(w => `<li>${_deploySummaryEscape(w)}</li>`).join('')}
+                </ul>
             `;
-        } else {
+        } else if (warningsDiv) {
             warningsDiv.style.display = 'none';
+            warningsDiv.innerHTML = '';
         }
-        
+
+        // Wire row click → open editor
+        rows.forEach(row => {
+            if (!row.editable) return;
+            const rowEl = specList.querySelector(`.spec-row[data-summary-row="${row.key}"]`);
+            if (!rowEl) return;
+            const head = rowEl.querySelector('.spec-row__head');
+            head.addEventListener('click', (e) => {
+                // Don't reopen if already editing & click was on the head outside editor
+                if (rowEl.getAttribute('data-editing') === 'true') return;
+                _deploySummaryOpenRow(rowEl, row, config);
+            });
+        });
+
+        // Wire editor delegate (event delegation on the list).
+        // Cache the latest rows on the element so the delegate sees the
+        // current set after each re-render (loadConfigSummary may be called
+        // multiple times). Listener is attached once.
+        specList._summaryRows = rows;
+        specList._summaryConfig = config;
+        if (specList._summaryDelegateWired) return;
+        specList._summaryDelegateWired = true;
+        specList.addEventListener('click', (e) => {
+            const rowsRef = specList._summaryRows || [];
+            const configRef = specList._summaryConfig || {};
+            const action = e.target.closest('[data-edit-action]');
+            const segBtn = e.target.closest('.seg-control__option');
+            const typeCard = e.target.closest('[data-type-card]');
+            if (segBtn) {
+                e.stopPropagation();
+                segBtn.parentElement.querySelectorAll('.seg-control__option').forEach(b => b.classList.remove('is-active'));
+                segBtn.classList.add('is-active');
+                return;
+            }
+            if (typeCard) {
+                e.stopPropagation();
+                const grid = typeCard.closest('[data-edit-type-grid]');
+                if (grid) grid.querySelectorAll('.spec-type-card').forEach(c => c.classList.remove('is-checked'));
+                typeCard.classList.add('is-checked');
+                const radio = typeCard.querySelector('input[type="radio"]');
+                if (radio) radio.checked = true;
+                return;
+            }
+            if (!action) return;
+            e.stopPropagation();
+            const rowEl = action.closest('.spec-row');
+            if (!rowEl) return;
+            const rowKey = rowEl.dataset.summaryRow;
+            const row = rowsRef.find(r => r.key === rowKey);
+            if (!row) return;
+            if (action.dataset.editAction === 'cancel') {
+                _deploySummaryCloseAll(specList);
+            } else if (action.dataset.editAction === 'save') {
+                _deploySummarySaveRow(rowEl, row, configRef);
+            } else if (action.dataset.editAction === 'my-ip') {
+                // Fetch caller IP and stuff it into the input
+                fetch(`${API_BASE}/config/public-ip`).then(r => r.json()).then(d => {
+                    if (d.success && d.ip) {
+                        const inp = rowEl.querySelector('[data-edit-input]');
+                        if (inp) inp.value = `${d.ip}/32`;
+                    }
+                }).catch(() => {});
+            }
+        }, { once: false });
+
     } catch (error) {
         console.error('Error loading config summary:', error);
         summarySection.style.display = 'none';
     }
 }
+
+// PHASE 3A — Manage sub-pill V3-native rebuild (loaded; see bottom of file).
+APP.manage = APP.manage || {};
 
 let deploymentPollInterval = null;
 let isPlanRunning = false;  // Flag to prevent polling from overwriting plan UI
@@ -8426,10 +11303,46 @@ function applyAutoRefreshSetting() {
     const seconds = parseInt(select.value, 10);
     localStorage.setItem('autoRefreshInterval', seconds);
 
+    // Phase 3d — keep the seg-control mirror in sync after a change.
+    _syncAutoRefreshSeg(String(seconds));
+
     // Restart if currently on deployments page
     if (APP.currentPage === 'deployments') {
         startAutoRefresh();
     }
+}
+
+// Phase 3d — sync the .seg-control mirror in #auto-refresh-seg to the
+// hidden <select> value. The select is the canonical state of truth;
+// the seg-control is just the visible chrome.
+function _syncAutoRefreshSeg(value) {
+    const seg = document.getElementById('auto-refresh-seg');
+    if (!seg) return;
+    seg.querySelectorAll('.seg-control__option').forEach(btn => {
+        const isActive = btn.dataset.value === value;
+        btn.classList.toggle('is-active', isActive);
+        if (isActive) btn.setAttribute('aria-selected', 'true');
+        else btn.removeAttribute('aria-selected');
+    });
+}
+
+// Phase 3d — wire seg-control clicks → hidden <select> → existing handler.
+// Wraps the seg-control click handler so that selecting an option drives
+// the canonical <select>.value + dispatches `change` (which fires
+// applyAutoRefreshSetting). Idempotent via dataset.wired.
+function _setupAutoRefreshSeg() {
+    const seg = document.getElementById('auto-refresh-seg');
+    const select = document.getElementById('auto-refresh-interval');
+    if (!seg || !select || seg.dataset.wired === 'true') return;
+    seg.dataset.wired = 'true';
+    seg.addEventListener('click', (e) => {
+        const opt = e.target.closest('.seg-control__option');
+        if (!opt) return;
+        const value = opt.dataset.value;
+        if (select.value === value) return;
+        select.value = value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
 }
 
 function initSettingsPage() {
@@ -8437,11 +11350,258 @@ function initSettingsPage() {
     if (select) {
         select.value = String(getAutoRefreshSeconds());
     }
+    // Phase 3d — wire the seg-control + sync its visible state to the
+    // canonical select.value (loaded from localStorage above).
+    _setupAutoRefreshSeg();
+    _syncAutoRefreshSeg(String(getAutoRefreshSeconds()));
     // Load cost tracker settings + cached cost data
     loadCostSettings();
     loadCostProjectSelector();
     loadProjectCosts(false); // Load from cache, no API call
+    // M-Redesign Agent 1 — wire TOC smooth scroll + active highlighting
+    APP._setupSettingsToc();
+    // D8 — lazy-load Domains / Secrets / Infra Services inventory cards.
+    // Each loader is idempotent (guarded by dataset.loaded) so re-entering
+    // the Settings tab does not re-fetch.
+    if (typeof loadSettingsDomains === 'function') loadSettingsDomains(false);
+    if (typeof loadSettingsSecrets === 'function') loadSettingsSecrets(false);
+    if (typeof loadSettingsServices === 'function') loadSettingsServices(false);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// D8 — Settings inventory cards: Domains & DNS / Secrets Manager /
+// Infrastructure Services. Each loader fetches once per Settings tab open
+// (guarded by `list.dataset.loaded`), with explicit Refresh buttons that
+// pass forceRefresh=true. All three follow the same pattern.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Format an ISO-8601 timestamp for display in a settings row.
+ * Returns "—" for null / undefined / unparseable input.
+ */
+function _formatSettingsDate(iso) {
+    if (!iso) return '—';
+    try {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return '—';
+        return d.toISOString().slice(0, 10);
+    } catch (_e) {
+        return '—';
+    }
+}
+
+// Phase 3d — set status label + state on the spec-list toolbar (drives
+// data-state which switches color). Backwards-compatible with the legacy
+// span-only markup (older callers passed an element with no data-state
+// attribute; setting it is a no-op there).
+function _setSettingsStatus(elOrId, text, state) {
+    const el = typeof elOrId === 'string' ? document.getElementById(elOrId) : elOrId;
+    if (!el) return;
+    el.textContent = text;
+    if (state) el.setAttribute('data-state', state);
+}
+
+// Phase 3d — render a key/value spec-row read-only (no edit, no hover lift).
+// `value` is rendered as the body identity; `hint` is the right-side meta;
+// `key` is the caps eyebrow on the left.
+function _renderSettingsSpecRow({ key, value, hint, valueMono, dataKey }) {
+    const valueClasses = ['spec-row__value'];
+    if (valueMono) valueClasses.push('spec-row__value--mono');
+    const hintHtml = hint ? `<dd class="spec-row__hint">${hint}</dd>` : '<dd class="spec-row__hint"></dd>';
+    const dataAttr = dataKey ? ` data-settings-row="${escapeHtml(dataKey)}"` : '';
+    return `
+        <div class="spec-row" data-readonly="true"${dataAttr}>
+            <div class="spec-row__head">
+                <dt class="spec-row__key">${key}</dt>
+                <dd class="${valueClasses.join(' ')}">${value}</dd>
+                ${hintHtml}
+                <span class="spec-row__action" aria-hidden="true"></span>
+            </div>
+        </div>`;
+}
+
+async function loadSettingsDomains(forceRefresh) {
+    const list = document.getElementById('settings-domains-list');
+    const status = document.getElementById('settings-domains-status');
+    if (!list) return;
+    if (!forceRefresh && list.dataset.loaded === 'true') return;
+    APP.renderSkeleton('settings-domains-list', 'card', 2);
+    _setSettingsStatus(status, 'Loading...', 'loading');
+    try {
+        const res = await fetch('/api/health/route53-domains');
+        const data = await res.json();
+        const zones = data.zones || data.domains || [];
+        if (!zones.length) {
+            list.innerHTML = '<p class="settings-spec-empty">No Route 53 hosted zones found in this account.</p>';
+        } else {
+            // Phase 3d — each zone becomes a read-only spec-row. The zone
+            // name is the caps key; record count is the body value; private
+            // / in-use-by status becomes the hint.
+            const rows = zones.map(z => {
+                const name = escapeHtml(z.name || z.domain_name || z.domain || '—');
+                const records = z.record_count != null ? z.record_count : 0;
+                const hints = [];
+                if (z.private) hints.push('private');
+                if (z.in_use_by) hints.push(`used by ${escapeHtml(z.in_use_by)}`);
+                return _renderSettingsSpecRow({
+                    key: name,
+                    value: `${records} record${records === 1 ? '' : 's'}`,
+                    hint: hints.join(' &middot; '),
+                    valueMono: true,
+                    dataKey: z.name || z.domain_name || z.domain || ''
+                });
+            }).join('');
+            list.innerHTML = `<dl class="spec-list spec-list--inset motion-stagger-in" aria-label="Route 53 hosted zones">${rows}</dl>`;
+            APP._staggerOnce(list.querySelector('.spec-list'));
+        }
+        list.dataset.loaded = 'true';
+        _setSettingsStatus(status, `${zones.length} zone${zones.length === 1 ? '' : 's'}`, zones.length ? 'ready' : 'empty');
+    } catch (e) {
+        list.innerHTML = '<p class="settings-spec-error">Failed to load zones. Check AWS credentials.</p>';
+        _setSettingsStatus(status, 'Error', 'error');
+    }
+}
+
+async function loadSettingsSecrets(forceRefresh) {
+    const list = document.getElementById('settings-secrets-list');
+    const status = document.getElementById('settings-secrets-status');
+    if (!list) return;
+    if (!forceRefresh && list.dataset.loaded === 'true') return;
+    APP.renderSkeleton('settings-secrets-list', 'card', 2);
+    _setSettingsStatus(status, 'Loading...', 'loading');
+    try {
+        const res = await fetch('/api/health/secrets');
+        const data = await res.json();
+        const secrets = data.secrets || [];
+        if (!data.success && data.error) {
+            list.innerHTML = `<p class="settings-spec-error">Failed to list secrets: ${escapeHtml(data.error)}</p>`;
+            _setSettingsStatus(status, 'Error', 'error');
+            return;
+        }
+        if (!secrets.length) {
+            list.innerHTML = '<p class="settings-spec-empty">No project secrets found in AWS Secrets Manager.</p>';
+        } else {
+            const rows = secrets.map(s => {
+                const name = escapeHtml(s.name || '—');
+                const changed = _formatSettingsDate(s.last_changed);
+                const accessed = _formatSettingsDate(s.last_accessed);
+                return _renderSettingsSpecRow({
+                    key: name,
+                    value: `changed ${changed}`,
+                    hint: `accessed ${accessed}`,
+                    valueMono: true,
+                    dataKey: s.name || ''
+                });
+            }).join('');
+            list.innerHTML = `<dl class="spec-list spec-list--inset motion-stagger-in" aria-label="Project secrets in AWS Secrets Manager">${rows}</dl>`;
+            APP._staggerOnce(list.querySelector('.spec-list'));
+        }
+        list.dataset.loaded = 'true';
+        _setSettingsStatus(status, `${secrets.length} secret${secrets.length === 1 ? '' : 's'}`, secrets.length ? 'ready' : 'empty');
+    } catch (e) {
+        list.innerHTML = '<p class="settings-spec-error">Failed to load secrets. Check AWS credentials.</p>';
+        _setSettingsStatus(status, 'Error', 'error');
+    }
+}
+
+async function loadSettingsServices(forceRefresh) {
+    const list = document.getElementById('settings-services-list');
+    const status = document.getElementById('settings-services-status');
+    if (!list) return;
+    if (!forceRefresh && list.dataset.loaded === 'true') return;
+    APP.renderSkeleton('settings-services-list', 'card', 1);
+    _setSettingsStatus(status, 'Loading...', 'loading');
+    try {
+        const res = await fetch('/api/deploy/resources/all-projects');
+        const data = await res.json();
+        const resources = data.resources || [];
+        // Filter to platform / dashboard-tagged resources. The dashboard
+        // server is tagged Project=dashboard (and/or Name contains
+        // "dashboard"); the S3 state backend lives in the platform layer.
+        const services = resources.filter(r => {
+            const proj = (r.project || '').toLowerCase();
+            const name = (r.name || '').toLowerCase();
+            const type = (r.type || '').toLowerCase();
+            if (proj === 'dashboard') return true;
+            if (name.includes('dashboard') && type.includes('ec2')) return true;
+            if (type === 's3-bucket' && (name.includes('tfstate') || name.includes('terraform-state'))) return true;
+            return false;
+        });
+        if (!services.length) {
+            list.innerHTML = '<p class="settings-spec-empty">No shared infrastructure services detected. The dashboard server itself may not be tagged for inventory.</p>';
+        } else {
+            const rows = services.map(svc => {
+                const name = escapeHtml(svc.name || svc.id || '—');
+                const type = svc.type ? escapeHtml(svc.type) : '—';
+                const hints = [];
+                if (svc.state) hints.push(escapeHtml(svc.state));
+                if (svc.region) hints.push(escapeHtml(svc.region));
+                if (svc.details) hints.push(escapeHtml(svc.details));
+                return _renderSettingsSpecRow({
+                    key: name,
+                    value: type,
+                    hint: hints.join(' &middot; '),
+                    valueMono: true,
+                    dataKey: svc.name || svc.id || ''
+                });
+            }).join('');
+            list.innerHTML = `<dl class="spec-list spec-list--inset motion-stagger-in" aria-label="Shared infrastructure services">${rows}</dl>`;
+            APP._staggerOnce(list.querySelector('.spec-list'));
+        }
+        list.dataset.loaded = 'true';
+        _setSettingsStatus(status, `${services.length} service${services.length === 1 ? '' : 's'}`, services.length ? 'ready' : 'empty');
+    } catch (e) {
+        list.innerHTML = '<p class="settings-spec-error">Failed to load infrastructure services. Check AWS credentials.</p>';
+        _setSettingsStatus(status, 'Error', 'error');
+    }
+}
+
+// M-Redesign Agent 1 — Settings TOC active-section tracker.
+// Wires smooth scroll on TOC click + IntersectionObserver-based active
+// highlighting. Idempotent (guarded by _settingsTocReady). Called from
+// initSettingsPage() each time the Settings tab is opened.
+APP._setupSettingsToc = function () {
+    const toc = document.querySelector('.tab-page[data-page="settings"] .settings-toc');
+    if (!toc) return;
+    if (APP._settingsTocReady) return;
+    APP._settingsTocReady = true;
+
+    // Smooth scroll handler — relies on .settings-section { scroll-margin-top }
+    // for sticky-chrome offset.
+    toc.addEventListener('click', (e) => {
+        const link = e.target.closest('.settings-toc__item');
+        if (!link) return;
+        e.preventDefault();
+        const id = link.getAttribute('href').slice(1);
+        const target = document.getElementById(id);
+        if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // Preview of D6 bookmarkable-URL pattern.
+            if (history.replaceState) {
+                history.replaceState(null, '', '#' + id);
+            }
+        }
+    });
+
+    // IntersectionObserver — highlights TOC item whose section is currently
+    // in the upper portion of the viewport. rootMargin biases the trigger
+    // line below the sticky header.
+    const sections = document.querySelectorAll('.tab-page[data-page="settings"] .settings-section');
+    const tocItems = toc.querySelectorAll('.settings-toc__item');
+    if (!sections.length || !tocItems.length) return;
+
+    const observer = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                tocItems.forEach(i => i.classList.toggle(
+                    'is-active',
+                    i.getAttribute('href').slice(1) === entry.target.id
+                ));
+            }
+        });
+    }, { rootMargin: '-100px 0px -50% 0px' });
+    sections.forEach(s => observer.observe(s));
+};
 
 async function checkDeploymentStatus() {
     // First update the deploy page based on selected deployment type
@@ -9928,6 +13088,8 @@ async function startDeployment() {
         if (data.success) {
             // Start polling immediately with project name
             pollDeploymentStatus(projectName);
+            // M-Redesign Agent 3 — operator-facing confirmation toast
+            if (APP && APP.toast) APP.toast(`Deployment "${projectName}" started`, 'success');
         } else {
             statusDiv.innerHTML = `
                 <div style="padding: 15px;">
@@ -9937,6 +13099,8 @@ async function startDeployment() {
             `;
             statusDiv.className = 'status-display error';
             disableDeployButton(false);
+            // M-Redesign Agent 3 — toast (long-lived, critical operator signal)
+            if (APP && APP.toast) APP.toast('Deployment failed: ' + (data.error || 'Unknown error'), 'danger', 8000);
         }
     } catch (error) {
         statusDiv.innerHTML = `
@@ -9947,6 +13111,7 @@ async function startDeployment() {
         `;
         statusDiv.className = 'status-display error';
         disableDeployButton(false);
+        if (APP && APP.toast) APP.toast('Deployment connection error: ' + error.message, 'danger', 8000);
     }
 }
 
@@ -12599,6 +15764,8 @@ async function checkSystemDeps() {
 
         if (allRequiredInstalled) {
             html = `<div class="callout callout--success" style="margin: 0 0 12px 0;"><p style="margin: 0;">All required dependencies installed.</p></div>` + html;
+            // D2.3 — Record that a prereq check has passed (dismisses dashboard banner).
+            try { localStorage.setItem('prereqs-verified-at', new Date().toISOString()); } catch (e) { /* ignore */ }
         } else {
             const missing = required.filter(d => !d.installed).map(d => d.name).join(', ');
             html = `<div class="callout callout--danger" style="margin: 0 0 12px 0;"><p style="margin: 0;"><strong>Missing required:</strong> ${missing}</p></div>` + html;
@@ -12712,6 +15879,8 @@ async function checkAWSCredentials() {
 
         if (data.success && data.authenticated) {
             statusDiv.className = 'status-display success';
+            // D2.3 — Record that a prereq check has passed (dismisses dashboard banner).
+            try { localStorage.setItem('prereqs-verified-at', new Date().toISOString()); } catch (e) { /* ignore */ }
             statusDiv.innerHTML = `
                 <p><strong>${data.message || 'AWS credentials are valid'}</strong></p>
                 <div style="margin-top: 15px; padding: 15px; background: var(--bg-card); border-radius: 5px;">
@@ -12827,6 +15996,8 @@ async function checkSSHKey() {
 
         if (data.has_key) {
             statusDiv.className = 'status-display success';
+            // D2.3 — Record that a prereq check has passed (dismisses dashboard banner).
+            try { localStorage.setItem('prereqs-verified-at', new Date().toISOString()); } catch (e) { /* ignore */ }
             statusDiv.innerHTML = `
                 <p><strong>SSH Key Found: ${data.key_type}</strong></p>
                 <div style="margin-top: 8px; padding: 12px; background: var(--bg-card); border-radius: 5px;">
@@ -12863,6 +16034,10 @@ async function checkGitHubCLI() {
         const data = await response.json();
         
         if (data.success && data.authenticated) {
+            // D2.3 — Record that a prereq check has passed (dismisses dashboard banner).
+            // GitHub CLI is authenticated counts as a successful check, even if repo
+            // access is still pending (warning path below).
+            try { localStorage.setItem('prereqs-verified-at', new Date().toISOString()); } catch (e) { /* ignore */ }
             if (data.has_repo_access) {
                 // Fully authenticated with repo access
                 statusDiv.className = 'status-display success';
@@ -12932,7 +16107,11 @@ async function checkAWSPermissions() {
         if (data.success) {
             const status = data.status || 'unknown';
             const statusClass = status === 'sufficient' ? 'success' : (status === 'insufficient' ? 'error' : 'warning');
-            
+
+            // D2.3 — Record that a prereq check has run (dismisses dashboard banner).
+            // Any successful API response (regardless of permissions verdict) counts.
+            try { localStorage.setItem('prereqs-verified-at', new Date().toISOString()); } catch (e) { /* ignore */ }
+
             statusDiv.className = `status-display ${statusClass}`;
             let html = `
                     <p><strong>${data.status_icon || '📊'} ${data.status_text || 'Checking permissions...'}</strong></p>
@@ -14654,15 +17833,18 @@ function _renderDeploymentTimelineNow() {
     if (window._destroyInProgress) return;
 
     // Don't rebuild if any session is expanded with loaded content — re-rendering
-    // wipes lazy-loaded connection info, checklist, and credentials HTML.
+    // wipes lazy-loaded connection info, checklist, credentials, and setup-check HTML.
     // Only skip if the timeline already has content (not initial render).
     if (timelineContent.children.length > 0 && expandedSessions.size > 0) {
         const hasLoadedContent = Array.from(expandedSessions).some(sid => {
             const connDiv = document.getElementById(`${sid}-connection-content`);
             if (connDiv) {
                 const text = connDiv.textContent.trim();
-                return text !== 'Loading connection details...' && text !== '';
+                if (text !== 'Loading connection details...' && text !== '') return true;
             }
+            // Also check if setup-check has rendered host details — re-render would wipe them
+            const setupDiv = document.getElementById('setup-check-content');
+            if (setupDiv && setupDiv.querySelector('details')) return true;
             return false;
         });
         if (hasLoadedContent) return;
@@ -15255,14 +18437,14 @@ function buildSessionDetails(session, sessionId) {
             <!-- Host Setup Status (checks bootstrap script completion via SSM) -->
             ${isSuccess ? `
             <details class="details-card" data-details-id="${sessionId}-setup-check">
-                <summary style="font-weight: 600;">Host Setup Status <span id="setup-check-badge" style="font-weight: 400; margin-left: 8px; font-size: 0.78em;"></span><span id="setup-check-last-checked" style="font-weight: 400; margin-left: 8px; font-size: 0.78em; color: var(--text-muted);"></span></summary>
+                <summary style="font-weight: 600;">Host Setup Status <span id="setup-check-badge" style="font-weight: 400; margin-left: 8px;"></span><span id="setup-check-last-checked" style="font-weight: 400; margin-left: 8px; color: var(--text-muted);"></span></summary>
                 <div>
-                    <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
-                        <button onclick="runSetupCheck('${projectName}')" id="setup-check-btn" class="btn btn-secondary" style="font-size: 0.75em; padding: 4px 10px;">
+                    <div style="display: flex; gap: 12px; margin-bottom: 10px;">
+                        <button onclick="runSetupCheck('${projectName}')" id="setup-check-btn" class="btn btn-info btn-sm">
                             Check Setup
                         </button>
                     </div>
-                    <div id="setup-check-content" data-project-name="${projectName}" style="color: var(--text-secondary); font-size: 0.9em;">
+                    <div id="setup-check-content" data-project-name="${projectName}" style="color: var(--text-secondary);">
                         <p style="color: var(--text-muted); font-style: italic;">No setup check results yet. Click "Check Setup" or wait for the automatic check after deployment.</p>
                     </div>
                 </div>
@@ -15703,64 +18885,51 @@ function showSessionLogs(sessionKey) {
         alert('No logs found for this session.');
         return;
     }
-    
-    // Create modal
-    const modal = document.createElement('div');
-    modal.id = 'session-logs-modal';
-    modal.style.cssText = `
-        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0,0,0,0.8); z-index: 10000;
-        display: flex; align-items: center; justify-content: center;
-        padding: 20px;
-    `;
-    
+
+    // M-Redesign Agent 2 (v2.0.0): use the static #session-logs-modal markup
+    // from index.html. Title + body + footer are populated dynamically; the
+    // canonical APP.modal.open handles backdrop / Esc / focus return.
+    const titleEl = document.getElementById('session-logs-modal-title');
+    if (titleEl) titleEl.textContent = `Full Deployment Logs — ${formatDate(date)}`;
+
     const levelColors = {
-        'info': '#8BB4D9',
-        'success': '#7ECF8C',
-        'warning': '#E8C56D',
-        'error': '#F08A84'
+        'info':    'var(--info-text)',
+        'success': 'var(--success-text)',
+        'warning': 'var(--warning-text)',
+        'error':   'var(--danger-text)',
     };
-    
-    modal.innerHTML = `
-        <div style="background: var(--bg-terminal); border-radius: 12px; max-width: 900px; width: 100%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column;">
-            <div style="padding: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
-                <h2 style="margin: 0; color: white;">📜 Full Deployment Logs - ${formatDate(date)}</h2>
-                <button onclick="closeSessionLogsModal()" style="background: none; border: none; color: white; font-size: 24px; cursor: pointer;">&times;</button>
-            </div>
-            <div style="flex: 1; overflow-y: auto; padding: 15px; font-family: 'SF Mono', Monaco, monospace; font-size: 0.88em; line-height: 1.6;">
-                ${sessionLogs.map(log => {
-                    const time = new Date(log.timestamp).toLocaleTimeString();
-                    const color = levelColors[log.level] || '#B0B8CC';
-                    // Clean ANSI codes
-                    const cleanMsg = log.message.replace(/\x1b\[[0-9;]*m/g, '');
-                    return `<div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                        <span style="color: #7A849E;">[${time}]</span>
-                        <span style="color: ${color}; background: ${color}20; padding: 1px 6px; border-radius: 3px; font-size: 0.8em; margin: 0 8px;">${log.level.toUpperCase()}</span>
-                        <span style="color: #B0B8CC;">${cleanMsg}</span>
-                    </div>`;
-                }).join('')}
-            </div>
-            <div style="padding: 15px; border-top: 1px solid rgba(255,255,255,0.1); text-align: right;">
-                <button onclick="copySessionLogs('${date}')" class="btn btn-secondary" style="margin-right: 10px;">📋 Copy All</button>
-                <button onclick="closeSessionLogsModal()" class="btn btn-primary">Close</button>
-            </div>
-        </div>
-    `;
-    
-    document.body.appendChild(modal);
-    
-    // Close on backdrop click
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeSessionLogsModal();
-    });
+
+    const body = document.getElementById('session-logs-modal-body');
+    if (body) {
+        body.style.cssText = 'font-family: \'SF Mono\', Monaco, monospace; font-size: 0.88em; line-height: 1.6;';
+        body.innerHTML = sessionLogs.map(log => {
+            const time = new Date(log.timestamp).toLocaleTimeString();
+            const color = levelColors[log.level] || 'var(--text-secondary)';
+            const cleanMsg = log.message.replace(/\x1b\[[0-9;]*m/g, '');
+            return `<div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid var(--border-subtle);">
+                <span style="color: var(--text-muted);">[${time}]</span>
+                <span style="color: ${color}; padding: 1px 6px; border-radius: 3px; font-size: 0.8em; margin: 0 8px; border: 1px solid currentColor;">${log.level.toUpperCase()}</span>
+                <span style="color: var(--text-primary);">${cleanMsg}</span>
+            </div>`;
+        }).join('');
+    }
+
+    const footer = document.getElementById('session-logs-modal-footer');
+    if (footer) {
+        footer.innerHTML = `
+            <button type="button" class="btn btn-secondary" onclick="copySessionLogs('${date}')">Copy All</button>
+            <button type="button" class="btn btn-primary" onclick="closeSessionLogsModal()">Close</button>
+        `;
+    }
+
+    APP.modal.open('session-logs-modal');
 }
 
 /**
- * Close session logs modal
+ * Close session logs modal — delegates to canonical APP.modal.close().
  */
 function closeSessionLogsModal() {
-    const modal = document.getElementById('session-logs-modal');
-    if (modal) modal.remove();
+    APP.modal.close('session-logs-modal');
 }
 
 /**
@@ -16017,15 +19186,14 @@ function viewArchivedLogs() {
         return;
     }
 
-    // Create modal
-    const modal = document.createElement('div');
-    modal.id = 'archived-logs-modal';
-    modal.style.cssText = `
-        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0,0,0,0.7); z-index: 10000;
-        display: flex; align-items: center; justify-content: center;
-        padding: 20px;
-    `;
+    // M-Redesign Agent 2 (v2.0.0): use static #archived-logs-modal markup.
+    // The body innerHTML is re-rendered on every toggleArchivedSession call;
+    // title and footer are set once on open.
+    const modal = document.getElementById('archived-logs-modal');
+    if (!modal) {
+        console.warn('#archived-logs-modal not found in index.html');
+        return;
+    }
 
     function buildArchivedSessions() {
         // Group archived logs into sessions (same logic as renderDeploymentTimeline)
@@ -16299,51 +19467,54 @@ function viewArchivedLogs() {
             `;
         }).join('');
 
-        return `
-            <div style="background: var(--bg-container); border-radius: 12px; max-width: 900px; width: 100%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column;">
-                <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
-                    <h2 style="margin: 0; color: var(--text-primary); font-weight: 700;">Archived Logs <span style="color: var(--text-muted); font-size: 0.6em; font-weight: 400;">${sessionList.length} sessions &middot; ${archivedLogs.length} events</span></h2>
-                    <button onclick="closeArchivedLogsModal()" style="background: none; border: none; color: var(--text-primary); font-size: 24px; cursor: pointer;">&times;</button>
-                </div>
+        // M-Redesign Agent 2 (v2.0.0): return body innerHTML only — the
+        // surrounding modal chrome lives in index.html and is handled by
+        // APP.modal. We also export the session count + event count so the
+        // caller can update the title.
+        return {
+            body: sessionCards,
+            counts: { sessions: sessionList.length, events: archivedLogs.length },
+        };
+    }
 
-                <div id="archived-logs-content" style="flex: 1; overflow-y: auto; padding: 20px;">
-                    ${sessionCards}
-                </div>
+    // Initial render — populate title, body, footer (set once per open).
+    const initial = renderArchivedContent();
+    const titleEl = document.getElementById('archived-logs-modal-title');
+    if (titleEl) {
+        titleEl.innerHTML = `Archived Logs <span style="color: var(--text-muted); font-size: 0.7em; font-weight: 400; margin-left: 8px;">${initial.counts.sessions} sessions &middot; ${initial.counts.events} events</span>`;
+    }
+    const bodyEl = document.getElementById('archived-logs-modal-body');
+    if (bodyEl) bodyEl.innerHTML = initial.body;
 
-                <div style="padding: 15px 20px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
-                    <button onclick="clearArchivedLogs()" style="padding: 8px 16px; background: transparent; border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); cursor: pointer; font-size: 0.9em;">
-                        Clear Archive
-                    </button>
-                    <button onclick="downloadArchivedLogs()" style="padding: 8px 16px; background: var(--brand); border: none; border-radius: 6px; color: var(--text-inverse); cursor: pointer; font-size: 0.9em;">
-                        Download All
-                    </button>
-                </div>
-            </div>
+    const footerEl = document.getElementById('archived-logs-modal-footer');
+    if (footerEl) {
+        // Override modal__footer's default flex-end justification so Clear
+        // Archive (destructive) sits left and Download All sits right.
+        footerEl.style.justifyContent = 'space-between';
+        footerEl.innerHTML = `
+            <button type="button" class="btn btn-danger" onclick="clearArchivedLogs()">Clear Archive</button>
+            <button type="button" class="btn btn-info" onclick="downloadArchivedLogs()">Download All</button>
         `;
     }
 
-    modal.innerHTML = renderArchivedContent();
-    document.body.appendChild(modal);
-
-    // Toggle expand/collapse for archived sessions
+    // Toggle expand/collapse — re-renders only the body to keep header/footer
+    // animation state stable.
     window.toggleArchivedSession = (sessionId) => {
         if (expandedArchivedSessions.has(sessionId)) {
             expandedArchivedSessions.delete(sessionId);
         } else {
             expandedArchivedSessions.add(sessionId);
         }
-        modal.innerHTML = renderArchivedContent();
+        const rendered = renderArchivedContent();
+        const body = document.getElementById('archived-logs-modal-body');
+        if (body) body.innerHTML = rendered.body;
     };
 
-    // Close on backdrop click
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeArchivedLogsModal();
-    });
+    APP.modal.open('archived-logs-modal');
 }
 
 function closeArchivedLogsModal() {
-    const modal = document.getElementById('archived-logs-modal');
-    if (modal) modal.remove();
+    APP.modal.close('archived-logs-modal');
 }
 
 function clearArchivedLogs() {
@@ -18132,6 +21303,8 @@ async function refreshStagedFiles() {
             if (actionsDiv) actionsDiv.style.display = 'none';
             updateToolsTransferButton();
             updateToolsCommandPreview();
+            // Phase 3B.3 — keep the V3 parameter spec-list in sync.
+            if (APP.payloads && typeof APP.payloads.updateSpec === 'function') APP.payloads.updateSpec();
             return;
         }
 
@@ -18152,6 +21325,8 @@ async function refreshStagedFiles() {
         if (actionsDiv) actionsDiv.style.display = data.count > 1 ? 'block' : 'none';
         updateToolsTransferButton();
         updateToolsCommandPreview();
+        // Phase 3B.3 — keep the V3 parameter spec-list in sync.
+        if (APP.payloads && typeof APP.payloads.updateSpec === 'function') APP.payloads.updateSpec();
     } catch (e) {
         listDiv.innerHTML = `<p style="color: var(--danger); font-size: 0.9em;">Error: ${e.message}</p>`;
     }
@@ -18437,7 +21612,8 @@ async function loadCostProjectSelector() {
 }
 
 async function loadProjectCosts(forceRefresh = false) {
-    const project = 'account';
+    const selector = document.getElementById('cost-project-selector');
+    const project = (selector && selector.value) || 'account';
     const btn = document.getElementById('cost-refresh-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
 
@@ -18480,9 +21656,13 @@ async function loadProjectCosts(forceRefresh = false) {
             btn.textContent = `Refresh Costs — last updated ${now}`;
             localStorage.setItem('cost_last_refreshed', now);
         }
+        // M-Redesign Agent 3 — operator-facing toast only on explicit
+        // refreshes (forceRefresh=true), not silent auto-loads.
+        if (forceRefresh && APP && APP.toast) APP.toast('Cost data refreshed', 'success', 2000);
     } catch (e) {
         console.error('Error loading project costs:', e);
         if (btn) { btn.disabled = false; btn.textContent = 'Refresh Costs — error'; }
+        if (forceRefresh && APP && APP.toast) APP.toast('Cost refresh failed', 'danger', 6000);
     }
 }
 
@@ -18501,7 +21681,7 @@ function renderCostSummaryCards(data) {
     // If no actual Cost Explorer data, show a waiting state instead of estimates
     if (!actualHasData) {
         container.innerHTML = `
-            <div class="callout callout--warning" style="margin: 0; grid-column: 1 / -1;">
+            <div class="callout callout--warning" style="margin: 0;">
                 <strong>Awaiting cost data from AWS Cost Explorer.</strong><br>
                 Cost data typically takes 24-48 hours to appear after deployment. Click "Refresh Costs" to check for updates.
             </div>
@@ -18515,34 +21695,43 @@ function renderCostSummaryCards(data) {
     const dailyAvg = daysWithCost > 0 ? totalSpend / daysWithCost : 0;
 
     const budgetRemaining = budget.threshold > 0 ? budget.remaining : null;
-    const budgetClass = budget.used_percent >= 100 ? 'cost-value--danger'
-        : budget.used_percent >= 80 ? 'cost-value--warning'
-        : 'cost-value--success';
+    const budgetState = budget.used_percent >= 100 ? 'danger'
+        : budget.used_percent >= 80 ? 'warning'
+        : (budget.threshold > 0 ? 'success' : '');
 
     // Projected monthly based on actual daily average
     const estMonthly = dailyAvg * 30;
 
+    // Phase 3d — render four-up summary as a spec-list (replaces the
+    // legacy 4-card grid). Each row is read-only; the value column gets
+    // the cost figure (mono / tabular-nums) and the hint column gets the
+    // supporting context (e.g. "Actual (Cost Explorer)" or
+    // "12 days with charges"). The Budget Remaining row carries a
+    // data-cost-state so the value paints success/warning/danger.
+    const row = (key, value, hint, opts) => {
+        opts = opts || {};
+        const stateAttr = opts.state ? ` data-cost-state="${opts.state}"` : '';
+        return `
+            <div class="spec-row" data-readonly="true" data-cost-row="${escapeHtml(opts.dataKey || key.toLowerCase().replace(/\s+/g, '_'))}"${stateAttr}>
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">${escapeHtml(key)}</dt>
+                    <dd class="spec-row__value spec-row__value--mono spec-row__value--strong">${value}</dd>
+                    <dd class="spec-row__hint">${escapeHtml(hint)}</dd>
+                    <span class="spec-row__action" aria-hidden="true"></span>
+                </div>
+            </div>`;
+    };
+
     container.innerHTML = `
-        <div class="lifecycle-card">
-            <h4>Total Spend</h4>
-            <div class="cost-value">$${totalSpend.toFixed(2)}</div>
-            <div class="cost-label">Actual (Cost Explorer)</div>
-        </div>
-        <div class="lifecycle-card">
-            <h4>Daily Average</h4>
-            <div class="cost-value">$${dailyAvg.toFixed(2)}</div>
-            <div class="cost-label">${daysWithCost} day${daysWithCost !== 1 ? 's' : ''} with charges</div>
-        </div>
-        <div class="lifecycle-card">
-            <h4>Budget Remaining</h4>
-            <div class="cost-value ${budgetClass}">${budgetRemaining !== null ? '$' + budgetRemaining.toFixed(2) : 'No budget set'}</div>
-            <div class="cost-label">${budget.threshold > 0 ? 'of $' + budget.threshold + ' budget' : 'Set in settings above'}</div>
-        </div>
-        <div class="lifecycle-card">
-            <h4>Est. Monthly</h4>
-            <div class="cost-value">$${estMonthly.toFixed(2)}</div>
-            <div class="cost-label">projected from actual daily avg</div>
-        </div>
+        <dl class="spec-list spec-list--inset" aria-label="Cost summary">
+            ${row('Total Spend', `$${totalSpend.toFixed(2)}`, 'Actual (Cost Explorer)', { dataKey: 'total' })}
+            ${row('Daily Average', `$${dailyAvg.toFixed(2)}`, `${daysWithCost} day${daysWithCost !== 1 ? 's' : ''} with charges`, { dataKey: 'daily_avg' })}
+            ${row('Budget Remaining',
+                budgetRemaining !== null ? `$${budgetRemaining.toFixed(2)}` : 'No budget set',
+                budget.threshold > 0 ? `of $${budget.threshold} budget` : 'Set in settings above',
+                { dataKey: 'budget_remaining', state: budgetState })}
+            ${row('Est. Monthly', `$${estMonthly.toFixed(2)}`, 'projected from actual daily avg', { dataKey: 'est_monthly' })}
+        </dl>
     `;
 }
 
@@ -18787,6 +21976,15 @@ async function loadCachedSetupCheck() {
     const contentEl = document.getElementById('setup-check-content');
     if (!contentEl) return;
 
+    // Don't reload from cache if a check is currently running -- would wipe the spinner
+    if (_setupCheckPollTimer) return;
+    const btn = document.getElementById('setup-check-btn');
+    if (btn && btn.disabled) return;
+
+    // Don't reload if content is already rendered with hosts -- avoids re-render flashing
+    // which makes the list "disappear" during scrolling/interaction
+    if (contentEl.querySelector('details')) return;
+
     // Try localStorage first
     const activeSession = document.querySelector('[data-details-id$="-setup-check"]');
     if (!activeSession) return;
@@ -18885,16 +22083,18 @@ function pollSetupCheck(checkId, project) {
                 return;
             }
 
-            // Complete
+            // Complete -- clear poll timer so future cache loads aren't blocked
+            _setupCheckPollTimer = null;
             if (data.success && data.hosts) {
                 const cacheKey = `setupCheck_${project}`;
                 localStorage.setItem(cacheKey, JSON.stringify(data));
                 renderSetupCheckResults(data);
             } else {
-                if (contentEl) contentEl.innerHTML = `<p style="color: var(--error);">Check failed: ${data.error || 'Unknown error'}</p>`;
+                if (contentEl) contentEl.innerHTML = `<p style="color: var(--danger-text);">Check failed: ${data.error || 'Unknown error'}</p>`;
             }
         } catch (e) {
-            if (contentEl) contentEl.innerHTML = `<p style="color: var(--error);">Poll error: ${e.message}</p>`;
+            _setupCheckPollTimer = null;
+            if (contentEl) contentEl.innerHTML = `<p style="color: var(--danger-text);">Poll error: ${e.message}</p>`;
         }
         if (btn) { btn.disabled = false; btn.textContent = 'Check Setup'; }
     };
@@ -18925,7 +22125,7 @@ function renderSetupCheckResults(data) {
         let badgeColor = 'var(--success)';
         if (healthy === 0) badgeColor = 'var(--error)';
         else if (healthy < total) badgeColor = 'var(--warning)';
-        badgeEl.innerHTML = `<span style="background: ${badgeColor}; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 0.75em;">${healthy}/${total} healthy</span>`;
+        badgeEl.innerHTML = `<span style="background: ${badgeColor}; color: var(--text-inverse); padding: 2px 10px; border-radius: 10px;">${healthy}/${total} healthy</span>`;
     }
 
     // Update last checked
@@ -19003,12 +22203,12 @@ function renderSetupCheckResults(data) {
                 else if (step.status === 'running') sIcon = '🔄';
 
                 const dur = step.duration_s != null ? `${step.duration_s}s` : '';
-                const msg = step.message ? `<span style="color: var(--error); font-size: 0.85em; margin-left: 8px;">${step.message}</span>` : '';
+                const msg = step.message ? `<span style="color: var(--danger-text); margin-left: 8px;">${step.message}</span>` : '';
                 stepDetailHtml += `
-                    <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                    <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                         <span>${sIcon}</span>
-                        <span style="min-width: 20px; color: var(--text-muted);">${step.step}.</span>
-                        <span>${step.name}</span>
+                        <span style="min-width: 24px; color: var(--text-muted);">${step.step}.</span>
+                        <span style="color: var(--text-primary);">${step.name}</span>
                         <span style="color: var(--text-muted); margin-left: auto;">${dur}</span>
                         ${msg}
                     </div>`;
@@ -19025,17 +22225,17 @@ function renderSetupCheckResults(data) {
                 for (const [k, v] of Object.entries(sd)) {
                     if (['status', 'status_file', 'detected_services', 'services'].includes(k)) continue;
                     const valDisplay = v || '(empty)';
-                    const valColor = v === 'needs_activation' ? 'var(--warning)' : 'var(--text-secondary)';
+                    const valColor = v === 'needs_activation' ? 'var(--warning-text)' : 'var(--text-secondary)';
                     stepDetailHtml += `
-                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                             <span>${v ? '✅' : '⚠️'}</span>
-                            <span>${k}:</span>
+                            <span style="color: var(--text-primary);">${k}:</span>
                             <span style="color: ${valColor};">${valDisplay}</span>
                         </div>`;
                 }
                 if (sd.status_file) {
                     stepDetailHtml += `
-                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                             <span>📄</span>
                             <span style="color: var(--text-muted);">Status file: ${sd.status_file}</span>
                         </div>`;
@@ -19055,21 +22255,21 @@ function renderSetupCheckResults(data) {
                 for (const svc of services) {
                     const label = serviceLabels[svc] || svc;
                     stepDetailHtml += `
-                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                             <span>✅</span>
-                            <span>${label}</span>
+                            <span style="color: var(--text-primary);">${label}</span>
                         </div>`;
                 }
                 if (sd.uptime) {
                     stepDetailHtml += `
-                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                             <span>🕐</span>
                             <span style="color: var(--text-muted);">Up since: ${sd.uptime}</span>
                         </div>`;
                 }
                 if (sd.status_file) {
                     stepDetailHtml += `
-                        <div style="display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.85em;">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
                             <span>📄</span>
                             <span style="color: var(--text-muted);">Status file: ${sd.status_file}</span>
                         </div>`;
@@ -19079,17 +22279,24 @@ function renderSetupCheckResults(data) {
         }
 
         const hasDetail = stepDetailHtml !== '';
+        const rowTextColor = host.check_status === 'ok' ? 'var(--success-text)' :
+                             host.check_status === 'warning' || host.check_status === 'parse_error' || host.check_status === 'ssm_timeout' ? 'var(--warning-text)' :
+                             host.check_status === 'no_status_file' ? 'var(--text-muted)' :
+                             rowColor.includes('success') ? 'var(--success-text)' :
+                             rowColor.includes('warning') ? 'var(--warning-text)' :
+                             rowColor.includes('error') ? 'var(--danger-text)' :
+                             rowColor.includes('accent') ? 'var(--info-text)' : 'var(--text-muted)';
         html += `
-            <details style="margin-bottom: 4px; border-bottom: 1px solid var(--border); padding-bottom: 4px;">
-                <summary style="cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 6px 0; list-style: none;">
+            <details style="margin-bottom: 6px; border-bottom: 1px solid var(--border); padding-bottom: 6px;">
+                <summary style="cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 8px 4px; list-style: none; flex-wrap: wrap;">
                     <span>${icon}</span>
-                    <strong style="flex: 1;">${host.name}</strong>
-                    <span style="background: var(--bg-section); padding: 1px 6px; border-radius: 4px; font-size: 0.75em; color: var(--text-muted);">${roleLabel}</span>
-                    ${stepInfo ? `<span style="font-size: 0.8em; color: var(--text-secondary);">${stepInfo}</span>` : ''}
-                    ${durationInfo ? `<span style="font-size: 0.8em; color: var(--text-muted);">${durationInfo}</span>` : ''}
-                    ${statusText ? `<span style="font-size: 0.8em; color: ${rowColor};">${statusText}</span>` : ''}
+                    <strong style="color: var(--text-primary);">${host.name}</strong>
+                    <span style="background: var(--bg-elevated); padding: 2px 8px; border-radius: 4px; color: var(--text-secondary);">${roleLabel}</span>
+                    ${stepInfo ? `<span style="color: var(--text-secondary);">${stepInfo}</span>` : ''}
+                    ${durationInfo ? `<span style="color: var(--text-muted);">${durationInfo}</span>` : ''}
+                    ${statusText ? `<span style="color: ${rowTextColor};">${statusText}</span>` : ''}
                 </summary>
-                ${hasDetail ? stepDetailHtml : '<div style="padding: 6px 0 6px 24px; font-size: 0.85em; color: var(--text-muted);">No step details available</div>'}
+                ${hasDetail ? stepDetailHtml : '<div style="padding: 8px 0 8px 24px; color: var(--text-muted);">No step details available</div>'}
             </details>`;
     }
 
@@ -19351,8 +22558,11 @@ const TERMINAL = {
             }, 500);
         };
 
-        this.sessions[id] = { term, ws, type: 'tunnel', label };
-        this._addTab(id, label);
+        // Phase 3B.2 — record the operator that opened this session for
+        // attribution in the tab strip.
+        const opener = (APP.operator && APP.operator.current && APP.operator.current.id) || null;
+        this.sessions[id] = { term, ws, type: 'tunnel', label, opener };
+        this._addTab(id, label, opener);
         this._switchTo(id);
     },
 
@@ -19490,8 +22700,10 @@ const TERMINAL = {
             this._sendResize(ws, term);
         };
 
-        this.sessions[id] = { term, ws, type: 'local', label };
-        this._addTab(id, label);
+        // Phase 3B.2 — record the operator that opened this session.
+        const opener = (APP.operator && APP.operator.current && APP.operator.current.id) || null;
+        this.sessions[id] = { term, ws, type: 'local', label, opener };
+        this._addTab(id, label, opener);
         this._switchTo(id);
     },
 
@@ -19519,8 +22731,10 @@ const TERMINAL = {
             ws.send(JSON.stringify({ host, user, bastion: bastion || null }));
         };
 
-        this.sessions[id] = { term, ws, type: 'ssh', label: label || host, host };
-        this._addTab(id, label || host);
+        // Phase 3B.2 — record the operator that opened this session.
+        const opener = (APP.operator && APP.operator.current && APP.operator.current.id) || null;
+        this.sessions[id] = { term, ws, type: 'ssh', label: label || host, host, opener };
+        this._addTab(id, label || host, opener);
         this._switchTo(id);
     },
 
@@ -19626,7 +22840,11 @@ const TERMINAL = {
     },
 
     // ── Tab management ──
-    _addTab(id, label) {
+    // Phase 3B.2 — V3-native chrome. Each tab carries an 8px operator color
+    // dot (color from APP.operator.all lookup by `opener` id) plus an icon
+    // close affordance. Active tab uses .seg-control-style inset under-rule
+    // via the .active class (see PHASE 3B.2 in style.css).
+    _addTab(id, label, opener) {
         const bar = document.getElementById('terminal-tab-bar');
         if (!bar) return;
 
@@ -19637,7 +22855,26 @@ const TERMINAL = {
         const tab = document.createElement('button');
         tab.className = 'terminal-tab';
         tab.dataset.termId = id;
-        tab.innerHTML = `<span class="tab-label">${this._esc(label)}</span><span class="tab-close" onclick="event.stopPropagation(); TERMINAL.closeSession('${id}')">✕</span>`;
+        if (opener) tab.dataset.opener = opener;
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-label', `Terminal session: ${label}`);
+
+        // Operator dot — color resolved from APP.operator.all profile
+        const op = opener && (APP.operator.all || []).find(o => o.id === opener);
+        const dotColor = (op && op.color) || '';
+        const dotClass = dotColor ? 'terminal-tab__op-dot' : 'terminal-tab__op-dot terminal-tab__op-dot--unknown';
+        const dotStyle = dotColor ? ` style="background: ${this._esc(dotColor)}"` : '';
+        const dotTitle = op ? `Opened by ${this._esc(op.display || op.id)}` : 'Opened by an unknown operator';
+
+        tab.innerHTML = `
+            <span class="${dotClass}"${dotStyle} title="${dotTitle}" aria-hidden="true"></span>
+            <span class="terminal-tab__label tab-label">${this._esc(label)}</span>
+            <span class="terminal-tab__close tab-close" role="button" tabindex="0"
+                  aria-label="Close session ${this._esc(label)}"
+                  onclick="event.stopPropagation(); TERMINAL.closeSession('${id}')"
+                  onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();TERMINAL.closeSession('${id}')}">
+                <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-x"/></svg>
+            </span>`;
         tab.onclick = () => this._switchTo(id);
         bar.appendChild(tab);
 
@@ -19645,6 +22882,7 @@ const TERMINAL = {
         const plus = document.createElement('button');
         plus.className = 'terminal-tab terminal-tab-new';
         plus.title = 'New local shell';
+        plus.setAttribute('aria-label', 'Open a new local shell');
         plus.innerHTML = '<span class="tab-plus">+</span>';
         plus.onclick = () => this.openLocal();
         bar.appendChild(plus);
@@ -20069,7 +23307,11 @@ const TOPOLOGY = {
 
         // Operator node — the red team operator connecting via SSH tunnel
         const operatorId = nid();
-        const operatorName = document.getElementById('operator-badge')?.textContent || 'Operator';
+        // D1 — Prefer the new global header element; fall back to the hidden
+        // legacy mirror so existing topology behaviour is preserved.
+        const operatorName = document.getElementById('global-operator-name')?.textContent
+            || document.getElementById('operator-badge')?.textContent
+            || 'Operator';
         this.nodes.push({
             id: operatorId, type: 'operator',
             label: operatorName,
@@ -21145,8 +24387,1245 @@ const TOPOLOGY = {
 
 
 // ============================================================================
+// Version modal helpers (P1 #7.6)
+// ============================================================================
+
+/**
+ * Open the version modal. Idempotent. Delegates to canonical APP.modal.open
+ * which handles backdrop / Esc / focus return (M-Redesign Agent 2 v2.0.0).
+ */
+function openVersionModal() {
+    const footer = document.getElementById('app-version-footer');
+    APP.modal.open('version-modal', { returnFocusTo: footer });
+}
+
+/**
+ * Close the version modal. Idempotent. Delegates to canonical APP.modal.close.
+ */
+function closeVersionModal() {
+    APP.modal.close('version-modal');
+}
+
+// ============================================================================
 // APPLICATION INITIALIZATION
 // ============================================================================
+
+// === D8 Agent B — Deployments → Cleanup sub-pill ============================
+// PHASE 3C — V3-native rebuild. Renders the cleanup view using the Phase 2b
+// spec-list primitives + bespoke summary tiles. The original D8 detection
+// logic is unchanged (still client-side from /api/deploy/resources/all-projects);
+// only the rendering layer and the localStorage schema were touched.
+//
+// LocalStorage schema migration (Phase 3c):
+//   v1 (legacy, D8):  ["eip::abc", "acm::xyz"]                  (array of strings)
+//   v2 (Phase 3c):    { "eip::abc": { id, by, at }, ... }       (id-keyed map)
+// `_cleanupReadKnown()` auto-migrates v1 → v2 on first read and writes the
+// migrated map back. v1 entries get { by: null, at: null } so they still
+// render in the marked state but with "marked by unknown" attribution.
+//
+// Per-row actions are still alert() stubs — destructive ops remain
+// operator-driven via AWS CLI to keep this surface read-only and safe.
+//
+// All cleanup state + functions are namespaced under APP.cleanup so the
+// global function names (loadCleanupResources, cleanupMarkKnown, etc.)
+// are thin wrappers for backwards-compat with the existing onclick attrs.
+
+const CLEANUP_KNOWN_KEY = 'cleanup.knownExternal.v1';
+
+APP.cleanup = APP.cleanup || {
+    /**
+     * Read the known-external map from localStorage. Auto-migrates the
+     * legacy v1 (array-of-string) format to the v2 (id-keyed map) format
+     * with attribution fields. Returns an object keyed by resourceId →
+     * { id, by, at } where `by` is the operator id (string|null) and
+     * `at` is an ISO timestamp (string|null).
+     */
+    readKnown() {
+        let raw;
+        try { raw = localStorage.getItem(CLEANUP_KNOWN_KEY); }
+        catch (_) { return {}; }
+        if (!raw) return {};
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch (_) { return {}; }
+
+        // v1 → v2 migration: array-of-strings → id-keyed map.
+        if (Array.isArray(parsed)) {
+            const migrated = {};
+            parsed.forEach(id => {
+                if (typeof id === 'string') {
+                    migrated[id] = { id, by: null, at: null };
+                }
+            });
+            try { localStorage.setItem(CLEANUP_KNOWN_KEY, JSON.stringify(migrated)); }
+            catch (_) { /* quota or disabled — silent */ }
+            return migrated;
+        }
+        // v2 — guard against corrupt entries.
+        if (parsed && typeof parsed === 'object') {
+            const clean = {};
+            Object.keys(parsed).forEach(k => {
+                const entry = parsed[k];
+                if (entry && typeof entry === 'object') {
+                    clean[k] = {
+                        id: entry.id || k,
+                        by: entry.by || null,
+                        at: entry.at || null,
+                    };
+                }
+            });
+            return clean;
+        }
+        return {};
+    },
+
+    /**
+     * Mark a resource as known-external. Records the current operator id
+     * + ISO timestamp. Idempotent — re-marking updates the timestamp.
+     */
+    addKnown(id) {
+        if (!id) return;
+        const map = APP.cleanup.readKnown();
+        const opId = (APP.operator && APP.operator.current && APP.operator.current.id) || null;
+        map[id] = { id, by: opId, at: new Date().toISOString() };
+        try { localStorage.setItem(CLEANUP_KNOWN_KEY, JSON.stringify(map)); }
+        catch (_) { /* silent */ }
+    },
+
+    /** Stable, type-prefixed resource id used for storage + DOM lookup. */
+    resourceId(item, kind) {
+        return [
+            kind,
+            item.allocation_id || item.AllocationId ||
+            item.arn || item.Arn ||
+            item.domain || item.DomainName ||
+            item.name || item.Name ||
+            item.public_ip || item.PublicIp ||
+            JSON.stringify(item).slice(0, 64)
+        ].join('::');
+    },
+
+    /** Lookup operator metadata (display + color) by id. Falls back gracefully. */
+    operatorFor(opId) {
+        if (!opId || !APP.operator || !Array.isArray(APP.operator.all)) {
+            return { display: 'unknown', color: '#7A849E', id: null };
+        }
+        const found = APP.operator.all.find(o => o.id === opId);
+        if (found) return { display: found.display || found.id, color: found.color || '#7A849E', id: found.id };
+        return { display: opId, color: '#7A849E', id: opId };
+    },
+
+    /** Pretty-print an ISO timestamp using the existing relative-time util. */
+    formatTime(iso) {
+        if (!iso) return '';
+        if (typeof _relativeTime === 'function') return _relativeTime(iso);
+        try { return new Date(iso).toLocaleString(); } catch (_) { return ''; }
+    },
+
+    /** Format the small mono caps last-refreshed-at hint. */
+    formatRefreshedAt(date) {
+        try {
+            const d = (date instanceof Date) ? date : new Date(date);
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mm = String(d.getMinutes()).padStart(2, '0');
+            const ss = String(d.getSeconds()).padStart(2, '0');
+            return `LAST SCAN ${hh}:${mm}:${ss}`;
+        } catch (_) { return ''; }
+    },
+};
+
+// Legacy aliases preserved for any external callers that referenced the
+// underscored helpers directly.
+function _cleanupGetKnownExternal() {
+    // Returns a Set of marked ids for code paths that only need membership.
+    return new Set(Object.keys(APP.cleanup.readKnown()));
+}
+function _cleanupAddKnownExternal(id) { APP.cleanup.addKnown(id); }
+function _cleanupResourceId(item, kind) { return APP.cleanup.resourceId(item, kind); }
+
+async function loadCleanupResources(forceRefresh = false) {
+    const list = document.getElementById('cleanup-resource-list');
+    if (!list) return;
+    const refreshBtn = document.getElementById('cleanup-refresh-btn');
+    if (refreshBtn) refreshBtn.setAttribute('data-loading', 'true');
+    if (APP && typeof APP.renderSkeleton === 'function') {
+        APP.renderSkeleton('cleanup-resource-list', 'card', 3);
+    }
+    try {
+        const url = '/api/deploy/resources/all-projects' + (forceRefresh ? '?refresh=1' : '');
+        const res = await fetch(url);
+        const data = await res.json();
+        const orphans = _detectOrphans(data);
+        const known = APP.cleanup.readKnown();
+
+        const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setText('cleanup-orphan-count', orphans.total);
+        setText('cleanup-eip-count', orphans.eips.length);
+        setText('cleanup-acm-count', orphans.acm_certs.length);
+        setText('cleanup-buckets-count', orphans.s3_buckets.length);
+
+        // Last-refreshed-at hint
+        const refreshedAt = document.getElementById('cleanup-refreshed-at');
+        if (refreshedAt) {
+            refreshedAt.textContent = APP.cleanup.formatRefreshedAt(new Date());
+            refreshedAt.hidden = false;
+        }
+
+        if (orphans.total === 0) {
+            list.innerHTML = `<div class="empty-state">
+                <div class="empty-state__icon"><span class="empty-state__icon-inner"></span></div>
+                <h3 class="empty-state__title">No orphan resources detected</h3>
+                <p class="empty-state__description">All AWS resources in this account are tracked by an active deployment.</p>
+            </div>`;
+            return;
+        }
+        list.innerHTML = _renderCleanupGroups(orphans, known);
+        if (APP && typeof APP._staggerOnce === 'function') APP._staggerOnce(list);
+    } catch (e) {
+        list.innerHTML = '<div class="callout callout--warning">Failed to load resources. Check AWS credentials.</div>';
+    } finally {
+        if (refreshBtn) refreshBtn.removeAttribute('data-loading');
+    }
+}
+
+function _detectOrphans(data) {
+    // Phase 3c: detection no longer FILTERS marked-known items — instead it
+    // tags them so the renderer can display them with attribution. This
+    // preserves operator audit visibility ("Alice marked this 3d ago")
+    // rather than silently hiding the entry on next load.
+    const orphans = {
+        eips: [],
+        acm_certs: [],
+        s3_buckets: [],
+        snapshots: [],
+        workspaces: [],
+        total: 0
+    };
+
+    // Unattached EIPs — no instance_id means floating allocation.
+    (data.eips || []).forEach(e => {
+        if (!e.instance_id) {
+            const id = APP.cleanup.resourceId(e, 'eip');
+            orphans.eips.push(Object.assign({ _id: id, _kind: 'eip' }, e));
+        }
+    });
+
+    // ACM certs (eu-central-1 + us-east-1 from D5.0) — anything not in-use is an orphan.
+    const allAcm = (data.acm_certs || []).concat(data.acm_us_east_1 || []);
+    allAcm.forEach(c => {
+        if (!c.in_use) {
+            const id = APP.cleanup.resourceId(c, 'acm');
+            orphans.acm_certs.push(Object.assign({ _id: id, _kind: 'acm' }, c));
+        }
+    });
+
+    // S3 buckets — anything outside the project naming convention.
+    const projectRe = /^(c2-adhoc|c2-purple|c2-full|goad-mini|goad-light|goad-sccm|goad-full|goad-nha|combined-)|redteam-dashboard-tfstate/;
+    (data.s3_buckets || []).forEach(b => {
+        const name = b.name || b.Name || '';
+        if (!projectRe.test(name)) {
+            const id = APP.cleanup.resourceId(b, 's3');
+            orphans.s3_buckets.push(Object.assign({ _id: id, _kind: 's3' }, b));
+        }
+    });
+
+    orphans.total = orphans.eips.length + orphans.acm_certs.length +
+                    orphans.s3_buckets.length + orphans.snapshots.length +
+                    orphans.workspaces.length;
+    return orphans;
+}
+
+function _renderCleanupGroups(orphans, known) {
+    const groups = [];
+    known = known || APP.cleanup.readKnown();
+
+    if (orphans.eips.length > 0) {
+        groups.push(_renderGroup({
+            title: 'Unattached Elastic IPs',
+            kind: 'eip',
+            items: orphans.eips,
+            keyFor: (e) => 'ELASTIC IP',
+            valueFor: (e) => e.public_ip || e.PublicIp || '—',
+            hintFor: (e) => {
+                const parts = [];
+                if (e.allocation_id || e.AllocationId) parts.push(e.allocation_id || e.AllocationId);
+                if (e.region) parts.push(e.region);
+                return parts.join(' · ');
+            },
+            known,
+        }));
+    }
+    if (orphans.acm_certs.length > 0) {
+        groups.push(_renderGroup({
+            title: 'Orphan ACM Certificates',
+            kind: 'acm',
+            items: orphans.acm_certs,
+            keyFor: (c) => 'ACM CERT',
+            valueFor: (c) => c.domain || c.DomainName || '—',
+            hintFor: (c) => {
+                const parts = [];
+                if (c.region) parts.push(c.region); else parts.push('eu-central-1');
+                if (c.status || c.Status) parts.push(c.status || c.Status);
+                return parts.join(' · ');
+            },
+            known,
+        }));
+    }
+    if (orphans.s3_buckets.length > 0) {
+        groups.push(_renderGroup({
+            title: 'Untagged S3 Buckets',
+            kind: 's3',
+            items: orphans.s3_buckets,
+            keyFor: (b) => 'S3 BUCKET',
+            valueFor: (b) => b.name || b.Name || '—',
+            hintFor: (b) => {
+                const parts = [];
+                if (b.region) parts.push(b.region);
+                if (b.creation_date || b.CreationDate) parts.push(b.creation_date || b.CreationDate);
+                return parts.join(' · ');
+            },
+            known,
+        }));
+    }
+    return groups.join('');
+}
+
+function _renderGroup(opts) {
+    const { title, items, keyFor, valueFor, hintFor, known } = opts;
+    const rows = items.map((item) => {
+        const safeId = escapeHtml(item._id || '');
+        const isMarked = !!known[item._id];
+        const markedEntry = isMarked ? known[item._id] : null;
+        const op = markedEntry ? APP.cleanup.operatorFor(markedEntry.by) : null;
+        const rowAttrs = isMarked ? ' data-marked-known="true"' : '';
+
+        let valueMeta = `<div class="spec-row__value">${escapeHtml(valueFor(item))}</div>`;
+        if (isMarked) {
+            const opColor = escapeHtml(op.color || '#7A849E');
+            const opName = escapeHtml(op.display || 'unknown');
+            const when = escapeHtml(APP.cleanup.formatTime(markedEntry.at));
+            valueMeta = `
+                <div class="cleanup-row__value-meta">
+                    <div class="cleanup-row__value-meta-row">
+                        <span class="spec-row__value">${escapeHtml(valueFor(item))}</span>
+                        <span class="spec-pill spec-pill--draft" data-state="marked-known">
+                            <span class="spec-pill__dot"></span>KNOWN
+                        </span>
+                    </div>
+                    <span class="cleanup-row__attribution" data-attribution>
+                        <span class="cleanup-row__attribution-dot" style="background: ${opColor}"></span>
+                        marked by ${opName}${when ? ' · ' + when : ''}
+                    </span>
+                </div>`;
+        }
+
+        return `
+        <div class="spec-row cleanup-row" data-resource-id="${safeId}" data-kind="${escapeHtml(item._kind || '')}"${rowAttrs}>
+            <div class="spec-row__head">
+                <div class="spec-row__key">${escapeHtml(keyFor(item))}</div>
+                ${valueMeta}
+                <div class="cleanup-row__actions">
+                    <button class="spec-edit-btn cleanup-row__action"
+                            type="button"
+                            onclick="cleanupAdoptResource('${safeId}')"
+                            aria-label="Adopt into Terraform">
+                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link"/></svg>
+                        Adopt
+                    </button>
+                    <button class="spec-edit-btn spec-edit-btn--danger cleanup-row__action"
+                            type="button"
+                            onclick="cleanupDestroyResource('${safeId}')"
+                            aria-label="Destroy resource">
+                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                        Destroy
+                    </button>
+                    <button class="spec-edit-btn cleanup-row__action"
+                            type="button"
+                            onclick="cleanupMarkKnown('${safeId}')"
+                            aria-label="Mark as known-external">
+                        ${isMarked ? '' : '<svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg>'}
+                        ${isMarked ? 'Re-mark' : 'Mark known'}
+                    </button>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+    return `
+        <section class="cleanup-group" data-group-kind="${escapeHtml(opts.kind || '')}">
+            <header class="cleanup-group__header">
+                <h4 class="cleanup-group__title">${escapeHtml(title)}</h4>
+                <span class="cleanup-group__count">${items.length} found</span>
+            </header>
+            <div class="spec-list cleanup-group__list" role="list" aria-label="${escapeHtml(title)}">
+                ${rows}
+            </div>
+        </section>`;
+}
+
+function cleanupAdoptResource(_id) {
+    alert('Adopt into Terraform — manual step. See docs/ for terraform import syntax for this resource type.');
+}
+
+function cleanupDestroyResource(_id) {
+    alert('Destroy via AWS CLI — operator must confirm in console. No destructive backend endpoint is wired by design.');
+}
+
+function cleanupMarkKnown(id) {
+    if (!id) return;
+    APP.cleanup.addKnown(id);
+    // Phase 3c: row stays visible with attribution. Refresh the row in-place
+    // by re-fetching just the marked entry (no full re-scan needed for this
+    // single state flip).
+    const row = document.querySelector(`.cleanup-row[data-resource-id="${CSS.escape(id)}"]`);
+    if (!row) return;
+    const entry = APP.cleanup.readKnown()[id];
+    if (!entry) return;
+    const op = APP.cleanup.operatorFor(entry.by);
+    row.setAttribute('data-marked-known', 'true');
+    // Wrap the existing value into the value-meta + attribution layout.
+    const head = row.querySelector('.spec-row__head');
+    const value = head ? head.querySelector('.spec-row__value') : null;
+    if (value && head && !head.querySelector('[data-attribution]')) {
+        const valueText = value.textContent;
+        const wrapper = document.createElement('div');
+        wrapper.className = 'cleanup-row__value-meta';
+        wrapper.innerHTML = `
+            <div class="cleanup-row__value-meta-row">
+                <span class="spec-row__value">${escapeHtml(valueText)}</span>
+                <span class="spec-pill spec-pill--draft" data-state="marked-known">
+                    <span class="spec-pill__dot"></span>KNOWN
+                </span>
+            </div>
+            <span class="cleanup-row__attribution" data-attribution>
+                <span class="cleanup-row__attribution-dot" style="background: ${escapeHtml(op.color)}"></span>
+                marked by ${escapeHtml(op.display)}${entry.at ? ' · ' + escapeHtml(APP.cleanup.formatTime(entry.at)) : ''}
+            </span>`;
+        value.replaceWith(wrapper);
+    }
+    // Update the action button label.
+    const markBtn = row.querySelector('button[onclick^="cleanupMarkKnown"]');
+    if (markBtn) markBtn.textContent = 'Re-mark';
+}
+// === end D8 Agent B (Phase 3c V3-native) ====================================
+
+// ============================================================================
+// === M-Operators (Decision #23) — operator chip + menu + activity feed ====
+// ============================================================================
+// Backend contract (Agent A):
+//   GET    /api/operators            → { success, operators, current, default }
+//   POST   /api/operators            → { success, operator }
+//   POST   /api/operators/switch     → { success, current }  (sets cookie)
+//   GET    /api/audit?limit=&op=&action_prefix=&project=&target= → { success, entries, count }
+// Frontend reuses APP.modal, APP.toast, escapeHtml; no new utilities.
+// ============================================================================
+
+APP.operator = {
+    current: null,
+    all: [],
+    _listeners: [],
+    onChange(fn) { this._listeners.push(fn); },
+    _notify() {
+        this._listeners.forEach(fn => { try { fn(this.current); } catch (_) { /* ignore */ } });
+    },
+};
+
+// ──────────────────────────────────────────────────────────────────────
+// Phase 3B — Operations sub-pill namespaces. Thin wrappers on top of the
+// existing BEACON / TERMINAL globals + the legacy tools-upload helpers.
+// These exist so tests and future modules have a stable APP.* surface to
+// hang off of (rather than reaching for the top-level globals).
+// ──────────────────────────────────────────────────────────────────────
+APP.beacons = APP.beacons || {
+    list() { return (typeof BEACON !== 'undefined' && BEACON.cachedBeacons) ? BEACON.cachedBeacons.slice() : []; },
+    select(bid, label) {
+        if (typeof BEACON !== 'undefined' && typeof BEACON.selectBeacon === 'function') {
+            BEACON.selectBeacon(bid, label || '');
+        }
+    },
+    refresh() {
+        if (typeof BEACON !== 'undefined' && typeof BEACON.refreshBeacons === 'function') {
+            return BEACON.refreshBeacons();
+        }
+    },
+    refreshHistory() {
+        if (typeof BEACON !== 'undefined' && typeof BEACON.refreshCmdHistory === 'function') {
+            return BEACON.refreshCmdHistory();
+        }
+    },
+};
+
+APP.terminal = APP.terminal || {
+    sessions() {
+        if (typeof TERMINAL === 'undefined') return [];
+        return Object.entries(TERMINAL.sessions).map(([id, s]) => ({
+            id, type: s.type, label: s.label, opener: s.opener || null,
+            host: s.host || null,
+        }));
+    },
+    active() {
+        return (typeof TERMINAL !== 'undefined' && TERMINAL.activeId) || null;
+    },
+    open(kind) {
+        if (typeof TERMINAL === 'undefined') return;
+        if (kind === 'local' || !kind) TERMINAL.openLocal();
+    },
+};
+
+// ──────────────────────────────────────────────────────────────────────
+// Phase 3B.3 — APP.payloads: parameter spec-list + artifacts management.
+// Reads form state (deployment, files, destination) and re-renders the
+// preview pane's spec-list + artifacts list. Wired up on init by
+// initPayloadsV3() which subscribes to the form controls.
+// ──────────────────────────────────────────────────────────────────────
+APP.payloads = APP.payloads || {
+    artifacts: [],      // each: { name, size?, url?, kind? }
+    _state: {},         // last-known form state for spec-list rendering
+
+    init() {
+        if (this._initialized) { this.updateSpec(); return; }
+        this._initialized = true;
+        // Subscribe to form changes — both selects and radio buttons.
+        const wireOnce = (id, evt) => {
+            const el = document.getElementById(id);
+            if (el && !el._payloadsV3Wired) {
+                el._payloadsV3Wired = true;
+                el.addEventListener(evt, () => this.updateSpec());
+            }
+        };
+        wireOnce('tools-project-select', 'change');
+        wireOnce('tools-custom-dest', 'input');
+        document.querySelectorAll('input[name="tools-dest"]').forEach(r => {
+            if (!r._payloadsV3Wired) {
+                r._payloadsV3Wired = true;
+                r.addEventListener('change', () => this.updateSpec());
+            }
+        });
+        this.updateSpec();
+        this.renderArtifacts();
+    },
+
+    _readState() {
+        const project = document.getElementById('tools-project-select')?.value || '';
+        const dest = document.querySelector('input[name="tools-dest"]:checked')?.value || '';
+        const custom = document.getElementById('tools-custom-dest')?.value || '';
+        const stagedListEl = document.getElementById('tools-staged-list');
+        const stagedCount = stagedListEl ? stagedListEl.children.length : 0;
+        return {
+            project: project || '(not selected)',
+            destination: dest === 'custom' ? (custom || '(custom path not set)') : (dest || '(not chosen)'),
+            stagedCount,
+        };
+    },
+
+    updateSpec() {
+        const list = document.getElementById('ops-payloads-spec-list');
+        const pillLabel = document.getElementById('ops-payloads-spec-pill-label');
+        const pill = document.getElementById('ops-payloads-spec-pill');
+        if (!list) return;
+        const s = this._readState();
+        this._state = s;
+        const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+
+        const rows = [
+            { key: 'TARGET',      value: esc(s.project), hint: 'deployment' },
+            { key: 'DESTINATION', value: `<span class="spec-row__value--mono">${esc(s.destination)}</span>`, hint: 'attack box' },
+            { key: 'STAGED',      value: `<span class="spec-row__value--mono">${s.stagedCount} file${s.stagedCount === 1 ? '' : 's'}</span>`, hint: s.stagedCount > 0 ? 'ready' : 'empty' },
+        ];
+
+        list.innerHTML = rows.map(r => `
+            <li class="spec-row" data-readonly="true">
+              <div class="spec-row__head">
+                <span class="spec-row__key">${esc(r.key)}</span>
+                <span class="spec-row__value">${r.value}</span>
+                <span class="spec-row__hint">${esc(r.hint)}</span>
+                <span aria-hidden="true"></span>
+              </div>
+            </li>`).join('');
+
+        // Update pill state — DRAFT until a project is selected AND something is staged.
+        if (pill && pillLabel) {
+            const ready = s.project !== '(not selected)' && s.stagedCount > 0;
+            pill.classList.remove('spec-pill--draft', 'spec-pill--live', 'spec-pill--error');
+            if (ready) {
+                pill.classList.add('spec-pill--live');
+                pillLabel.textContent = 'READY';
+            } else {
+                pill.classList.add('spec-pill--draft');
+                pillLabel.textContent = 'DRAFT';
+            }
+        }
+    },
+
+    addArtifact(art) {
+        if (!art || !art.name) return;
+        this.artifacts.unshift(art);
+        this.renderArtifacts();
+    },
+
+    clearArtifacts() {
+        this.artifacts = [];
+        this.renderArtifacts();
+    },
+
+    renderArtifacts() {
+        const card = document.getElementById('ops-payloads-artifacts-card');
+        const list = document.getElementById('ops-payloads-artifacts-list');
+        const count = document.getElementById('ops-payloads-artifacts-count');
+        if (!list || !card) return;
+        if (!this.artifacts.length) {
+            card.hidden = true;
+            list.innerHTML = '';
+            if (count) count.textContent = '0';
+            return;
+        }
+        card.hidden = false;
+        if (count) count.textContent = String(this.artifacts.length);
+        const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        list.innerHTML = this.artifacts.map((art, i) => {
+            const url = art.url ? esc(art.url) : '';
+            return `
+              <li class="spec-row" data-readonly="true" data-artifact-index="${i}">
+                <div class="spec-row__head">
+                  <span class="ops-payloads-artifact__name">${esc(art.name)}</span>
+                  <span class="ops-payloads-artifact__size">${esc(art.size || '')}</span>
+                  <span class="ops-payloads-artifact__actions">
+                    ${url ? `<a class="ops-payloads-artifact__btn" href="${url}" download="${esc(art.name)}" title="Download">
+                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-download"/></svg>Download
+                    </a>` : ''}
+                    <button type="button" class="ops-payloads-artifact__btn"
+                            onclick="APP.payloads._view(${i})" title="View">
+                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-eye"/></svg>View
+                    </button>
+                  </span>
+                </div>
+              </li>`;
+        }).join('');
+    },
+
+    _view(i) {
+        const art = this.artifacts[i];
+        if (!art) return;
+        if (art.url) window.open(art.url, '_blank');
+        else if (typeof APP.toast === 'function') APP.toast(`Artifact: ${art.name}`, 'info');
+    },
+};
+
+async function loadOperators() {
+    try {
+        const res = await fetch('/api/operators');
+        const data = await res.json();
+        if (!data || !data.success) return;
+        APP.operator.current = data.current || null;
+        APP.operator.all = data.operators || [];
+        renderOperatorChip();
+        renderOperatorMenu();
+        APP.operator._notify();
+    } catch (e) {
+        console.warn('Failed to load operators', e);
+    }
+}
+
+function renderOperatorChip() {
+    const op = APP.operator.current;
+    if (!op) return;
+    const dot = document.getElementById('operator-chip-dot');
+    const name = document.getElementById('operator-chip-name');
+    if (dot) dot.style.background = op.color || 'var(--success)';
+    if (name) name.textContent = op.display || op.id || '—';
+    // Keep legacy hidden mirrors in sync (topology.js + any whoami consumers)
+    const ghName = document.getElementById('global-operator-name');
+    if (ghName) ghName.textContent = op.display || op.id || '';
+    const legacyBadge = document.getElementById('operator-badge');
+    if (legacyBadge) legacyBadge.textContent = op.display || op.id || '';
+}
+
+function renderOperatorMenu() {
+    const list = document.getElementById('operator-menu-list');
+    if (!list) return;
+    const currentId = APP.operator.current ? APP.operator.current.id : null;
+    list.innerHTML = APP.operator.all.map(op => {
+        const isActive = op.id === currentId ? ' is-active' : '';
+        return `
+            <button class="operator-menu__operator${isActive}" type="button"
+                    role="menuitem"
+                    onclick="switchOperator('${escapeHtml(op.id)}')">
+                <span class="operator-menu__operator-dot operator-dot operator-dot--lg" style="background: ${escapeHtml(op.color || '#7A849E')}"></span>
+                <span class="operator-menu__operator-name">${escapeHtml(op.display || op.id || '')}</span>
+                <span class="operator-menu__operator-id">${escapeHtml(op.id || '')}</span>
+            </button>`;
+    }).join('');
+}
+
+async function switchOperator(opId) {
+    try {
+        const res = await fetch('/api/operators/switch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: opId }),
+        });
+        const data = await res.json();
+        if (data && data.success) {
+            APP.operator.current = data.current;
+            renderOperatorChip();
+            renderOperatorMenu();
+            APP.operator._notify();
+            closeOperatorMenu();
+            if (typeof APP.toast === 'function' && data.current) {
+                APP.toast(`Switched to ${data.current.display || data.current.id}`, 'info');
+            }
+            // Refresh the activity feed so it re-attributes rows with the
+            // newly-current operator's color (and picks up any audit entry
+            // the backend wrote for the switch itself).
+            loadDashboardActivity(true);
+        }
+    } catch (e) {
+        console.warn('Failed to switch operator', e);
+    }
+}
+
+function openOperatorMenu() {
+    const menu = document.getElementById('operator-menu');
+    const chip = document.getElementById('operator-chip');
+    if (!menu || !chip) return;
+    menu.hidden = false;
+    chip.setAttribute('aria-expanded', 'true');
+    // Position below the chip, right-aligned to it.
+    const rect = chip.getBoundingClientRect();
+    menu.style.top = (rect.bottom + 8) + 'px';
+    menu.style.right = Math.max(8, window.innerWidth - rect.right) + 'px';
+    document.addEventListener('click', _operatorMenuOutsideClick, true);
+    document.addEventListener('keydown', _operatorMenuEsc);
+}
+
+function closeOperatorMenu() {
+    const menu = document.getElementById('operator-menu');
+    const chip = document.getElementById('operator-chip');
+    if (!menu || !chip) return;
+    if (menu.hidden) return;
+    menu.hidden = true;
+    chip.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', _operatorMenuOutsideClick, true);
+    document.removeEventListener('keydown', _operatorMenuEsc);
+}
+
+function _operatorMenuOutsideClick(e) {
+    const menu = document.getElementById('operator-menu');
+    const chip = document.getElementById('operator-chip');
+    if (!menu || !chip) return;
+    if (!menu.contains(e.target) && !chip.contains(e.target)) closeOperatorMenu();
+}
+function _operatorMenuEsc(e) { if (e.key === 'Escape') closeOperatorMenu(); }
+
+// --- Add Operator modal ---
+const OPERATOR_COLORS = ['#a31621', '#3b82f6', '#0d9488', '#7c3aed', '#ea580c', '#65a30d'];
+let _selectedOperatorColor = OPERATOR_COLORS[0];
+
+function openAddOperatorModal() {
+    closeOperatorMenu();
+    if (!APP.modal || typeof APP.modal.open !== 'function') return;
+    APP.modal.open('add-operator-modal');
+    populateOperatorColorGrid();
+    const idEl = document.getElementById('add-op-id');
+    const displayEl = document.getElementById('add-op-display');
+    const errEl = document.getElementById('add-op-error');
+    if (idEl) idEl.value = '';
+    if (displayEl) displayEl.value = '';
+    if (errEl) errEl.style.display = 'none';
+}
+
+function populateOperatorColorGrid() {
+    const grid = document.getElementById('add-op-color-grid');
+    if (!grid) return;
+    _selectedOperatorColor = OPERATOR_COLORS[0];
+    grid.innerHTML = OPERATOR_COLORS.map((c, i) => `
+        <button type="button"
+                class="operator-color-swatch${i === 0 ? ' is-selected' : ''}"
+                style="background: ${c}" data-color="${c}"
+                onclick="selectOperatorColor('${c}', this)"
+                aria-label="Color ${c}"></button>
+    `).join('');
+}
+
+function selectOperatorColor(color, btn) {
+    _selectedOperatorColor = color;
+    document.querySelectorAll('#add-op-color-grid .operator-color-swatch').forEach(s => {
+        s.classList.remove('is-selected');
+    });
+    if (btn) btn.classList.add('is-selected');
+}
+
+async function submitAddOperator(e) {
+    e.preventDefault();
+    const idEl = document.getElementById('add-op-id');
+    const displayEl = document.getElementById('add-op-display');
+    const errBox = document.getElementById('add-op-error');
+    if (!idEl || !displayEl || !errBox) return false;
+    const id = idEl.value.trim();
+    const display = displayEl.value.trim();
+    errBox.style.display = 'none';
+    try {
+        const res = await fetch('/api/operators', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, display, color: _selectedOperatorColor }),
+        });
+        const data = await res.json();
+        if (!data || !data.success) {
+            errBox.textContent = (data && data.error) || 'Failed to add operator';
+            errBox.style.display = 'block';
+            return false;
+        }
+        APP.modal.close('add-operator-modal');
+        await loadOperators();
+        if (data.operator && data.operator.id) {
+            await switchOperator(data.operator.id);
+        }
+        if (typeof APP.toast === 'function' && data.operator) {
+            APP.toast(`Operator ${data.operator.display || data.operator.id} added`, 'success');
+        }
+    } catch (err) {
+        errBox.textContent = 'Network error';
+        errBox.style.display = 'block';
+    }
+    return false;
+}
+
+// --- Activity feed ---
+async function loadDashboardActivity(forceRefresh = false) {
+    const list = document.getElementById('activity-feed-list');
+    if (!list) return;
+    try {
+        const res = await fetch('/api/audit?limit=20');
+        const data = await res.json();
+        const entries = (data && data.entries) || [];
+        if (entries.length === 0) {
+            list.innerHTML = '<li class="activity-feed__empty">No recent activity.</li>';
+            return;
+        }
+        list.innerHTML = entries.map(e => _renderActivityRow(e)).join('');
+    } catch (err) {
+        list.innerHTML = '<li class="activity-feed__empty">Failed to load activity.</li>';
+    }
+}
+
+function _renderActivityRow(e) {
+    // Phase 3e — emit a .spec-row (read-only) composing the V3 primitive.
+    // Key column: operator dot + display name. Value column: verb + target.
+    // Hint column: relative time. Unknown operators fall back to muted gray.
+    const op = APP.operator.all.find(o => o.id === e.op);
+    const color = (op && op.color) || '#7A849E';
+    const display = (op && op.display) || e.op || 'unknown';
+    const verb = _activityVerb(e.action);
+    const target = e.project || e.target || '';
+    const time = _relativeTime(e.ts);
+    const targetHtml = target
+        ? `<span class="spec-row__value-target">${escapeHtml(target)}</span>`
+        : '';
+    return `
+        <li class="spec-row" data-readonly="true" data-activity-op="${escapeHtml(e.op || '')}">
+            <div class="spec-row__head">
+                <span class="spec-row__key">
+                    <span class="operator-dot" style="background: ${escapeHtml(color)}" aria-hidden="true"></span>
+                    ${escapeHtml(display)}
+                </span>
+                <span class="spec-row__value">
+                    <span class="spec-row__value-verb">${escapeHtml(verb)}</span>${targetHtml}
+                </span>
+                <span class="spec-row__hint">${escapeHtml(time)}</span>
+            </div>
+        </li>
+    `;
+}
+
+function _activityVerb(action) {
+    const map = {
+        'deploy.apply': 'deployed',
+        'deploy.destroy': 'destroyed',
+        'deploy.plan': 'planned',
+        'deploy.save_config': 'saved config for',
+        'beacon.exec': 'ran a command on',
+        'beacon.listener_create': 'created listener on',
+        'terminal.start': 'started terminal on',
+        'operator.add': 'added operator',
+        'operator.remove': 'removed operator',
+        'operator.switch': 'switched to',
+        'cleanup.mark_known': 'marked known-external',
+    };
+    return map[action] || action || '';
+}
+
+function _relativeTime(iso) {
+    if (!iso) return '';
+    const then = new Date(iso).getTime();
+    if (isNaN(then)) return '';
+    const diff = Date.now() - then;
+    const s = Math.max(0, Math.floor(diff / 1000));
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    return `${d}d ago`;
+}
+
+// Wire up on DOMContentLoaded — coexists with APP.init() (separate listener).
+document.addEventListener('DOMContentLoaded', () => {
+    loadOperators();
+    const chip = document.getElementById('operator-chip');
+    if (chip) {
+        chip.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const menu = document.getElementById('operator-menu');
+            if (!menu) return;
+            if (menu.hidden) openOperatorMenu(); else closeOperatorMenu();
+        });
+    }
+    const addBtn = document.getElementById('operator-menu-add');
+    if (addBtn) addBtn.addEventListener('click', openAddOperatorModal);
+    // Manage button — opens the Manage operators modal (APP.operatorManagement).
+    // Replaces the v2.3.0 placeholder toast. The module closes the dropdown
+    // itself so we don't double-close here.
+    const manageBtn = document.getElementById('operator-menu-manage');
+    if (manageBtn) manageBtn.addEventListener('click', () => {
+        if (APP.operatorManagement && typeof APP.operatorManagement.open === 'function') {
+            APP.operatorManagement.open();
+        } else {
+            closeOperatorMenu();
+        }
+    });
+
+    // Initial activity load — also loaded on every Dashboard tab activation.
+    loadDashboardActivity(true);
+});
+
+// Hook into APP.navigateTo so the activity feed refreshes on Dashboard entry.
+// Wrap idempotently — guarded by _mOperatorsWrapped so HMR/dup-load is safe.
+if (APP.navigateTo && !APP.navigateTo._mOperatorsWrapped) {
+    const _origNav = APP.navigateTo.bind(APP);
+    APP.navigateTo = function (...args) {
+        const result = _origNav(...args);
+        // The dashboard tab is registered as 'dashboard' (data-target="dashboard");
+        // the spec referenced 'dashboard-tab' for forward-compat — accept both.
+        const first = args[0];
+        const parent = (first && typeof first === 'object') ? first.parent : first;
+        if (parent === 'dashboard' || parent === 'dashboard-tab') {
+            loadDashboardActivity(true);
+        }
+        return result;
+    };
+    APP.navigateTo._mOperatorsWrapped = true;
+}
+
+// ============================================================================
+// === APP.operatorManagement — Manage operators modal (Phase 3 native) =======
+// ============================================================================
+// Wires the dropdown "Manage…" item to a real modal that renders one
+// .spec-row per operator, with inline rename / recolor / delete editors.
+//
+// Backend contract:
+//   GET    /api/operators            → { operators: [{id, display, color,
+//                                                   last_active, action_count}], current, default }
+//   PATCH  /api/operators/<id>       → { operator }
+//   DELETE /api/operators/<id>
+//
+// Protections surfaced in the UI:
+//   - Cannot delete the currently-active operator (would orphan the cookie).
+//   - Cannot delete the last operator (backend also enforces).
+//   - Cannot delete the default operator unless another exists to promote.
+//     Backend auto-promotes; the UI just confirms the next-default in copy.
+// ============================================================================
+
+APP.operatorManagement = (function () {
+    const MODAL_ID = 'operator-management-modal';
+    const LIST_ID = 'operator-management-list';
+    let _operators = [];
+    let _currentId = null;
+    let _defaultId = null;
+    let _editingId = null;
+    let _editingColor = null;
+    let _pendingDeleteId = null;
+
+    function _relTime(iso) {
+        // Shared with _relativeTime above but duplicated to keep this module
+        // self-contained — _relativeTime is a module-scoped function in the
+        // M-Operators block above; reuse via the closure since both live in
+        // the same script bundle.
+        if (typeof _relativeTime === 'function') return _relativeTime(iso);
+        return '';
+    }
+
+    async function _fetchOperators() {
+        const res = await fetch('/api/operators');
+        const data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'load failed');
+        _operators = data.operators || [];
+        _currentId = (data.current && data.current.id) || null;
+        _defaultId = data.default || null;
+        // Keep the global APP.operator cache in sync so renderOperatorMenu()
+        // picks up any rename / recolor immediately without a second fetch.
+        APP.operator.all = _operators;
+        if (data.current) APP.operator.current = data.current;
+    }
+
+    function _renderColorGrid(currentColor) {
+        return OPERATOR_COLORS.map(c => {
+            const sel = (c.toLowerCase() === (currentColor || '').toLowerCase()) ? ' is-selected' : '';
+            return `<button type="button" class="operator-color-swatch${sel}"
+                            style="background: ${escapeHtml(c)}" data-color="${escapeHtml(c)}"
+                            aria-label="Color ${escapeHtml(c)}"
+                            data-mgmt-color></button>`;
+        }).join('');
+    }
+
+    function _renderRow(op) {
+        const isEditing = op.id === _editingId;
+        const isCurrent = op.id === _currentId;
+        const isDefault = op.id === _defaultId;
+        const isLast = _operators.length === 1;
+        const cantDelete = isCurrent || isLast;
+        const deleteTip = isCurrent
+            ? 'Switch to another operator before deleting this profile.'
+            : (isLast ? 'Cannot delete the last operator.' : '');
+        const lastActive = op.last_active ? _relTime(op.last_active) : null;
+        const count = Number(op.action_count || 0);
+        const countLabel = count === 1 ? '1 action' : `${count} actions`;
+        const hintText = lastActive
+            ? `${countLabel} · last active ${lastActive}`
+            : (count > 0 ? countLabel : 'never used');
+
+        const color = op.color || '#7A849E';
+        const display = op.display || op.id || '';
+
+        const editorColor = _editingColor || color;
+        const pendingDel = (_pendingDeleteId === op.id);
+
+        const editorMarkup = isEditing ? `
+            <div class="spec-row__editor">
+                <div class="spec-row__editor-field">
+                    <label class="spec-row__editor-label" for="op-mgmt-display-${escapeHtml(op.id)}">Display name</label>
+                    <input class="spec-row__editor-input" id="op-mgmt-display-${escapeHtml(op.id)}"
+                           type="text" value="${escapeHtml(display)}"
+                           data-mgmt-display autocomplete="off">
+                </div>
+                <div class="spec-row__editor-field">
+                    <span class="spec-row__editor-label">Color</span>
+                    <div class="operator-color-grid" data-mgmt-color-grid>
+                        ${_renderColorGrid(editorColor)}
+                    </div>
+                </div>
+                ${isDefault ? `
+                <div class="spec-row__editor-hint operator-mgmt__hint-default">
+                    Default profile. ${_operators.length > 1
+                        ? 'Deleting promotes another operator to default.'
+                        : 'Add another operator before deleting.'}
+                </div>` : ''}
+                <div class="spec-row__editor-foot">
+                    <button type="button" class="spec-edit-btn spec-edit-btn--danger"
+                            data-mgmt-delete
+                            ${cantDelete ? 'disabled' : ''}
+                            ${cantDelete ? `title="${escapeHtml(deleteTip)}"` : ''}>
+                        Delete profile
+                    </button>
+                    <span style="flex: 1"></span>
+                    <button type="button" class="spec-edit-btn" data-mgmt-cancel>Cancel</button>
+                    <button type="button" class="spec-edit-btn spec-edit-btn--save" data-mgmt-save>Save</button>
+                </div>
+                ${pendingDel ? `
+                <div class="operator-mgmt__confirm" role="alertdialog" aria-label="Confirm delete">
+                    <span class="operator-mgmt__confirm-text">
+                        Delete profile? Audit log entries are preserved.
+                    </span>
+                    <button type="button" class="spec-edit-btn" data-mgmt-delete-cancel>Cancel</button>
+                    <button type="button" class="spec-edit-btn spec-edit-btn--danger-fill" data-mgmt-delete-confirm>Confirm</button>
+                </div>` : ''}
+            </div>
+        ` : '';
+
+        const statusBadges = [];
+        if (isCurrent) statusBadges.push('<span class="spec-pill operator-mgmt__pill operator-mgmt__pill--current">Active</span>');
+        if (isDefault) statusBadges.push('<span class="spec-pill operator-mgmt__pill">Default</span>');
+
+        return `
+            <div class="spec-row operator-mgmt__row" data-op-id="${escapeHtml(op.id)}"
+                 ${isEditing ? 'data-editing="true"' : ''}>
+                <div class="spec-row__head">
+                    <span class="spec-row__key operator-mgmt__key">
+                        <span class="operator-dot operator-dot--lg" style="background: ${escapeHtml(color)}" aria-hidden="true"></span>
+                        <span class="operator-mgmt__display">${escapeHtml(display)}</span>
+                        ${statusBadges.join('')}
+                    </span>
+                    <span class="spec-row__value spec-row__value--mono">${escapeHtml(op.id)}</span>
+                    <span class="spec-row__hint">${escapeHtml(hintText)}</span>
+                    <button type="button" class="spec-row__action" data-mgmt-edit
+                            aria-label="Edit ${escapeHtml(display)}"
+                            aria-expanded="${isEditing ? 'true' : 'false'}">
+                        <svg class="icon" aria-hidden="true"><use href="#icon-edit-pencil"/></svg>
+                    </button>
+                </div>
+                ${editorMarkup}
+            </div>
+        `;
+    }
+
+    function render() {
+        const list = document.getElementById(LIST_ID);
+        if (!list) return;
+        list.setAttribute('data-editing', _editingId ? 'true' : 'false');
+        list.innerHTML = _operators.map(_renderRow).join('');
+        // Delegated events would also work, but the row count is small (<=32)
+        // so per-element wiring keeps the handlers self-documenting.
+        list.querySelectorAll('[data-op-id]').forEach(row => {
+            const opId = row.getAttribute('data-op-id');
+            const editBtn = row.querySelector('[data-mgmt-edit]');
+            if (editBtn) editBtn.addEventListener('click', () => editRow(opId));
+            // Swatch picker — flip the selection class without a full re-render
+            // so the user's text input doesn't lose focus/value.
+            const grid = row.querySelector('[data-mgmt-color-grid]');
+            if (grid) {
+                grid.addEventListener('click', (e) => {
+                    const sw = e.target.closest('[data-mgmt-color]');
+                    if (!sw) return;
+                    _editingColor = sw.getAttribute('data-color');
+                    grid.querySelectorAll('[data-mgmt-color]').forEach(s => s.classList.remove('is-selected'));
+                    sw.classList.add('is-selected');
+                });
+            }
+            const cancelBtn = row.querySelector('[data-mgmt-cancel]');
+            if (cancelBtn) cancelBtn.addEventListener('click', () => cancelRow(opId));
+            const saveBtn = row.querySelector('[data-mgmt-save]');
+            if (saveBtn) saveBtn.addEventListener('click', () => saveRow(opId));
+            const delBtn = row.querySelector('[data-mgmt-delete]');
+            if (delBtn && !delBtn.disabled) delBtn.addEventListener('click', () => deleteRow(opId));
+            const delCancel = row.querySelector('[data-mgmt-delete-cancel]');
+            if (delCancel) delCancel.addEventListener('click', () => { _pendingDeleteId = null; render(); });
+            const delConfirm = row.querySelector('[data-mgmt-delete-confirm]');
+            if (delConfirm) delConfirm.addEventListener('click', () => confirmDelete(opId));
+        });
+    }
+
+    async function open() {
+        // Close the dropdown first so two popovers don't stack.
+        closeOperatorMenu();
+        _editingId = null;
+        _editingColor = null;
+        _pendingDeleteId = null;
+        const list = document.getElementById(LIST_ID);
+        if (list) list.innerHTML = '<div class="operator-mgmt__loading">Loading…</div>';
+        APP.modal.open(MODAL_ID);
+        try {
+            await _fetchOperators();
+            render();
+            // Keep the global chip in sync — if anything changed since last load.
+            renderOperatorChip();
+            renderOperatorMenu();
+        } catch (e) {
+            if (list) list.innerHTML = `<div class="operator-mgmt__error">Failed to load operators.</div>`;
+        }
+    }
+
+    function close() {
+        APP.modal.close(MODAL_ID);
+        _editingId = null;
+        _editingColor = null;
+        _pendingDeleteId = null;
+    }
+
+    function editRow(opId) {
+        const op = _operators.find(o => o.id === opId);
+        _editingId = opId;
+        _editingColor = (op && op.color) || null;
+        _pendingDeleteId = null;
+        render();
+    }
+
+    function cancelRow(_opId) {
+        _editingId = null;
+        _editingColor = null;
+        _pendingDeleteId = null;
+        render();
+    }
+
+    async function saveRow(opId) {
+        const row = document.querySelector(`#${LIST_ID} [data-op-id="${CSS.escape(opId)}"]`);
+        if (!row) return;
+        const displayEl = row.querySelector('[data-mgmt-display]');
+        const newDisplay = displayEl ? displayEl.value.trim() : null;
+        const op = _operators.find(o => o.id === opId);
+        const payload = {};
+        if (newDisplay && newDisplay !== (op && op.display)) payload.display = newDisplay;
+        if (_editingColor && _editingColor !== (op && op.color)) payload.color = _editingColor;
+        if (Object.keys(payload).length === 0) {
+            cancelRow(opId);
+            return;
+        }
+        try {
+            const res = await fetch(`/api/operators/${encodeURIComponent(opId)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!data || !data.success) {
+                if (typeof APP.toast === 'function') APP.toast((data && data.error) || 'Update failed', 'error');
+                return;
+            }
+            _editingId = null;
+            _editingColor = null;
+            await _fetchOperators();
+            render();
+            renderOperatorChip();
+            renderOperatorMenu();
+            if (typeof APP.toast === 'function') APP.toast(`Updated ${data.operator.display || data.operator.id}`, 'success');
+        } catch (e) {
+            if (typeof APP.toast === 'function') APP.toast('Network error', 'error');
+        }
+    }
+
+    function deleteRow(opId) {
+        // Stage 1 — show the inline confirm. Stage 2 is confirmDelete().
+        _pendingDeleteId = opId;
+        render();
+    }
+
+    async function confirmDelete(opId) {
+        try {
+            const res = await fetch(`/api/operators/${encodeURIComponent(opId)}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (!data || !data.success) {
+                if (typeof APP.toast === 'function') APP.toast((data && data.error) || 'Delete failed', 'error');
+                _pendingDeleteId = null;
+                render();
+                return;
+            }
+            _editingId = null;
+            _editingColor = null;
+            _pendingDeleteId = null;
+            await _fetchOperators();
+            render();
+            renderOperatorChip();
+            renderOperatorMenu();
+            if (typeof APP.toast === 'function') APP.toast(`Removed ${opId}`, 'info');
+        } catch (e) {
+            if (typeof APP.toast === 'function') APP.toast('Network error', 'error');
+        }
+    }
+
+    function addOperator() {
+        // Chain into the existing Add Operator modal — close ours first so
+        // they don't stack visually.
+        close();
+        openAddOperatorModal();
+    }
+
+    return { open, close, editRow, saveRow, cancelRow, deleteRow, addOperator };
+})();
+
+document.addEventListener('DOMContentLoaded', () => {
+    const addBtn = document.getElementById('operator-management-add');
+    if (addBtn) addBtn.addEventListener('click', () => APP.operatorManagement.addOperator());
+});
+
+// === end M-Operators ========================================================
 
 document.addEventListener('DOMContentLoaded', () => {
     APP.init();
@@ -21164,3 +25643,426 @@ window.addEventListener('beforeunload', (e) => {
         e.returnValue = msg;
     }
 });
+
+// ════════════════════════════════════════════════════════════════════════
+// PHASE 3A — Manage sub-pill V3-native rebuild.
+// Builds the hero + spec-list + actions strip at the top of the Manage
+// pane, composing Phase 2B primitives. Preserves all existing data flows
+// (refreshAll, loadResourceList, renderDeploymentTimeline, etc.) — only
+// the top-of-pane skeleton is replaced. APP.manage.render() is called
+// from APP._runSubPillInit on manage activation AND on
+// APP.activeDeployment.subscribe (wired in APP.manage.init).
+// ════════════════════════════════════════════════════════════════════════
+
+APP.manage = APP.manage || {};
+
+APP.manage._escape = function (s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+};
+
+/** Humanised "x minutes ago" formatter for audit timestamps (ISO 8601). */
+APP.manage._timeAgo = function (iso) {
+    if (!iso) return '';
+    let t;
+    try { t = new Date(iso).getTime(); } catch (_) { return ''; }
+    if (!Number.isFinite(t)) return '';
+    const diff = Math.floor((Date.now() - t) / 1000);
+    if (diff < 0) return 'just now';
+    if (diff < 10) return 'just now';
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+};
+
+/** Build a spec-row HTML fragment. Read-only — manage rows don't edit. */
+APP.manage._renderRow = function (row) {
+    const esc = APP.manage._escape;
+    const valueClasses = ['spec-row__value'];
+    if (row.valueMono) valueClasses.push('spec-row__value--mono');
+    if (row.valueStrong) valueClasses.push('spec-row__value--strong');
+    let valueHtml;
+    if (row.isPill) {
+        valueHtml = `<dd class="${valueClasses.join(' ')}"><span class="spec-pill"><span class="spec-pill__dot" aria-hidden="true"></span>${esc(row.value)}</span></dd>`;
+    } else if (row.valueHtml) {
+        valueHtml = `<dd class="${valueClasses.join(' ')}" data-manage-value="${esc(row.key)}">${row.valueHtml}</dd>`;
+    } else {
+        valueHtml = `<dd class="${valueClasses.join(' ')}" data-manage-value="${esc(row.key)}">${esc(row.value)}</dd>`;
+    }
+    const hintHtml = row.hint
+        ? `<dd class="spec-row__hint" data-manage-hint="${esc(row.key)}">${esc(row.hint)}</dd>`
+        : '<dd class="spec-row__hint" data-manage-hint=""></dd>';
+    return `
+        <div class="spec-row" data-manage-row="${esc(row.key)}" data-readonly="true">
+            <div class="spec-row__head">
+                <dt class="spec-row__key">${esc(row.label)}</dt>
+                ${valueHtml}
+                ${hintHtml}
+                <span class="spec-row__action" aria-hidden="true"></span>
+            </div>
+        </div>
+    `;
+};
+
+/** Update the .spec-pill in the eyebrow to reflect deployment state. */
+APP.manage._updateStatusPill = function (state) {
+    const pill = document.getElementById('manage-status-pill');
+    const label = document.getElementById('manage-status-label');
+    if (!pill || !label) return;
+    pill.classList.remove('spec-pill--live', 'spec-pill--draft', 'spec-pill--error');
+    if (state === 'live') {
+        pill.classList.add('spec-pill--live');
+        label.textContent = 'LIVE';
+    } else if (state === 'error') {
+        pill.classList.add('spec-pill--error');
+        label.textContent = 'ERROR';
+    } else {
+        pill.classList.add('spec-pill--draft');
+        label.textContent = state ? String(state).toUpperCase() : 'IDLE';
+    }
+};
+
+/** Look up the most-recent deploy.* audit entry for a project. */
+APP.manage._loadLastTouched = async function (projectName) {
+    if (!projectName) return null;
+    try {
+        const r = await fetch(`/api/audit?action_prefix=deploy.&project=${encodeURIComponent(projectName)}&limit=1`);
+        const d = await r.json();
+        if (!d || !d.success) return null;
+        const entry = (d.entries || [])[0];
+        if (!entry) return null;
+        return {
+            operator: entry.op || 'unknown',
+            ts: entry.ts || '',
+            action: entry.action || '',
+        };
+    } catch (e) {
+        console.warn('manage._loadLastTouched failed:', e);
+        return null;
+    }
+};
+
+/** Build the spec-list rows. */
+APP.manage._buildRows = function (ctx) {
+    const rows = [];
+    const infra = ctx.infrastructure || {};
+    const cost = ctx.cost;
+    const audit = ctx.audit;
+    const config = ctx.config || {};
+
+    rows.push({
+        key: 'region',
+        label: 'AWS Region',
+        value: config.aws_region || 'eu-central-1',
+        valueMono: true,
+        hint: 'primary',
+    });
+
+    if (ctx.account_id) {
+        rows.push({
+            key: 'account',
+            label: 'AWS Account',
+            value: ctx.account_id,
+            valueMono: true,
+            hint: 'caller identity',
+        });
+    }
+
+    const totalInstances =
+        (infra.summary?.c2_server_count || 0) +
+        (infra.summary?.redirector_count || 0) +
+        (infra.summary?.has_bastion ? 1 : 0) +
+        (infra.summary?.has_attack_box ? 1 : 0);
+    rows.push({
+        key: 'instances',
+        label: 'EC2 Instances',
+        value: String(totalInstances || (ctx.instance_count ?? '—')),
+        valueMono: true,
+        valueStrong: true,
+        hint: totalInstances ? 'all healthy' : '',
+    });
+
+    if (infra.bastion?.public_ip) {
+        rows.push({
+            key: 'bastion',
+            label: 'Bastion',
+            value: infra.bastion.public_ip,
+            valueMono: true,
+            hint: 'SSH 22 from your CIDR',
+        });
+    }
+    const redirIps = infra.redirectors?.public_ips || [];
+    if (redirIps.length) {
+        rows.push({
+            key: 'redirector_ips',
+            label: 'Redirector IPs',
+            value: redirIps.length === 1 ? redirIps[0] : `${redirIps.length} public IPs`,
+            valueMono: true,
+            hint: redirIps.length === 1 ? 'HTTPS 443' : `${redirIps.length} · HTTPS 443`,
+        });
+    }
+    if (infra.jumpbox_public_ip) {
+        rows.push({
+            key: 'jumpbox',
+            label: 'Jumpbox',
+            value: infra.jumpbox_public_ip,
+            valueMono: true,
+            hint: 'SSH 22 (GOAD)',
+        });
+    }
+
+    const sgs = infra.security_groups || {};
+    const sgIds = Object.values(sgs).filter(Boolean);
+    if (sgIds.length) {
+        rows.push({
+            key: 'sgs',
+            label: 'Security Groups',
+            value: `${sgIds.length} group${sgIds.length === 1 ? '' : 's'}`,
+            valueMono: true,
+            hint: 'least-privilege',
+        });
+    }
+
+    if (cost != null) {
+        rows.push({
+            key: 'cost',
+            label: 'Estimated Burn',
+            value: `$${Number(cost).toFixed(2)} / mo`,
+            valueMono: true,
+            valueStrong: true,
+            hint: 'computed',
+        });
+    }
+
+    // Last-touched-by — operator attribution from audit log.
+    if (audit) {
+        const esc = APP.manage._escape;
+        const operatorHtml = audit.operator && audit.operator !== 'unknown'
+            ? `<span class="manage-attr">${esc(audit.operator)}</span>`
+            : `<span class="manage-attr manage-attr--unknown">unknown operator</span>`;
+        const timeAgo = APP.manage._timeAgo(audit.ts) || 'recently';
+        rows.push({
+            key: 'last_touched',
+            label: 'Last touched by',
+            valueHtml: `${operatorHtml} <span style="color: var(--text-secondary);">${esc(timeAgo)}</span>`,
+            hint: audit.action ? audit.action : '',
+        });
+    } else if (ctx.hasDeployment) {
+        rows.push({
+            key: 'last_touched',
+            label: 'Last touched by',
+            valueHtml: `<span class="manage-attr manage-attr--unknown">no audit data</span>`,
+            hint: 'no recent deploy actions',
+        });
+    }
+
+    return rows;
+};
+
+/** Show a transient message in the inline output panel. */
+APP.manage._setOutput = function (text, state) {
+    const out = document.getElementById('manage-output');
+    if (!out) return;
+    if (!text) {
+        out.hidden = true;
+        out.textContent = '';
+        out.removeAttribute('data-state');
+        return;
+    }
+    out.hidden = false;
+    out.textContent = text;
+    if (state) out.setAttribute('data-state', state);
+    else out.removeAttribute('data-state');
+};
+
+/** Wire the action strip — idempotent. */
+APP.manage._wireActions = function () {
+    const strip = document.getElementById('manage-actions');
+    if (!strip || strip._manageWired) return;
+    strip._manageWired = true;
+    strip.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-manage-action]');
+        if (!btn) return;
+        const action = btn.dataset.manageAction;
+        if (action === 'refresh') {
+            APP.manage._setOutput('Refreshing...', 'loading');
+            try {
+                if (typeof refreshAll === 'function') await refreshAll();
+            } catch (err) { /* surfaced via banners */ }
+            await APP.manage.render();
+            APP.manage._setOutput('');
+        } else if (action === 'logs') {
+            const section = document.getElementById('deployment-history-section');
+            if (section) {
+                section.style.display = 'block';
+                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        } else if (action === 'health') {
+            const project = APP.manage._currentProject();
+            APP.manage._setOutput(`Running health check${project ? ' for ' + project : ''}...`, 'loading');
+            try {
+                const r = await fetch(`/api/deploy/infrastructure${project ? '?project=' + encodeURIComponent(project) : ''}`);
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Health check failed');
+                const lines = [];
+                lines.push(`Project: ${d.project_name || '(default)'}`);
+                lines.push(`Deployment mode: ${d.deployment_mode || 'unknown'}`);
+                if (d.summary) {
+                    lines.push(`  c2 servers:     ${d.summary.c2_server_count || 0}`);
+                    lines.push(`  redirectors:    ${d.summary.redirector_count || 0}`);
+                    lines.push(`  bastion:        ${d.summary.has_bastion ? 'yes' : 'no'}`);
+                    lines.push(`  attack box:     ${d.summary.has_attack_box ? 'yes' : 'no'}`);
+                    lines.push(`  subnet count:   ${d.summary.subnet_count || 0}`);
+                }
+                if (d.network?.vpc_id) lines.push(`VPC: ${d.network.vpc_id}`);
+                lines.push('');
+                lines.push('OK — infrastructure is responsive.');
+                APP.manage._setOutput(lines.join('\n'), 'ok');
+            } catch (err) {
+                APP.manage._setOutput(`ERROR: ${err.message || err}`, 'error');
+            }
+        } else if (action === 'destroy') {
+            APP.manage._confirmDestroy();
+        }
+    });
+};
+
+/** Resolve the current project name. */
+APP.manage._currentProject = function () {
+    if (APP.activeDeployment && APP.activeDeployment.current) {
+        return APP.activeDeployment.current;
+    }
+    if (typeof getCurrentProjectName === 'function') {
+        return getCurrentProjectName();
+    }
+    return '';
+};
+
+/** Confirm + invoke destroy. */
+APP.manage._confirmDestroy = function () {
+    const project = APP.manage._currentProject() || '(active deployment)';
+    const msg = `Destroy infrastructure for "${project}"?\n\nThis is non-reversible — all EC2 instances, networking, and state will be torn down. Snapshots and Terraform state archives are kept.`;
+    const proceed = () => {
+        if (typeof destroyInfrastructure === 'function') {
+            destroyInfrastructure(project === '(active deployment)' ? null : project);
+        } else {
+            console.warn('destroyInfrastructure() not available');
+        }
+    };
+    if (window.APP && typeof window.APP.modal === 'function') {
+        try {
+            window.APP.modal({
+                title: 'Destroy deployment',
+                body: msg,
+                danger: true,
+                confirmLabel: 'Destroy',
+                onConfirm: proceed,
+            });
+            return;
+        } catch (_) { /* fall through */ }
+    }
+    if (window.confirm(msg)) proceed();
+};
+
+/** Pull live data + render the hero / spec-list. Re-entrant. */
+APP.manage.render = async function () {
+    const view = document.getElementById('manage-view');
+    const heroName = document.getElementById('manage-hero-name');
+    const heroType = document.getElementById('manage-hero-type');
+    const heroState = document.getElementById('manage-hero-state');
+    const specList = document.getElementById('manage-spec-list');
+    if (!view || !specList) return;
+
+    APP.manage._wireActions();
+
+    const project = APP.manage._currentProject();
+    if (!project) {
+        view.style.display = 'block';
+        if (heroName) heroName.textContent = '(no deployment selected)';
+        if (heroType) heroType.textContent = '—';
+        if (heroState) heroState.textContent = '';
+        APP.manage._updateStatusPill('idle');
+        specList.innerHTML = `
+            <div class="manage-empty">
+                <p class="manage-empty__title">No deployment selected</p>
+                <p class="manage-empty__body">Pick a deployment from the header selector, or deploy a new one from the Deploy sub-pill.</p>
+            </div>
+        `;
+        return;
+    }
+
+    view.style.display = 'block';
+    if (heroName) heroName.textContent = project;
+    if (heroState) heroState.textContent = '';
+    if (heroType) heroType.textContent = 'loading…';
+
+    const [infraRes, statusRes, costRes, auditEntry, configRes] = await Promise.all([
+        fetch(`/api/deploy/infrastructure?project=${encodeURIComponent(project)}`).then(r => r.json()).catch(() => ({ success: false })),
+        fetch(`/api/deploy/status?project=${encodeURIComponent(project)}`).then(r => r.json()).catch(() => ({ success: false })),
+        fetch('/api/costs/aggregate').then(r => r.json()).catch(() => ({ success: false })),
+        APP.manage._loadLastTouched(project),
+        fetch('/api/config').then(r => r.json()).catch(() => ({ success: false })),
+    ]);
+
+    const hasDeployment = !!(infraRes && infraRes.has_deployment);
+    const config = (configRes && configRes.config) || {};
+    const deployType = config.deployment_type || (infraRes && infraRes.deployment_mode) || '';
+    const deployConfig = (typeof DEPLOYMENT_CONFIGS !== 'undefined') ? DEPLOYMENT_CONFIGS[deployType] : null;
+
+    if (heroType) heroType.textContent = deployConfig?.title || deployType || '—';
+    if (heroState) {
+        if (hasDeployment) heroState.textContent = 'live infrastructure';
+        else heroState.textContent = 'no live infrastructure';
+    }
+
+    if (statusRes?.status?.deployed) APP.manage._updateStatusPill('live');
+    else if (statusRes?.status?.last_error) APP.manage._updateStatusPill('error');
+    else if (hasDeployment) APP.manage._updateStatusPill('live');
+    else APP.manage._updateStatusPill('idle');
+
+    let projectCost = null;
+    if (costRes?.success && Array.isArray(costRes.deployments)) {
+        const entry = costRes.deployments.find(d => d.project_name === project);
+        if (entry && Number.isFinite(entry.monthly)) projectCost = entry.monthly;
+    }
+
+    const rows = APP.manage._buildRows({
+        infrastructure: infraRes || {},
+        cost: projectCost,
+        audit: auditEntry,
+        config: config,
+        account_id: infraRes?.account_id || '',
+        instance_states: {},
+        hasDeployment: hasDeployment,
+    });
+
+    specList.innerHTML = rows.map(APP.manage._renderRow).join('');
+};
+
+/** Init hook — idempotent. */
+APP.manage.init = function () {
+    if (APP.manage._initDone) return;
+    APP.manage._initDone = true;
+    APP.manage._wireActions();
+    if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function') {
+        APP.activeDeployment.subscribe(() => {
+            const pane = document.getElementById('subpill-pane-manage');
+            if (pane && !pane.hidden) APP.manage.render();
+        });
+    }
+};
+
+// Wire on DOMContentLoaded so APP.activeDeployment subscriber is in place
+// before any subpill activation. Idempotent with the in-init hook below.
+if (typeof window !== 'undefined') {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            try { APP.manage.init(); } catch (e) { console.warn('APP.manage.init failed:', e); }
+        });
+    } else {
+        try { APP.manage.init(); } catch (e) { console.warn('APP.manage.init failed:', e); }
+    }
+}
+// === end PHASE 3A Manage sub-pill =====================================

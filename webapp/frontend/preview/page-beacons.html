@@ -1,0 +1,1320 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Operations · Beacons — TASTE Demo Set C</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           TASTE DEMO SET C — OPERATIONS · BEACONS
+           Hypothesis: Beacons list rows in spec-list rhythm; selecting
+           one opens an attributed detail panel that shows who's
+           currently driving and the per-command operator history.
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP ─────────────────────────────────────── */
+        .preview-hypothesis {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .preview-hypothesis__text strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: var(--letter-spacing-caps);
+        }
+        .preview-theme-toggle {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 6px 14px;
+            border-radius: var(--radius-xs);
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .preview-theme-toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── PAGE FRAME ────────────────────────────────────────────── */
+        .pb-shell {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 32px 32px 56px;
+        }
+
+        .pb-eyebrow {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 22px;
+        }
+        .pb-eyebrow__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .pb-eyebrow__meta {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+
+        /* ── TWO-COLUMN LAYOUT ─────────────────────────────────────── */
+        .pb-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.1fr);
+            gap: 20px;
+            align-items: start;
+        }
+        @media (max-width: 960px) {
+            .pb-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ── BEACONS LIST (LEFT) ───────────────────────────────────── */
+        .pb-list-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 14px 14px 6px;
+        }
+        .pb-list-card__head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            padding: 0 4px;
+        }
+        .pb-list-card__title {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin: 0;
+        }
+        .pb-list-card__count {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            padding: 2px 9px;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-full);
+            background: var(--bg-input);
+            letter-spacing: 0.04em;
+        }
+        .pb-beacons-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        .pb-beacons-list .spec-row__head {
+            grid-template-columns: 1fr auto 22px;
+            gap: 14px;
+            align-items: center;
+        }
+        .pb-beacon-row__name {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            min-width: 0;
+        }
+        .pb-beacon-row__host {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .pb-beacon-row__title {
+            font-size: 13.5px;
+            color: var(--text-primary);
+            font-weight: 600;
+            line-height: 1.3;
+        }
+        .pb-beacon-row__hint {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+        .pb-beacons-list .spec-row[data-selected="true"] .spec-row__head {
+            background: var(--bg-card-hover);
+        }
+        .pb-beacons-list .spec-row[data-selected="true"] .spec-row__head::before {
+            opacity: 1;
+            transform: scaleY(1);
+        }
+        .pb-beacons-list .spec-row[data-selected="true"] .spec-row__action {
+            opacity: 1;
+            color: var(--text-primary);
+        }
+
+        /* ── DETAIL PANEL (RIGHT) ──────────────────────────────────── */
+        .pb-detail {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .pb-detail-hero {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 18px 18px 16px;
+        }
+        .pb-detail-hero__caption {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .pb-detail-hero__head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 4px;
+        }
+        .pb-detail-hero__name {
+            font-family: var(--font-family-mono);
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            margin: 0;
+            line-height: 1.25;
+            word-break: break-all;
+        }
+        .pb-detail-hero__sub {
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+        .pb-detail-hero__sub strong {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .pb-detail-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+        }
+        .pb-detail-card__head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px 8px;
+        }
+        .pb-detail-card__eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .pb-detail-card__list {
+            list-style: none;
+        }
+        .pb-detail-card__list .spec-row__head {
+            grid-template-columns: 150px 1fr auto;
+            padding: 11px 16px;
+            cursor: default;
+        }
+        .pb-detail-card__list .spec-row:hover .spec-row__head {
+            background: transparent;
+            transform: none;
+        }
+        .pb-detail-card__list .spec-row:hover .spec-row__head::before { opacity: 0; }
+
+        /* "Driven by" operator pill */
+        .pb-driven-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 3px 10px 3px 8px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-full);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .pb-driven-pill__dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 30%, transparent);
+            flex-shrink: 0;
+        }
+        .pb-driven-pill__bolt {
+            color: var(--brand-light);
+            display: inline-flex;
+            align-items: center;
+        }
+
+        /* Command history */
+        .pb-cmd-list {
+            list-style: none;
+        }
+        .pb-cmd-list .spec-row__head {
+            grid-template-columns: 22px 1fr auto;
+            gap: 12px;
+            padding: 9px 16px;
+            cursor: default;
+            align-items: center;
+        }
+        .pb-cmd-list .spec-row:hover .spec-row__head {
+            background: var(--bg-card-hover);
+            transform: none;
+        }
+        .pb-cmd-list .spec-row:hover .spec-row__head::before { opacity: 0; }
+        .pb-cmd-op-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 30%, transparent);
+            flex-shrink: 0;
+            display: inline-block;
+        }
+        .pb-cmd-text {
+            font-family: var(--font-family-mono);
+            color: var(--text-primary);
+            font-size: 12.5px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .pb-cmd-op-name {
+            color: var(--text-secondary);
+            font-weight: 600;
+            margin-right: 8px;
+        }
+        .pb-cmd-time {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+            white-space: nowrap;
+        }
+
+        /* Command input bar (cosmetic) */
+        .pb-input-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 10px 12px;
+        }
+        .pb-input-bar__prompt {
+            font-family: var(--font-family-mono);
+            font-size: 12px;
+            color: var(--brand-light);
+            font-weight: 700;
+        }
+        .pb-input-bar__input {
+            flex: 1;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            padding: 7px 10px;
+            color: var(--text-primary);
+            font-family: var(--font-family-mono);
+            font-size: 12.5px;
+            min-width: 0;
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pb-input-bar__input:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+        }
+        .pb-input-bar__send {
+            appearance: none;
+            background: var(--brand-light);
+            color: var(--text-inverse);
+            border: 1px solid var(--brand-light);
+            border-radius: var(--radius-xs);
+            padding: 6px 14px;
+            font-family: var(--font-family-base);
+            font-size: 11.5px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pb-input-bar__send:hover {
+            background: var(--brand);
+            border-color: var(--brand);
+        }
+
+        /* Empty state when nothing selected */
+        .pb-detail-empty {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 56px 24px;
+            text-align: center;
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 12px;
+            letter-spacing: 0.04em;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * { transition: none !important; animation: none !important; }
+        }
+    
+        /* ── DEMO LEFT-RAIL (vertical app-level nav stub) ───────────── */
+        :root {
+            --demo-rail-w: 220px;
+            --hypothesis-strip-height: 47px;
+            --top-utility-bar-height: 48px;
+            --demo-rail-top: calc(var(--hypothesis-strip-height) + var(--top-utility-bar-height));
+        }
+        main {
+            margin-left: var(--demo-rail-w);
+        }
+        .demo-rail {
+            position: fixed;
+            top: var(--demo-rail-top);
+            left: 0;
+            bottom: 0;
+            width: var(--demo-rail-w);
+            background: var(--bg-section);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 16px 12px 12px;
+            gap: 2px;
+            z-index: 90;
+            overflow-y: auto;
+            font-family: var(--font-family-base);
+        }
+        .demo-rail__brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 8px 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 10px;
+        }
+        .demo-rail__brand-mark {
+            width: 22px;
+            height: 22px;
+            border: 1.5px solid var(--brand-light);
+            border-radius: 5px;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .demo-rail__brand-mark::after {
+            content: "";
+            position: absolute;
+            inset: 5px;
+            background: var(--brand-light);
+            border-radius: 2px;
+        }
+        .demo-rail__brand-text {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.2;
+            min-width: 0;
+        }
+        .demo-rail__brand-eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .demo-rail__brand-sub {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+        .demo-rail__group-label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 10px 10px 6px;
+        }
+        .demo-rail__item {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 12px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            text-align: left;
+            width: 100%;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__item:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .demo-rail__item.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__item.is-active::before {
+            content: "";
+            position: absolute;
+            left: -12px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__item:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px var(--brand-light);
+        }
+        .demo-rail__icon {
+            width: 16px;
+            height: 16px;
+            display: inline-flex;
+            color: currentColor;
+            flex-shrink: 0;
+        }
+        .demo-rail__icon svg { display: block; }
+        .demo-rail__label {
+            flex: 1;
+            white-space: nowrap;
+        }
+        .demo-rail__caret {
+            width: 6px;
+            height: 6px;
+            border-right: 1.4px solid currentColor;
+            border-bottom: 1.4px solid currentColor;
+            transform: rotate(-45deg);
+            opacity: 0.55;
+            transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__item.is-expanded .demo-rail__caret {
+            transform: rotate(45deg);
+        }
+        .demo-rail__children {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__children > div { overflow: hidden; }
+        .demo-rail__children.is-open {
+            grid-template-rows: 1fr;
+        }
+        .demo-rail__child {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 2px 0 2px 0;
+            padding: 7px 12px 7px 36px;
+            font-family: inherit;
+            font-size: 12.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            text-align: left;
+            position: relative;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__child:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .demo-rail__child.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__child.is-active::before {
+            content: "";
+            position: absolute;
+            left: 16px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__child:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px var(--brand-light);
+        }
+        .demo-rail__footer {
+            margin-top: auto;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-subtle);
+            display: flex;
+            justify-content: center;
+        }
+        .demo-rail__version {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        /* ── TOP UTILITY BAR ───────────────────────────────────────── */
+        .top-utility-bar {
+            position: sticky;
+            top: var(--hypothesis-strip-height);
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 16px; height: var(--top-utility-bar-height);
+            padding: 0 24px;
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--border);
+            z-index: 95; font-family: var(--font-family-base);
+        }
+        .top-utility-bar__left,
+        .top-utility-bar__right { display: flex; align-items: center; gap: 14px; min-width: 0; }
+        .top-utility-bar__right { gap: 16px; }
+        .deployment-selector {
+            appearance: none; display: inline-flex; align-items: center; gap: 10px;
+            padding: 6px 12px; border-radius: 6px;
+            background: var(--bg-card); border: 1px solid var(--border-subtle);
+            color: var(--text-primary); font-family: var(--font-family-mono);
+            font-size: 12.5px; font-weight: 600; cursor: pointer;
+            min-width: 0; max-width: 420px;
+            transition: border-color 200ms cubic-bezier(0.4,0,0.2,1),
+                        background-color 200ms cubic-bezier(0.4,0,0.2,1);
+        }
+        .deployment-selector:hover { border-color: var(--border-light); background: var(--bg-card-hover); }
+        .deployment-selector__eyebrow {
+            font-family: var(--font-family-mono); font-size: 9.5px; font-weight: 700;
+            color: var(--text-secondary); letter-spacing: 0.14em; text-transform: uppercase;
+            flex-shrink: 0;
+        }
+        .deployment-selector__name { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .deployment-selector__caret { width: 7px; height: 7px; flex-shrink: 0; color: var(--text-secondary); }
+        .deployment-selector__caret svg { display: block; }
+        .deployment-selector[aria-expanded="true"] .deployment-selector__caret { transform: rotate(180deg); }
+        .deployment-menu {
+            position: fixed;
+            top: calc(var(--hypothesis-strip-height) + var(--top-utility-bar-height) - 4px);
+            left: 24px; min-width: 320px; padding: 6px;
+            background: var(--bg-elevated); border: 1px solid var(--border);
+            border-radius: 8px; box-shadow: 0 12px 28px -10px rgba(0,0,0,0.35);
+            opacity: 0; transform: translateY(-4px); pointer-events: none;
+            transition: opacity 220ms cubic-bezier(0.4,0,0.2,1),
+                        transform 220ms cubic-bezier(0.4,0,0.2,1);
+            z-index: 110;
+        }
+        .deployment-menu[data-open="true"] { opacity: 1; transform: translateY(0); pointer-events: auto; }
+        .deployment-menu__item {
+            appearance: none; background: transparent; border: 0;
+            display: flex; align-items: center; gap: 10px; width: 100%;
+            padding: 8px 10px; border-radius: 5px;
+            font-family: var(--font-family-mono); font-size: 12px; font-weight: 500;
+            color: var(--text-primary); cursor: pointer; text-align: left;
+            transition: background-color 180ms cubic-bezier(0.4,0,0.2,1);
+        }
+        .deployment-menu__item:hover { background: var(--bg-card-hover); }
+        .deployment-menu__item.is-current { color: var(--text-primary); font-weight: 700; }
+        .deployment-menu__item.is-current::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--brand-light); flex-shrink: 0; }
+        .deployment-menu__item:not(.is-current)::before { content: ""; width: 6px; height: 6px; flex-shrink: 0; }
+        .top-cost { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 1px; font-family: var(--font-family-mono); line-height: 1.1; }
+        .top-cost__value { font-size: 12.5px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+        .top-cost__caption { font-size: 8.5px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.14em; text-transform: uppercase; }
+        .top-operator {
+            appearance: none; display: inline-flex; align-items: center; gap: 8px;
+            padding: 5px 10px; border-radius: 999px;
+            background: var(--bg-card); border: 1px solid var(--border-subtle);
+            font-family: var(--font-family-mono); font-size: 12px;
+            color: var(--text-primary); cursor: pointer;
+            transition: border-color 200ms cubic-bezier(0.4,0,0.2,1),
+                        background-color 200ms cubic-bezier(0.4,0,0.2,1);
+        }
+        .top-operator:hover { border-color: var(--border-light); background: var(--bg-card-hover); }
+        .top-operator__name { font-weight: 600; color: var(--text-primary); }
+        .top-operator__caret { width: 7px; height: 7px; color: var(--text-secondary); }
+        .top-operator__caret svg { display: block; }
+        .top-theme {
+            appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+            background: var(--bg-card); border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono); font-size: 10.5px; font-weight: 600;
+            letter-spacing: 0.1em; text-transform: uppercase;
+            padding: 5px 10px; border-radius: 999px; cursor: pointer;
+            transition: border-color 200ms cubic-bezier(0.4,0,0.2,1),
+                        color 200ms cubic-bezier(0.4,0,0.2,1),
+                        background-color 200ms cubic-bezier(0.4,0,0.2,1);
+        }
+        .top-theme:hover { border-color: var(--brand-light); color: var(--text-primary); background: var(--bg-card-hover); }
+        .top-theme__glyph { width: 13px; height: 13px; display: inline-flex; }
+        .top-theme__glyph svg { display: block; }
+        @media (max-width: 720px) {
+            .top-utility-bar { padding: 0 14px; }
+            .deployment-selector { max-width: 220px; }
+            .deployment-selector__eyebrow { display: none; }
+            .top-cost__caption { display: none; }
+            .top-operator__name { display: none; }
+        }
+        .demo-rail-toast {
+            position: fixed;
+            top: 18px;
+            right: 18px;
+            padding: 10px 14px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 12.5px;
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-6px);
+            transition: opacity 240ms, transform 240ms;
+            z-index: 1000;
+        }
+        .demo-rail-toast[data-show="true"] {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        @media (max-width: 880px) {
+            :root { --demo-rail-w: 64px; }
+            .demo-rail__label,
+            .demo-rail__caret,
+            .demo-rail__group-label,
+            .demo-rail__brand-text,
+            .demo-rail__children,
+            .demo-rail__version {
+                display: none;
+            }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .demo-rail__item,
+            .demo-rail__child,
+            .demo-rail__caret,
+            .demo-rail__children {
+                transition-duration: 0.01ms !important;
+            }
+        }
+</style>
+</head>
+<body>
+    <!-- Icon symbol library (mirror of index.html mount) -->
+    <svg id="icon-defs" width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="icon-chevron-right" viewBox="0 0 14 14">
+                <path d="M5 2.5 L9.5 7 L5 11.5"/>
+            </symbol>
+            <symbol id="icon-bolt" viewBox="0 0 14 14">
+                <path d="M8 1 L3 8 L7 8 L6 13 L11 6 L7 6 Z"/>
+            </symbol>
+            <symbol id="icon-play" viewBox="0 0 14 14">
+                <path d="M3.5 2 L11 7 L3.5 12 Z"/>
+            </symbol>
+        </defs>
+    </svg>
+
+    <header class="preview-hypothesis">
+        <div class="preview-hypothesis__text">
+            <strong>Demo C·1</strong>
+            Beacons list rows in spec-list rhythm; selecting one opens an attributed detail panel that shows who's currently driving and the per-command operator history.
+        </div>
+        <button class="preview-theme-toggle" type="button"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+            Toggle theme
+        </button>
+    </header>
+
+    <!-- TOP UTILITY BAR — deployment selector + cost + operator + theme -->
+    <div class="top-utility-bar" role="toolbar" aria-label="Workspace utilities">
+        <div class="top-utility-bar__left">
+            <button class="deployment-selector" type="button" id="deployment-selector" aria-haspopup="menu" aria-expanded="false" aria-controls="deployment-menu">
+                <span class="deployment-selector__eyebrow">Project</span>
+                <span class="deployment-selector__name" id="deployment-selector-name">c2_adhoc_dev_harriss_macbook_pro_01</span>
+                <span class="deployment-selector__caret" aria-hidden="true">
+                    <svg width="7" height="7" viewBox="0 0 8 8" fill="none">
+                        <path d="M1 2.5 L4 5.5 L7 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+            </button>
+        </div>
+        <div class="top-utility-bar__right">
+            <span class="top-cost" title="Estimated monthly cost (demo)">
+                <span class="top-cost__value">~$340/mo</span>
+                <span class="top-cost__caption">est / mo</span>
+            </span>
+            <button class="top-operator" type="button" data-demo-nav="operator menu" aria-haspopup="menu">
+                <span class="operator-dot" style="background: #3b82f6;" aria-hidden="true"></span>
+                <span class="top-operator__name">alice</span>
+                <span class="top-operator__caret" aria-hidden="true">
+                    <svg width="7" height="7" viewBox="0 0 8 8" fill="none">
+                        <path d="M1 2.5 L4 5.5 L7 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+            </button>
+            <button class="top-theme" type="button" data-demo-theme aria-label="Toggle theme">
+                <span class="top-theme__glyph" aria-hidden="true">
+                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                        <circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.3"/>
+                        <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.6 2.6l1.05 1.05M10.35 10.35l1.05 1.05M2.6 11.4l1.05-1.05M10.35 3.65l1.05-1.05" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    </svg>
+                </span>
+                <span>Theme</span>
+            </button>
+        </div>
+    </div>
+    <div class="deployment-menu" id="deployment-menu" role="menu" aria-labelledby="deployment-selector">
+        <button class="deployment-menu__item is-current" type="button" role="menuitem" data-project="c2_adhoc_dev_harriss_macbook_pro_01">c2_adhoc_dev_harriss_macbook_pro_01</button>
+        <button class="deployment-menu__item" type="button" role="menuitem" data-project="goad_mini_dev_harriss_macbook_pro">goad_mini_dev_harriss_macbook_pro</button>
+        <button class="deployment-menu__item" type="button" role="menuitem" data-project="c2_purple_stage_redteam_lab">c2_purple_stage_redteam_lab</button>
+        <button class="deployment-menu__item" type="button" role="menuitem" data-project="combined_adhoc_mini_dev_purple">combined_adhoc_mini_dev_purple</button>
+    </div>
+
+    <!-- Demo left rail (vertical app-level nav stub) — see demo-rail init script below. -->
+    <nav class="demo-rail" aria-label="App navigation (demo)">
+        <div class="demo-rail__brand">
+            <span class="demo-rail__brand-mark" aria-hidden="true"></span>
+            <span class="demo-rail__brand-text">
+                <span class="demo-rail__brand-eyebrow">RED TEAM INFRA</span>
+                <span class="demo-rail__brand-sub">v3 · demo</span>
+            </span>
+        </div>
+
+        <span class="demo-rail__group-label">Workspace</span>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="dashboard" data-demo-nav="Dashboard">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="8.5" y="1.5" width="6" height="3" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="8.5" y="5.5" width="6" height="9" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="1.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                </svg></span>
+            <span class="demo-rail__label">Dashboard</span>
+        </button>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="deployments" aria-expanded="false">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.5" y="1.5" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="1.5" y="10" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <circle cx="4" cy="3.75" r="0.7" fill="currentColor"/>
+                    <circle cx="4" cy="12.25" r="0.7" fill="currentColor"/>
+                </svg></span>
+            <span class="demo-rail__label">Deployments</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="demo-rail__children" data-children-of="deployments">
+            <div>
+                <button class="demo-rail__child" type="button" data-demo-sub="configure" data-demo-nav="Configure">Configure</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="deploy" data-demo-nav="Deploy">Deploy</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="manage" data-demo-nav="Manage">Manage</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="cleanup" data-demo-nav="Cleanup">Cleanup</button>
+            </div>
+        </div>
+
+        <button class="demo-rail__item is-active is-expanded" type="button" data-demo-parent="operations" aria-expanded="true">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4M12.6 12.6l-1.4-1.4M4.8 4.8L3.4 3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg></span>
+            <span class="demo-rail__label">Operations</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="demo-rail__children is-open" data-children-of="operations">
+            <div>
+                <button class="demo-rail__child is-active" type="button" data-demo-sub="beacons" data-demo-nav="Beacons">Beacons</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="terminal" data-demo-nav="Terminal">Terminal</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="payloads" data-demo-nav="Payloads">Payloads</button>
+            </div>
+        </div>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="settings" data-demo-nav="Settings">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M2.5 8 a5.5 5.5 0 0 1 0.5 -2.3 L1.8 4.6 L3.6 2.8 L4.7 3.5 a5.5 5.5 0 0 1 2.3 -1 L7.4 1.3 H8.6 L9 2.5 a5.5 5.5 0 0 1 2.3 1 L12.4 2.8 L14.2 4.6 L13.5 5.7 a5.5 5.5 0 0 1 0.5 2.3 a5.5 5.5 0 0 1 -0.5 2.3 L14.2 11.4 L12.4 13.2 L11.3 12.5 a5.5 5.5 0 0 1 -2.3 1 L8.6 14.7 H7.4 L7 13.5 a5.5 5.5 0 0 1 -2.3 -1 L3.6 13.2 L1.8 11.4 L2.5 10.3 a5.5 5.5 0 0 1 -0.5 -2.3 Z" stroke="currentColor" stroke-width="1.1" fill="none"/>
+                </svg></span>
+            <span class="demo-rail__label">Settings</span>
+        </button>
+
+        <div class="demo-rail__footer">
+            <span class="demo-rail__version">v2.5.5</span>
+        </div>
+    </nav>
+    <div class="demo-rail-toast" id="demo-rail-toast" role="status" aria-live="polite"></div>
+
+
+    <main class="pb-shell">
+        <div class="pb-eyebrow">
+            <span class="pb-eyebrow__label">Operations · Beacons</span>
+            <span class="pb-eyebrow__meta">5 alive · 2 stale · last poll 4s ago</span>
+        </div>
+
+        <div class="pb-grid">
+            <!-- LEFT: Beacons list -->
+            <aside class="pb-list-card" aria-label="Active beacons">
+                <div class="pb-list-card__head">
+                    <h2 class="pb-list-card__title">Active Beacons</h2>
+                    <span class="pb-list-card__count">5 sessions</span>
+                </div>
+                <ol class="spec-list pb-beacons-list" id="pb-beacons-list">
+                    <!-- Rendered by JS below -->
+                </ol>
+            </aside>
+
+            <!-- RIGHT: Detail panel -->
+            <section class="pb-detail" id="pb-detail" aria-live="polite">
+                <!-- Rendered by JS -->
+            </section>
+        </div>
+    </main>
+
+    <script>
+        // ── Demo data ────────────────────────────────────────────────
+        const OPERATORS = {
+            alice:  { name: 'alice',  color: '#3b82f6' },
+            harris: { name: 'harris', color: '#a31621' },
+            bob:    { name: 'bob',    color: '#0d9488' }
+        };
+
+        const BEACONS = [
+            {
+                id: 'b1',
+                bid: 'beacon-0x4a17',
+                host: 'CORP-WS-08',
+                osTitle: 'Windows 11 · CORP-WS-08',
+                osFamily: 'Windows 11 Enterprise · x64',
+                user: 'CORP\\j.miller',
+                pid: 4812,
+                sleep: '60s',
+                jitter: '15%',
+                listener: 'https-main',
+                established: '2026-05-18 14:02 UTC',
+                lastCheckin: '4s ago',
+                status: 'alive',
+                statusLabel: 'ALIVE',
+                drivenBy: 'alice',
+                history: [
+                    { op: 'alice',  cmd: 'shell whoami /all',                    t: '8s ago'  },
+                    { op: 'alice',  cmd: 'powershell-import Invoke-Recon.ps1',   t: '34s ago' },
+                    { op: 'harris', cmd: 'getsystem',                            t: '2m ago'  },
+                    { op: 'alice',  cmd: 'ls C:\\Users\\j.miller\\Documents',    t: '4m ago'  },
+                    { op: 'harris', cmd: 'sleep 60 15',                          t: '6m ago'  },
+                    { op: 'alice',  cmd: 'jobs',                                 t: '11m ago' },
+                    { op: 'harris', cmd: 'screenshot',                           t: '14m ago' },
+                    { op: 'alice',  cmd: 'pwd',                                  t: '22m ago' }
+                ]
+            },
+            {
+                id: 'b2',
+                bid: 'beacon-0x2b9c',
+                host: 'CORP-DC-01',
+                osTitle: 'Windows Server 2022 · CORP-DC-01',
+                osFamily: 'Windows Server 2022 · x64',
+                user: 'CORP\\svc_backup',
+                pid: 1208,
+                sleep: '120s',
+                jitter: '30%',
+                listener: 'dns-fallback',
+                established: '2026-05-18 11:47 UTC',
+                lastCheckin: '47s ago',
+                status: 'idle',
+                statusLabel: 'IDLE',
+                drivenBy: null,
+                history: [
+                    { op: 'harris', cmd: 'net group "Domain Admins" /domain',    t: '6m ago'  },
+                    { op: 'harris', cmd: 'mimikatz "lsadump::dcsync /user:..."', t: '9m ago'  },
+                    { op: 'alice',  cmd: 'spawnto x64 %windir%\\sysnative...',   t: '14m ago' },
+                    { op: 'harris', cmd: 'inject 1208 x64 listener-https',       t: '24m ago' },
+                    { op: 'alice',  cmd: 'sleep 120 30',                         t: '38m ago' },
+                    { op: 'harris', cmd: 'checkin',                              t: '52m ago' },
+                    { op: 'harris', cmd: 'ps',                                   t: '1h ago'  },
+                    { op: 'alice',  cmd: 'ls \\\\corp.local\\sysvol\\',          t: '1h ago'  }
+                ]
+            },
+            {
+                id: 'b3',
+                bid: 'beacon-0x88e1',
+                host: 'mac-dev-02',
+                osTitle: 'macOS 15 · mac-dev-02.local',
+                osFamily: 'macOS 15.2 · arm64',
+                user: 'aharper',
+                pid: 21849,
+                sleep: '30s',
+                jitter: '20%',
+                listener: 'https-main',
+                established: '2026-05-18 15:38 UTC',
+                lastCheckin: '12s ago',
+                status: 'alive',
+                statusLabel: 'ALIVE',
+                drivenBy: 'harris',
+                history: [
+                    { op: 'harris', cmd: 'shell uname -a',                       t: '15s ago' },
+                    { op: 'harris', cmd: 'ls /Users/aharper/.ssh',               t: '1m ago'  },
+                    { op: 'alice',  cmd: 'cat /etc/hosts',                       t: '3m ago'  },
+                    { op: 'harris', cmd: 'shell security find-generic-password', t: '7m ago'  },
+                    { op: 'harris', cmd: 'pwd',                                  t: '12m ago' },
+                    { op: 'alice',  cmd: 'sleep 30 20',                          t: '18m ago' },
+                    { op: 'harris', cmd: 'shell sw_vers',                        t: '24m ago' },
+                    { op: 'alice',  cmd: 'env',                                  t: '31m ago' }
+                ]
+            },
+            {
+                id: 'b4',
+                bid: 'beacon-0x5fda',
+                host: 'srv-app-04',
+                osTitle: 'Ubuntu 22.04 · srv-app-04',
+                osFamily: 'Linux Ubuntu 22.04 · x64',
+                user: 'www-data',
+                pid: 3344,
+                sleep: '90s',
+                jitter: '25%',
+                listener: 'https-main',
+                established: '2026-05-18 09:21 UTC',
+                lastCheckin: '4m ago',
+                status: 'stale',
+                statusLabel: 'STALE',
+                drivenBy: null,
+                history: [
+                    { op: 'alice',  cmd: 'shell id',                             t: '4m ago'  },
+                    { op: 'alice',  cmd: 'shell sudo -l',                        t: '8m ago'  },
+                    { op: 'harris', cmd: 'download /etc/shadow',                 t: '17m ago' },
+                    { op: 'alice',  cmd: 'shell crontab -l',                     t: '25m ago' },
+                    { op: 'harris', cmd: 'ps -ef',                               t: '34m ago' },
+                    { op: 'alice',  cmd: 'sleep 90 25',                          t: '52m ago' },
+                    { op: 'harris', cmd: 'pwd',                                  t: '1h ago'  },
+                    { op: 'alice',  cmd: 'shell uname -a',                       t: '1h ago'  }
+                ]
+            },
+            {
+                id: 'b5',
+                bid: 'beacon-0x1003',
+                host: 'WIN-LT-22',
+                osTitle: 'Windows 10 · WIN-LT-22',
+                osFamily: 'Windows 10 Pro · x64',
+                user: 'CORP\\m.chen',
+                pid: 7720,
+                sleep: '300s',
+                jitter: '40%',
+                listener: 'https-backup',
+                established: '2026-05-17 22:14 UTC',
+                lastCheckin: '38m ago',
+                status: 'dead',
+                statusLabel: 'DEAD',
+                drivenBy: null,
+                history: [
+                    { op: 'harris', cmd: 'sleep 300 40',                         t: '38m ago' },
+                    { op: 'harris', cmd: 'jobs',                                 t: '52m ago' },
+                    { op: 'alice',  cmd: 'shell tasklist /v',                    t: '1h ago'  },
+                    { op: 'harris', cmd: 'screenshot',                           t: '2h ago'  },
+                    { op: 'alice',  cmd: 'getuid',                               t: '3h ago'  },
+                    { op: 'harris', cmd: 'shell ipconfig /all',                  t: '4h ago'  },
+                    { op: 'alice',  cmd: 'pwd',                                  t: '5h ago'  },
+                    { op: 'harris', cmd: 'checkin',                              t: '6h ago'  }
+                ]
+            }
+        ];
+
+        let selectedId = BEACONS[0].id;
+
+        // ── Render beacons list ──────────────────────────────────────
+        function renderList() {
+            const list = document.getElementById('pb-beacons-list');
+            list.innerHTML = BEACONS.map(b => `
+                <li class="spec-row" data-selected="${b.id === selectedId}" data-id="${b.id}">
+                    <div class="spec-row__head" role="button" tabindex="0" aria-pressed="${b.id === selectedId}">
+                        <div class="pb-beacon-row__name">
+                            <span class="pb-beacon-row__host">${b.bid} · ${escapeHtml(b.host)}</span>
+                            <span class="pb-beacon-row__title">${escapeHtml(b.osTitle)}</span>
+                        </div>
+                        <span class="pb-beacon-row__hint">last seen ${b.lastCheckin}</span>
+                        <span class="spec-pill spec-pill--${b.status}">
+                            <span class="spec-pill__dot"></span>${b.statusLabel}
+                        </span>
+                    </div>
+                </li>
+            `).join('');
+
+            list.querySelectorAll('.spec-row').forEach(row => {
+                row.addEventListener('click', () => {
+                    selectedId = row.dataset.id;
+                    renderList();
+                    renderDetail();
+                });
+                row.querySelector('.spec-row__head').addEventListener('keydown', e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        selectedId = row.dataset.id;
+                        renderList();
+                        renderDetail();
+                    }
+                });
+            });
+        }
+
+        // ── Render detail panel ──────────────────────────────────────
+        function renderDetail() {
+            const b = BEACONS.find(x => x.id === selectedId);
+            const detail = document.getElementById('pb-detail');
+            if (!b) {
+                detail.innerHTML = `<div class="pb-detail-empty">Select a beacon to view detail.</div>`;
+                return;
+            }
+
+            const drivenBlock = b.drivenBy
+                ? `<span class="pb-driven-pill">
+                       <span class="pb-driven-pill__bolt"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-bolt"/></svg></span>
+                       <span class="pb-driven-pill__dot" style="background: ${OPERATORS[b.drivenBy].color};"></span>
+                       Driven by ${OPERATORS[b.drivenBy].name}
+                   </span>`
+                : `<span class="pb-driven-pill" style="color: var(--text-secondary);">
+                       <span class="pb-driven-pill__dot" style="background: transparent; border: 1px dashed var(--border-strong); box-shadow: none;"></span>
+                       Idle · no operator
+                   </span>`;
+
+            detail.innerHTML = `
+                <div class="pb-detail-hero">
+                    <span class="pb-detail-hero__caption">Selected beacon</span>
+                    <div class="pb-detail-hero__head">
+                        <h2 class="pb-detail-hero__name">${escapeHtml(b.bid)}</h2>
+                        <span class="spec-pill spec-pill--${b.status}">
+                            <span class="spec-pill__dot"></span>${b.statusLabel}
+                        </span>
+                    </div>
+                    <p class="pb-detail-hero__sub"><strong>${escapeHtml(b.host)}</strong> &middot; ${escapeHtml(b.osFamily)}</p>
+                </div>
+
+                <div class="pb-detail-card">
+                    <div class="pb-detail-card__head">
+                        <span class="pb-detail-card__eyebrow">Session Attributes</span>
+                        ${drivenBlock}
+                    </div>
+                    <ol class="spec-list pb-detail-card__list" aria-label="Beacon metadata">
+                        ${specRow('PID',        b.pid)}
+                        ${specRow('User',       b.user)}
+                        ${specRow('Sleep',      b.sleep)}
+                        ${specRow('Jitter',     b.jitter)}
+                        ${specRow('Listener',   b.listener)}
+                        ${specRow('Established',b.established)}
+                        ${specRow('Last checkin', b.lastCheckin)}
+                    </ol>
+                </div>
+
+                <div class="pb-detail-card">
+                    <div class="pb-detail-card__head">
+                        <span class="pb-detail-card__eyebrow">Command History · Attributed</span>
+                        <span class="pb-eyebrow__meta">last 8 commands</span>
+                    </div>
+                    <ol class="spec-list pb-cmd-list" aria-label="Command history">
+                        ${b.history.map(h => `
+                            <li class="spec-row">
+                                <div class="spec-row__head">
+                                    <span class="pb-cmd-op-dot" style="background: ${OPERATORS[h.op].color};" aria-label="${OPERATORS[h.op].name}"></span>
+                                    <span class="pb-cmd-text"><span class="pb-cmd-op-name">${OPERATORS[h.op].name}</span>${escapeHtml(h.cmd)}</span>
+                                    <span class="pb-cmd-time">${escapeHtml(h.t)}</span>
+                                </div>
+                            </li>
+                        `).join('')}
+                    </ol>
+                </div>
+
+                <div class="pb-input-bar" role="group" aria-label="Beacon command input">
+                    <span class="pb-input-bar__prompt">beacon&gt;</span>
+                    <input class="pb-input-bar__input" type="text" placeholder="shell whoami / sleep 60 15 / jobs..." aria-label="Beacon command">
+                    <button class="pb-input-bar__send" type="button">
+                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-play"/></svg>
+                        Send
+                    </button>
+                </div>
+            `;
+        }
+
+        function specRow(key, value) {
+            return `
+                <li class="spec-row" data-readonly="true">
+                    <div class="spec-row__head">
+                        <dt class="spec-row__key">${escapeHtml(key)}</dt>
+                        <dd class="spec-row__value spec-row__value--mono">${escapeHtml(String(value))}</dd>
+                        <dd class="spec-row__hint"></dd>
+                    </div>
+                </li>
+            `;
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        renderList();
+        renderDetail();
+    
+        // ── Demo left rail — non-routing nav + theme toggle + toast ────
+        (function demoRailInit() {
+            const toast = document.getElementById('demo-rail-toast');
+            let toastTimer = null;
+            function showToast(label) {
+                if (!toast || !label) return;
+                toast.textContent = 'Navigating to ' + label + ' — open the standalone demo to view';
+                toast.setAttribute('data-show', 'true');
+                window.clearTimeout(toastTimer);
+                toastTimer = window.setTimeout(() => toast.setAttribute('data-show', 'false'), 2400);
+            }
+            // Parent items — clicking a non-active parent expands its children (if any)
+            document.querySelectorAll('.demo-rail__item[data-demo-parent]').forEach(btn => {
+                btn.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    const parent = btn.dataset.demoParent;
+                    const children = document.querySelector('[data-children-of="' + parent + '"]');
+                    if (children) {
+                        // Toggle expand for this parent; collapse others (only one open at a time)
+                        const willOpen = !children.classList.contains('is-open');
+                        document.querySelectorAll('.demo-rail__children').forEach(c => c.classList.remove('is-open'));
+                        document.querySelectorAll('.demo-rail__item[data-demo-parent]').forEach(i => {
+                            if (i !== btn) i.classList.remove('is-expanded');
+                        });
+                        if (willOpen) {
+                            children.classList.add('is-open');
+                            btn.classList.add('is-expanded');
+                            btn.setAttribute('aria-expanded', 'true');
+                        } else {
+                            btn.classList.remove('is-expanded');
+                            btn.setAttribute('aria-expanded', 'false');
+                        }
+                        return;
+                    }
+                    // Leaf parent (no children) — emit nav toast
+                    if (btn.classList.contains('is-active')) return;
+                    showToast(btn.dataset.demoNav);
+                });
+            });
+            // Sub-pills (children) — emit nav toast for non-active
+            document.querySelectorAll('.demo-rail__child').forEach(btn => {
+                btn.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    if (btn.classList.contains('is-active')) return;
+                    showToast(btn.dataset.demoNav);
+                });
+            });
+            // Theme toggle (top utility bar)
+            const themeBtn = document.querySelector('.top-utility-bar [data-demo-theme]');
+            if (themeBtn) {
+                themeBtn.addEventListener('click', () => {
+                    const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+                    document.documentElement.setAttribute('data-theme', cur === 'light' ? 'dark' : 'light');
+                });
+            }
+            const opBtn = document.querySelector('.top-operator');
+            if (opBtn) opBtn.addEventListener('click', () => showToast('operator menu'));
+            const dsBtn = document.getElementById('deployment-selector');
+            const dsMenu = document.getElementById('deployment-menu');
+            const dsName = document.getElementById('deployment-selector-name');
+            if (dsBtn && dsMenu) {
+                const closeMenu = () => {
+                    dsMenu.setAttribute('data-open', 'false');
+                    dsBtn.setAttribute('aria-expanded', 'false');
+                };
+                dsBtn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    const open = dsMenu.getAttribute('data-open') === 'true';
+                    dsMenu.setAttribute('data-open', open ? 'false' : 'true');
+                    dsBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+                });
+                dsMenu.querySelectorAll('.deployment-menu__item').forEach(item => {
+                    item.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        const proj = item.dataset.project || '';
+                        dsMenu.querySelectorAll('.deployment-menu__item').forEach(i => i.classList.remove('is-current'));
+                        item.classList.add('is-current');
+                        if (dsName) dsName.textContent = proj;
+                        closeMenu();
+                        showToast('Switched to ' + proj);
+                    });
+                });
+                document.addEventListener('click', (ev) => {
+                    if (!dsMenu.contains(ev.target) && ev.target !== dsBtn) closeMenu();
+                });
+                document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeMenu(); });
+            }
+        })();
+    </script>
+</body>
+</html>

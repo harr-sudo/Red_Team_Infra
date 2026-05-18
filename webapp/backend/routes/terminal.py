@@ -20,6 +20,23 @@ from pathlib import Path
 from flask import Blueprint, request
 from flask_sock import Sock
 
+from webapp.backend.services import audit_service, operator_service
+
+
+def _audit_actor():
+    """Resolve operator from the WebSocket upgrade request cookies.
+
+    flask.g may not be reliably populated for WebSocket routes because
+    before_request hooks behave inconsistently across sock implementations,
+    so we re-resolve from the request cookie directly.
+    """
+    try:
+        op = operator_service.resolve_from_request(request)
+        return op.get("id") if op else "unknown"
+    except Exception:
+        return "unknown"
+
+
 bp = Blueprint('terminal', __name__)
 sock = Sock()
 
@@ -176,6 +193,8 @@ def terminal_local(ws):
     except Exception:
         pass
 
+    audit_service.write(_audit_actor(), "terminal.start", details={"kind": "local"})
+
     _pty_session(ws, [shell, '-i'], env={
         'HOME': home,
     })
@@ -241,6 +260,13 @@ def terminal_ssh(ws):
     ws.send(f'\x1b[36mConnecting to {user}@{host}' +
             (f' via {bastion}' if using_jump else '') +
             '...\x1b[0m\r\n')
+
+    audit_service.write(
+        _audit_actor(),
+        "terminal.start",
+        target=f"{user}@{host}",
+        details={"kind": "ssh", "via_bastion": using_jump},
+    )
 
     _pty_session(ws, cmd)
 

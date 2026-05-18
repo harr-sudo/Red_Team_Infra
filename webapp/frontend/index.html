@@ -7,58 +7,414 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+    <!-- Phase 2B — Shared icon symbol library. Consumers reference glyphs via
+         <svg class="icon"><use href="#icon-edit-pencil"/></svg>. Mounted once
+         at body-top so every later <use> resolves regardless of mount order. -->
+    <svg id="icon-defs" width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="icon-edit-pencil" viewBox="0 0 14 14">
+                <path d="M9.5 1.5 L12.5 4.5 L4 13 H1 V10 Z"/>
+                <path d="M8 3 L11 6"/>
+            </symbol>
+            <symbol id="icon-check" viewBox="0 0 14 14">
+                <path d="M2 7.5 L5.5 11 L12 3.5"/>
+            </symbol>
+            <symbol id="icon-x" viewBox="0 0 14 14">
+                <path d="M3 3 L11 11 M11 3 L3 11"/>
+            </symbol>
+            <symbol id="icon-chevron-right" viewBox="0 0 14 14">
+                <path d="M5 2.5 L9.5 7 L5 11.5"/>
+            </symbol>
+            <symbol id="icon-chevron-down" viewBox="0 0 14 14">
+                <path d="M2.5 5 L7 9.5 L11.5 5"/>
+            </symbol>
+            <!-- Phase 3c — Cleanup sub-pill action glyphs.
+                 icon-trash: destroy/delete affordance (paired with .spec-edit-btn--danger).
+                 icon-refresh: rotational refresh arrow for resource list re-scan.
+                 icon-link: adopt/import (resource linked into Terraform state). -->
+            <symbol id="icon-trash" viewBox="0 0 14 14">
+                <path d="M2.5 4 H11.5"/>
+                <path d="M3.5 4 L4 12 H10 L10.5 4"/>
+                <path d="M5.5 4 V2.5 H8.5 V4"/>
+                <path d="M6 6.5 V10 M8 6.5 V10"/>
+            </symbol>
+            <symbol id="icon-refresh" viewBox="0 0 14 14">
+                <path d="M11.5 3.5 A4.5 4.5 0 1 0 12 8"/>
+                <path d="M11.5 1.5 V4 H9"/>
+            </symbol>
+            <symbol id="icon-link" viewBox="0 0 14 14">
+                <path d="M5.5 8.5 L8.5 5.5"/>
+                <path d="M6 4.5 L7.5 3 A2.12 2.12 0 0 1 10.5 6 L9 7.5"/>
+                <path d="M8 9.5 L6.5 11 A2.12 2.12 0 0 1 3.5 8 L5 6.5"/>
+            </symbol>
+            <!-- Phase 3a (Manage sub-pill) — additional action glyphs.
+                 icon-logs: paper/page with horizontal rules — view-logs affordance.
+                 icon-health: heart-beat / EKG line — health-check affordance. -->
+            <symbol id="icon-logs" viewBox="0 0 14 14">
+                <rect x="2.5" y="1.5" width="9" height="11" rx="0.8"/>
+                <path d="M4.5 4.5 H9.5"/>
+                <path d="M4.5 6.5 H9.5"/>
+                <path d="M4.5 8.5 H7.5"/>
+            </symbol>
+            <symbol id="icon-health" viewBox="0 0 14 14">
+                <path d="M1.5 7 H4 L5 4.5 L7 9.5 L8.5 7 L9.5 8 H12.5"/>
+            </symbol>
+            <!-- Phase 3B — Operations sub-pill glyphs.
+                 icon-terminal: prompt/console affordance.
+                 icon-download: artifact retrieval action.
+                 icon-eye: preview/view-detail affordance.
+                 icon-play: send-command / generate / run-now affordance.
+                 icon-bolt: live-driven beacon attribution indicator. -->
+            <symbol id="icon-terminal" viewBox="0 0 14 14">
+                <rect x="1" y="2.5" width="12" height="9" rx="1"/>
+                <path d="M3.5 5 L5.5 7 L3.5 9"/>
+                <path d="M6.5 9.5 L10 9.5"/>
+            </symbol>
+            <symbol id="icon-download" viewBox="0 0 14 14">
+                <path d="M7 1.5 L7 9"/>
+                <path d="M3.5 6 L7 9.5 L10.5 6"/>
+                <path d="M2 12 L12 12"/>
+            </symbol>
+            <symbol id="icon-eye" viewBox="0 0 14 14">
+                <path d="M1 7 C3 3.5 5 2.5 7 2.5 C9 2.5 11 3.5 13 7 C11 10.5 9 11.5 7 11.5 C5 11.5 3 10.5 1 7 Z"/>
+                <circle cx="7" cy="7" r="2"/>
+            </symbol>
+            <symbol id="icon-play" viewBox="0 0 14 14">
+                <path d="M3.5 2 L11 7 L3.5 12 Z"/>
+            </symbol>
+            <symbol id="icon-bolt" viewBox="0 0 14 14">
+                <path d="M8 1 L3 8 L7 8 L6 13 L11 6 L7 6 Z"/>
+            </symbol>
+        </defs>
+    </svg>
+
     <div class="container">
+        <!--
+            D1 — Global header (Plan §17 P1 #11, §21.7 D1.1-D1.4, Decision #15).
+            Sticky 64px strip ABOVE the tab nav. V3 design language (dials 5/6/5).
+            Hosts: brand, deployment selector, monthly burn, operator badge, theme toggle.
+            The legacy #operator-badge + #theme-toggle DOM has been LIFTED into here;
+            #operator-badge is kept as a hidden mirror element for backwards-compat
+            with topology.js (which reads its textContent at app.js:20268).
+        -->
+        <header class="global-header" role="banner">
+            <div class="global-header__brand">
+                <a href="#dashboard" class="global-header__brand-mark" aria-label="Red Team Infrastructure home">
+                    <span class="global-header__brand-mark-inner"></span>
+                </a>
+                <div class="global-header__brand-text">
+                    <div class="global-header__brand-name">Red Team Infrastructure</div>
+                </div>
+            </div>
+            <div class="global-header__rail">
+                <!-- Active deployment selector (custom combobox listbox) -->
+                <div class="global-header__chip global-header__deploy" id="global-deployment-chip">
+                    <span class="global-header__chip-label">DEPLOYMENT</span>
+                    <div class="global-header__combobox" id="global-deploy-combo">
+                        <button type="button"
+                                class="global-header__combobox-trigger"
+                                id="global-deploy-trigger"
+                                aria-haspopup="listbox"
+                                aria-expanded="false"
+                                aria-controls="global-deploy-listbox"
+                                aria-label="Select active deployment">
+                            <span class="global-header__combobox-value" id="global-deploy-value">Loading...</span>
+                            <span class="global-header__combobox-chevron" aria-hidden="true"></span>
+                        </button>
+                        <ul role="listbox"
+                            class="global-header__combobox-listbox"
+                            id="global-deploy-listbox"
+                            aria-label="Active deployment"
+                            tabindex="-1"
+                            hidden></ul>
+                    </div>
+                    <!-- D3.8 — Explicit "New Deployment" entry. Pairs with the
+                         banner at the top of the Configure sub-pane. Wired in
+                         app.js initGlobalHeader() to APP.startNewDeployment(). -->
+                    <button class="global-header__new-deployment-btn"
+                            type="button"
+                            id="global-new-deployment-btn"
+                            title="Start a new deployment"
+                            aria-label="New deployment">
+                        + New
+                    </button>
+                </div>
+                <!-- Cost indicator -->
+                <div class="global-header__chip global-header__cost" id="global-cost-chip"
+                     title="Monthly burn (estimated). Click to view Cost Tracker.">
+                    <div class="global-header__cost-value" id="global-cost-amount">&mdash;</div>
+                    <div class="global-header__cost-caption">MONTHLY BURN</div>
+                </div>
+                <!-- M-Operators (Decision #23) — interactive operator chip + menu.
+                     Replaces the prior display-only #global-operator-chip badge.
+                     Uses /api/operators (Agent A backend) for current/switch/add.
+                     The hidden #global-operator-name span below is kept as a
+                     mirror so the legacy code paths (whoami populator at
+                     app.js:317 + #operator-badge mirror at :88) keep working. -->
+                <button class="operator-chip" id="operator-chip" type="button"
+                        aria-haspopup="true" aria-expanded="false"
+                        aria-label="Current operator — click to switch">
+                    <span class="operator-chip__dot operator-dot" id="operator-chip-dot"></span>
+                    <span class="operator-chip__name" id="operator-chip-name">&hellip;</span>
+                    <svg class="operator-chip__caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                        <path d="M2 4 L5 7 L8 4" fill="none" stroke="currentColor" stroke-width="1.5"
+                              stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+                <span id="global-operator-name" hidden>&mdash;</span>
+                <!-- Theme toggle (lifted from old location) -->
+                <button class="global-header__theme-toggle"
+                        id="global-theme-toggle"
+                        type="button"
+                        aria-label="Toggle theme">
+                    <span class="global-header__theme-toggle-label" id="global-theme-toggle-label">Light</span>
+                </button>
+            </div>
+        </header>
+        <!--
+            Hidden mirror of the operator name — topology.js (app.js:20268)
+            reads this textContent to label the operator node. Kept in sync
+            by the same fetch that populates #global-operator-name.
+        -->
+        <span id="operator-badge" hidden></span>
+
+        <!-- M-Operators (Decision #23) — switch-operator dropdown menu.
+             Floating popover positioned by JS relative to #operator-chip.
+             Lives outside the header so it can escape any overflow clipping. -->
+        <div class="operator-menu" id="operator-menu" role="menu" hidden>
+            <div class="operator-menu__section">
+                <div class="operator-menu__label">Switch operator</div>
+                <div id="operator-menu-list"></div>
+            </div>
+            <div class="operator-menu__divider"></div>
+            <div class="operator-menu__section">
+                <button class="operator-menu__action" id="operator-menu-add" type="button" role="menuitem">
+                    <span class="operator-menu__action-icon">+</span>
+                    Add operator&hellip;
+                </button>
+                <button class="operator-menu__action" id="operator-menu-manage" type="button" role="menuitem">
+                    <span class="operator-menu__action-icon">&#x22EF;</span>
+                    Manage&hellip;
+                </button>
+            </div>
+        </div>
+
         <!-- Navigation Tabs -->
         <nav class="tabs" id="tab-navigation">
             <button class="tab-btn active" data-target="dashboard">Dashboard</button>
-            <button class="tab-btn" data-target="aws-check">Pre Reqs</button>
-            <button class="tab-btn" data-target="configuration">Configuration</button>
-            <button class="tab-btn" data-target="deployment">Deploy</button>
-            <button class="tab-btn" data-target="deployments">Deployment Manager</button>
-            <button class="tab-btn" data-target="tools">Tools</button>
-            <button class="tab-btn" data-target="architecture">Architecture</button>
-            <button class="tab-btn" data-target="beacon">Beacon</button>
-            <button class="tab-btn" data-target="terminal">Terminal</button>
+            <!-- D3.1/D3.6 — Merged Deployments tab (Configure / Deploy / Manage sub-pills).
+                 D3.6 retired the 3 legacy buttons (Configuration / Deploy / Deployment
+                 Manager) and the ?legacyTabs=1 feature flag. Legacy navigateTo() callers
+                 are still routed here via NAVIGATE_ALIASES in app.js. -->
+            <button class="tab-btn" data-target="deployments-tab">Deployments</button>
+            <!-- D4.1/D4.6 — Merged Operations tab (Beacons / Terminal / Payloads sub-pills).
+                 D4.6 retired the 3 legacy buttons (Beacon / Terminal / Tools) and the
+                 ?legacyTabs=1 feature flag. Legacy navigateTo() callers are still
+                 routed here via NAVIGATE_ALIASES in app.js. Final 5-tab layout:
+                 Dashboard / Deployments / Operations / Architecture / Settings. -->
+            <button class="tab-btn" data-target="operations-tab">Operations</button>
+            <!-- M-Dashboard / Decision #21 — Architecture tab folded into a Dashboard
+                 widget + modal. Legacy navigateTo('architecture') callers continue to
+                 work via NAVIGATE_ALIASES (app.js) which now opens the modal instead. -->
             <button class="tab-btn" data-target="settings">Settings</button>
-            <span style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
-                <span id="operator-badge" style="display: none; font-size: 0.75em; color: var(--text-muted); padding: 3px 8px; border: 1px solid var(--border-light); border-radius: 4px; white-space: nowrap;"></span>
-                <button class="theme-toggle" id="theme-toggle" title="Toggle dark/light mode" aria-label="Toggle theme">
-                    <span id="theme-icon">&#9790;</span>
-                </button>
-            </span>
         </nav>
 
         <!-- Tab Content Container -->
         <div id="tab-container">
 
-            <!-- Dashboard Page -->
+            <!-- Dashboard Page — M-Dashboard launchpad (Decisions #19, #20, #21).
+                 12-widget action-dense overview. Architecture tab is folded into
+                 the widget + modal (Decision #21); legacy callers go through
+                 NAVIGATE_ALIASES -> openArchitectureModal(). -->
             <div class="tab-page active" data-page="dashboard">
                 <h2 class="page-title">Infrastructure Overview</h2>
-                <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
-                    <strong style="color: var(--gold);">Region:</strong> All deployments, resource queries, and purge operations are restricted to <strong>eu-central-1</strong> (Frankfurt).
-                    <span style="margin-left: 8px; opacity: 0.8;">Note: If CloudFront domain fronting is enabled, ACM certificates are provisioned in us-east-1 (AWS requirement for CloudFront).</span>
-                </div>
-                <div id="dashboard-status">
-                    <p>Loading...</p>
+
+                <!-- Region notice (preserved from pre-M-Dashboard layout) -->
+                <div class="dashboard-region-notice">
+                    <strong>Region:</strong> All deployments, resource queries, and purge operations are restricted to <strong>eu-central-1</strong> (Frankfurt).
+                    <span class="dashboard-region-notice__hint">Note: If CloudFront domain fronting is enabled, ACM certificates are provisioned in us-east-1 (AWS requirement for CloudFront).</span>
                 </div>
 
-                <!-- Elastic Detection Rules Card -->
-                <div class="section-card" style="margin-top: 16px;">
-                    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                        <h3 style="margin: 0;">Elastic Detection Rules</h3>
-                        <span id="elastic-rules-count" class="badge badge-info" style="font-size: 0.85em;">—</span>
-                        <span id="elastic-rules-date" class="t-muted" style="font-size: 0.85em;">Last updated: —</span>
-                        <button class="btn btn-sm btn-info" id="btn-update-elastic-rules" onclick="updateElasticRules()">Update Rules</button>
-                        <span id="elastic-rules-status" class="t-muted" style="font-size: 0.85em;"></span>
+                <!-- 1. Hero CTAs row — primary "New Deployment" + secondary "Resume" -->
+                <section class="dashboard-hero">
+                    <button class="dashboard-hero__primary" type="button" onclick="APP.startNewDeployment()">
+                        <span class="dashboard-hero__icon" aria-hidden="true">+</span>
+                        <div class="dashboard-hero__text">
+                            <div class="dashboard-hero__title">New Deployment</div>
+                            <div class="dashboard-hero__subtitle">Configure + deploy C2 / GOAD / Combined</div>
+                        </div>
+                    </button>
+                    <button class="dashboard-hero__resume" id="dashboard-resume-btn" type="button" style="display: none;">
+                        <div class="dashboard-hero__resume-label">Resume</div>
+                        <div class="dashboard-hero__resume-name" id="dashboard-resume-name">&mdash;</div>
+                    </button>
+                </section>
+
+                <!-- 2. Alerts row — shown only when relevant -->
+                <section class="dashboard-alerts">
+                    <!-- D2.3 — First-run prerequisites banner. Shown when localStorage
+                         'prereqs-verified-at' is absent. Cleared after any prereq check
+                         succeeds. Link routes through APP.navigateTo('aws-check'),
+                         which the NAVIGATE_ALIASES map redirects to Settings + anchor. -->
+                    <div id="prereqs-first-run-banner" class="dashboard-alert dashboard-alert--warning" style="display: none;">
+                        <strong>Prerequisites not verified.</strong>
+                        Run the AWS &amp; SSH prerequisite checks in
+                        <a href="#" onclick="APP.navigateTo('aws-check'); return false;">Settings &rarr; AWS &amp; SSH Prerequisites</a>
+                        before your first deployment.
                     </div>
-                    <p class="t-muted" style="margin-top: 8px; font-size: 0.88em;">
+                    <div id="budget-alert-banner" class="dashboard-alert dashboard-alert--warning" style="display: none;"></div>
+                    <div id="failed-deployments-alert" class="dashboard-alert dashboard-alert--danger" style="display: none;"></div>
+                </section>
+
+                <!-- 3. Live deployments grid — Phase 3e: eyebrow + title rhythm -->
+                <section class="dashboard-widget">
+                    <header class="dashboard-widget__head">
+                        <div class="dashboard-widget__head-text">
+                            <span class="dashboard-widget__eyebrow">Active Infrastructure</span>
+                            <h3 class="dashboard-widget__title">Live Deployments</h3>
+                        </div>
+                    </header>
+                    <div id="dashboard-deployments-grid" class="dashboard-deployments-grid">
+                        <p class="t-muted">Loading...</p>
+                    </div>
+                </section>
+
+                <!-- 4. 3-col widget row: Active Beacons + Cost Trend + Architecture -->
+                <section class="dashboard-widget-row">
+                    <div class="dashboard-widget dashboard-widget--compact">
+                        <header class="dashboard-widget__head">
+                            <div class="dashboard-widget__head-text">
+                                <span class="dashboard-widget__eyebrow">Operations</span>
+                                <h3 class="dashboard-widget__title">Active Beacons</h3>
+                            </div>
+                        </header>
+                        <div id="dashboard-beacons-widget">
+                            <div class="dashboard-stat-big" id="dashboard-beacons-count">&mdash;</div>
+                            <div class="dashboard-stat-caption">Last callback: <span id="dashboard-beacons-last">&mdash;</span></div>
+                            <a href="#" onclick="APP.navigateTo('operations-tab', 'beacons'); return false;" class="dashboard-stat-link">Open beacons &rarr;</a>
+                        </div>
+                    </div>
+                    <div class="dashboard-widget dashboard-widget--compact">
+                        <header class="dashboard-widget__head">
+                            <div class="dashboard-widget__head-text">
+                                <span class="dashboard-widget__eyebrow">Last 14 days</span>
+                                <h3 class="dashboard-widget__title">Cost Trend</h3>
+                            </div>
+                        </header>
+                        <div id="dashboard-cost-widget">
+                            <div class="dashboard-stat-big" id="dashboard-cost-total">&mdash;</div>
+                            <svg id="dashboard-cost-sparkline" viewBox="0 0 200 40" class="dashboard-cost-sparkline" preserveAspectRatio="none" aria-hidden="true"></svg>
+                            <div class="dashboard-cost-delta" id="dashboard-cost-delta">&mdash;</div>
+                            <a href="#" onclick="APP.navigateTo('settings'); return false;" class="dashboard-stat-link">Cost tracker &rarr;</a>
+                        </div>
+                    </div>
+                    <div class="dashboard-widget dashboard-widget--compact" id="dashboard-architecture-widget">
+                        <header class="dashboard-widget__head">
+                            <div class="dashboard-widget__head-text">
+                                <span class="dashboard-widget__eyebrow">Active deployment</span>
+                                <h3 class="dashboard-widget__title">Architecture</h3>
+                            </div>
+                        </header>
+                        <div class="dashboard-architecture-thumb" id="dashboard-architecture-thumb" onclick="APP.openArchitectureModal()">
+                            <img id="dashboard-architecture-img" alt="Architecture diagram" style="display: none;">
+                            <div class="dashboard-architecture-placeholder" id="dashboard-architecture-placeholder">
+                                Pick a deployment to see its architecture.
+                            </div>
+                        </div>
+                        <div class="dashboard-architecture-meta">
+                            <span id="dashboard-architecture-current">&mdash;</span>
+                            <button class="btn btn-secondary btn-sm" type="button" onclick="APP.openArchitectureModal()">Browse all &rarr;</button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 5. Recent activity feed — M-Operators (Decision #23).
+                     Consumes /api/audit (Agent A backend). Auto-refreshes on
+                     tab activation + manual refresh button + after operator
+                     switch. Empty state when no entries.
+                     Phase 3e: now renders as .spec-list with .operator-dot per row. -->
+                <section class="dashboard-widget" id="dashboard-activity-widget">
+                    <header class="dashboard-widget__head">
+                        <div class="dashboard-widget__head-text">
+                            <span class="dashboard-widget__eyebrow">Operator audit trail</span>
+                            <h3 class="dashboard-widget__title">Recent Activity</h3>
+                        </div>
+                        <div class="dashboard-widget__head-actions">
+                            <button class="dashboard-activity-widget__refresh"
+                                    type="button"
+                                    onclick="loadDashboardActivity(true)"
+                                    aria-label="Refresh activity feed"
+                                    title="Refresh">&#x21BB;</button>
+                        </div>
+                    </header>
+                    <div id="dashboard-activity-feed">
+                        <ul class="activity-feed spec-list" id="activity-feed-list" aria-label="Recent operator activity">
+                            <li class="activity-feed__empty">Loading recent activity&hellip;</li>
+                        </ul>
+                    </div>
+                </section>
+
+                <!-- 6. Elastic Detection Rules card (preserved, polished for launchpad) -->
+                <section class="dashboard-widget" id="dashboard-elastic-rules-widget">
+                    <header class="dashboard-widget__head">
+                        <div class="dashboard-widget__head-text">
+                            <span class="dashboard-widget__eyebrow">SIEM mappings</span>
+                            <h3 class="dashboard-widget__title">Elastic Detection Rules</h3>
+                        </div>
+                    </header>
+                    <div class="dashboard-elastic-rules-row">
+                        <span id="elastic-rules-count" class="badge badge-info">&mdash;</span>
+                        <span id="elastic-rules-date" class="t-muted">Last updated: &mdash;</span>
+                        <button class="btn btn-sm btn-info" id="btn-update-elastic-rules" type="button" onclick="updateElasticRules()">Update Rules</button>
+                        <span id="elastic-rules-status" class="t-muted"></span>
+                    </div>
+                    <p class="t-muted dashboard-elastic-rules-help">
                         Pulls latest Elastic SIEM detection rules from GitHub and regenerates the OPSEC command mappings.
                     </p>
-                </div>
+                </section>
             </div>
 
-            <!-- Configuration Page -->
-            <div class="tab-page" data-page="configuration">
+            <!-- D3 — Deployments merged tab (Configure / Deploy / Manage sub-pills).
+                 D3.1: scaffold only. The 3 sub-views are re-parented from
+                 data-page="configuration" / "deployment" / "deployments" in D3.2-D3.4.
+                 Per Decision #6: ?legacyTabs=1 query param keeps the old 3 nav buttons
+                 accessible during the refactor; default behavior shows only the new
+                 merged tab. -->
+            <div class="tab-page" data-page="deployments-tab" style="display: none;">
+                <div class="subpill-nav" role="tablist" aria-label="Deployments sub-views">
+                    <button class="subpill-nav__pill is-active"
+                            role="tab"
+                            data-subpill="configure"
+                            aria-selected="true"
+                            id="subpill-configure">Configure</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
+                            data-subpill="deploy"
+                            aria-selected="false"
+                            id="subpill-deploy">Deploy</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
+                            data-subpill="manage"
+                            aria-selected="false"
+                            id="subpill-manage">Manage</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
+                            data-subpill="cleanup"
+                            aria-selected="false"
+                            id="subpill-cleanup">Cleanup</button>
+                </div>
+                <div class="subpill-content" role="tabpanel">
+                    <div class="subpill-pane" data-subpill-pane="configure" id="subpill-pane-configure">
+                        <!-- D3.2: Configuration tab content re-parents here -->
+                    <!-- D3.8 — Explicit "New Deployment" banner. Pairs with the
+                         "+ New" button in the global header. Both wired to
+                         APP.startNewDeployment() in app.js. -->
+                    <div class="configure-new-deployment-banner" id="configure-new-deployment-banner">
+                        <button class="btn btn-primary" id="configure-new-deployment-btn" type="button">
+                            + New Deployment
+                        </button>
+                        <span class="t-muted">Or edit the deployment currently selected in the header.</span>
+                    </div>
                     <h2 class="page-title">Configuration Editor</h2>
 
                     <!-- What to Deploy Section -->
@@ -801,10 +1157,9 @@ ns-143.awsdns-17.org
                     </div>
 
                     <div id="config-message" class="message"></div>
-            </div>
-
-            <!-- Deployment Page -->
-            <div class="tab-page" data-page="deployment">
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="deploy" id="subpill-pane-deploy" hidden>
+                        <!-- D3.3: Deploy tab content re-parents here -->
                     <h2 class="page-title">Deployment Control</h2>
 
                     <!-- Prerequisites Section -->
@@ -818,23 +1173,32 @@ ns-143.awsdns-17.org
                             <div id="deploy-type-details" class="overview-detail"></div>
                         </div>
 
-                        <!-- Configuration Summary Section -->
-                        <div id="config-summary-section" class="config-summary" style="display: none;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                                <h4 style="margin: 0;">Configuration Summary</h4>
-                                <button class="btn btn-secondary btn-sm" onclick="APP.navigateTo('configuration')">
-                                    Edit Config
-                                </button>
+                        <!-- Configuration Summary Section — Phase 2B Composition A.
+                             V3-native spec-list: hero project identity + key/value rows
+                             with hover row-rail + per-row inline edit (data-row="key"
+                             rows are populated + wired by APP.deploySummary in app.js). -->
+                        <div id="config-summary-section" class="deploy-summary" style="display: none;">
+                            <div class="deploy-summary__eyebrow">
+                                <span class="deploy-summary__eyebrow-label">Configuration Summary</span>
+                                <span class="spec-pill spec-pill--draft" id="deploy-summary-status" aria-live="polite">
+                                    <span class="spec-pill__dot" aria-hidden="true"></span>
+                                    <span id="deploy-summary-status-label">DRAFT</span>
+                                </span>
                             </div>
 
-                            <div id="config-summary-grid" class="summary-grid">
-                                <!-- Populated by JavaScript -->
-                            </div>
+                            <section class="deploy-summary__hero" aria-label="Deployment identity">
+                                <span class="deploy-summary__hero-caption">project</span>
+                                <h3 class="deploy-summary__hero-name" id="deploy-summary-hero-name">&mdash;</h3>
+                                <p class="deploy-summary__hero-type">
+                                    <strong id="deploy-summary-hero-type">&mdash;</strong>
+                                    <span id="deploy-summary-hero-state" class="t-muted"> &middot; click any row to edit</span>
+                                </p>
+                            </section>
 
-                            <!-- Warnings/Issues -->
-                            <div id="config-summary-warnings" style="margin-top: 15px; display: none;">
-                                <!-- Populated by JavaScript if there are issues -->
-                            </div>
+                            <dl class="spec-list" id="deploy-summary-spec-list" aria-label="Configuration values"></dl>
+
+                            <!-- Validation warnings — rendered if config is incomplete -->
+                            <div id="config-summary-warnings" class="deploy-summary__warnings" style="display: none;"></div>
                         </div>
 
                         <!-- Domain Configuration Check (C2 deployments only) -->
@@ -1221,203 +1585,323 @@ ns-143.awsdns-17.org
                     </div>
 
                     <div id="deployment-output" class="output-display"></div>
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="manage" id="subpill-pane-manage" hidden>
+                        <!-- D3.4: Deployment Manager content re-parents here.
+                             Phase 3a — V3-native rebuild: hero + spec-list +
+                             actions strip replace the old "Deployment Manager"
+                             chrome. Legacy IDs (#deployments-overview,
+                             #deployments-last-updated, #refresh-all-btn) are
+                             preserved so existing JS still binds. -->
+
+                    <section class="manage-view" id="manage-view" style="display: none;">
+                        <!-- Eyebrow strip: label + last-updated + status pill -->
+                        <div class="manage-view__eyebrow">
+                            <span class="manage-view__eyebrow-label">Deployment Manager</span>
+                            <div class="manage-view__eyebrow-meta">
+                                <span id="deployments-last-updated" class="manage-view__updated"></span>
+                                <span class="spec-pill spec-pill--draft" id="manage-status-pill" aria-live="polite">
+                                    <span class="spec-pill__dot" aria-hidden="true"></span>
+                                    <span id="manage-status-label">IDLE</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Hero: project identity + deployment type kicker -->
+                        <section class="manage-view__hero" aria-label="Deployment identity">
+                            <span class="manage-view__hero-caption">project</span>
+                            <h3 class="manage-view__hero-name" id="manage-hero-name">&mdash;</h3>
+                            <p class="manage-view__hero-type">
+                                <strong id="manage-hero-type">&mdash;</strong>
+                                <span id="manage-hero-state" class="manage-view__hero-state"></span>
+                            </p>
+                        </section>
+
+                        <!-- Resource summary spec-list (region, account, IPs, SGs, cost, last-touched) -->
+                        <dl class="spec-list" id="manage-spec-list" aria-label="Deployment resources"></dl>
+
+                        <!-- Actions strip — operator-facing controls -->
+                        <div class="manage-actions" id="manage-actions" role="toolbar" aria-label="Deployment actions">
+                            <button class="manage-action" id="manage-action-refresh" type="button" data-manage-action="refresh">
+                                <svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                                <span>Refresh</span>
+                            </button>
+                            <button class="manage-action" id="manage-action-logs" type="button" data-manage-action="logs">
+                                <svg class="icon" aria-hidden="true"><use href="#icon-logs"/></svg>
+                                <span>View Logs</span>
+                            </button>
+                            <button class="manage-action" id="manage-action-health" type="button" data-manage-action="health">
+                                <svg class="icon" aria-hidden="true"><use href="#icon-health"/></svg>
+                                <span>Health Check</span>
+                            </button>
+                            <button class="manage-action manage-action--danger" id="manage-action-destroy" type="button" data-manage-action="destroy">
+                                <svg class="icon" aria-hidden="true"><use href="#icon-trash"/></svg>
+                                <span>Destroy</span>
+                            </button>
+                        </div>
+
+                        <!-- Inline health-check / status output panel -->
+                        <div class="manage-view__output" id="manage-output" hidden></div>
+                    </section>
+
+                    <!-- Budget Alert Banner (lightweight — links to Settings for details) -->
+                    <div id="cost-budget-alert" style="display: none; margin: 18px 0;"></div>
+
+                    <!-- Hidden controls preserved for JS: the new actions strip
+                         calls refreshAll() directly, but legacy code paths still
+                         poke #refresh-all-btn (disabled-state, label text). Keep
+                         it in the DOM but visually hidden. -->
+                    <button id="refresh-all-btn" type="button" onclick="refreshAll()" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden" aria-hidden="true" tabindex="-1">Refresh All</button>
+
+                    <!-- Deployment Status Overview — JS still mounts banners here -->
+                    <div id="deployments-overview" style="margin-bottom: 30px;">
+                    </div>
+
+                    <!-- Lifecycle Management Section -->
+                    <div id="lifecycle-section" style="margin-bottom: 30px; display: none;">
+                        <div class="grid-auto">
+
+                            <!-- Stop Infrastructure -->
+                            <div class="lifecycle-card">
+                                <h4>Stop EC2 Instances</h4>
+                                <p>
+                                    <strong>Pause compute without deleting.</strong> All EC2 instances (C2 servers, jumpbox, Windows VMs) will be stopped.
+                                    Data and configuration preserved.
+                                </p>
+                                <button class="btn btn-warning" onclick="stopInfrastructure()" style="width: 100%;">
+                                    Stop All EC2 Instances
+                                </button>
+                            </div>
+
+                            <!-- Start Infrastructure -->
+                            <div class="lifecycle-card">
+                                <h4>Start EC2 Instances</h4>
+                                <p>
+                                    <strong>Resume stopped instances.</strong> Bring your EC2 instances back online.
+                                    All configurations and data preserved from when you stopped.
+                                </p>
+                                <button class="btn btn-success" onclick="startInfrastructure()" style="width: 100%;">
+                                    Start All EC2 Instances
+                                </button>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                    <!-- Full Resource List Section (collapsed by default) -->
+                    <div id="resource-list-section" style="margin-bottom: 30px;">
+                        <details class="details-card">
+                            <summary>All Deployed Resources</summary>
+                            <div>
+                                <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
+                                    <div id="resource-scope-info" style="color: var(--text-muted); font-size: 0.88em;"></div>
+                                    <div style="display: flex; gap: 5px;">
+                                        <button class="btn btn-secondary btn-sm" onclick="refreshResourceList()">
+                                            Refresh
+                                        </button>
+                                        <button class="btn btn-secondary btn-sm" onclick="exportResourceList()">
+                                            Export CSV
+                                        </button>
+                                    </div>
+                                </div>
+                                <div style="margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
+                                    <select id="resource-type-filter" onchange="filterResources()">
+                                        <option value="all">All Types</option>
+                                        <option value="ec2">EC2 Instances</option>
+                                        <option value="vpc">VPC</option>
+                                        <option value="subnet">Subnets</option>
+                                        <option value="sg">Security Groups</option>
+                                        <option value="eip">Elastic IPs</option>
+                                        <option value="nat">NAT Gateways</option>
+                                        <option value="s3">S3 Buckets</option>
+                                    </select>
+                                    <input type="text" id="resource-search" placeholder="Search by name or ID..."
+                                           onkeyup="filterResources()"
+                                           style="flex: 1; min-width: 200px;">
+                                </div>
+                                <div id="resource-list-container" style="border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;">
+                                    <div id="resource-table-body" style="max-height: 520px; overflow-y: auto;">
+                                    </div>
+                                </div>
+                                <div id="resource-count" style="margin-top: 8px; color: var(--text-muted); font-size: 0.88em;"></div>
+                            </div>
+                        </details>
+                    </div>
+
+                    <!-- Deployment History & Logs Section -->
+                    <div id="deployment-history-section" style="margin-bottom: 30px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <h3 style="margin: 0;">Deployment History & Logs</h3>
+                            <div>
+                                <button class="btn btn-secondary btn-sm" onclick="viewArchivedLogs()">
+                                    Archived Logs
+                                </button>
+                                <button class="btn btn-secondary btn-sm" onclick="clearDeploymentLogs()" style="margin-left: 5px;">
+                                    Clear Logs
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Deployment Timeline -->
+                        <div id="deployment-timeline" style="margin-bottom: 20px;">
+                            <div id="timeline-content">
+                                <!-- Populated by JavaScript -->
+                            </div>
+                        </div>
+
+                        <!-- Detailed Logs -->
+                        <div style="background: var(--bg-terminal); border-radius: var(--radius-lg); overflow: hidden; border: 1px solid var(--border);">
+                            <div style="background: var(--bg-elevated); padding: 10px 15px; display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-weight: bold; color: var(--text-terminal);">Detailed Logs</span>
+                                <div>
+                                    <button onclick="copyLogs()" class="btn btn-secondary btn-sm">
+                                        Copy
+                                    </button>
+                                    <button onclick="downloadLogs()" class="btn btn-secondary btn-sm" style="margin-left: 5px;">
+                                        Download
+                                    </button>
+                                </div>
+                            </div>
+                            <!-- Log Level Filter -->
+                            <div style="padding: 8px 15px; display: flex; gap: 10px; align-items: center; border-bottom: 1px solid var(--border);">
+                                <span style="color: var(--text-muted); font-size: 0.88em;">Filter:</span>
+                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                    <input type="checkbox" id="log-filter-info" checked onchange="filterLogs()">
+                                    <span class="btn btn-info btn-sm">INFO</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                    <input type="checkbox" id="log-filter-success" checked onchange="filterLogs()">
+                                    <span class="btn btn-success btn-sm">SUCCESS</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                    <input type="checkbox" id="log-filter-warning" checked onchange="filterLogs()">
+                                    <span class="btn btn-warning btn-sm">WARNING</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                    <input type="checkbox" id="log-filter-error" checked onchange="filterLogs()">
+                                    <span class="btn btn-danger btn-sm">ERROR</span>
+                                </label>
+                            </div>
+                            <div id="deployment-logs" style="padding: 15px; max-height: 400px; overflow-y: auto; font-family: 'SF Mono', 'Consolas', monospace; font-size: 0.88em; line-height: 1.6;">
+                                <div class="t-muted">No deployment logs yet. Deploy infrastructure to see logs here.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- GOAD Lab Section -->
+                    <div id="goad-lab-section" class="section-card section-card--highlight" style="margin-bottom: 25px; display: none;">
+                        <h3>GOAD Lab (Active Directory)</h3>
+                        <p>Vulnerable Active Directory environment for testing.</p>
+                        <div id="goad-lab-details" class="infrastructure-details">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                        <div id="goad-lab-actions" style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                        <div id="goad-provision-section" style="margin-top: 15px; display: none;">
+                            <div style="border-top: 1px solid var(--border); padding-top: 15px;">
+                                <h4>Active Directory Provisioning</h4>
+                                <div id="goad-provision-status-panel">
+                                    <!-- Populated by JavaScript -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- No Deployment State -->
+                    <div id="no-deployment-message" style="display: none; text-align: center; padding: 40px;">
+                        <h3>No Active Deployments</h3>
+                        <p style="color: var(--text-muted); margin-bottom: 20px;">You haven't deployed any infrastructure yet.</p>
+                        <button class="btn btn-success" onclick="APP.navigateTo('deployment')">Go to Deploy Tab</button>
+                    </div>
+
+
+
+                    </div>
+
+                    <!-- D8 Agent B — Cleanup sub-pane (orphan AWS resources)
+                         Phase 3c — V3-native rebuild: legacy `.cleanup-*` skeleton replaced
+                         with `.cleanup-v3 *` namespace, summary stat tiles + spec-list
+                         resource groups composing the Phase 2b primitives. -->
+                    <div class="subpill-pane" data-subpill-pane="cleanup" id="subpill-pane-cleanup" hidden>
+                        <div class="cleanup-v3">
+                            <div class="cleanup-v3__eyebrow">
+                                <div class="cleanup-v3__eyebrow-text">
+                                    <span class="cleanup-v3__eyebrow-label">UNTRACKED RESOURCES</span>
+                                    <h2 class="cleanup-v3__title">Cleanup</h2>
+                                    <p class="cleanup-v3__description">
+                                        AWS resources NOT tied to any current Terraform state. Includes orphan
+                                        EIPs, unattached EBS snapshots, stale ACM certs (eu-central-1 + us-east-1),
+                                        S3 buckets outside the project naming convention, and old Terraform workspaces.
+                                    </p>
+                                </div>
+                                <div class="cleanup-v3__eyebrow-actions">
+                                    <span class="cleanup-v3__refreshed-at" id="cleanup-refreshed-at" hidden></span>
+                                    <button class="spec-edit-btn cleanup-v3__refresh-btn"
+                                            type="button"
+                                            id="cleanup-refresh-btn"
+                                            onclick="loadCleanupResources(true)">
+                                        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                                        Refresh
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Summary stat tiles (4 numbers) -->
+                            <div class="cleanup-v3-summary" id="cleanup-summary" role="group" aria-label="Orphan resource counts">
+                                <div class="cleanup-v3-summary__tile">
+                                    <span class="cleanup-v3-summary__num" id="cleanup-orphan-count">—</span>
+                                    <span class="cleanup-v3-summary__label">orphans found</span>
+                                </div>
+                                <div class="cleanup-v3-summary__tile">
+                                    <span class="cleanup-v3-summary__num" id="cleanup-eip-count">—</span>
+                                    <span class="cleanup-v3-summary__label">unattached EIPs</span>
+                                </div>
+                                <div class="cleanup-v3-summary__tile">
+                                    <span class="cleanup-v3-summary__num" id="cleanup-acm-count">—</span>
+                                    <span class="cleanup-v3-summary__label">orphan ACM certs</span>
+                                </div>
+                                <div class="cleanup-v3-summary__tile">
+                                    <span class="cleanup-v3-summary__num" id="cleanup-buckets-count">—</span>
+                                    <span class="cleanup-v3-summary__label">untagged S3 buckets</span>
+                                </div>
+                            </div>
+
+                            <!-- Resource groups (rendered as .spec-list per AWS service) -->
+                            <div id="cleanup-resource-list" class="cleanup-v3__groups motion-stagger-in">
+                                <p class="cleanup-v3__placeholder">Click Refresh to scan AWS for orphan resources.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <!-- AWS Check Page -->
-            <div class="tab-page" data-page="aws-check">
-                    <h2 class="page-title">Prerequisites Check</h2>
-                    <p style="margin-bottom: 20px;">
-                        Verify all required tools and credentials are properly configured before deploying infrastructure.
-                    </p>
-                    <!-- System Dependencies -->
-                    <div class="section-card section-card--highlight section-card--compact" style="margin-bottom: 20px;">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-                            <h3 style="margin: 0;">System Dependencies</h3>
-                            <button class="btn btn-primary btn-sm" onclick="checkSystemDeps()">Check All</button>
-                        </div>
-                        <div id="system-deps-status">
-                            <small class="t-muted">Click "Check All" to verify installed tools.</small>
-                        </div>
-                    </div>
-
-                    <!-- AWS Credentials Check Section -->
-                    <div class="section-card section-card--highlight section-card--compact">
-                        <h3>AWS Credentials</h3>
-                        <p>Check if your AWS CLI credentials are configured and valid.</p>
-                        <button class="btn btn-primary btn-sm" onclick="checkAWSCredentials()">Check AWS Credentials</button>
-                        <div id="aws-credentials-status" class="status-display"></div>
-                    </div>
-
-                    <!-- AWS Permissions Check Section -->
-                    <div class="section-card section-card--highlight section-card--compact">
-                        <h3>AWS Permissions Check</h3>
-                        <p>Verify your AWS credentials have the required permissions to deploy.</p>
-                        <button class="btn btn-primary btn-sm" onclick="checkAWSPermissions()">Check AWS Permissions</button>
-                        <div id="aws-permissions-status" class="status-display"></div>
-                    </div>
-
-                    <!-- SSH Key Check Section -->
-                    <div class="section-card section-card--highlight section-card--compact">
-                        <h3>SSH Key Pair</h3>
-                        <p>Required for EC2 instance access (bastion, jumpbox, team server). Your public key is uploaded to AWS during deployment. The private key is used for SSH tunnels and GOAD provisioning.</p>
-                        <button class="btn btn-primary btn-sm" onclick="checkSSHKey()">Check SSH Key</button>
-                        <div id="ssh-key-status" class="status-display"></div>
-                    </div>
-
-                    <!-- GitHub CLI Check Section -->
-                    <div class="section-card section-card--highlight section-card--compact">
-                        <h3>GitHub CLI Authentication</h3>
-                        <p>Required to access the tools repo at <a href="https://github.com/harr-sudo/red-team-tools" target="_blank">github.com/harr-sudo/red-team-tools</a>.</p>
-                        <button class="btn btn-primary btn-sm" onclick="checkGitHubCLI()">Check GitHub CLI</button>
-                        <div id="github-cli-status" class="status-display"></div>
-                    </div>
-            </div>
-
-            <!-- Tools Upload Page -->
-            <div class="tab-page" data-page="tools">
-                <h2 style="color: var(--accent); margin-bottom: 20px; font-size: 1.7em;">Tools Upload</h2>
-                <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
-                    Upload files to the Windows Attack Box via SCP through the bastion host. Use this for Outflank tools, custom loaders, or any binaries your operators need.
+            <!-- D4 — Operations merged tab (Beacons / Terminal / Payloads sub-pills).
+                 D4.1: scaffold only. The 3 sub-views are re-parented from
+                 data-page="beacon" / "terminal" / "tools" in D4.2-D4.4.
+                 Per Decision #6: ?legacyTabs=1 query param keeps the old 3 nav
+                 buttons accessible during the refactor; default behavior hides them. -->
+            <div class="tab-page" data-page="operations-tab" style="display: none;">
+                <div class="subpill-nav" role="tablist" aria-label="Operations sub-views">
+                    <button class="subpill-nav__pill is-active"
+                            role="tab"
+                            data-subpill="beacons"
+                            aria-selected="true"
+                            id="subpill-beacons">Beacons</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
+                            data-subpill="terminal"
+                            aria-selected="false"
+                            id="subpill-terminal">Terminal</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
+                            data-subpill="payloads"
+                            aria-selected="false"
+                            id="subpill-payloads">Payloads</button>
                 </div>
-
-                <!-- Target Deployment Selector -->
-                <div class="section-card" style="margin-bottom: 16px;">
-                    <label for="tools-project-select" style="display: block; font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">Target Deployment:</label>
-                    <select id="tools-project-select" class="form-select">
-                        <option value="">Loading deployments...</option>
-                    </select>
-                </div>
-
-                <!-- Connection Status -->
-                <div class="section-card" id="tools-connection-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--gold-muted); margin-bottom: 12px; font-size: 1.1em;">Connection Status</h3>
-                    <div id="tools-connection-status">
-                        <p class="t-muted">Select a deployment above</p>
-                    </div>
-                </div>
-
-                <!-- File Upload -->
-                <div class="section-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Upload Files</h3>
-                    <div id="tools-upload-area" style="border: 2px dashed var(--border); border-radius: var(--radius); padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s ease; margin-bottom: 12px;"
-                         ondragover="event.preventDefault(); this.style.borderColor='var(--gold)'; this.style.background='rgba(143, 164, 100, 0.05)';"
-                         ondragleave="this.style.borderColor='var(--border)'; this.style.background='transparent';"
-                         ondrop="event.preventDefault(); this.style.borderColor='var(--border)'; this.style.background='transparent'; handleToolsDrop(event);"
-                         onclick="document.getElementById('tools-file-input').click();">
-                        <p style="color: var(--text-secondary); margin: 0;">Drag & drop files or folders here, or click to browse</p>
-                        <p style="color: var(--text-muted); font-size: 0.8em; margin: 6px 0 0 0;">Any file type accepted, up to 500MB. Folders preserve directory structure.</p>
-                    </div>
-                    <input type="file" id="tools-file-input" multiple style="display: none;" onchange="handleToolsFileSelect(event)">
-                    <button class="btn btn-sm btn-secondary" style="margin-bottom: 12px;" onclick="document.getElementById('tools-folder-input').click();">Browse Folder</button>
-                    <input type="file" id="tools-folder-input" webkitdirectory directory multiple style="display: none;" onchange="handleToolsFolderSelect(event)">
-                    <div id="tools-upload-progress" style="display: none; margin-bottom: 12px;">
-                        <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
-                            <div id="tools-upload-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
-                        </div>
-                        <p id="tools-upload-progress-text" style="font-size: 0.8em; color: var(--text-muted); margin-top: 4px;">Uploading...</p>
-                    </div>
-
-                    <!-- Staged Files List -->
-                    <div id="tools-staged-container">
-                        <div id="tools-staged-list" style="margin-bottom: 8px;"></div>
-                        <div id="tools-staged-actions" style="display: none; text-align: right;">
-                            <button class="btn btn-sm btn-secondary" onclick="clearAllToolsFiles()">Clear All</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Destination Picker -->
-                <div class="section-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--gold-muted); margin-bottom: 12px; font-size: 1.1em;">Destination</h3>
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
-                            <input type="radio" name="tools-dest" value="C:\Outflank\" checked style="accent-color: var(--gold);">
-                            <code style="font-size: 0.9em;">C:\Outflank\</code>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
-                            <input type="radio" name="tools-dest" value="C:\Tools\" style="accent-color: var(--gold);">
-                            <code style="font-size: 0.9em;">C:\Tools\</code>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
-                            <input type="radio" name="tools-dest" value="custom" style="accent-color: var(--gold);">
-                            <span>Custom:</span>
-                            <input type="text" id="tools-custom-dest" placeholder="C:\MyTools\" disabled
-                                   style="flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text-primary); font-family: monospace; font-size: 0.9em;">
-                        </label>
-                    </div>
-                </div>
-
-                <!-- Command Preview -->
-                <div class="section-card" id="tools-command-preview-card" style="margin-bottom: 16px;">
-                    <h3 style="color: var(--accent-muted); margin-bottom: 10px; font-size: 1.1em;">Command Preview</h3>
-                    <div id="tools-command-preview" style="background: var(--bg-terminal); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font-family: monospace; font-size: 0.82em; white-space: pre-wrap; word-break: break-all; color: var(--text-terminal);">Select a deployment and stage files to see the SCP command</div>
-                </div>
-
-                <!-- Transfer Controls -->
-                <div style="margin-bottom: 16px;">
-                    <button id="tools-transfer-btn" class="btn btn-primary" onclick="startToolsTransfer()" disabled style="width: 100%; padding: 12px; font-size: 1.05em;">
-                        Transfer to Attack Box
-                    </button>
-                </div>
-
-                <!-- Transfer Log -->
-                <div class="section-card" id="tools-transfer-log-card" style="display: none;">
-                    <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Transfer Log</h3>
-                    <div id="tools-transfer-progress" style="margin-bottom: 10px;">
-                        <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
-                            <div id="tools-transfer-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
-                        </div>
-                        <p id="tools-transfer-progress-text" style="font-size: 0.85em; color: var(--text-muted); margin-top: 4px;"></p>
-                    </div>
-                    <div id="tools-transfer-log" class="output-display" style="max-height: 300px;"></div>
-                </div>
-            </div>
-
-            <!-- Settings Page -->
-            <!-- Architecture Docs Page -->
-            <div class="tab-page" data-page="architecture">
-                <h2 class="page-title">Infrastructure Architecture</h2>
-
-                <div class="section-card" style="margin-bottom: 20px;">
-                    <label for="architecture-select" style="display: block; font-weight: 600; margin-bottom: 10px; color: var(--gold-muted);">Select Deployment Architecture:</label>
-                    <select id="architecture-select" class="form-select">
-                        <optgroup label="Full C2 Infrastructure (Internet-Facing Ops)">
-                            <option value="c2-adhoc">C2 Ad-Hoc: Single Server + Redirectors</option>
-                            <option value="c2-adhoc-domain-fronting">C2 Ad-Hoc: Domain Fronting Mode</option>
-                            <option value="ssl-options">SSL/TLS Options Comparison</option>
-                            <option value="c2-purple">C2 Purple Team: Redundant Servers</option>
-                            <option value="c2-full">C2 Full Red Team: Phase-Based Operations</option>
-                        </optgroup>
-                        <optgroup label="GOAD Training Labs (with Cobalt Strike)">
-                            <option value="goad-mini">GOAD Mini + CS: 1 VM, 1 Domain</option>
-                            <option value="goad-light">GOAD Light + CS: 3 VMs, 2 Domains</option>
-                            <option value="goad-full">GOAD Full + CS: 5 VMs, 3 Domains, 2 Forests</option>
-                            <option value="goad-sccm">GOAD SCCM + CS: 4 VMs, SCCM Lab</option>
-                            <option value="goad-nha">GOAD NHA + CS: 5 VMs, Challenge Lab</option>
-                        </optgroup>
-                        <optgroup label="Full C2 + GOAD Lab (Realistic Training)">
-                            <option value="combined-mini">Full C2 Ad-Hoc + GOAD Mini</option>
-                            <option value="combined-light">Full C2 Ad-Hoc + GOAD Light</option>
-                            <option value="combined-full">Full C2 Red Team + GOAD Full</option>
-                        </optgroup>
-                        <optgroup label="Component Architecture (Technical Details)">
-                            <option value="attack-box">Windows Attack Box - Detailed Architecture</option>
-                            <option value="s3-storage">S3 Deployment Storage - Security Architecture</option>
-                            <option value="iam-security">IAM Security - Roles & Permissions</option>
-                            <option value="ssh-key-management">SSH Key Management - Automation</option>
-                        </optgroup>
-                    </select>
-                </div>
-
-                <div class="arch-content-area">
-                    <div id="markdown-content" class="markdown-content">
-                        <p style="color: var(--text-muted); text-align: center; padding: 40px 0;">Select an architecture above to view documentation</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Beacon Management Page -->
-            <div class="tab-page" data-page="beacon">
+                <div class="subpill-content" role="tabpanel">
+                    <div class="subpill-pane" data-subpill-pane="beacons" id="subpill-pane-beacons">
                 <h2>Beacon Management</h2>
 
                 <!-- Deployment Selector -->
@@ -1433,7 +1917,7 @@ ns-143.awsdns-17.org
                 <!-- No Deployment -->
                 <div id="beacon-no-deployment" class="section-card" style="display: none;">
                     <div style="text-align: center; padding: 40px 20px;">
-                        <h3 style="color: var(--gold-muted); margin-bottom: 16px;">No Active Deployments</h3>
+                        <h3 style="margin-bottom: 16px;">No Active Deployments</h3>
                         <p style="color: var(--text-muted); max-width: 500px; margin: 0 auto; line-height: 1.6;">
                             Deploy infrastructure with REST API enabled to manage beacons. Enable it in the <strong>Configuration</strong> tab under Cobalt Strike settings.
                         </p>
@@ -1493,12 +1977,18 @@ ns-143.awsdns-17.org
 
                     <!-- Beacon Table -->
                     <div class="section-card" id="beacon-table-section" style="display: none;">
-                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-                            <h3 style="margin: 0;">Active Beacons</h3>
-                            <span id="beacon-count" class="badge badge-info" style="font-size: 0.85em;">0 beacons</span>
-                            <input type="text" id="beacon-filter" class="beacon-filter-input" placeholder="Filter beacons..." oninput="BEACON.filterTable(this.value)" style="max-width: 250px;">
+                        <div class="ops-beacons__header">
+                            <h3 class="ops-beacons__title">Active Beacons</h3>
+                            <span id="beacon-count" class="badge badge-info ops-beacons__count">0 beacons</span>
+                            <input type="text" id="beacon-filter" class="beacon-filter-input ops-beacons__filter" placeholder="Filter beacons..." oninput="BEACON.filterTable(this.value)">
                         </div>
-                        <div class="table-responsive">
+                        <!-- Phase 3B.1 — V3-native beacons spec-list. Renders alongside
+                             (and visually replaces) the legacy beacon-table. The table
+                             is kept in the DOM with display:none for backwards-compat
+                             with code paths that read from it; selectBeacon() updates
+                             both surfaces. -->
+                        <ol class="spec-list ops-beacons-list" id="beacons-spec-list" aria-label="Active beacons"></ol>
+                        <div class="table-responsive" style="display: none;">
                             <table class="beacon-table" id="beacon-table">
                                 <thead>
                                     <tr>
@@ -1527,13 +2017,36 @@ ns-143.awsdns-17.org
                         <div class="interact-drag-bar" id="interact-drag-bar"></div>
                         <div style="display: flex; align-items: center; gap: 12px; padding-top: 8px;">
                             <h3 style="margin: 0;">
-                                Interact — <span id="interact-beacon-label" style="color: var(--gold-muted);"></span>
+                                Interact — <span id="interact-beacon-label" class="interact-beacon-label"></span>
                             </h3>
                             <button class="btn btn-danger" onclick="BEACON.closeInteract()">Close</button>
                         </div>
 
                         <!-- Beacon Metadata Badges -->
                         <div class="beacon-meta-badges" id="beacon-meta-badges"></div>
+
+                        <!-- Phase 3B.1 — V3-native beacon detail spec-list.
+                             Renders metadata (hostname, user, pid, sleep, listener,
+                             established, last checkin) plus "driven by" attribution
+                             pulled from /api/audit?action_prefix=beacon.exec. -->
+                        <ol class="spec-list ops-beacon-detail" id="beacon-detail-spec-list"
+                            aria-label="Beacon detail" hidden></ol>
+
+                        <!-- Phase 3B.1 — Operator-attributed command history.
+                             Rows show operator color dot + display name + command +
+                             timestamp. Sourced from the audit log (per-bid client-side
+                             filter). Stays in sync with task-feed polling. -->
+                        <div class="ops-cmd-history" id="ops-cmd-history" hidden>
+                            <div class="ops-cmd-history__header">
+                                <span class="ops-cmd-history__eyebrow">COMMAND HISTORY · ATTRIBUTED</span>
+                                <button type="button" class="spec-edit-btn ops-cmd-history__refresh"
+                                        onclick="BEACON.refreshCmdHistory()" title="Refresh history">
+                                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                                </button>
+                            </div>
+                            <ol class="spec-list ops-cmd-history__list" id="ops-cmd-history-list"
+                                aria-label="Command history"></ol>
+                        </div>
 
                         <!-- Beacon Feature Tabs -->
                         <div class="beacon-feature-tabs" id="beacon-feature-tabs">
@@ -2005,10 +2518,8 @@ ns-143.awsdns-17.org
                     </div>
 
                 </div>
-            </div>
-
-            <!-- Terminal Page -->
-            <div class="tab-page" data-page="terminal">
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="terminal" id="subpill-pane-terminal" hidden>
                 <h2 class="page-title">Terminal</h2>
 
                 <!-- Local Shell — primary action, always available -->
@@ -2051,46 +2562,381 @@ ns-143.awsdns-17.org
                     <strong>Terminal dependencies not installed.</strong><br>
                     Run: <code>pip install flask-sock</code> then restart the webapp.
                 </div>
+                    </div>
+                    <div class="subpill-pane" data-subpill-pane="payloads" id="subpill-pane-payloads" hidden>
+                <h2 class="page-title">Tools Upload</h2>
+                <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
+                    Upload files to the Windows Attack Box via SCP through the bastion host. Use this for Outflank tools, custom loaders, or any binaries your operators need.
+                </div>
+
+                <!-- Phase 3B.3 — Two-column V3 layout.
+                     Left:  Form (target, connection, upload, destination).
+                     Right: Live parameter spec-list + command preview +
+                            transfer trigger + artifacts list + transfer log. -->
+                <div class="ops-payloads-grid" id="ops-payloads-grid">
+
+                  <div class="ops-payloads-grid__form" id="ops-payloads-form">
+                    <!-- Target Deployment Selector -->
+                    <div class="section-card" style="margin-bottom: 16px;">
+                        <label for="tools-project-select" style="display: block; font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">Target Deployment:</label>
+                        <select id="tools-project-select" class="form-select">
+                            <option value="">Loading deployments...</option>
+                        </select>
+                    </div>
+
+                    <!-- Connection Status -->
+                    <div class="section-card" id="tools-connection-card" style="margin-bottom: 16px;">
+                        <h3 style="margin-bottom: 12px; font-size: 1.1em;">Connection Status</h3>
+                        <div id="tools-connection-status">
+                            <p class="t-muted">Select a deployment above</p>
+                        </div>
+                    </div>
+
+                    <!-- File Upload -->
+                    <div class="section-card" style="margin-bottom: 16px;">
+                        <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Upload Files</h3>
+                    <div id="tools-upload-area" style="border: 2px dashed var(--border); border-radius: var(--radius); padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s ease; margin-bottom: 12px;"
+                         ondragover="event.preventDefault(); this.style.borderColor='var(--gold)'; this.style.background='rgba(143, 164, 100, 0.05)';"
+                         ondragleave="this.style.borderColor='var(--border)'; this.style.background='transparent';"
+                         ondrop="event.preventDefault(); this.style.borderColor='var(--border)'; this.style.background='transparent'; handleToolsDrop(event);"
+                         onclick="document.getElementById('tools-file-input').click();">
+                        <p style="color: var(--text-secondary); margin: 0;">Drag & drop files or folders here, or click to browse</p>
+                        <p style="color: var(--text-muted); font-size: 0.8em; margin: 6px 0 0 0;">Any file type accepted, up to 500MB. Folders preserve directory structure.</p>
+                    </div>
+                    <input type="file" id="tools-file-input" multiple style="display: none;" onchange="handleToolsFileSelect(event)">
+                    <button class="btn btn-sm btn-secondary" style="margin-bottom: 12px;" onclick="document.getElementById('tools-folder-input').click();">Browse Folder</button>
+                    <input type="file" id="tools-folder-input" webkitdirectory directory multiple style="display: none;" onchange="handleToolsFolderSelect(event)">
+                    <div id="tools-upload-progress" style="display: none; margin-bottom: 12px;">
+                        <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
+                            <div id="tools-upload-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
+                        </div>
+                        <p id="tools-upload-progress-text" style="font-size: 0.8em; color: var(--text-muted); margin-top: 4px;">Uploading...</p>
+                    </div>
+
+                    <!-- Staged Files List -->
+                    <div id="tools-staged-container">
+                        <div id="tools-staged-list" style="margin-bottom: 8px;"></div>
+                        <div id="tools-staged-actions" style="display: none; text-align: right;">
+                            <button class="btn btn-sm btn-secondary" onclick="clearAllToolsFiles()">Clear All</button>
+                        </div>
+                    </div>
+                </div>
+
+                    <!-- Destination Picker -->
+                    <div class="section-card" style="margin-bottom: 16px;">
+                        <h3 style="margin-bottom: 12px; font-size: 1.1em;">Destination</h3>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                                <input type="radio" name="tools-dest" value="C:\Outflank\" checked style="accent-color: var(--gold);">
+                                <code style="font-size: 0.9em;">C:\Outflank\</code>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                                <input type="radio" name="tools-dest" value="C:\Tools\" style="accent-color: var(--gold);">
+                                <code style="font-size: 0.9em;">C:\Tools\</code>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-primary);">
+                                <input type="radio" name="tools-dest" value="custom" style="accent-color: var(--gold);">
+                                <span>Custom:</span>
+                                <input type="text" id="tools-custom-dest" placeholder="C:\MyTools\" disabled
+                                       style="flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text-primary); font-family: monospace; font-size: 0.9em;">
+                            </label>
+                        </div>
+                    </div>
+                  </div><!-- /.ops-payloads-grid__form -->
+
+                  <div class="ops-payloads-grid__preview" id="ops-payloads-preview">
+                    <!-- Phase 3B.3 — Parameter summary spec-list. Re-rendered by
+                         APP.payloads.updateSpec() whenever the form changes. -->
+                    <div class="section-card ops-payloads-summary-card">
+                        <div class="ops-payloads-summary__head">
+                            <span class="ops-payloads-summary__eyebrow">PARAMETERS · LIVE</span>
+                            <span class="spec-pill spec-pill--draft" id="ops-payloads-spec-pill">
+                                <span class="spec-pill__dot"></span>
+                                <span id="ops-payloads-spec-pill-label">DRAFT</span>
+                            </span>
+                        </div>
+                        <ol class="spec-list ops-payloads-summary__list" id="ops-payloads-spec-list"
+                            aria-label="Payload generation parameters"></ol>
+                    </div>
+
+                    <!-- Command Preview -->
+                    <div class="section-card" id="tools-command-preview-card" style="margin-bottom: 16px;">
+                        <h3 style="margin-bottom: 10px; font-size: 1.1em;">Command Preview</h3>
+                        <div id="tools-command-preview" style="background: var(--bg-terminal); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font-family: monospace; font-size: 0.82em; white-space: pre-wrap; word-break: break-all; color: var(--text-terminal);">Select a deployment and stage files to see the SCP command</div>
+                    </div>
+
+                    <!-- Transfer Controls -->
+                    <div style="margin-bottom: 16px;">
+                        <button id="tools-transfer-btn" class="btn btn-primary" onclick="startToolsTransfer()" disabled style="width: 100%; padding: 12px; font-size: 1.05em;">
+                            Transfer to Attack Box
+                        </button>
+                    </div>
+
+                    <!-- Phase 3B.3 — Generated artifacts list. Each artifact gets
+                         a .spec-row with Download / View icon-buttons. -->
+                    <div class="section-card ops-payloads-artifacts-card" id="ops-payloads-artifacts-card" hidden>
+                        <div class="ops-payloads-artifacts__head">
+                            <span class="ops-payloads-artifacts__eyebrow">ARTIFACTS</span>
+                            <span class="ops-payloads-artifacts__count" id="ops-payloads-artifacts-count">0</span>
+                        </div>
+                        <ol class="spec-list ops-payloads-artifacts__list" id="ops-payloads-artifacts-list"
+                            aria-label="Generated artifacts"></ol>
+                    </div>
+
+                    <!-- Transfer Log -->
+                    <div class="section-card" id="tools-transfer-log-card" style="display: none;">
+                        <h3 style="color: var(--text-primary); margin-bottom: 12px; font-size: 1.1em;">Transfer Log</h3>
+                        <div id="tools-transfer-progress" style="margin-bottom: 10px;">
+                            <div style="background: var(--bg-section); border-radius: var(--radius); height: 6px; overflow: hidden;">
+                                <div id="tools-transfer-progress-bar" style="background: var(--gold); height: 100%; width: 0%; transition: width 0.3s;"></div>
+                            </div>
+                            <p id="tools-transfer-progress-text" style="font-size: 0.85em; color: var(--text-muted); margin-top: 4px;"></p>
+                        </div>
+                        <div id="tools-transfer-log" class="output-display" style="max-height: 300px;"></div>
+                    </div>
+                  </div><!-- /.ops-payloads-grid__preview -->
+
+                </div><!-- /.ops-payloads-grid -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- D2 — Pre Reqs content moved into Settings tab below as a section card. -->
+
+            <!-- Settings Page -->
+            <!-- M-Dashboard / Decision #21 — Architecture content folded into a modal
+                 launched from the Dashboard "Architecture" widget. The legacy
+                 .tab-page wrapper was deleted; the inner deployment selector +
+                 markdown render still live here so initArchitecturePage() and
+                 architecture.js keep working unchanged. The modal is hidden by
+                 default via the `hidden` attribute + .modal[hidden] CSS rule. -->
+            <div id="architecture-modal" class="modal modal--wide" hidden role="dialog" aria-modal="true" aria-labelledby="architecture-modal-title">
+                <div class="modal__backdrop" data-modal-close onclick="APP.closeArchitectureModal()"></div>
+                <div class="modal__content">
+                    <header class="modal__header">
+                        <h2 id="architecture-modal-title" class="modal__title">Infrastructure Architecture</h2>
+                        <button class="modal__close" type="button" data-modal-close onclick="APP.closeArchitectureModal()" aria-label="Close">&times;</button>
+                    </header>
+                    <div class="modal__body">
+                        <div class="section-card" style="margin-bottom: 20px;">
+                            <label for="architecture-select" style="display: block; font-weight: 600; margin-bottom: 10px; color: var(--text-secondary);">Select Deployment Architecture:</label>
+                            <select id="architecture-select" class="form-select">
+                                <optgroup label="Full C2 Infrastructure (Internet-Facing Ops)">
+                                    <option value="c2-adhoc">C2 Ad-Hoc: Single Server + Redirectors</option>
+                                    <option value="c2-adhoc-domain-fronting">C2 Ad-Hoc: Domain Fronting Mode</option>
+                                    <option value="ssl-options">SSL/TLS Options Comparison</option>
+                                    <option value="c2-purple">C2 Purple Team: Redundant Servers</option>
+                                    <option value="c2-full">C2 Full Red Team: Phase-Based Operations</option>
+                                </optgroup>
+                                <optgroup label="GOAD Training Labs (with Cobalt Strike)">
+                                    <option value="goad-mini">GOAD Mini + CS: 1 VM, 1 Domain</option>
+                                    <option value="goad-light">GOAD Light + CS: 3 VMs, 2 Domains</option>
+                                    <option value="goad-full">GOAD Full + CS: 5 VMs, 3 Domains, 2 Forests</option>
+                                    <option value="goad-sccm">GOAD SCCM + CS: 4 VMs, SCCM Lab</option>
+                                    <option value="goad-nha">GOAD NHA + CS: 5 VMs, Challenge Lab</option>
+                                </optgroup>
+                                <optgroup label="Full C2 + GOAD Lab (Realistic Training)">
+                                    <option value="combined-mini">Full C2 Ad-Hoc + GOAD Mini</option>
+                                    <option value="combined-light">Full C2 Ad-Hoc + GOAD Light</option>
+                                    <option value="combined-full">Full C2 Red Team + GOAD Full</option>
+                                </optgroup>
+                                <optgroup label="Component Architecture (Technical Details)">
+                                    <option value="attack-box">Windows Attack Box - Detailed Architecture</option>
+                                    <option value="s3-storage">S3 Deployment Storage - Security Architecture</option>
+                                    <option value="iam-security">IAM Security - Roles &amp; Permissions</option>
+                                    <option value="ssh-key-management">SSH Key Management - Automation</option>
+                                </optgroup>
+                            </select>
+                        </div>
+
+                        <div class="arch-content-area">
+                            <div id="markdown-content" class="markdown-content">
+                                <p class="t-muted" style="text-align: center; padding: 40px 0;">Select an architecture above to view documentation</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="tab-page" data-page="settings">
                     <h2 class="page-title">Settings</h2>
-                    <p style="margin-bottom: 20px;">
+                    <p class="settings-intro">
                         Application settings and preferences.
                     </p>
 
-                    <div class="status-display info">
-                        <p><strong>Application Information</strong></p>
-                        <p>Red Team Infrastructure Manager v1.0.0</p>
-                        <p>Local management interface for deploying and managing red team infrastructure on AWS.</p>
-                    </div>
+                    <!-- M-Redesign Agent 1 — Settings page rebuild (v2.0.0).
+                         Two-column grid: 200px left rail of section anchors +
+                         main content. Each section is anchor-linkable. -->
+                    <div class="settings-layout">
+                        <aside class="settings-toc" role="navigation" aria-label="Settings sections">
+                            <span class="settings-toc__eyebrow">SETTINGS &middot; SECTIONS</span>
+                            <a href="#settings-general" class="settings-toc__item">General</a>
+                            <a href="#settings-prereqs" class="settings-toc__item">AWS &amp; SSH Prerequisites</a>
+                            <a href="#settings-domains" class="settings-toc__item">Domains &amp; DNS</a>
+                            <a href="#settings-secrets" class="settings-toc__item">Secrets Manager</a>
+                            <a href="#settings-services" class="settings-toc__item">Infrastructure Services</a>
+                            <a href="#settings-cost" class="settings-toc__item">Cost Tracker</a>
+                            <a href="#settings-prefs" class="settings-toc__item">Deployment Preferences</a>
+                            <a href="#settings-roadmap" class="settings-toc__item">Roadmap</a>
+                        </aside>
 
-                    <div class="section-card" style="margin-top: 24px;">
-                        <h3>Deployment Manager</h3>
-                        <div class="form-group form-group--compact">
-                            <label for="auto-refresh-interval">Auto-Refresh Interval</label>
-                            <select id="auto-refresh-interval" onchange="applyAutoRefreshSetting()">
-                                <option value="0">Off — manual refresh only</option>
-                                <option value="10">Every 10 seconds</option>
-                                <option value="30" selected>Every 30 seconds</option>
-                                <option value="60">Every 60 seconds</option>
-                                <option value="120">Every 2 minutes</option>
-                            </select>
-                            <small>Automatically refreshes resources and status on the Deployment Manager page.</small>
+                        <main class="settings-content">
+
+                    <section id="settings-general" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">CONFIG &middot; GENERAL</span>
+                            <h3 class="settings-section__title">Application Information</h3>
+                            <p class="settings-section__description">Build identity and dashboard release metadata.</p>
+                        </header>
+                        <div class="status-display info">
+                            <p><strong>Application Information</strong></p>
+                            <p>Red Team Infrastructure Manager v1.0.0</p>
+                            <p>Local management interface for deploying and managing red team infrastructure on AWS.</p>
                         </div>
-                    </div>
+                    </section>
+
+                    <!-- D2 — AWS & SSH Prerequisites (moved from standalone "Pre Reqs" tab). -->
+                    <section id="settings-prereqs" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">CONFIG &middot; WORKSTATION</span>
+                            <h3 class="settings-section__title" id="aws-prereqs-anchor">AWS &amp; SSH Prerequisites</h3>
+                            <p class="settings-section__description">Verify the tools and credentials your workstation needs before deploying.</p>
+                        </header>
+                        <div class="section-card" id="aws-prereqs-section">
+                        <p style="margin-bottom: 16px; color: var(--text-secondary);">
+                            Verify all required tools and credentials are configured. Run these once per workstation;
+                            the dashboard will warn you on first load if any check has never passed.
+                        </p>
+
+                        <!-- System Dependencies -->
+                        <div class="section-card section-card--highlight section-card--compact" style="margin-bottom: 20px;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                                <h3 style="margin: 0;">System Dependencies</h3>
+                                <button class="btn btn-primary btn-sm" onclick="checkSystemDeps()">Check All</button>
+                            </div>
+                            <div id="system-deps-status">
+                                <small class="t-muted">Click "Check All" to verify installed tools.</small>
+                            </div>
+                        </div>
+
+                        <!-- AWS Credentials Check Section -->
+                        <div class="section-card section-card--highlight section-card--compact">
+                            <h3>AWS Credentials</h3>
+                            <p>Check if your AWS CLI credentials are configured and valid.</p>
+                            <button class="btn btn-primary btn-sm" onclick="checkAWSCredentials()">Check AWS Credentials</button>
+                            <div id="aws-credentials-status" class="status-display"></div>
+                        </div>
+
+                        <!-- AWS Permissions Check Section -->
+                        <div class="section-card section-card--highlight section-card--compact">
+                            <h3>AWS Permissions Check</h3>
+                            <p>Verify your AWS credentials have the required permissions to deploy.</p>
+                            <button class="btn btn-primary btn-sm" onclick="checkAWSPermissions()">Check AWS Permissions</button>
+                            <div id="aws-permissions-status" class="status-display"></div>
+                        </div>
+
+                        <!-- SSH Key Check Section -->
+                        <div class="section-card section-card--highlight section-card--compact">
+                            <h3>SSH Key Pair</h3>
+                            <p>Required for EC2 instance access (bastion, jumpbox, team server). Your public key is uploaded to AWS during deployment. The private key is used for SSH tunnels and GOAD provisioning.</p>
+                            <button class="btn btn-primary btn-sm" onclick="checkSSHKey()">Check SSH Key</button>
+                            <div id="ssh-key-status" class="status-display"></div>
+                        </div>
+
+                        <!-- GitHub CLI Check Section -->
+                        <div class="section-card section-card--highlight section-card--compact">
+                            <h3>GitHub CLI Authentication</h3>
+                            <p>Required to access the tools repo at <a href="https://github.com/harr-sudo/red-team-tools" target="_blank">github.com/harr-sudo/red-team-tools</a>.</p>
+                            <button class="btn btn-primary btn-sm" onclick="checkGitHubCLI()">Check GitHub CLI</button>
+                            <div id="github-cli-status" class="status-display"></div>
+                        </div>
+                        </div>
+                    </section>
+
+                    <!-- D8 — Domains & DNS card (Route 53 hosted zones) -->
+                    <section id="settings-domains" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">DNS &middot; ROUTE 53</span>
+                            <h3 class="settings-section__title">Domains &amp; DNS</h3>
+                            <p class="settings-section__description">
+                                Route 53 hosted zones in this account. Linked to deployments that
+                                reference them in <code>primary_domain_name</code>.
+                            </p>
+                        </header>
+                        <div class="section-card">
+                            <!-- Phase 3d: spec-list toolbar replaces inline-flex pair. -->
+                            <div class="settings-spec-toolbar">
+                                <span class="settings-spec-toolbar__status" id="settings-domains-status" data-state="loading">Loading...</span>
+                                <button class="btn btn-secondary btn-sm" onclick="loadSettingsDomains(true)">Refresh</button>
+                            </div>
+                            <div id="settings-domains-list" class="motion-stagger-in">
+                                <!-- Populated by JS — emits .spec-list / .spec-row markup. -->
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- D8 — Secrets Manager card -->
+                    <section id="settings-secrets" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">AWS &middot; SECRETS MANAGER</span>
+                            <h3 class="settings-section__title">Secrets Manager</h3>
+                            <p class="settings-section__description">
+                                Project secrets stored in AWS Secrets Manager. Shared across
+                                deployments; never in Terraform state.
+                            </p>
+                        </header>
+                        <div class="section-card">
+                            <div class="settings-spec-toolbar">
+                                <span class="settings-spec-toolbar__status" id="settings-secrets-status" data-state="loading">Loading...</span>
+                                <button class="btn btn-secondary btn-sm" onclick="loadSettingsSecrets(true)">Refresh</button>
+                            </div>
+                            <div id="settings-secrets-list" class="motion-stagger-in">
+                                <!-- Populated by JS — emits .spec-list / .spec-row markup. -->
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- D8 — Infrastructure Services card -->
+                    <section id="settings-services" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">PLATFORM &middot; INFRA SERVICES</span>
+                            <h3 class="settings-section__title">Infrastructure Services</h3>
+                            <p class="settings-section__description">
+                                Shared platform services (dashboard server, S3 state backend,
+                                etc.) &mdash; distinct from per-deployment infrastructure.
+                            </p>
+                        </header>
+                        <div class="section-card" id="settings-services-card">
+                            <div class="settings-spec-toolbar">
+                                <span class="settings-spec-toolbar__status" id="settings-services-status" data-state="loading">Loading...</span>
+                                <button class="btn btn-secondary btn-sm" onclick="loadSettingsServices(true)">Refresh</button>
+                            </div>
+                            <div id="settings-services-list" class="motion-stagger-in">
+                                <!-- Populated by JS — emits .spec-list / .spec-row markup. -->
+                            </div>
+                        </div>
+                    </section>
 
                     <!-- Cost Tracker Display -->
-                    <div class="section-card" style="margin-top: 24px;">
-                        <h3 style="margin: 0 0 15px 0;">Cost Tracker</h3>
+                    <section id="settings-cost" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">CONFIG &middot; SPEND</span>
+                            <h3 class="settings-section__title">Cost Tracker</h3>
+                            <p class="settings-section__description">Live AWS Cost Explorer data for your tracked deployments.</p>
+                        </header>
+                        <div class="section-card" id="cost-tracker-section">
 
                         <!-- Refresh button -->
-                        <button class="btn btn-secondary" onclick="refreshCosts()" id="cost-refresh-btn" style="width: 100%; margin-bottom: 20px; padding: 10px; border: 1px solid var(--gold-muted); font-weight: 600;">
-                            Refresh Costs — never refreshed
+                        <button class="btn btn-secondary settings-cost__refresh" onclick="refreshCosts()" id="cost-refresh-btn">
+                            Refresh Costs &mdash; never refreshed
                         </button>
 
-                        <!-- Summary cards -->
-                        <div id="cost-summary-cards" class="grid-auto" style="margin-bottom: 20px;">
+                        <!-- Phase 3d — Cost summary spec-list (replaces lifecycle-card four-up).
+                             The container ID is preserved so existing JS (and any deep-links)
+                             still find it; the inner markup is now a .spec-list. -->
+                        <div class="cost-tracker-summary" style="margin-bottom: 20px;">
+                            <div id="cost-summary-cards">
+                            </div>
                         </div>
 
                         <!-- Budget progress bar -->
@@ -2107,13 +2953,13 @@ ns-143.awsdns-17.org
 
                         <!-- Daily cost trend -->
                         <div id="cost-trend-section" style="margin-bottom: 20px; display: none;">
-                            <h4 style="margin: 0 0 10px 0; color: var(--gold-muted); font-size: 1em;">Daily Cost Trend (Last 14 Days)</h4>
+                            <h4 class="settings-cost__subhead">Daily Cost Trend (Last 14 Days)</h4>
                             <div id="cost-trend-chart"></div>
                         </div>
 
                         <!-- Component breakdown -->
                         <div id="cost-breakdown-section" style="margin-bottom: 20px; display: none;">
-                            <h4 style="margin: 0 0 10px 0; color: var(--gold-muted); font-size: 1em;">Cost Breakdown</h4>
+                            <h4 class="settings-cost__subhead">Cost Breakdown</h4>
                             <div id="cost-breakdown-table"></div>
                         </div>
 
@@ -2132,18 +2978,55 @@ ns-143.awsdns-17.org
                             <p>Deploy infrastructure to see cost tracking here.</p>
                             <button class="btn btn-success btn-sm" onclick="APP.navigateTo('deployment')">Go to Deploy</button>
                         </div>
-                    </div>
+                        </div>
+                    </section>
+
+                    <section id="settings-prefs" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">CONFIG &middot; PREFERENCES</span>
+                            <h3 class="settings-section__title">Deployment Preferences</h3>
+                            <p class="settings-section__description">Auto-refresh cadence for the Deployment Manager view.</p>
+                        </header>
+                        <div class="section-card">
+                            <div class="form-group form-group--compact">
+                                <label for="auto-refresh-interval">Auto-Refresh Interval</label>
+                                <!-- Phase 3d — seg-control wraps the existing <select> for V3 chrome.
+                                     The <select> is kept as a hidden state-of-truth element so
+                                     existing handlers (applyAutoRefreshSetting + localStorage) keep
+                                     working unchanged. The seg-control mirrors select.value on click. -->
+                                <div class="seg-control" id="auto-refresh-seg" role="tablist" aria-label="Auto-refresh interval">
+                                    <button type="button" class="seg-control__option" data-value="0" role="tab">Off</button>
+                                    <button type="button" class="seg-control__option" data-value="10" role="tab">10s</button>
+                                    <button type="button" class="seg-control__option is-active" data-value="30" role="tab" aria-selected="true">30s</button>
+                                    <button type="button" class="seg-control__option" data-value="60" role="tab">60s</button>
+                                    <button type="button" class="seg-control__option" data-value="120" role="tab">2m</button>
+                                </div>
+                                <select id="auto-refresh-interval" onchange="applyAutoRefreshSetting()" hidden aria-hidden="true">
+                                    <option value="0">Off &mdash; manual refresh only</option>
+                                    <option value="10">Every 10 seconds</option>
+                                    <option value="30" selected>Every 30 seconds</option>
+                                    <option value="60">Every 60 seconds</option>
+                                    <option value="120">Every 2 minutes</option>
+                                </select>
+                                <small>Automatically refreshes resources and status on the Deployment Manager page.</small>
+                            </div>
+                        </div>
+                    </section>
 
                     <!-- Roadmap / TODO -->
-                    <div class="section-card" style="margin-top: 24px;">
-                        <h3>Roadmap</h3>
-                        <p style="color: var(--text-secondary); font-size: 0.9em; margin-bottom: 16px;">Planned features and outstanding work items.</p>
+                    <section id="settings-roadmap" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">CONFIG &middot; ROADMAP</span>
+                            <h3 class="settings-section__title">Roadmap</h3>
+                            <p class="settings-section__description">Planned features and outstanding work items.</p>
+                        </header>
+                        <div class="section-card">
 
                         <!-- Beacon API Features -->
                         <details style="margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
                             <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; background: var(--bg-section);">
                                 Beacon Web App &mdash; Unimplemented API Features
-                                <span style="float: right; font-weight: 400; font-size: 0.85em; color: var(--text-muted);">beacon-api-features-backlog.md</span>
+                                <span class="roadmap-summary__doc">beacon-api-features-backlog.md</span>
                             </summary>
                             <div style="padding: 16px; font-size: 0.9em;">
                                 <p style="color: var(--text-secondary); margin-bottom: 12px;">Features available via the CS REST API (219 endpoints) not yet in the web app UI. Backend service methods exist for most.</p>
@@ -2180,7 +3063,7 @@ ns-143.awsdns-17.org
                         <details style="margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
                             <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; background: var(--bg-section);">
                                 CS REST API &mdash; Test Plan
-                                <span style="float: right; font-weight: 400; font-size: 0.85em; color: var(--text-muted);">API_TEST_PLAN.md</span>
+                                <span class="roadmap-summary__doc">API_TEST_PLAN.md</span>
                             </summary>
                             <div style="padding: 16px; font-size: 0.9em;">
                                 <p style="color: var(--text-secondary); margin-bottom: 12px;">Endpoint-by-endpoint test coverage for the CS REST API (219 endpoints). Tracks what's been tested live vs outstanding.</p>
@@ -2205,7 +3088,7 @@ ns-143.awsdns-17.org
                         <details style="margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
                             <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; background: var(--bg-section);">
                                 Attack Box &mdash; Golden AMI
-                                <span style="float: right; font-weight: 400; font-size: 0.85em; color: var(--text-muted);">planned</span>
+                                <span class="roadmap-summary__doc">planned</span>
                             </summary>
                             <div style="padding: 16px; font-size: 0.9em;">
                                 <p style="color: var(--text-secondary); margin-bottom: 12px;">Create a reusable AMI from the current c2-adhoc attack box (46GB, 40+ tools pre-installed). Eliminates 15-20 min bootstrap on future deployments.</p>
@@ -2221,187 +3104,11 @@ ns-143.awsdns-17.org
                                 </p>
                             </div>
                         </details>
-                    </div>
-            </div>
-
-            <!-- Deployments Page (Active Infrastructure) -->
-            <div class="tab-page" data-page="deployments">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <h2 style="color: var(--gold); margin: 0; font-size: 1.7em;">Deployment Manager</h2>
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <span id="deployments-last-updated" style="color: var(--text-muted); font-size: 0.9em;"></span>
-                            <button id="refresh-all-btn" class="btn btn-info" onclick="refreshAll()">Refresh All</button>
                         </div>
+                    </section>
+
+                        </main>
                     </div>
-
-                    <!-- Budget Alert Banner (lightweight — links to Settings for details) -->
-                    <div id="cost-budget-alert" style="display: none; margin-bottom: 20px;"></div>
-
-                    <!-- Deployment Status Overview -->
-                    <div id="deployments-overview" style="margin-bottom: 30px;">
-                    </div>
-
-                    <!-- Lifecycle Management Section -->
-                    <div id="lifecycle-section" style="margin-bottom: 30px; display: none;">
-                        <div class="grid-auto">
-
-                            <!-- Stop Infrastructure -->
-                            <div class="lifecycle-card">
-                                <h4>Stop EC2 Instances</h4>
-                                <p>
-                                    <strong>Pause compute without deleting.</strong> All EC2 instances (C2 servers, jumpbox, Windows VMs) will be stopped.
-                                    Data and configuration preserved.
-                                </p>
-                                <button class="btn btn-warning" onclick="stopInfrastructure()" style="width: 100%;">
-                                    Stop All EC2 Instances
-                                </button>
-                            </div>
-
-                            <!-- Start Infrastructure -->
-                            <div class="lifecycle-card">
-                                <h4>Start EC2 Instances</h4>
-                                <p>
-                                    <strong>Resume stopped instances.</strong> Bring your EC2 instances back online.
-                                    All configurations and data preserved from when you stopped.
-                                </p>
-                                <button class="btn btn-success" onclick="startInfrastructure()" style="width: 100%;">
-                                    Start All EC2 Instances
-                                </button>
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                    <!-- Full Resource List Section (collapsed by default) -->
-                    <div id="resource-list-section" style="margin-bottom: 30px;">
-                        <details class="details-card">
-                            <summary>All Deployed Resources</summary>
-                            <div>
-                                <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
-                                    <div id="resource-scope-info" style="color: var(--text-muted); font-size: 0.88em;"></div>
-                                    <div style="display: flex; gap: 5px;">
-                                        <button class="btn btn-secondary btn-sm" onclick="refreshResourceList()">
-                                            Refresh
-                                        </button>
-                                        <button class="btn btn-secondary btn-sm" onclick="exportResourceList()">
-                                            Export CSV
-                                        </button>
-                                    </div>
-                                </div>
-                                <div style="margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
-                                    <select id="resource-type-filter" onchange="filterResources()">
-                                        <option value="all">All Types</option>
-                                        <option value="ec2">EC2 Instances</option>
-                                        <option value="vpc">VPC</option>
-                                        <option value="subnet">Subnets</option>
-                                        <option value="sg">Security Groups</option>
-                                        <option value="eip">Elastic IPs</option>
-                                        <option value="nat">NAT Gateways</option>
-                                        <option value="s3">S3 Buckets</option>
-                                    </select>
-                                    <input type="text" id="resource-search" placeholder="Search by name or ID..."
-                                           onkeyup="filterResources()"
-                                           style="flex: 1; min-width: 200px;">
-                                </div>
-                                <div id="resource-list-container" style="border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;">
-                                    <div id="resource-table-body" style="max-height: 520px; overflow-y: auto;">
-                                    </div>
-                                </div>
-                                <div id="resource-count" style="margin-top: 8px; color: var(--text-muted); font-size: 0.88em;"></div>
-                            </div>
-                        </details>
-                    </div>
-
-                    <!-- Deployment History & Logs Section -->
-                    <div id="deployment-history-section" style="margin-bottom: 30px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                            <h3 style="margin: 0;">Deployment History & Logs</h3>
-                            <div>
-                                <button class="btn btn-secondary btn-sm" onclick="viewArchivedLogs()">
-                                    Archived Logs
-                                </button>
-                                <button class="btn btn-secondary btn-sm" onclick="clearDeploymentLogs()" style="margin-left: 5px;">
-                                    Clear Logs
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Deployment Timeline -->
-                        <div id="deployment-timeline" style="margin-bottom: 20px;">
-                            <div id="timeline-content">
-                                <!-- Populated by JavaScript -->
-                            </div>
-                        </div>
-
-                        <!-- Detailed Logs -->
-                        <div style="background: var(--bg-terminal); border-radius: var(--radius-lg); overflow: hidden; border: 1px solid var(--border);">
-                            <div style="background: var(--bg-elevated); padding: 10px 15px; display: flex; justify-content: space-between; align-items: center;">
-                                <span style="font-weight: bold; color: var(--text-terminal);">Detailed Logs</span>
-                                <div>
-                                    <button onclick="copyLogs()" class="btn btn-secondary btn-sm">
-                                        Copy
-                                    </button>
-                                    <button onclick="downloadLogs()" class="btn btn-secondary btn-sm" style="margin-left: 5px;">
-                                        Download
-                                    </button>
-                                </div>
-                            </div>
-                            <!-- Log Level Filter -->
-                            <div style="padding: 8px 15px; display: flex; gap: 10px; align-items: center; border-bottom: 1px solid var(--border);">
-                                <span style="color: var(--text-muted); font-size: 0.88em;">Filter:</span>
-                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-                                    <input type="checkbox" id="log-filter-info" checked onchange="filterLogs()">
-                                    <span class="btn btn-info btn-sm">INFO</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-                                    <input type="checkbox" id="log-filter-success" checked onchange="filterLogs()">
-                                    <span class="btn btn-success btn-sm">SUCCESS</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-                                    <input type="checkbox" id="log-filter-warning" checked onchange="filterLogs()">
-                                    <span class="btn btn-warning btn-sm">WARNING</span>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-                                    <input type="checkbox" id="log-filter-error" checked onchange="filterLogs()">
-                                    <span class="btn btn-danger btn-sm">ERROR</span>
-                                </label>
-                            </div>
-                            <div id="deployment-logs" style="padding: 15px; max-height: 400px; overflow-y: auto; font-family: 'SF Mono', 'Consolas', monospace; font-size: 0.88em; line-height: 1.6;">
-                                <div class="t-muted">No deployment logs yet. Deploy infrastructure to see logs here.</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- GOAD Lab Section -->
-                    <div id="goad-lab-section" class="section-card section-card--highlight" style="margin-bottom: 25px; display: none;">
-                        <h3>GOAD Lab (Active Directory)</h3>
-                        <p>Vulnerable Active Directory environment for testing.</p>
-                        <div id="goad-lab-details" class="infrastructure-details">
-                            <!-- Populated by JavaScript -->
-                        </div>
-                        <div id="goad-lab-actions" style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-                            <!-- Populated by JavaScript -->
-                        </div>
-                        <div id="goad-provision-section" style="margin-top: 15px; display: none;">
-                            <div style="border-top: 1px solid var(--border); padding-top: 15px;">
-                                <h4>Active Directory Provisioning</h4>
-                                <div id="goad-provision-status-panel">
-                                    <!-- Populated by JavaScript -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- No Deployment State -->
-                    <div id="no-deployment-message" style="display: none; text-align: center; padding: 40px;">
-                        <h3>No Active Deployments</h3>
-                        <p style="color: var(--text-muted); margin-bottom: 20px;">You haven't deployed any infrastructure yet.</p>
-                        <button class="btn btn-success" onclick="APP.navigateTo('deployment')">Go to Deploy Tab</button>
-                    </div>
-
-
-
             </div>
 
         </div>
@@ -2415,5 +3122,167 @@ ns-143.awsdns-17.org
     <script src="js/elastic-rules.js"></script>
     <script src="js/architecture.js"></script>
     <script src="js/app.js"></script>
+
+    <!-- M-Redesign Agent 3 — toast container (bottom-right transient notifications) -->
+    <div class="toast-container" id="toast-container" role="region" aria-label="Notifications" aria-live="polite"></div>
+
+    <!-- Version footer (P1 #7.6) — persists across tab switches, opens modal -->
+    <footer id="app-version-footer" role="contentinfo" aria-label="Application version" tabindex="0">
+        <span id="app-version-footer-text">v? (unknown)</span>
+    </footer>
+
+    <!-- Version modal — canonical .modal__* markup (M-Redesign Agent 2 v2.0.0).
+         The .version-modal__close alias class is retained on the close button so
+         existing Playwright tests (page.locator('.version-modal__close')) pass. -->
+    <div id="version-modal" class="modal modal--small" hidden role="dialog" aria-modal="true" aria-labelledby="version-modal-title">
+        <div class="modal__backdrop" data-modal-close data-version-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 id="version-modal-title" class="modal__title">Red Team Infrastructure</h2>
+                <button type="button" class="modal__close version-modal__close" aria-label="Close version dialog" data-modal-close data-version-modal-close>&times;</button>
+            </header>
+            <div class="modal__body">
+                <dl class="version-modal__body">
+                    <dt>Version</dt>
+                    <dd id="version-modal-version">unknown</dd>
+                    <dt>Git SHA</dt>
+                    <dd id="version-modal-sha">unknown</dd>
+                    <dt>Built at</dt>
+                    <dd id="version-modal-built">unknown</dd>
+                </dl>
+            </div>
+            <footer class="modal__footer">
+                <a id="version-modal-changelog" class="version-modal__footer-link" href="/changelog" target="_blank" rel="noopener">View changelog</a>
+            </footer>
+        </div>
+    </div>
+
+    <!-- Session-logs modal — static markup, body populated dynamically by
+         viewSessionLogs(). M-Redesign Agent 2 (v2.0.0). -->
+    <div id="session-logs-modal" class="modal modal--wide" hidden role="dialog" aria-modal="true" aria-labelledby="session-logs-modal-title">
+        <div class="modal__backdrop" data-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 id="session-logs-modal-title" class="modal__title">Deployment Logs</h2>
+                <button type="button" class="modal__close" aria-label="Close" data-modal-close>&times;</button>
+            </header>
+            <div class="modal__body" id="session-logs-modal-body"></div>
+            <footer class="modal__footer" id="session-logs-modal-footer"></footer>
+        </div>
+    </div>
+
+    <!-- Archived-logs modal — static markup, body populated dynamically by
+         viewArchivedLogs(). M-Redesign Agent 2 (v2.0.0). -->
+    <div id="archived-logs-modal" class="modal modal--wide" hidden role="dialog" aria-modal="true" aria-labelledby="archived-logs-modal-title">
+        <div class="modal__backdrop" data-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 id="archived-logs-modal-title" class="modal__title">Archived Logs</h2>
+                <button type="button" class="modal__close" aria-label="Close" data-modal-close>&times;</button>
+            </header>
+            <div class="modal__body" id="archived-logs-modal-body"></div>
+            <footer class="modal__footer" id="archived-logs-modal-footer"></footer>
+        </div>
+    </div>
+
+    <!-- M-Operators (Decision #23) — Add operator modal.
+         Uses the V3 .modal/.modal__backdrop/.modal__content pattern (same as
+         architecture-modal, version-modal). Wired through APP.modal.open()
+         and APP.modal.close() helpers in app.js. -->
+    <div id="add-operator-modal" class="modal modal--small" hidden role="dialog" aria-modal="true" aria-labelledby="add-operator-title">
+        <div class="modal__backdrop" data-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 id="add-operator-title" class="modal__title">Add operator profile</h2>
+                <button type="button" class="modal__close" aria-label="Close" data-modal-close>&times;</button>
+            </header>
+            <div class="modal__body">
+                <p class="t-muted" style="margin-top: 0;">
+                    Operator profiles are for action attribution &mdash; no password, no auth.
+                    Trust is upstream via AWS IAM and SSH access.
+                </p>
+                <form id="add-operator-form" onsubmit="return submitAddOperator(event)">
+                    <div class="form-group">
+                        <label for="add-op-id">Operator ID</label>
+                        <input type="text" id="add-op-id" required
+                               pattern="[a-z0-9_-]+"
+                               autocomplete="off"
+                               placeholder="alice">
+                        <small>Lowercase alphanumeric, hyphens, or underscores.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="add-op-display">Display name</label>
+                        <input type="text" id="add-op-display" required placeholder="Alice">
+                    </div>
+                    <div class="form-group">
+                        <label>Color</label>
+                        <div class="operator-color-grid" id="add-op-color-grid">
+                            <!-- populated by JS — 6 swatches -->
+                        </div>
+                    </div>
+                    <div id="add-op-error" class="callout callout--warning" style="display: none; margin-top: 12px;"></div>
+                    <div class="modal__footer" style="margin-top: 20px; padding: 0; border: 0;">
+                        <button class="btn btn-secondary" type="button" data-modal-close>Cancel</button>
+                        <button class="btn btn-primary" type="submit">Add operator</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- M-Operators (Decision #23) — Manage operators modal.
+         Wired through APP.operatorManagement.open(); list rendered into
+         #operator-management-list via the Phase 2b .spec-list / .spec-row
+         primitives so the modal inherits dual-theme contrast invariants. -->
+    <div id="operator-management-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="operator-management-title">
+        <div class="modal__backdrop" data-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 id="operator-management-title" class="modal__title">Manage operators</h2>
+                <button type="button" class="modal__close" aria-label="Close" data-modal-close>&times;</button>
+            </header>
+            <div class="modal__body">
+                <p class="t-muted" style="margin-top: 0;">
+                    Operator profiles are for action attribution. Switching profiles is a click;
+                    the trust boundary is upstream via AWS IAM and SSH.
+                </p>
+                <dl class="spec-list operator-mgmt__list" id="operator-management-list" aria-label="Operator profiles">
+                    <!-- populated by APP.operatorManagement.render() -->
+                </dl>
+                <div class="modal__footer" style="margin-top: 20px; padding: 0; border: 0;">
+                    <button class="btn btn-secondary" type="button" data-modal-close>Close</button>
+                    <button class="btn btn-primary" id="operator-management-add" type="button">+ Add operator</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Screenshot viewer — full-bleed modal for beacon screenshots.
+         Body populated dynamically by BEACON.viewScreenshot(). M-Redesign Agent 2. -->
+    <div id="screenshot-overlay" class="modal modal--full" hidden role="dialog" aria-modal="true" aria-label="Screenshot viewer">
+        <div class="modal__backdrop" data-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 class="modal__title">Screenshot</h2>
+                <button type="button" class="modal__close" aria-label="Close" data-modal-close>&times;</button>
+            </header>
+            <div class="modal__body" id="screenshot-overlay-body"></div>
+        </div>
+    </div>
+
+    <!-- Phase 2B — New Deployment journey takeover.
+         Mounted lazily by APP.journey.open(); shells remain in the DOM but
+         the actual wizard / review interior is rendered into #journey-card
+         on first open. Scrim + card use shared .scrim-takeover / .takeover-card
+         primitives so dim/blur/animations stay consistent with Phase 3 reuse. -->
+    <div id="journey-scrim" class="scrim-takeover" hidden aria-hidden="true"></div>
+    <div id="journey-takeover"
+         class="takeover-card"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="journey-takeover-title"
+         hidden>
+        <div id="journey-takeover-body"></div>
+    </div>
 </body>
 </html>

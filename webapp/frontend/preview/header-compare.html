@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html data-theme="light" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Header Design Pilot — Baseline vs Taste-skill</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* Compare-view styles (anti-emoji, palette only, dual-theme).
+           Temporary — slated for removal at D1 completion per Plan §17/§24. */
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, sans-serif;
+            background: var(--bg-app);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        .compare-bar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 20px;
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+        }
+        .compare-bar h1 {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .compare-bar__controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .compare-bar__btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            text-decoration: none;
+            display: inline-block;
+            font-family: inherit;
+        }
+        .compare-bar__btn:hover { border-color: var(--text-secondary); }
+
+        /* Variant selector group — segmented control feel */
+        .compare-bar__variants {
+            display: inline-flex;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .compare-bar__variant {
+            background: var(--bg-card);
+            border: 0;
+            border-left: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            font-family: inherit;
+            transition: background-color 120ms ease, color 120ms ease;
+        }
+        .compare-bar__variant:first-child { border-left: 0; }
+        .compare-bar__variant:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .compare-bar__variant.is-active {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            font-weight: 600;
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+        .compare-bar__variant:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px var(--brand);
+        }
+        .compare-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1px;
+            background: var(--border);
+            min-height: calc(100vh - 50px);
+        }
+        .compare-pane {
+            background: var(--bg-app);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+        .compare-pane__label {
+            position: absolute;
+            top: 12px;
+            left: 16px;
+            z-index: 50;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.72rem;
+            font-family: 'SF Mono', Monaco, monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .compare-pane iframe {
+            border: 0;
+            width: 100%;
+            flex: 1;
+        }
+        @media (max-width: 1024px) {
+            .compare-grid {
+                grid-template-columns: 1fr;
+                grid-template-rows: 1fr 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="compare-bar">
+        <h1>Header Design Pilot — A/B</h1>
+        <div class="compare-bar__controls">
+            <div class="compare-bar__variants" role="group" aria-label="Taste variant selector">
+                <button class="compare-bar__variant is-active"
+                        type="button"
+                        data-variant="taste"
+                        data-label="6/3/6"
+                        aria-pressed="true">V1 6/3/6</button>
+                <button class="compare-bar__variant"
+                        type="button"
+                        data-variant="taste-v2"
+                        data-label="8/2/7"
+                        aria-pressed="false">V2 8/2/7</button>
+                <button class="compare-bar__variant"
+                        type="button"
+                        data-variant="taste-v3"
+                        data-label="5/6/5"
+                        aria-pressed="false">V3 5/6/5</button>
+                <button class="compare-bar__variant"
+                        type="button"
+                        data-variant="taste-v4"
+                        data-label="10/10/7"
+                        aria-pressed="false">V4 10/10/7</button>
+            </div>
+            <button class="compare-bar__btn" id="theme-toggle">Toggle theme (both panes)</button>
+            <a class="compare-bar__btn" href="/preview/header?variant=baseline">Baseline only</a>
+            <a class="compare-bar__btn" id="taste-only-link" href="/preview/header?variant=taste">Taste-skill only</a>
+        </div>
+    </div>
+    <div class="compare-grid">
+        <div class="compare-pane">
+            <span class="compare-pane__label">Baseline (no skill)</span>
+            <iframe id="baseline-frame" src="/preview/header/baseline" title="Baseline header"></iframe>
+        </div>
+        <div class="compare-pane">
+            <span class="compare-pane__label" id="taste-pane-label">Taste-skill (6/3/6)</span>
+            <iframe id="taste-frame" src="/preview/header/taste" title="Taste-skill header"></iframe>
+        </div>
+    </div>
+    <script>
+        // Variant selector — swaps right-pane iframe between V1/V2/V3.
+        (function () {
+            const buttons = document.querySelectorAll('.compare-bar__variant');
+            const tasteFrame = document.getElementById('taste-frame');
+            const tasteLabel = document.getElementById('taste-pane-label');
+            const tasteOnlyLink = document.getElementById('taste-only-link');
+
+            function setVariant(variant, dials) {
+                buttons.forEach(b => {
+                    const isActive = b.dataset.variant === variant;
+                    b.classList.toggle('is-active', isActive);
+                    b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+                });
+                tasteFrame.src = '/preview/header/' + variant;
+                tasteLabel.textContent = 'Taste-skill (' + dials + ')';
+                tasteOnlyLink.href = '/preview/header?variant=' + variant;
+            }
+            buttons.forEach(b => {
+                b.addEventListener('click', () => {
+                    setVariant(b.dataset.variant, b.dataset.label);
+                });
+            });
+        })();
+
+        // Theme toggle that flips theme attr inside both iframes
+        const toggle = document.getElementById('theme-toggle');
+        toggle.addEventListener('click', () => {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+            const next = currentTheme === 'light' ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', next);
+            document.querySelectorAll('iframe').forEach(f => {
+                try {
+                    f.contentDocument.documentElement.setAttribute('data-theme', next);
+                } catch (e) { /* cross-origin or not loaded */ }
+            });
+        });
+    </script>
+</body>
+</html>

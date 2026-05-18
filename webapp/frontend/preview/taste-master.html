@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TASTE Master Demo Hub — Red Team Infrastructure</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ════════════════════════════════════════════════════════════════════
+           TASTE MASTER DEMO HUB — Self-contained styling, palette tokens only.
+           Layout: 280px sidebar nav + main iframe viewport + top bar.
+           ════════════════════════════════════════════════════════════════════ */
+
+        :root {
+            --hub-sidebar-w: 280px;
+            --hub-topbar-h: 56px;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background: var(--bg-app);
+            color: var(--text-primary);
+            font-family: var(--font-family-base);
+            font-size: var(--font-size-base);
+            overflow: hidden;
+        }
+
+        /* ── Top bar ─────────────────────────────────────────────────────── */
+        .hub-topbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: var(--hub-topbar-h);
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            z-index: 100;
+        }
+        .hub-topbar__brand {
+            display: flex;
+            align-items: baseline;
+            gap: 14px;
+        }
+        .hub-topbar__title {
+            font-size: var(--font-size-lg);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+            margin: 0;
+            letter-spacing: var(--letter-spacing-tight);
+        }
+        .hub-topbar__subtitle {
+            font-size: var(--font-size-xs);
+            font-family: var(--font-family-mono);
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: var(--letter-spacing-caps);
+        }
+        .hub-topbar__actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .hub-topbar__btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 7px 14px;
+            border-radius: var(--radius-sm);
+            font-size: var(--font-size-sm);
+            font-family: inherit;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .hub-topbar__btn:hover {
+            border-color: var(--brand-light);
+        }
+
+        /* ── Sidebar nav ─────────────────────────────────────────────────── */
+        .hub-sidebar {
+            position: fixed;
+            top: var(--hub-topbar-h);
+            left: 0;
+            bottom: 0;
+            width: var(--hub-sidebar-w);
+            background: var(--bg-section);
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+            padding: 16px 0;
+        }
+        .hub-sidebar__section {
+            margin-bottom: 24px;
+        }
+        .hub-sidebar__section-label {
+            display: block;
+            font-size: 9.5px;
+            font-family: var(--font-family-mono);
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: var(--letter-spacing-caps);
+            padding: 8px 20px 6px;
+            font-weight: var(--font-weight-medium);
+        }
+        .hub-sidebar__section-decision {
+            background: var(--bg-card);
+            padding-top: 4px;
+            padding-bottom: 8px;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+        .hub-sidebar__section-decision .hub-sidebar__section-label {
+            color: var(--brand-light);
+        }
+        .hub-sidebar__pending-pill {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 1px 6px;
+            background: var(--brand-light);
+            color: var(--text-inverse);
+            border-radius: 999px;
+            font-size: 8.5px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            vertical-align: middle;
+        }
+        .hub-sidebar__item {
+            display: block;
+            padding: 8px 20px;
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+            cursor: pointer;
+            border: 0;
+            background: transparent;
+            text-align: left;
+            width: 100%;
+            font-family: inherit;
+            transition: background var(--motion-duration-base) var(--motion-easing-standard),
+                        color var(--motion-duration-base) var(--motion-easing-standard);
+            position: relative;
+        }
+        .hub-sidebar__item::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: transparent;
+            transition: background var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .hub-sidebar__item:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .hub-sidebar__item.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: var(--font-weight-semibold);
+        }
+        .hub-sidebar__item.is-active::before {
+            background: var(--brand-light);
+        }
+        .hub-sidebar__item-name {
+            display: block;
+        }
+        .hub-sidebar__item-hint {
+            display: block;
+            font-size: var(--font-size-xs);
+            color: var(--text-secondary);
+            margin-top: 2px;
+            font-weight: var(--font-weight-regular);
+        }
+        .hub-sidebar__item.is-pick {
+            color: var(--text-primary);
+        }
+        .hub-sidebar__item.is-pick .hub-sidebar__item-name::after {
+            content: ' ★';
+            color: var(--brand-light);
+            font-size: 11px;
+        }
+
+        /* ── Main viewport ───────────────────────────────────────────────── */
+        .hub-main {
+            position: fixed;
+            top: var(--hub-topbar-h);
+            left: var(--hub-sidebar-w);
+            right: 0;
+            bottom: 0;
+            background: var(--bg-app);
+            display: flex;
+            flex-direction: column;
+        }
+        .hub-main__bar {
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .hub-main__title-block {
+            min-width: 0;
+        }
+        .hub-main__eyebrow {
+            font-size: 9.5px;
+            font-family: var(--font-family-mono);
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: var(--letter-spacing-caps);
+            margin-bottom: 3px;
+        }
+        .hub-main__title {
+            margin: 0;
+            font-size: var(--font-size-md);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+        }
+        .hub-main__hypothesis {
+            margin: 4px 0 0;
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+            font-style: italic;
+            max-width: 720px;
+        }
+        .hub-iframe-wrap {
+            flex: 1;
+            background: var(--bg-app);
+            position: relative;
+            overflow: hidden;
+        }
+        .hub-iframe {
+            border: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .hub-iframe-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-secondary);
+            font-size: var(--font-size-base);
+        }
+    </style>
+</head>
+<body>
+    <header class="hub-topbar">
+        <div class="hub-topbar__brand">
+            <h1 class="hub-topbar__title">TASTE Master Demo Hub</h1>
+            <span class="hub-topbar__subtitle">Red Team Infrastructure — V3 5/6/5 Design Language</span>
+        </div>
+        <div class="hub-topbar__actions">
+            <a class="hub-topbar__btn" id="open-standalone" href="#" target="_blank" rel="noopener">Open standalone ↗</a>
+            <button class="hub-topbar__btn" id="theme-toggle" type="button">Toggle theme</button>
+        </div>
+    </header>
+
+    <nav class="hub-sidebar" aria-label="Demo navigation">
+        <!-- Bolt-on feature (Phase 1) — blended target page is the pick -->
+        <section class="hub-sidebar__section hub-sidebar__section-decision">
+            <span class="hub-sidebar__section-label">Bolt-on feature (Phase 1)<span class="hub-sidebar__pending-pill">DECISION PENDING</span></span>
+            <button class="hub-sidebar__item is-pick" data-url="/preview/page-bolton-target.html"
+                    data-title="Bolt-on target (blended catalog + per-host)"
+                    data-eyebrow="BOLT-ON · TARGET (BLENDED)"
+                    data-hypothesis="The bolt-on target page is one host's vulnerability state in one place — installed, patchable, available, blocked, and patched, all in a single scrollable spec-list sorted by what the operator can do next.">
+                <span class="hub-sidebar__item-name">Target (blended)</span>
+                <span class="hub-sidebar__item-hint">★ Picked direction — one host, one unified spec-list, 5 status sections</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-bolton-install.html"
+                    data-title="Bolt-on install confirmation + progress + agent"
+                    data-eyebrow="BOLT-ON · INSTALL"
+                    data-hypothesis="Install confirmation surfaces compatibility, detection coverage, and what will change — then a live-streaming progress view that exposes the agentic fallback if scripts fail.">
+                <span class="hub-sidebar__item-name">Install + progress + agent</span>
+                <span class="hub-sidebar__item-hint">4 scenarios via seg-control</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-bolton-catalog.html"
+                    data-title="Bolt-on catalog (legacy — superseded by blended)"
+                    data-eyebrow="BOLT-ON · CATALOG"
+                    data-hypothesis="The bolt-on catalog is the operator's vulnerability shopping mall — categorized cards filterable by compatibility, with MITRE TTP + detection coverage stamped on every entry.">
+                <span class="hub-sidebar__item-name">Catalog browser</span>
+                <span class="hub-sidebar__item-hint">(legacy — see blended) · 18 cards · 8 compat states</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-bolton-host.html"
+                    data-title="Bolt-on per-host installed view (legacy — superseded by blended)"
+                    data-eyebrow="BOLT-ON · HOST"
+                    data-hypothesis="Per host, see what's installed, what's patchable, what's missing detection coverage — the operator's command center for one machine's vulnerability state.">
+                <span class="hub-sidebar__item-name">Per-host installed view</span>
+                <span class="hub-sidebar__item-hint">(legacy — see blended) · Patch / uninstall / detect-fired</span>
+            </button>
+        </section>
+
+        <!-- Decisions pending — top-level scaffolds (most important for review) -->
+        <section class="hub-sidebar__section hub-sidebar__section-decision">
+            <span class="hub-sidebar__section-label">Decision pending<span class="hub-sidebar__pending-pill">PICK</span></span>
+            <button class="hub-sidebar__item" data-url="/preview/top-level-compare.html"
+                    data-title="Top-level scaffolds — Comparison"
+                    data-eyebrow="MACRO SCAFFOLD · 4-WAY COMPARE"
+                    data-hypothesis="Four genuinely different macro layouts side-by-side; pick one to shape the whole app.">
+                <span class="hub-sidebar__item-name">Compare all 4 scaffolds</span>
+                <span class="hub-sidebar__item-hint">3-pane grid + theme toggle</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/top-level-a-left-rail.html"
+                    data-title="Scaffold A — Left rail navigation"
+                    data-eyebrow="SCAFFOLD · A"
+                    data-hypothesis="Vertical icon+label rail replaces the top tab strip; sub-pills become nested rail children with a brand-light accent.">
+                <span class="hub-sidebar__item-name">A · Left rail</span>
+                <span class="hub-sidebar__item-hint">Vertical nav, minimal header</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/top-level-b-palette.html"
+                    data-title="Scaffold B — Command palette"
+                    data-eyebrow="SCAFFOLD · B"
+                    data-hypothesis="Persistent nav disappears; movement happens through a centered Search pill + ⌘K palette. Keyboard-first.">
+                <span class="hub-sidebar__item-name">B · Command palette</span>
+                <span class="hub-sidebar__item-hint">⌘K summons everything</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/top-level-c-workflow.html"
+                    data-title="Scaffold C — Workflow stages"
+                    data-eyebrow="SCAFFOLD · C"
+                    data-hypothesis="Replace domain tabs with Plan / Build / Run / Clean stage tabs. Sub-pills reorganize per stage.">
+                <span class="hub-sidebar__item-name">C · Workflow stages</span>
+                <span class="hub-sidebar__item-hint">Plan / Build / Run / Clean</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/top-level-d-dashboard-os.html"
+                    data-title="Scaffold D — Dashboard as OS"
+                    data-eyebrow="SCAFFOLD · D"
+                    data-hypothesis="Dashboard is the only persistent surface; everything else is a contextual overlay opened from a widget.">
+                <span class="hub-sidebar__item-name">D · Dashboard-as-OS</span>
+                <span class="hub-sidebar__item-hint">No tabs; everything overlays</span>
+            </button>
+        </section>
+
+        <!-- Production page demos — what every page looks like under TASTE -->
+        <section class="hub-sidebar__section">
+            <span class="hub-sidebar__section-label">Production page renders (10)</span>
+            <button class="hub-sidebar__item" data-url="/preview/page-dashboard.html"
+                    data-title="Dashboard landing"
+                    data-eyebrow="PAGE · DASHBOARD"
+                    data-hypothesis="The dashboard is a launchpad, not a report — hero CTA up top, then a calm rhythm of single-question widgets.">
+                <span class="hub-sidebar__item-name">Dashboard</span>
+                <span class="hub-sidebar__item-hint">Landing with all widgets</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-configure.html"
+                    data-title="Configure (edit existing deployment)"
+                    data-eyebrow="PAGE · CONFIGURE"
+                    data-hypothesis="Configure is symmetric with Deploy summary — same spec-list shape, but in editing mode by default. The form is the spec-list.">
+                <span class="hub-sidebar__item-name">Configure</span>
+                <span class="hub-sidebar__item-hint">Inline edit + plan diff</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-manage.html"
+                    data-title="Manage (per-deployment detail)"
+                    data-eyebrow="PAGE · MANAGE"
+                    data-hypothesis="Manage is the operator's command center for one deployment — TASTE hero, spec-list summary, action strip, dense detail tables below.">
+                <span class="hub-sidebar__item-name">Manage</span>
+                <span class="hub-sidebar__item-hint">Per-deployment command center</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-cleanup.html"
+                    data-title="Cleanup (orphan resources)"
+                    data-eyebrow="PAGE · CLEANUP"
+                    data-hypothesis="Cleanup catalogs AWS resources nothing currently owns — spec-list rhythm, per-row actions, marked entries persist with attribution.">
+                <span class="hub-sidebar__item-name">Cleanup</span>
+                <span class="hub-sidebar__item-hint">Orphan + marked-known flow</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-beacons.html"
+                    data-title="Beacons (list + detail)"
+                    data-eyebrow="PAGE · BEACONS"
+                    data-hypothesis="Beacons list rows in spec-list rhythm; selecting one opens an attributed detail panel with driven-by + command history.">
+                <span class="hub-sidebar__item-name">Beacons</span>
+                <span class="hub-sidebar__item-hint">List + driven-by detail</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-terminal.html"
+                    data-title="Terminal (sessions)"
+                    data-eyebrow="PAGE · TERMINAL"
+                    data-hypothesis="Terminal sessions are tab-strip first — operator color dot on every tab with contrast ring for identity.">
+                <span class="hub-sidebar__item-name">Terminal</span>
+                <span class="hub-sidebar__item-hint">Tab strip + operator dots</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-payloads.html"
+                    data-title="Payloads (form + preview)"
+                    data-eyebrow="PAGE · PAYLOADS"
+                    data-hypothesis="Payloads is two columns — config form on the left, parameter summary + artifacts list on the right.">
+                <span class="hub-sidebar__item-name">Payloads</span>
+                <span class="hub-sidebar__item-hint">Two-column form + summary</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-settings.html"
+                    data-title="Settings (TOC + 8 sections)"
+                    data-eyebrow="PAGE · SETTINGS"
+                    data-hypothesis="Settings is a TOC rail of 8 anchored sections — eyebrow caps + title + description pattern, spec-lists wherever key/value.">
+                <span class="hub-sidebar__item-name">Settings</span>
+                <span class="hub-sidebar__item-hint">TOC rail + 8 sections</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-modals.html"
+                    data-title="Modals showcase"
+                    data-eyebrow="PAGE · MODALS"
+                    data-hypothesis="Every modal shares the same V3 chrome — scrim + centered card + header/body/footer — only the body differs.">
+                <span class="hub-sidebar__item-name">Modals</span>
+                <span class="hub-sidebar__item-hint">6 modal variants</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/page-architecture.html"
+                    data-title="Architecture modal"
+                    data-eyebrow="PAGE · ARCHITECTURE"
+                    data-hypothesis="Architecture is reference content — a contextual modal you open from the Dashboard widget. Diagram + deployment selector + notes.">
+                <span class="hub-sidebar__item-name">Architecture</span>
+                <span class="hub-sidebar__item-hint">Diagram + selector + notes</span>
+            </button>
+        </section>
+
+        <!-- Picks already made — Composition A summary + Hybrid journey -->
+        <section class="hub-sidebar__section">
+            <span class="hub-sidebar__section-label">Picks already made</span>
+            <button class="hub-sidebar__item is-pick" data-url="/preview/deploy-summary-v3-a.html"
+                    data-title="Composition A — Spec list (Deploy summary)"
+                    data-eyebrow="PICK · DEPLOY SUMMARY"
+                    data-hypothesis="A deployment configuration is fundamentally a list of key/value pairs — present it as one, with no tile chrome.">
+                <span class="hub-sidebar__item-name">Composition A — Spec list</span>
+                <span class="hub-sidebar__item-hint">Picked direction; ★ shipped to live Deploy</span>
+            </button>
+            <button class="hub-sidebar__item is-pick" data-url="/preview/deploy-journey-hybrid.html"
+                    data-title="Hybrid journey — Wizard + Spec edit"
+                    data-eyebrow="PICK · NEW DEPLOYMENT FLOW"
+                    data-hypothesis="Linear wizard for first-time creation; spec-list review for last-mile edits — no backtracking through the wizard once you're on review.">
+                <span class="hub-sidebar__item-name">Hybrid journey</span>
+                <span class="hub-sidebar__item-hint">Picked direction; ★ shipped to + New Deployment</span>
+            </button>
+        </section>
+
+        <!-- TASTE design DNA — header variants for reference -->
+        <section class="hub-sidebar__section">
+            <span class="hub-sidebar__section-label">TASTE DNA — header variants</span>
+            <button class="hub-sidebar__item" data-url="/preview/header-compare.html"
+                    data-title="Header variants comparison"
+                    data-eyebrow="DNA · HEADER A/B"
+                    data-hypothesis="Original taste-skill exploration. V3 5/6/5 won; the whole rest of the redesign is rooted in this language.">
+                <span class="hub-sidebar__item-name">Compare V1/V2/V3/V4</span>
+                <span class="hub-sidebar__item-hint">4-pane theme-toggleable</span>
+            </button>
+            <button class="hub-sidebar__item is-pick" data-url="/preview/header-taste-v3.html"
+                    data-title="Header V3 — 5/6/5"
+                    data-eyebrow="DNA · HEADER V3"
+                    data-hypothesis="Dial spec 5/6/5 (variance/motion/density). This is the design language north star for everything else.">
+                <span class="hub-sidebar__item-name">V3 (winner — 5/6/5)</span>
+                <span class="hub-sidebar__item-hint">★ The TASTE north star</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/header-taste.html"
+                    data-title="Header V1 — 6/3/6"
+                    data-eyebrow="DNA · HEADER V1"
+                    data-hypothesis="Original taste-skill output (6/3/6).">
+                <span class="hub-sidebar__item-name">V1 (6/3/6)</span>
+                <span class="hub-sidebar__item-hint">Original taste-skill</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/header-taste-v2.html"
+                    data-title="Header V2 — 8/2/7"
+                    data-eyebrow="DNA · HEADER V2"
+                    data-hypothesis="Higher variance, lower motion variant.">
+                <span class="hub-sidebar__item-name">V2 (8/2/7)</span>
+                <span class="hub-sidebar__item-hint">High variance, low motion</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/header-taste-v4.html"
+                    data-title="Header V4 — 10/10/7"
+                    data-eyebrow="DNA · HEADER V4"
+                    data-hypothesis="Maximum dial spec (10/10/7) — exploratory only.">
+                <span class="hub-sidebar__item-name">V4 (10/10/7)</span>
+                <span class="hub-sidebar__item-hint">Max dial — exploratory</span>
+            </button>
+        </section>
+
+        <!-- Design exploration history — summary + journey alternates -->
+        <section class="hub-sidebar__section">
+            <span class="hub-sidebar__section-label">Design exploration history</span>
+            <button class="hub-sidebar__item" data-url="/preview/deploy-summary-compare.html"
+                    data-title="Deploy summary — A/B/C comparison"
+                    data-eyebrow="EXPLORATION · DEPLOY SUMMARY"
+                    data-hypothesis="Three structurally different shapes considered; A won the pick.">
+                <span class="hub-sidebar__item-name">Summary A/B/C compare</span>
+                <span class="hub-sidebar__item-hint">A=spec list (won), B=hero+ribbon, C=prose</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/deploy-summary-v3-b.html"
+                    data-title="Composition B — Hero + ribbon"
+                    data-eyebrow="ALT · DEPLOY SUMMARY · B"
+                    data-hypothesis="Make project identity the headline; reduce technical details to a hairline-divided ribbon.">
+                <span class="hub-sidebar__item-name">B · Hero + ribbon</span>
+                <span class="hub-sidebar__item-hint">Alternative considered, not picked</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/deploy-summary-v3-c.html"
+                    data-title="Composition C — Prose + columns"
+                    data-eyebrow="ALT · DEPLOY SUMMARY · C"
+                    data-hypothesis="Read the deployment as a sentence first, scan the columns second — chrome disappears entirely.">
+                <span class="hub-sidebar__item-name">C · Prose + columns</span>
+                <span class="hub-sidebar__item-hint">Alternative considered, not picked</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/deploy-journey-compare.html"
+                    data-title="Journey alternatives — 4-way comparison"
+                    data-eyebrow="EXPLORATION · JOURNEY"
+                    data-hypothesis="Wizard / progressive / spec-edit / Hybrid; Hybrid won the pick.">
+                <span class="hub-sidebar__item-name">Journey 4-way compare</span>
+                <span class="hub-sidebar__item-hint">J1, J2, J3, Hybrid (winner)</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/deploy-journey-j1-wizard.html"
+                    data-title="Journey J1 — Linear wizard"
+                    data-eyebrow="ALT · JOURNEY · J1"
+                    data-hypothesis="One decision per step — five-step wizard with progress dots.">
+                <span class="hub-sidebar__item-name">J1 · Linear wizard</span>
+                <span class="hub-sidebar__item-hint">Alternative considered</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/deploy-journey-j2-progressive.html"
+                    data-title="Journey J2 — Progressive single-page"
+                    data-eyebrow="ALT · JOURNEY · J2"
+                    data-hypothesis="One growing card — sections appear as the prior decision is made.">
+                <span class="hub-sidebar__item-name">J2 · Progressive page</span>
+                <span class="hub-sidebar__item-hint">Alternative considered</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/deploy-journey-j3-spec-edit.html"
+                    data-title="Journey J3 — Spec list editor"
+                    data-eyebrow="ALT · JOURNEY · J3"
+                    data-hypothesis="The spec list IS the journey — pre-fill safe defaults, then click any row to edit it inline.">
+                <span class="hub-sidebar__item-name">J3 · Spec-list editor</span>
+                <span class="hub-sidebar__item-hint">Alternative considered (merged into Hybrid)</span>
+            </button>
+        </section>
+    </nav>
+
+    <main class="hub-main">
+        <div class="hub-main__bar">
+            <div class="hub-main__title-block">
+                <div class="hub-main__eyebrow" id="main-eyebrow">START</div>
+                <h2 class="hub-main__title" id="main-title">Pick a demo from the sidebar →</h2>
+                <p class="hub-main__hypothesis" id="main-hypothesis">The "Decision pending" section at the top has the top-level scaffold choice (left rail / palette / workflow / dashboard-as-OS) — open that first. Then browse production page renders to see what every page looks like in V3 TASTE.</p>
+            </div>
+        </div>
+        <div class="hub-iframe-wrap">
+            <iframe class="hub-iframe" id="demo-frame" title="Selected demo" hidden></iframe>
+            <div class="hub-iframe-placeholder" id="placeholder">
+                ← Pick a demo from the sidebar
+            </div>
+        </div>
+    </main>
+
+    <script>
+        (function () {
+            const sidebarItems = document.querySelectorAll('.hub-sidebar__item');
+            const frame = document.getElementById('demo-frame');
+            const placeholder = document.getElementById('placeholder');
+            const mainEyebrow = document.getElementById('main-eyebrow');
+            const mainTitle = document.getElementById('main-title');
+            const mainHypothesis = document.getElementById('main-hypothesis');
+            const openStandalone = document.getElementById('open-standalone');
+            const themeToggle = document.getElementById('theme-toggle');
+
+            function pickDemo(item) {
+                sidebarItems.forEach(i => i.classList.remove('is-active'));
+                item.classList.add('is-active');
+
+                const url = item.dataset.url;
+                const title = item.dataset.title;
+                const eyebrow = item.dataset.eyebrow;
+                const hypothesis = item.dataset.hypothesis;
+
+                placeholder.hidden = true;
+                frame.hidden = false;
+                frame.src = url;
+                mainEyebrow.textContent = eyebrow;
+                mainTitle.textContent = title;
+                mainHypothesis.textContent = hypothesis;
+                openStandalone.href = url;
+                openStandalone.hidden = false;
+
+                // Sync theme into iframe on load
+                frame.addEventListener('load', () => {
+                    try {
+                        const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+                        frame.contentDocument.documentElement.setAttribute('data-theme', theme);
+                    } catch (e) { /* cross-origin safety; same-origin so should work */ }
+                }, { once: true });
+
+                // Update URL hash so this demo is bookmarkable
+                history.replaceState(null, '', '#' + encodeURIComponent(item.dataset.url));
+            }
+
+            sidebarItems.forEach(item => {
+                item.addEventListener('click', () => pickDemo(item));
+            });
+
+            // Theme toggle — flips top-level + iframe
+            themeToggle.addEventListener('click', () => {
+                const current = document.documentElement.getAttribute('data-theme') || 'dark';
+                const next = current === 'dark' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-theme', next);
+                try {
+                    if (frame.contentDocument) {
+                        frame.contentDocument.documentElement.setAttribute('data-theme', next);
+                    }
+                } catch (e) {}
+            });
+
+            // Restore from hash
+            window.addEventListener('DOMContentLoaded', () => {
+                const hash = window.location.hash.replace('#', '');
+                if (hash) {
+                    const decoded = decodeURIComponent(hash);
+                    const match = Array.from(sidebarItems).find(i => i.dataset.url === decoded);
+                    if (match) pickDemo(match);
+                }
+            });
+
+            // Default: hide open-standalone link until a demo is selected
+            openStandalone.hidden = true;
+        })();
+    </script>
+</body>
+</html>

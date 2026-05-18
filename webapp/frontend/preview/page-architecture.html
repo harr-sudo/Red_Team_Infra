@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TASTE Demo D3 — Architecture modal (V3-native)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           DEMO D3 — ARCHITECTURE MODAL (V3-NATIVE)
+           Hypothesis: Architecture is reference content — a contextual
+           modal you open from the Dashboard widget, not a top-level
+           tab. Big diagram, deployment selector, brief notes.
+           ============================================================ */
+
+        :root {
+            --temp-page-max: 1080px;
+            --temp-hairline: var(--border-subtle);
+            --temp-modal-w: 960px;
+            --temp-notes-w: 300px;
+            --temp-scrim-z: 200;
+        }
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP ───────────────────────────────────────── */
+        .pa-hypothesis {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 12px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .pa-hypothesis__text { flex: 1; min-width: 0; }
+        .pa-hypothesis__text strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+        .pa-theme-toggle {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            padding: 5px 12px;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pa-theme-toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── DASHBOARD MOCK (behind modal) ──────────────────────────── */
+        .pa-shell {
+            max-width: var(--temp-page-max);
+            margin: 0 auto;
+            padding: 36px 32px 64px;
+            transition: filter 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        body[data-modal-open="true"] .pa-shell {
+            filter: blur(8px);
+            opacity: 0.32;
+            pointer-events: none;
+        }
+
+        .pa-pagehead {
+            margin-bottom: 28px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .pa-pagehead__eyebrow {
+            display: block;
+            margin-bottom: 6px;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .pa-pagehead__title {
+            margin: 0 0 4px 0;
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+        }
+        .pa-pagehead__desc {
+            margin: 0;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .pa-dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+        }
+        .pa-widget {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 18px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+        }
+        .pa-widget__eye {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            /* Layer note: widget paints --bg-card. --text-secondary passes
+               AA on --bg-card in both themes. */
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .pa-widget__title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .pa-widget__val {
+            font-family: var(--font-family-mono);
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+        }
+        .pa-widget__hint {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+        }
+
+        /* Architecture widget — clickable, triggers modal */
+        .pa-widget--arch {
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            text-align: left;
+            font: inherit;
+            color: inherit;
+        }
+        .pa-widget--arch:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            transform: translateY(-2px);
+        }
+        .pa-widget--arch:focus-visible {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+        .pa-widget__cue {
+            margin-top: 4px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--brand-light);
+            letter-spacing: 0.04em;
+        }
+
+        /* ── SCRIM + MODAL ──────────────────────────────────────────── */
+        .pa-scrim {
+            position: fixed;
+            inset: 0;
+            background: var(--scrim);
+            backdrop-filter: var(--scrim-blur);
+            -webkit-backdrop-filter: var(--scrim-blur);
+            z-index: calc(var(--temp-scrim-z) - 1);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pa-scrim[data-open="true"] {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .pa-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, calc(-50% + 8px));
+            width: calc(100% - 48px);
+            max-width: var(--temp-modal-w);
+            max-height: calc(100vh - 96px);
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            box-shadow: 0 16px 64px rgba(0, 0, 0, 0.4);
+            z-index: var(--temp-scrim-z);
+            opacity: 0;
+            pointer-events: none;
+            overflow: hidden;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pa-modal[data-open="true"] {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translate(-50%, -50%);
+        }
+
+        .pa-modal__head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 18px 24px 14px 24px;
+            border-bottom: 1px solid var(--temp-hairline);
+            flex-shrink: 0;
+        }
+        .pa-modal__head-text { min-width: 0; }
+        .pa-modal__head-eyebrow {
+            display: block;
+            margin-bottom: 4px;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            /* Layer note: head sits inside .pa-modal (--bg-card).
+               --text-secondary passes AA in both themes. */
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .pa-modal__head-title {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .pa-modal__head-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .pa-select {
+            appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-family: var(--font-family-mono);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 7px 32px 7px 12px;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                              linear-gradient(135deg, currentColor 50%, transparent 50%);
+            background-position: calc(100% - 16px) 50%, calc(100% - 10px) 50%;
+            background-size: 6px 6px;
+            background-repeat: no-repeat;
+            transition: border-color 200ms ease;
+        }
+        .pa-select:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+        }
+
+        .pa-modal__close {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            width: 32px;
+            height: 32px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
+        }
+        .pa-modal__close:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            color: var(--text-primary);
+        }
+
+        .pa-modal__body {
+            display: grid;
+            grid-template-columns: 1fr var(--temp-notes-w);
+            gap: 0;
+            min-height: 0;
+            overflow: auto;
+        }
+        @media (max-width: 820px) {
+            .pa-modal__body { grid-template-columns: 1fr; }
+        }
+
+        /* ── DIAGRAM CANVAS ─────────────────────────────────────────── */
+        .pa-diagram {
+            padding: 28px;
+            background: var(--bg-input);
+            border-right: 1px solid var(--temp-hairline);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 380px;
+            /* Layer note: --bg-input is a recessed surface. SVG strokes use
+               currentColor, which inherits --text-primary — passes AA on
+               --bg-input in both themes. */
+            color: var(--text-primary);
+        }
+        @media (max-width: 820px) {
+            .pa-diagram {
+                border-right: 0;
+                border-bottom: 1px solid var(--temp-hairline);
+            }
+        }
+        .pa-diagram svg {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-width: 560px;
+            max-height: 380px;
+        }
+        .pa-diagram-label {
+            font-family: var(--font-family-mono);
+            font-size: 10px;
+            fill: var(--text-primary);
+            stroke: none;
+        }
+        .pa-diagram-zone {
+            stroke-dasharray: 3 5;
+            opacity: 0.55;
+        }
+
+        /* ── NOTES PANEL ────────────────────────────────────────────── */
+        .pa-notes {
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            overflow-y: auto;
+        }
+        .pa-notes__eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            /* Layer note: notes sit inside .pa-modal (--bg-card).
+               --text-secondary passes AA on --bg-card in both themes. */
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .pa-notes__title {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+        }
+        .pa-notes__body p {
+            margin: 0 0 12px 0;
+            font-size: 12.5px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+        }
+        .pa-notes__body strong {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .pa-notes__body code {
+            font-family: var(--font-family-mono);
+            font-size: 11.5px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            padding: 1px 5px;
+            color: var(--text-primary);
+        }
+
+        .pa-notes__specs {
+            margin: 0;
+            padding: 12px 14px;
+            list-style: none;
+            background: var(--bg-section);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-xs);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .pa-notes__spec {
+            display: grid;
+            grid-template-columns: 110px 1fr;
+            gap: 10px;
+            font-size: 11.5px;
+            align-items: baseline;
+        }
+        .pa-notes__spec-key {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            /* Layer note: list paints --bg-section. --text-secondary passes
+               AA on --bg-section in both themes. */
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .pa-notes__spec-val {
+            font-family: var(--font-family-mono);
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .pa-widget--arch, .pa-scrim, .pa-modal,
+            .pa-select, .pa-modal__close, .pa-theme-toggle {
+                transition: none;
+            }
+            .pa-widget--arch:hover {
+                transform: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="pa-hypothesis">
+        <div class="pa-hypothesis__text">
+            <strong>Demo D3 — Architecture</strong>
+            Architecture is reference content — a contextual modal you open from the Dashboard widget, not a top-level tab. Big diagram, deployment selector, brief notes.
+        </div>
+        <button class="pa-theme-toggle" type="button" id="theme-toggle">Toggle theme</button>
+    </header>
+
+    <main class="pa-shell">
+        <header class="pa-pagehead">
+            <span class="pa-pagehead__eyebrow">DASHBOARD · OVERVIEW</span>
+            <h1 class="pa-pagehead__title">Operator Dashboard</h1>
+            <p class="pa-pagehead__desc">Click the Architecture widget to open the reference modal.</p>
+        </header>
+
+        <section class="pa-dashboard-grid">
+            <div class="pa-widget">
+                <span class="pa-widget__eye">DEPLOY · ACTIVE</span>
+                <span class="pa-widget__title">Deployments</span>
+                <span class="pa-widget__val">4</span>
+                <span class="pa-widget__hint">2 c2 · 2 goad</span>
+            </div>
+            <div class="pa-widget">
+                <span class="pa-widget__eye">SPEND · MTD</span>
+                <span class="pa-widget__title">Cloud cost</span>
+                <span class="pa-widget__val">$147.82</span>
+                <span class="pa-widget__hint">$8.69 daily avg</span>
+            </div>
+            <div class="pa-widget">
+                <span class="pa-widget__eye">BEACONS · LIVE</span>
+                <span class="pa-widget__title">Active beacons</span>
+                <span class="pa-widget__val">7</span>
+                <span class="pa-widget__hint">3 stale (over 1h)</span>
+            </div>
+            <button class="pa-widget pa-widget--arch" type="button" id="open-arch" aria-label="Open architecture viewer">
+                <span class="pa-widget__eye">REFERENCE · ARCHITECTURE</span>
+                <span class="pa-widget__title">Deployment architecture</span>
+                <span class="pa-widget__hint">Inspect topology for any deployment type — 11 variants available.</span>
+                <span class="pa-widget__cue">View topology →</span>
+            </button>
+        </section>
+    </main>
+
+    <!-- ═══════════════════ ARCHITECTURE MODAL ═══════════════════ -->
+
+    <div class="pa-scrim" id="scrim" aria-hidden="true"></div>
+
+    <div class="pa-modal" id="modal-arch" role="dialog" aria-modal="true" aria-labelledby="arch-title">
+        <div class="pa-modal__head">
+            <div class="pa-modal__head-text">
+                <span class="pa-modal__head-eyebrow">REFERENCE · ARCHITECTURE</span>
+                <h2 class="pa-modal__head-title" id="arch-title">Deployment Architecture</h2>
+            </div>
+            <div class="pa-modal__head-controls">
+                <select class="pa-select" id="arch-select" aria-label="Deployment type">
+                    <optgroup label="C2-only">
+                        <option value="c2-adhoc" selected>c2-adhoc</option>
+                        <option value="c2-purple">c2-purple</option>
+                        <option value="c2-full">c2-full</option>
+                    </optgroup>
+                    <optgroup label="GOAD-only">
+                        <option value="goad-mini">goad-mini</option>
+                        <option value="goad-light">goad-light</option>
+                        <option value="goad-sccm">goad-sccm</option>
+                        <option value="goad-full">goad-full</option>
+                        <option value="goad-nha">goad-nha</option>
+                    </optgroup>
+                    <optgroup label="Combined">
+                        <option value="combined-adhoc-mini">combined-adhoc-mini</option>
+                        <option value="combined-adhoc-light">combined-adhoc-light</option>
+                        <option value="combined-full-full">combined-full-full</option>
+                    </optgroup>
+                </select>
+                <button class="pa-modal__close" type="button" id="close-arch" aria-label="Close">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                        <path d="M3 3 L11 11 M11 3 L3 11"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <div class="pa-modal__body">
+            <div class="pa-diagram" id="arch-diagram">
+                <!-- diagram injected by JS -->
+            </div>
+            <aside class="pa-notes" id="arch-notes" aria-live="polite">
+                <!-- notes injected by JS -->
+            </aside>
+        </div>
+    </div>
+
+    <script>
+        // --- Theme toggle -----------------------------------------------------
+        document.getElementById('theme-toggle').addEventListener('click', () => {
+            const html = document.documentElement;
+            html.setAttribute('data-theme', html.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+        });
+
+        // --- Modal controls ---------------------------------------------------
+        const scrim = document.getElementById('scrim');
+        const modal = document.getElementById('modal-arch');
+
+        function openArch() {
+            scrim.setAttribute('data-open', 'true');
+            modal.setAttribute('data-open', 'true');
+            document.body.setAttribute('data-modal-open', 'true');
+        }
+        function closeArch() {
+            scrim.setAttribute('data-open', 'false');
+            modal.setAttribute('data-open', 'false');
+            document.body.removeAttribute('data-modal-open');
+        }
+        document.getElementById('open-arch').addEventListener('click', openArch);
+        document.getElementById('close-arch').addEventListener('click', closeArch);
+        scrim.addEventListener('click', closeArch);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeArch();
+        });
+
+        // --- Diagrams + notes per deployment type ----------------------------
+        // Strokes use currentColor — inherit from .pa-diagram (--text-primary).
+        const node = (x, y, w, h, label) =>
+            `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+             <text x="${x + w/2}" y="${y + h/2 + 3}" text-anchor="middle" class="pa-diagram-label">${label}</text>`;
+        const link = (d, dashed) =>
+            `<path d="${d}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"${dashed ? ' stroke-dasharray="3 4"' : ''}/>`;
+        const zone = (x, y, w, h, label) =>
+            `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="none" stroke="currentColor" stroke-width="1" class="pa-diagram-zone"/>
+             <text x="${x + 10}" y="${y + 16}" class="pa-diagram-label">${label}</text>`;
+
+        const DIAGRAMS = {
+            'c2-adhoc': {
+                svg: `<svg viewBox="0 0 560 380">
+                    ${zone(20, 20, 520, 340, "AWS VPC · eu-central-1")}
+                    ${zone(40, 50, 200, 290, "Mgmt subnet")}
+                    ${zone(260, 50, 130, 130, "DMZ subnet")}
+                    ${zone(260, 200, 260, 140, "Private subnet")}
+                    ${node(60, 130, 160, 50, "Bastion (Win)")}
+                    ${node(275, 90, 100, 50, "Redirector")}
+                    ${node(295, 240, 200, 80, "C2 team server")}
+                    ${link("M 220 155 H 275 V 115", true)}
+                    ${link("M 325 140 V 240")}
+                </svg>`,
+                title: 'c2-adhoc',
+                desc: '<p>Single-team-server ad-hoc engagement profile. One Cobalt Strike team server in a private subnet, one Nginx redirector in DMZ, one Windows bastion for operator RDP+SSH access.</p><p>Operators tunnel <code>50050</code> through the bastion to reach the CS client port.</p>',
+                specs: [
+                    { k: 'Instances', v: '3' },
+                    { k: 'Sizes', v: '1× t3.medium, 2× t3.small' },
+                    { k: 'Est. monthly', v: '~$95' },
+                    { k: 'VPC peering', v: 'none' }
+                ]
+            },
+            'c2-purple': {
+                svg: `<svg viewBox="0 0 560 380">
+                    ${zone(20, 20, 520, 340, "AWS VPC · eu-central-1")}
+                    ${zone(40, 50, 160, 290, "Mgmt subnet")}
+                    ${zone(220, 50, 160, 290, "DMZ subnets")}
+                    ${zone(400, 50, 140, 290, "Private subnet")}
+                    ${node(55, 140, 130, 50, "Bastion")}
+                    ${node(235, 80, 130, 50, "Redirector A")}
+                    ${node(235, 260, 130, 50, "Redirector B")}
+                    ${node(410, 100, 120, 70, "C2 (red)")}
+                    ${node(410, 240, 120, 70, "C2 (blue)")}
+                    ${link("M 185 165 H 235 V 105", true)}
+                    ${link("M 185 165 H 235 V 285", true)}
+                    ${link("M 365 105 H 410 V 135")}
+                    ${link("M 365 285 H 410 V 275")}
+                </svg>`,
+                title: 'c2-purple',
+                desc: '<p>Two team servers for purple-team operations — one tracked as <strong>red</strong>, one as <strong>blue</strong> for split-domain attribution. Each behind a dedicated redirector.</p><p>Useful for detection engineering or training scenarios with concurrent blue-team observability.</p>',
+                specs: [
+                    { k: 'Instances', v: '5' },
+                    { k: 'Sizes', v: '2× t3.medium, 3× t3.small' },
+                    { k: 'Est. monthly', v: '~$155' },
+                    { k: 'VPC peering', v: 'none' }
+                ]
+            },
+            'c2-full': {
+                svg: `<svg viewBox="0 0 560 380">
+                    ${zone(20, 20, 520, 340, "AWS VPC · eu-central-1")}
+                    ${zone(40, 50, 140, 290, "Mgmt")}
+                    ${zone(200, 50, 160, 290, "DMZ")}
+                    ${zone(380, 50, 160, 290, "Private")}
+                    ${node(55, 150, 110, 60, "Bastion")}
+                    ${node(220, 70, 120, 45, "Redirector · A")}
+                    ${node(220, 170, 120, 45, "Redirector · B")}
+                    ${node(220, 270, 120, 45, "Redirector · C")}
+                    ${node(395, 70, 130, 65, "C2 · phase 1")}
+                    ${node(395, 160, 130, 65, "C2 · phase 2")}
+                    ${node(395, 250, 130, 65, "C2 · phase 3")}
+                    ${link("M 165 180 H 220 V 92", true)}
+                    ${link("M 165 180 H 220 V 192", true)}
+                    ${link("M 165 180 H 220 V 292", true)}
+                    ${link("M 340 92 H 395 V 102")}
+                    ${link("M 340 192 H 395 V 192")}
+                    ${link("M 340 292 H 395 V 282")}
+                </svg>`,
+                title: 'c2-full',
+                desc: '<p>Three team servers organized by engagement <strong>phase</strong> — recon, exploitation, post-ex. Each phase has its own redirector for crisp attribution and clean teardown.</p><p>Highest C2 footprint; used for long-running multi-phase ops where compartmentalization matters.</p>',
+                specs: [
+                    { k: 'Instances', v: '7' },
+                    { k: 'Sizes', v: '3× t3.medium, 4× t3.small' },
+                    { k: 'Est. monthly', v: '~$245' },
+                    { k: 'VPC peering', v: 'none' }
+                ]
+            },
+            'goad-mini': {
+                svg: `<svg viewBox="0 0 560 380">
+                    ${zone(20, 20, 520, 340, "AWS VPC · GOAD")}
+                    ${zone(40, 50, 200, 130, "Public · jumpbox")}
+                    ${zone(40, 200, 480, 150, "AD lab subnet")}
+                    ${node(60, 90, 160, 60, "Jumpbox (Ansible)")}
+                    ${node(70, 240, 130, 80, "DC01")}
+                    ${node(220, 240, 130, 80, "DC02")}
+                    ${node(370, 240, 130, 80, "SRV01")}
+                    ${link("M 140 150 V 240")}
+                    ${link("M 200 280 H 220", true)}
+                    ${link("M 350 280 H 370", true)}
+                </svg>`,
+                title: 'goad-mini',
+                desc: '<p>Standalone GOAD Mini lab — two domain controllers (parent + child) and one member server. No C2 infrastructure deployed.</p><p>Jumpbox runs Ansible and the GOAD repo for provisioning. Operators SSH to jumpbox; RDP to AD VMs through it.</p>',
+                specs: [
+                    { k: 'Instances', v: '4' },
+                    { k: 'Sizes', v: '1× t2.small + 3× t3.large' },
+                    { k: 'Est. monthly', v: '~$110' },
+                    { k: 'Forest', v: 'north.sevenkingdoms.local' }
+                ]
+            },
+            'goad-light': {
+                svg: `<svg viewBox="0 0 560 380">
+                    ${zone(20, 20, 520, 340, "AWS VPC · GOAD")}
+                    ${zone(40, 50, 200, 130, "Public · jumpbox")}
+                    ${zone(40, 200, 480, 150, "AD lab")}
+                    ${node(60, 90, 160, 60, "Jumpbox")}
+                    ${node(60, 240, 110, 80, "DC01")}
+                    ${node(190, 240, 110, 80, "DC02")}
+                    ${node(320, 240, 110, 80, "DC03")}
+                    ${node(450, 240, 70, 80, "SRV02")}
+                    ${link("M 140 150 V 240")}
+                </svg>`,
+                title: 'goad-light',
+                desc: '<p>GOAD Light — 4 hosts across 3 domains. Adds child + cross-forest trust over Mini. Better for Kerberos-focused attack chains (Golden / Silver / Diamond tickets, S4U).</p>',
+                specs: [
+                    { k: 'Instances', v: '5' },
+                    { k: 'Domains', v: '3' },
+                    { k: 'Est. monthly', v: '~$165' },
+                    { k: 'Forest', v: 'sevenkingdoms.local' }
+                ]
+            },
+            'goad-sccm': {
+                svg: `<svg viewBox="0 0 560 380">
+                    ${zone(20, 20, 520, 340, "AWS VPC · GOAD-SCCM")}
+                    ${zone(40, 50, 480, 130, "AD + SCCM")}
+                    ${zone(40, 200, 480, 150, "Clients")}
+                    ${node(60, 90, 100, 60, "DC01")}
+                    ${node(180, 90, 110, 60, "SRV01 (SCCM)")}
+                    ${node(310, 90, 110, 60, "SRV02 (SCCM)")}
+                    ${node(440, 90, 80, 60, "Jumpbox")}
+                    ${node(220, 240, 130, 80, "WS01")}
+                </svg>`,
+                title: 'goad-sccm',
+                desc: '<p>GOAD SCCM lab — DC + two SCCM servers + workstation. Built for SCCM/MECM attack training: NTLM relay to MP, PXE secrets, Configuration Manager DACL abuse.</p>',
+                specs: [
+                    { k: 'Instances', v: '5' },
+                    { k: 'Domain', v: 'sccm.lab' },
+                    { k: 'Est. monthly', v: '~$170' },
+                    { k: 'Focus', v: 'SCCM attack paths' }
+                ]
+            },
+            'goad-full': {
+                svg: `<svg viewBox="0 0 560 380">
+                    ${zone(20, 20, 520, 340, "AWS VPC · GOAD-Full")}
+                    ${zone(40, 50, 480, 290, "Multi-forest AD")}
+                    ${node(60, 90, 100, 55, "DC01")}
+                    ${node(180, 90, 100, 55, "DC02")}
+                    ${node(300, 90, 100, 55, "DC03")}
+                    ${node(420, 90, 100, 55, "DC04")}
+                    ${node(60, 175, 100, 55, "SRV01")}
+                    ${node(180, 175, 100, 55, "SRV02")}
+                    ${node(300, 175, 100, 55, "SRV03")}
+                    ${node(420, 175, 100, 55, "SRV04")}
+                    ${node(150, 260, 130, 60, "WS01")}
+                    ${node(290, 260, 130, 60, "Jumpbox")}
+                </svg>`,
+                title: 'goad-full',
+                desc: '<p>Complete GOAD lab — 4 DCs, 4 member servers, 1 workstation. Multi-forest with trust paths. Largest GOAD footprint; covers every classic AD attack vector.</p>',
+                specs: [
+                    { k: 'Instances', v: '10' },
+                    { k: 'Forests', v: '2 (with trust)' },
+                    { k: 'Est. monthly', v: '~$320' },
+                    { k: 'Focus', v: 'comprehensive AD' }
+                ]
+            },
+            'goad-nha': {
+                svg: `<svg viewBox="0 0 560 380">
+                    ${zone(20, 20, 520, 340, "AWS VPC · NHA")}
+                    ${zone(40, 50, 240, 290, "ninja.hack")}
+                    ${zone(300, 50, 220, 290, "academy.ninja.lan")}
+                    ${node(60, 90, 100, 55, "DC01")}
+                    ${node(180, 90, 100, 55, "DC02")}
+                    ${node(60, 170, 100, 55, "SRV01")}
+                    ${node(180, 170, 100, 55, "SRV02")}
+                    ${node(110, 250, 110, 55, "SRV03")}
+                    ${node(320, 90, 100, 55, "DC.academy")}
+                    ${node(440, 90, 60, 55, "WS")}
+                    ${node(360, 250, 130, 55, "Jumpbox")}
+                </svg>`,
+                title: 'goad-nha',
+                desc: '<p>Ninja Hack Academy — two-forest scenario with <code>ninja.hack</code> and <code>academy.ninja.lan</code>. Tuned for cross-forest enumeration + trust abuse.</p>',
+                specs: [
+                    { k: 'Instances', v: '8' },
+                    { k: 'Forests', v: '2 (one-way trust)' },
+                    { k: 'Est. monthly', v: '~$245' },
+                    { k: 'IPs', v: '.10 / .20-.23' }
+                ]
+            },
+            'combined-adhoc-mini': {
+                svg: `<svg viewBox="0 0 560 380">
+                    ${zone(20, 20, 260, 340, "C2 VPC")}
+                    ${zone(300, 20, 240, 340, "GOAD VPC")}
+                    ${node(40, 60, 100, 50, "Bastion")}
+                    ${node(40, 140, 100, 50, "Redirector")}
+                    ${node(40, 220, 100, 50, "C2 server")}
+                    ${node(160, 100, 100, 50, "VPC EP")}
+                    ${node(320, 60, 100, 50, "Jumpbox")}
+                    ${node(320, 140, 100, 50, "DC01")}
+                    ${node(320, 220, 100, 50, "DC02")}
+                    ${node(440, 140, 90, 50, "SRV01")}
+                    ${link("M 260 125 H 300 V 90", true)}
+                    ${link("M 260 125 H 300 V 165", true)}
+                </svg>`,
+                title: 'combined-adhoc-mini',
+                desc: '<p>C2 ad-hoc engagement <strong>peered</strong> with a GOAD Mini AD lab. Two VPCs joined via VPC peering; cross-VPC traffic constrained to the management CIDR + AD subnets.</p><p>Most common training profile — one operator runs C2 + has a target AD to land beacons on.</p>',
+                specs: [
+                    { k: 'Instances', v: '7' },
+                    { k: 'VPC peering', v: 'enabled' },
+                    { k: 'Est. monthly', v: '~$180' },
+                    { k: 'Target', v: 'goad-mini' }
+                ]
+            },
+            'combined-adhoc-light': {
+                svg: `<svg viewBox="0 0 560 380">
+                    ${zone(20, 20, 240, 340, "C2 VPC")}
+                    ${zone(280, 20, 260, 340, "GOAD VPC")}
+                    ${node(40, 60, 100, 50, "Bastion")}
+                    ${node(40, 140, 100, 50, "Redirector")}
+                    ${node(40, 220, 100, 50, "C2 server")}
+                    ${node(160, 140, 90, 50, "VPC EP")}
+                    ${node(300, 60, 100, 50, "Jumpbox")}
+                    ${node(300, 140, 100, 50, "DC01")}
+                    ${node(420, 140, 100, 50, "DC02")}
+                    ${node(300, 220, 100, 50, "DC03")}
+                    ${node(420, 220, 100, 50, "SRV02")}
+                    ${link("M 250 165 H 300 V 100", true)}
+                </svg>`,
+                title: 'combined-adhoc-light',
+                desc: '<p>C2 ad-hoc + GOAD Light — adds the 3-domain forest for richer Kerberos and cross-forest attack chains. Same peering pattern as adhoc-mini.</p>',
+                specs: [
+                    { k: 'Instances', v: '8' },
+                    { k: 'VPC peering', v: 'enabled' },
+                    { k: 'Est. monthly', v: '~$245' },
+                    { k: 'Target', v: 'goad-light' }
+                ]
+            },
+            'combined-full-full': {
+                svg: `<svg viewBox="0 0 560 380">
+                    ${zone(20, 20, 240, 340, "C2 VPC (full)")}
+                    ${zone(280, 20, 260, 340, "GOAD VPC (full)")}
+                    ${node(40, 50, 100, 40, "Bastion")}
+                    ${node(40, 110, 100, 40, "Redir A")}
+                    ${node(40, 160, 100, 40, "Redir B")}
+                    ${node(40, 210, 100, 40, "Redir C")}
+                    ${node(40, 270, 100, 40, "C2 ×3")}
+                    ${node(160, 140, 90, 50, "VPC EP")}
+                    ${node(300, 50, 100, 40, "DC01")}
+                    ${node(420, 50, 100, 40, "DC02")}
+                    ${node(300, 110, 100, 40, "DC03")}
+                    ${node(420, 110, 100, 40, "DC04")}
+                    ${node(300, 170, 100, 40, "SRV01")}
+                    ${node(420, 170, 100, 40, "SRV02")}
+                    ${node(300, 230, 100, 40, "SRV03")}
+                    ${node(420, 230, 100, 40, "WS01")}
+                    ${node(360, 290, 130, 40, "Jumpbox")}
+                    ${link("M 250 165 H 300 V 130", true)}
+                </svg>`,
+                title: 'combined-full-full',
+                desc: '<p>Maximum profile — c2-full peered with goad-full. Three-phase C2 against multi-forest AD lab. Largest footprint; reserved for capstone exercises.</p>',
+                specs: [
+                    { k: 'Instances', v: '17' },
+                    { k: 'VPC peering', v: 'enabled' },
+                    { k: 'Est. monthly', v: '~$565' },
+                    { k: 'Target', v: 'goad-full' }
+                ]
+            }
+        };
+
+        function renderArch(key) {
+            const data = DIAGRAMS[key];
+            if (!data) return;
+            document.getElementById('arch-diagram').innerHTML = data.svg;
+            const notes = document.getElementById('arch-notes');
+            const specsHTML = data.specs.map(s =>
+                `<li class="pa-notes__spec">
+                    <span class="pa-notes__spec-key">${s.k}</span>
+                    <span class="pa-notes__spec-val">${s.v}</span>
+                </li>`
+            ).join('');
+            notes.innerHTML = `
+                <span class="pa-notes__eyebrow">DEPLOYMENT · ${key.toUpperCase()}</span>
+                <h3 class="pa-notes__title">${data.title}</h3>
+                <div class="pa-notes__body">${data.desc}</div>
+                <ul class="pa-notes__specs">${specsHTML}</ul>
+            `;
+        }
+
+        document.getElementById('arch-select').addEventListener('change', (e) => {
+            renderArch(e.target.value);
+        });
+
+        // Initial render
+        renderArch('c2-adhoc');
+    </script>
+</body>
+</html>

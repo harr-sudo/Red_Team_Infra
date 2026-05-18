@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Deploy Journey J3 — Spec List Editor</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           DEPLOY JOURNEY — J3 SPEC LIST EDITOR
+           Hypothesis: Composition A IS the journey. Show the spec list
+           pre-populated with safe defaults; each row is editable in
+           place via a pencil glyph. The summary and the editor are the
+           same surface. Dashboard behind dims + blurs as takeover.
+           ============================================================ */
+
+        :root {
+            --temp-rail: var(--brand-light);
+            --temp-hairline: var(--border-subtle);
+            --temp-scrim: rgba(8, 9, 14, 0.55);
+            --temp-scrim-blur: 8px;
+        }
+        [data-theme="light"] {
+            --temp-scrim: rgba(140, 160, 100, 0.32);
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+            overflow-x: hidden;
+        }
+
+        .preview-hypothesis {
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            position: relative;
+            z-index: 50;
+        }
+        .preview-hypothesis strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+
+        /* Dashboard mock */
+        .dash-mock {
+            position: fixed;
+            inset: 42px 0 0 0;
+            padding: 36px 48px;
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            gap: 24px;
+            pointer-events: none;
+            z-index: 1;
+            transition: filter 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .dash-mock.is-dimmed {
+            filter: blur(var(--temp-scrim-blur));
+            opacity: 0.28;
+        }
+        .dash-mock__rail-item {
+            height: 28px;
+            border-radius: 4px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            margin-bottom: 10px;
+        }
+        .dash-mock__header {
+            height: 44px;
+            border-radius: 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            margin-bottom: 16px;
+        }
+        .dash-mock__grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .dash-mock__card {
+            height: 140px;
+            border-radius: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+        }
+        .dash-mock__row {
+            height: 160px;
+            border-radius: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            margin-bottom: 16px;
+        }
+
+        .scrim {
+            position: fixed;
+            inset: 42px 0 0 0;
+            background: var(--temp-scrim);
+            backdrop-filter: blur(var(--temp-scrim-blur));
+            -webkit-backdrop-filter: blur(var(--temp-scrim-blur));
+            z-index: 10;
+            opacity: 1;
+            pointer-events: auto;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Journey surface */
+        .journey {
+            position: fixed;
+            inset: 42px 0 0 0;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 48px 24px 64px;
+            z-index: 20;
+            overflow-y: auto;
+        }
+        .journey__frame {
+            width: 100%;
+            max-width: 820px;
+            display: flex;
+            flex-direction: column;
+            gap: 26px;
+        }
+
+        /* Eyebrow + close */
+        .ds-eyebrow {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .ds-eyebrow__label {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .ds-eyebrow__close {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 5px 12px;
+            border-radius: 5px;
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ds-eyebrow__close:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* Hero */
+        .ds-hero {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .ds-hero__caption {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .ds-hero__name {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 21px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            word-break: break-all;
+            line-height: 1.2;
+        }
+        .ds-hero__type {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .ds-hero__type strong {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        /* Spec list — Composition A rhythm */
+        .ds-list {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .ds-row {
+            position: relative;
+            padding: 0;
+            border-bottom: 1px solid var(--temp-hairline);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ds-row:last-child { border-bottom: none; }
+
+        .ds-row__head {
+            display: grid;
+            grid-template-columns: 200px 1fr auto 22px;
+            align-items: baseline;
+            gap: 20px;
+            padding: 14px 16px 14px 14px;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ds-row__head::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 10px;
+            bottom: 10px;
+            width: 2px;
+            border-radius: 2px;
+            background: var(--temp-rail);
+            opacity: 0;
+            transform: scaleY(0.4);
+            transform-origin: center;
+            transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .ds-row:hover .ds-row__head {
+            background: var(--bg-card-hover);
+            transform: translateX(2px);
+        }
+        .ds-row:hover .ds-row__head::before,
+        .ds-row.is-editing .ds-row__head::before {
+            opacity: 1;
+            transform: scaleY(1);
+        }
+        .ds-row.is-editing .ds-row__head {
+            background: var(--bg-card-hover);
+        }
+
+        /* Other rows dim while one is editing */
+        .ds-list.has-editing .ds-row:not(.is-editing) {
+            opacity: 0.45;
+        }
+        .ds-list.has-editing .ds-row:not(.is-editing) .ds-row__head {
+            pointer-events: none;
+        }
+
+        .ds-key {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .ds-value {
+            font-size: 13.5px;
+            color: var(--text-primary);
+            font-weight: 500;
+            min-width: 0;
+            word-break: break-word;
+        }
+        .ds-value--mono {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 13px;
+        }
+        .ds-hint {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            letter-spacing: 0.02em;
+        }
+
+        /* Pencil glyph */
+        .ds-row__edit {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            border-radius: 4px;
+            color: var(--text-secondary);
+            transition: color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ds-row:hover .ds-row__edit {
+            color: var(--text-primary);
+            background: var(--bg-input);
+        }
+        .ds-row.is-readonly .ds-row__edit {
+            display: none;
+        }
+        .ds-row.is-readonly .ds-row__head { cursor: default; }
+        .ds-row.is-readonly:hover .ds-row__head {
+            background: transparent;
+            transform: none;
+        }
+        .ds-row.is-readonly:hover .ds-row__head::before { opacity: 0; }
+
+        /* Status pill */
+        .ds-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 9px;
+            border-radius: 9px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        .ds-pill__dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+        }
+
+        /* Inline editor */
+        .ds-edit {
+            display: none;
+            padding: 6px 16px 18px 14px;
+            animation: ds-edit-in 240ms cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+        .ds-row.is-editing .ds-edit { display: block; }
+
+        .ds-edit__field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+        .ds-edit__label {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .ds-edit__input {
+            width: 100%;
+            box-sizing: border-box;
+            appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 10px 12px;
+            border-radius: 6px;
+            font: inherit;
+            font-size: 13px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ds-edit__input:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+        }
+        .ds-edit__hint {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+
+        /* Segmented (env, region, ssh-keys) */
+        .ds-seg {
+            display: inline-flex;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+            background: var(--bg-input);
+            flex-wrap: wrap;
+        }
+        .ds-seg__btn {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            border-left: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 7px 12px;
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ds-seg__btn:first-child { border-left: 0; }
+        .ds-seg__btn:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+        .ds-seg__btn.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+
+        /* Deployment-type editor — radio grid grouped by family */
+        .ds-type-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 6px;
+        }
+        .ds-type-group {
+            grid-column: 1 / -1;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-top: 6px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .ds-type-card {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 10px 12px;
+            border: 1px solid var(--temp-hairline);
+            border-radius: 6px;
+            background: var(--bg-body);
+            cursor: pointer;
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ds-type-card input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+        .ds-type-card:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+        }
+        .ds-type-card.is-checked {
+            border-color: var(--brand-light);
+            background: var(--bg-card-hover);
+        }
+        .ds-type-card.is-checked::after {
+            content: "";
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+        }
+        .ds-type-card__title {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .ds-type-card__hint {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        /* "use my IP" pill */
+        .ds-input-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .ds-pill-btn {
+            appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 7px 12px;
+            border-radius: 999px;
+            font: inherit;
+            font-size: 11px;
+            font-weight: 600;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ds-pill-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--brand-light);
+        }
+
+        /* Edit footer (save/cancel) */
+        .ds-edit__foot {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-top: 10px;
+        }
+        .ds-edit__btn {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 6px 14px;
+            border-radius: 5px;
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .ds-edit__btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+        .ds-edit__btn--save {
+            background: var(--brand-light);
+            border-color: var(--brand-light);
+            color: var(--text-inverse);
+        }
+        .ds-edit__btn--save:hover {
+            background: var(--brand);
+            border-color: var(--brand);
+        }
+        .ds-edit__btn:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+
+        /* Footer */
+        .ds-foot {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            margin-top: 22px;
+            padding-top: 14px;
+            border-top: 1px solid var(--temp-hairline);
+        }
+        .ds-foot__crumb {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+        .ds-foot__deploy {
+            appearance: none;
+            background: var(--brand-light);
+            border: 1px solid var(--brand-light);
+            color: var(--text-inverse);
+            padding: 9px 20px;
+            border-radius: 6px;
+            font: inherit;
+            font-size: 12.5px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .ds-foot__deploy:hover {
+            background: var(--brand);
+            border-color: var(--brand);
+            transform: translateY(-1px);
+        }
+
+        .dash-trigger {
+            position: fixed;
+            top: 56px;
+            right: 56px;
+            z-index: 5;
+            padding: 8px 14px;
+            background: var(--brand-light);
+            border: 1px solid var(--brand-light);
+            color: var(--text-inverse);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            letter-spacing: 0.06em;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .dash-trigger.is-visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .preview-theme-toggle {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            padding: 8px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            z-index: 100;
+        }
+        .preview-theme-toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        @keyframes ds-edit-in {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="preview-hypothesis">
+        <strong>Journey J3</strong>
+        The spec list IS the journey — pre-fill safe defaults, then click any row to edit it inline. Other rows dim to focus attention.
+    </header>
+
+    <div class="dash-mock is-dimmed" id="dashMock">
+        <aside>
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+        </aside>
+        <main>
+            <div class="dash-mock__header"></div>
+            <div class="dash-mock__grid">
+                <div class="dash-mock__card"></div>
+                <div class="dash-mock__card"></div>
+                <div class="dash-mock__card"></div>
+            </div>
+            <div class="dash-mock__row"></div>
+            <div class="dash-mock__row"></div>
+        </main>
+    </div>
+
+    <button class="dash-trigger" id="dashTrigger" type="button">+ New Deployment</button>
+
+    <div class="scrim" id="scrim"></div>
+
+    <main class="journey" id="journey">
+        <div class="journey__frame">
+            <div class="ds-eyebrow">
+                <span class="ds-eyebrow__label">New Deployment · Spec Edit</span>
+                <button class="ds-eyebrow__close" id="jClose" type="button">Cancel</button>
+            </div>
+
+            <section class="ds-hero">
+                <span class="ds-hero__caption">project</span>
+                <span class="ds-hero__name" id="heroName">goad_mini_dev_harriss_macbook_pro</span>
+                <span class="ds-hero__type"><strong id="heroType">GOAD Mini</strong> &middot; click any row to edit</span>
+            </section>
+
+            <dl class="ds-list" id="specList">
+                <!-- ── Row: Deployment Type ── -->
+                <div class="ds-row" data-row="type">
+                    <div class="ds-row__head">
+                        <dt class="ds-key">Deployment Type</dt>
+                        <dd class="ds-value" id="val-type">GOAD Mini</dd>
+                        <dd class="ds-hint" id="hint-type">Training lab</dd>
+                        <span class="ds-row__edit" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                <path d="M9.5 1.5 L12.5 4.5 L4 13 H1 V10 Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                                <path d="M8 3 L11 6" stroke="currentColor" stroke-width="1.2"/>
+                            </svg>
+                        </span>
+                    </div>
+                    <div class="ds-edit" data-edit="type">
+                        <div class="ds-edit__field">
+                            <span class="ds-edit__label">Deployment Type</span>
+                            <div class="ds-type-grid" id="typeGrid"></div>
+                        </div>
+                        <div class="ds-edit__foot">
+                            <button class="ds-edit__btn" data-action="cancel" type="button">Cancel</button>
+                            <button class="ds-edit__btn ds-edit__btn--save" data-action="save" type="button">Save</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Row: Project Name ── -->
+                <div class="ds-row" data-row="name">
+                    <div class="ds-row__head">
+                        <dt class="ds-key">Project Name</dt>
+                        <dd class="ds-value ds-value--mono" id="val-name">goad_mini_dev_harriss_macbook_pro</dd>
+                        <dd class="ds-hint">36 chars</dd>
+                        <span class="ds-row__edit" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                <path d="M9.5 1.5 L12.5 4.5 L4 13 H1 V10 Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                                <path d="M8 3 L11 6" stroke="currentColor" stroke-width="1.2"/>
+                            </svg>
+                        </span>
+                    </div>
+                    <div class="ds-edit" data-edit="name">
+                        <div class="ds-edit__field">
+                            <span class="ds-edit__label">Project Name</span>
+                            <input class="ds-edit__input" type="text" value="goad_mini_dev_harriss_macbook_pro" data-input="name" autocomplete="off" spellcheck="false">
+                            <span class="ds-edit__hint">Lowercase, underscores. Tags every AWS resource.</span>
+                        </div>
+                        <div class="ds-edit__foot">
+                            <button class="ds-edit__btn" data-action="cancel" type="button">Cancel</button>
+                            <button class="ds-edit__btn ds-edit__btn--save" data-action="save" type="button">Save</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Row: Environment ── -->
+                <div class="ds-row" data-row="env">
+                    <div class="ds-row__head">
+                        <dt class="ds-key">Environment</dt>
+                        <dd class="ds-value">
+                            <span class="ds-pill"><span class="ds-pill__dot"></span><span id="val-env">DEV</span></span>
+                        </dd>
+                        <dd class="ds-hint">isolated</dd>
+                        <span class="ds-row__edit" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                <path d="M9.5 1.5 L12.5 4.5 L4 13 H1 V10 Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                                <path d="M8 3 L11 6" stroke="currentColor" stroke-width="1.2"/>
+                            </svg>
+                        </span>
+                    </div>
+                    <div class="ds-edit" data-edit="env">
+                        <div class="ds-edit__field">
+                            <span class="ds-edit__label">Environment</span>
+                            <div class="ds-seg" data-seg="env">
+                                <button class="ds-seg__btn is-active" type="button" data-val="DEV">DEV</button>
+                                <button class="ds-seg__btn" type="button" data-val="STAGING">Staging</button>
+                                <button class="ds-seg__btn" type="button" data-val="PROD">Prod</button>
+                            </div>
+                        </div>
+                        <div class="ds-edit__foot">
+                            <button class="ds-edit__btn" data-action="cancel" type="button">Cancel</button>
+                            <button class="ds-edit__btn ds-edit__btn--save" data-action="save" type="button">Save</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Row: Region ── -->
+                <div class="ds-row" data-row="region">
+                    <div class="ds-row__head">
+                        <dt class="ds-key">AWS Region</dt>
+                        <dd class="ds-value ds-value--mono" id="val-region">eu-central-1</dd>
+                        <dd class="ds-hint" id="hint-region">Frankfurt</dd>
+                        <span class="ds-row__edit" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                <path d="M9.5 1.5 L12.5 4.5 L4 13 H1 V10 Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                                <path d="M8 3 L11 6" stroke="currentColor" stroke-width="1.2"/>
+                            </svg>
+                        </span>
+                    </div>
+                    <div class="ds-edit" data-edit="region">
+                        <div class="ds-edit__field">
+                            <span class="ds-edit__label">AWS Region</span>
+                            <div class="ds-seg" data-seg="region">
+                                <button class="ds-seg__btn is-active" type="button" data-val="eu-central-1" data-hint="Frankfurt">eu-central-1</button>
+                                <button class="ds-seg__btn" type="button" data-val="eu-west-1" data-hint="Ireland">eu-west-1</button>
+                                <button class="ds-seg__btn" type="button" data-val="eu-west-2" data-hint="London">eu-west-2</button>
+                                <button class="ds-seg__btn" type="button" data-val="us-east-1" data-hint="N. Virginia">us-east-1</button>
+                                <button class="ds-seg__btn" type="button" data-val="us-west-2" data-hint="Oregon">us-west-2</button>
+                            </div>
+                        </div>
+                        <div class="ds-edit__foot">
+                            <button class="ds-edit__btn" data-action="cancel" type="button">Cancel</button>
+                            <button class="ds-edit__btn ds-edit__btn--save" data-action="save" type="button">Save</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Row: Management CIDR ── -->
+                <div class="ds-row" data-row="cidr">
+                    <div class="ds-row__head">
+                        <dt class="ds-key">Management CIDR</dt>
+                        <dd class="ds-value ds-value--mono" id="val-cidr">82.35.149.127/32</dd>
+                        <dd class="ds-hint">single host</dd>
+                        <span class="ds-row__edit" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                <path d="M9.5 1.5 L12.5 4.5 L4 13 H1 V10 Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                                <path d="M8 3 L11 6" stroke="currentColor" stroke-width="1.2"/>
+                            </svg>
+                        </span>
+                    </div>
+                    <div class="ds-edit" data-edit="cidr">
+                        <div class="ds-edit__field">
+                            <span class="ds-edit__label">Management CIDR</span>
+                            <div class="ds-input-row">
+                                <input class="ds-edit__input" type="text" value="82.35.149.127/32" data-input="cidr" autocomplete="off" spellcheck="false">
+                                <button class="ds-pill-btn" type="button" data-action="my-ip">Use my IP</button>
+                            </div>
+                            <span class="ds-edit__hint">Only this CIDR can SSH/RDP the bastion. /32 = exact host.</span>
+                        </div>
+                        <div class="ds-edit__foot">
+                            <button class="ds-edit__btn" data-action="cancel" type="button">Cancel</button>
+                            <button class="ds-edit__btn ds-edit__btn--save" data-action="save" type="button">Save</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Row: SSH Keys ── -->
+                <div class="ds-row" data-row="ssh">
+                    <div class="ds-row__head">
+                        <dt class="ds-key">SSH Keys</dt>
+                        <dd class="ds-value" id="val-ssh">Auto-generated</dd>
+                        <dd class="ds-hint">ed25519</dd>
+                        <span class="ds-row__edit" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                <path d="M9.5 1.5 L12.5 4.5 L4 13 H1 V10 Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                                <path d="M8 3 L11 6" stroke="currentColor" stroke-width="1.2"/>
+                            </svg>
+                        </span>
+                    </div>
+                    <div class="ds-edit" data-edit="ssh">
+                        <div class="ds-edit__field">
+                            <span class="ds-edit__label">SSH Keys</span>
+                            <div class="ds-seg" data-seg="ssh">
+                                <button class="ds-seg__btn is-active" type="button" data-val="Auto-generated">Auto-generate</button>
+                                <button class="ds-seg__btn" type="button" data-val="Uploaded">Upload existing</button>
+                                <button class="ds-seg__btn" type="button" data-val="From S3">Use S3 key</button>
+                            </div>
+                        </div>
+                        <div class="ds-edit__foot">
+                            <button class="ds-edit__btn" data-action="cancel" type="button">Cancel</button>
+                            <button class="ds-edit__btn ds-edit__btn--save" data-action="save" type="button">Save</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Row: Est. Monthly Cost (read-only) ── -->
+                <div class="ds-row is-readonly" data-row="cost">
+                    <div class="ds-row__head">
+                        <dt class="ds-key">Est. Monthly Cost</dt>
+                        <dd class="ds-value" style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 17px; font-weight: 700;">~$260/mo</dd>
+                        <dd class="ds-hint">computed</dd>
+                        <span class="ds-row__edit" aria-hidden="true"></span>
+                    </div>
+                </div>
+            </dl>
+
+            <div class="ds-foot">
+                <span class="ds-foot__crumb">Ready to deploy &middot; click any row to edit defaults</span>
+                <button class="ds-foot__deploy" id="deployBtn" type="button">Deploy ▸</button>
+            </div>
+        </div>
+    </main>
+
+    <button class="preview-theme-toggle" type="button"
+            onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+        Toggle theme
+    </button>
+
+    <script>
+    (function () {
+        'use strict';
+
+        const TYPES = [
+            { family: 'C2', items: [
+                { id: 'c2-adhoc', title: 'C2 — Ad-hoc', hint: '5 hosts' },
+                { id: 'c2-purple', title: 'C2 — Purple', hint: '7 hosts' },
+                { id: 'c2-full', title: 'C2 — Full', hint: '9 hosts' }
+            ]},
+            { family: 'GOAD', items: [
+                { id: 'goad-mini', title: 'GOAD Mini', hint: '2 hosts' },
+                { id: 'goad-light', title: 'GOAD Light', hint: '4 hosts' },
+                { id: 'goad-sccm', title: 'GOAD SCCM', hint: '4 hosts' },
+                { id: 'goad-full', title: 'GOAD Full', hint: '5 hosts' },
+                { id: 'goad-nha', title: 'GOAD NHA', hint: '5 hosts' }
+            ]},
+            { family: 'Combined', items: [
+                { id: 'combined-adhoc-mini', title: 'Adhoc + Mini', hint: '7 hosts' },
+                { id: 'combined-adhoc-light', title: 'Adhoc + Light', hint: '9 hosts' },
+                { id: 'combined-full-full', title: 'Full + Full', hint: '14 hosts' }
+            ]}
+        ];
+
+        const state = {
+            type: 'goad-mini',
+            typeTitle: 'GOAD Mini',
+            typeFamily: 'Training lab',
+            name: 'goad_mini_dev_harriss_macbook_pro',
+            env: 'DEV',
+            region: 'eu-central-1',
+            regionHint: 'Frankfurt',
+            cidr: '82.35.149.127/32',
+            ssh: 'Auto-generated'
+        };
+        // Temporary edit buffer
+        let buffer = {};
+
+        // ── Build type grid ──
+        const typeGrid = document.getElementById('typeGrid');
+        TYPES.forEach(group => {
+            const head = document.createElement('div');
+            head.className = 'ds-type-group';
+            head.textContent = group.family;
+            typeGrid.appendChild(head);
+            group.items.forEach(item => {
+                const card = document.createElement('label');
+                card.className = 'ds-type-card' + (item.id === state.type ? ' is-checked' : '');
+                card.dataset.id = item.id;
+                card.dataset.title = item.title;
+                card.dataset.family = group.family === 'C2' ? 'Red team C2' : group.family === 'GOAD' ? 'Training lab' : 'Combined';
+                card.innerHTML = `
+                    <input type="radio" name="type" value="${item.id}" ${item.id === state.type ? 'checked' : ''}>
+                    <span class="ds-type-card__title">${item.title}</span>
+                    <span class="ds-type-card__hint">${item.hint}</span>
+                `;
+                card.addEventListener('click', () => {
+                    typeGrid.querySelectorAll('.ds-type-card').forEach(c => c.classList.remove('is-checked'));
+                    card.classList.add('is-checked');
+                    buffer.type = item.id;
+                    buffer.typeTitle = item.title;
+                    buffer.typeFamily = card.dataset.family;
+                });
+                typeGrid.appendChild(card);
+            });
+        });
+
+        // ── Row open/close ──
+        const list = document.getElementById('specList');
+        const rows = document.querySelectorAll('.ds-row:not(.is-readonly)');
+
+        function openRow(row) {
+            closeAll();
+            row.classList.add('is-editing');
+            list.classList.add('has-editing');
+            buffer = {};
+            // Sync segmented controls to current state on open
+            const rowKey = row.dataset.row;
+            if (rowKey === 'env') syncSeg(row, 'env', state.env);
+            if (rowKey === 'region') syncSeg(row, 'region', state.region);
+            if (rowKey === 'ssh') syncSeg(row, 'ssh', state.ssh);
+            if (rowKey === 'type') syncType();
+        }
+        function closeAll() {
+            document.querySelectorAll('.ds-row').forEach(r => r.classList.remove('is-editing'));
+            list.classList.remove('has-editing');
+        }
+        function syncSeg(row, seg, value) {
+            row.querySelectorAll(`.ds-seg[data-seg="${seg}"] .ds-seg__btn`).forEach(b => {
+                b.classList.toggle('is-active', b.dataset.val === value);
+            });
+        }
+        function syncType() {
+            typeGrid.querySelectorAll('.ds-type-card').forEach(c => {
+                c.classList.toggle('is-checked', c.dataset.id === state.type);
+            });
+        }
+
+        rows.forEach(row => {
+            row.querySelector('.ds-row__head').addEventListener('click', () => {
+                if (row.classList.contains('is-editing')) return;
+                openRow(row);
+            });
+        });
+
+        // ── Segmented controls inside editors (buffer on click) ──
+        document.querySelectorAll('.ds-seg').forEach(seg => {
+            seg.querySelectorAll('.ds-seg__btn').forEach(b => {
+                b.addEventListener('click', e => {
+                    e.stopPropagation();
+                    seg.querySelectorAll('.ds-seg__btn').forEach(x => x.classList.remove('is-active'));
+                    b.classList.add('is-active');
+                    if (seg.dataset.seg === 'env') buffer.env = b.dataset.val;
+                    if (seg.dataset.seg === 'region') {
+                        buffer.region = b.dataset.val;
+                        buffer.regionHint = b.dataset.hint;
+                    }
+                    if (seg.dataset.seg === 'ssh') buffer.ssh = b.dataset.val;
+                });
+            });
+        });
+
+        // ── Inputs ──
+        document.querySelectorAll('.ds-edit__input').forEach(inp => {
+            inp.addEventListener('input', e => {
+                const which = inp.dataset.input;
+                buffer[which] = e.target.value;
+            });
+            inp.addEventListener('click', e => e.stopPropagation());
+        });
+
+        // "use my IP" pill
+        document.querySelector('[data-action="my-ip"]').addEventListener('click', e => {
+            e.stopPropagation();
+            const inp = document.querySelector('[data-input="cidr"]');
+            inp.value = '82.35.149.127/32';
+            buffer.cidr = inp.value;
+            inp.focus();
+        });
+
+        // ── Save / Cancel per row ──
+        document.querySelectorAll('.ds-edit').forEach(editEl => {
+            editEl.querySelectorAll('[data-action]').forEach(btn => {
+                if (btn.dataset.action === 'my-ip') return;
+                btn.addEventListener('click', e => {
+                    e.stopPropagation();
+                    const row = editEl.closest('.ds-row');
+                    const key = row.dataset.row;
+                    if (btn.dataset.action === 'save') {
+                        if (key === 'type' && buffer.type) {
+                            state.type = buffer.type;
+                            state.typeTitle = buffer.typeTitle;
+                            state.typeFamily = buffer.typeFamily;
+                            document.getElementById('val-type').textContent = state.typeTitle;
+                            document.getElementById('hint-type').textContent = state.typeFamily;
+                            document.getElementById('heroType').textContent = state.typeTitle;
+                        }
+                        if (key === 'name' && buffer.name !== undefined) {
+                            state.name = buffer.name;
+                            document.getElementById('val-name').textContent = state.name;
+                            document.getElementById('heroName').textContent = state.name;
+                        }
+                        if (key === 'env' && buffer.env) {
+                            state.env = buffer.env;
+                            document.getElementById('val-env').textContent = state.env;
+                        }
+                        if (key === 'region' && buffer.region) {
+                            state.region = buffer.region;
+                            state.regionHint = buffer.regionHint;
+                            document.getElementById('val-region').textContent = state.region;
+                            document.getElementById('hint-region').textContent = state.regionHint;
+                        }
+                        if (key === 'cidr' && buffer.cidr !== undefined) {
+                            state.cidr = buffer.cidr;
+                            document.getElementById('val-cidr').textContent = state.cidr;
+                        }
+                        if (key === 'ssh' && buffer.ssh) {
+                            state.ssh = buffer.ssh;
+                            document.getElementById('val-ssh').textContent = state.ssh;
+                        }
+                    }
+                    // Whether save or cancel, just close
+                    closeAll();
+                    buffer = {};
+                });
+            });
+        });
+
+        // ── Backdrop / open + close ──
+        const dashMock = document.getElementById('dashMock');
+        const scrim = document.getElementById('scrim');
+        const journey = document.getElementById('journey');
+        const dashTrigger = document.getElementById('dashTrigger');
+        const jClose = document.getElementById('jClose');
+
+        jClose.addEventListener('click', () => {
+            dashMock.classList.remove('is-dimmed');
+            scrim.style.opacity = '0';
+            scrim.style.pointerEvents = 'none';
+            journey.style.display = 'none';
+            dashTrigger.classList.add('is-visible');
+        });
+        dashTrigger.addEventListener('click', () => {
+            dashMock.classList.add('is-dimmed');
+            scrim.style.opacity = '1';
+            scrim.style.pointerEvents = 'auto';
+            journey.style.display = 'flex';
+            dashTrigger.classList.remove('is-visible');
+        });
+
+        document.getElementById('deployBtn').addEventListener('click', () => {
+            const btn = document.getElementById('deployBtn');
+            btn.textContent = 'Deploying…';
+            btn.disabled = true;
+        });
+    })();
+    </script>
+</body>
+</html>

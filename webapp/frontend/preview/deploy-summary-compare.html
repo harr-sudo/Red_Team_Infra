@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Deploy Summary — V3-Native Comparison (A/B/C)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           DEPLOY SUMMARY — COMPARISON PAGE
+           3-pane iframe grid (collapses to vertical stack <1200px).
+           Theme toggle flips every iframe's <html data-theme=> attr.
+           Variant tabs are highlight-only — all three panes are
+           shown simultaneously by default. Mirrors the structure of
+           header-compare.html (P1 #7.7 — design pilot convention).
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .compare-bar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 20px;
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+        }
+        .compare-bar h1 {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+        }
+        .compare-bar h1 .kicker {
+            display: inline-block;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-left: 10px;
+        }
+        .compare-bar__controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .compare-bar__btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 6px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-block;
+            font-family: inherit;
+            transition: background-color 200ms ease, border-color 200ms ease;
+        }
+        .compare-bar__btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        .compare-bar__variants {
+            display: inline-flex;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .compare-bar__variant {
+            background: var(--bg-card);
+            border: 0;
+            border-left: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 6px 14px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: inherit;
+            transition: background-color 200ms ease, color 200ms ease;
+        }
+        .compare-bar__variant:first-child { border-left: 0; }
+        .compare-bar__variant:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .compare-bar__variant.is-active {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+        .compare-bar__variant:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px var(--brand-light);
+        }
+
+        /* ── 3-PANE GRID (collapses to stack <1200px) ──────────────── */
+        .compare-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 1px;
+            background: var(--border);
+            min-height: calc(100vh - 56px);
+        }
+        @media (max-width: 1199px) {
+            .compare-grid {
+                grid-template-columns: minmax(0, 1fr);
+                grid-template-rows: auto auto auto;
+            }
+        }
+
+        .compare-pane {
+            background: var(--bg-body);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            min-height: 100vh;
+        }
+        @media (max-width: 1199px) {
+            .compare-pane { min-height: 90vh; }
+        }
+        .compare-pane.is-dimmed {
+            opacity: 0.45;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .compare-pane__label {
+            position: absolute;
+            top: 12px;
+            left: 16px;
+            z-index: 50;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .compare-pane__label a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 200ms ease;
+        }
+        .compare-pane__label a:hover {
+            color: var(--text-primary);
+            text-decoration: underline;
+        }
+
+        .compare-pane iframe {
+            border: 0;
+            width: 100%;
+            flex: 1;
+            background: var(--bg-body);
+        }
+
+        .compare-bar__theme-state {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            color: var(--text-secondary);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 0 6px;
+        }
+    </style>
+</head>
+<body>
+    <div class="compare-bar">
+        <h1>
+            Deploy Summary — V3-Native
+            <span class="kicker">Phase 1 · A/B/C</span>
+        </h1>
+        <div class="compare-bar__controls">
+            <div class="compare-bar__variants" role="group" aria-label="Highlight a single composition">
+                <button class="compare-bar__variant is-active"
+                        type="button"
+                        data-variant="all"
+                        aria-pressed="true">All</button>
+                <button class="compare-bar__variant"
+                        type="button"
+                        data-variant="a"
+                        aria-pressed="false">A · Spec list</button>
+                <button class="compare-bar__variant"
+                        type="button"
+                        data-variant="b"
+                        aria-pressed="false">B · Hero + ribbon</button>
+                <button class="compare-bar__variant"
+                        type="button"
+                        data-variant="c"
+                        aria-pressed="false">C · Prose + columns</button>
+            </div>
+            <button class="compare-bar__btn" id="theme-toggle">
+                Toggle theme
+                <span class="compare-bar__theme-state" id="theme-state">DARK</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="compare-grid">
+        <div class="compare-pane" data-pane="a">
+            <span class="compare-pane__label">
+                A · Spec list
+                <a href="/preview/deploy-summary-v3-a.html" target="_blank" rel="noopener">open ↗</a>
+            </span>
+            <iframe id="frame-a" src="/preview/deploy-summary-v3-a.html" title="Composition A — Spec list"></iframe>
+        </div>
+        <div class="compare-pane" data-pane="b">
+            <span class="compare-pane__label">
+                B · Hero + ribbon
+                <a href="/preview/deploy-summary-v3-b.html" target="_blank" rel="noopener">open ↗</a>
+            </span>
+            <iframe id="frame-b" src="/preview/deploy-summary-v3-b.html" title="Composition B — Hero + ribbon"></iframe>
+        </div>
+        <div class="compare-pane" data-pane="c">
+            <span class="compare-pane__label">
+                C · Prose + columns
+                <a href="/preview/deploy-summary-v3-c.html" target="_blank" rel="noopener">open ↗</a>
+            </span>
+            <iframe id="frame-c" src="/preview/deploy-summary-v3-c.html" title="Composition C — Prose + columns"></iframe>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        // ── Variant highlighter — dims non-selected panes, doesn't hide them ──
+        const variantButtons = document.querySelectorAll('.compare-bar__variant');
+        const panes = document.querySelectorAll('.compare-pane');
+
+        function setVariant(variant) {
+            variantButtons.forEach(b => {
+                const isActive = b.dataset.variant === variant;
+                b.classList.toggle('is-active', isActive);
+                b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            });
+            panes.forEach(p => {
+                if (variant === 'all') {
+                    p.classList.remove('is-dimmed');
+                } else {
+                    p.classList.toggle('is-dimmed', p.dataset.pane !== variant);
+                }
+            });
+        }
+
+        variantButtons.forEach(b => {
+            b.addEventListener('click', () => setVariant(b.dataset.variant));
+        });
+
+        // ── Theme toggle — flips data-theme on every iframe doc + parent ──
+        const themeBtn = document.getElementById('theme-toggle');
+        const themeState = document.getElementById('theme-state');
+        const frames = document.querySelectorAll('.compare-pane iframe');
+
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            themeState.textContent = theme.toUpperCase();
+            frames.forEach(f => {
+                try {
+                    if (f.contentDocument && f.contentDocument.documentElement) {
+                        f.contentDocument.documentElement.setAttribute('data-theme', theme);
+                    }
+                } catch (e) { /* cross-origin or not loaded */ }
+            });
+        }
+
+        themeBtn.addEventListener('click', () => {
+            const current = document.documentElement.getAttribute('data-theme') || 'dark';
+            applyTheme(current === 'light' ? 'dark' : 'light');
+        });
+
+        // On iframe load, sync theme so newly-loaded frames match parent state
+        frames.forEach(f => {
+            f.addEventListener('load', () => {
+                const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+                try {
+                    f.contentDocument.documentElement.setAttribute('data-theme', theme);
+                } catch (e) { /* ignore */ }
+            });
+        });
+
+        // Initial state — start dark to match palette.css :root
+        applyTheme('dark');
+    })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Top-Level Scaffold C — Workflow Stages (V3-native)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           SCAFFOLD C — WORKFLOW STAGE TABS (V3 5/6/5)
+           Hypothesis: Replace domain tabs (Dashboard/Deployments/
+           Operations/Settings) with stage-of-work tabs:
+           PLAN · BUILD · RUN · CLEAN. Each stage holds the operations
+           relevant to that moment in the engagement lifecycle. The
+           top bar carries the brand + a wide, taller V3-restyled tab
+           strip with mono-cap eyebrows, brand-light active underline
+           + a subtle inset glow. Sub-pills inside each stage tab
+           reorganize by stage.
+           ============================================================ */
+
+        :root {
+            --temp-header-h: 56px;
+            --temp-tabs-h: 64px;
+            --temp-hairline: var(--border-subtle);
+            --temp-scrim: rgba(8, 9, 14, 0.55);
+        }
+        [data-theme="light"] { --temp-scrim: rgba(140, 160, 100, 0.32); }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        /* ── HEADER BAND (brand + operator + theme) ─────────────────── */
+        .c-header {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--temp-header-h);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 28px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--temp-hairline);
+            box-shadow: inset 0 1px 0 0 var(--border-subtle);
+            z-index: 100;
+        }
+        .c-brand { display: flex; align-items: center; gap: 12px; }
+        .c-mark {
+            position: relative;
+            width: 24px; height: 24px;
+            border: 1.5px solid var(--brand);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .c-mark::before {
+            content: "";
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 9px; height: 9px;
+            background: var(--brand);
+            border-radius: 2px;
+            transform: translate(-50%, -50%);
+        }
+        .c-mark::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(115deg, transparent 35%,
+                color-mix(in srgb, var(--brand-light) 18%, transparent) 50%,
+                transparent 65%);
+            animation: c-shim 3500ms ease-in-out infinite;
+        }
+        @keyframes c-shim {
+            0%, 100% { opacity: 0; transform: translateX(-30%); }
+            50%      { opacity: 0.85; transform: translateX(0%); }
+        }
+        .c-brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+        .c-brand-name { font-size: 13px; font-weight: 700; color: var(--text-primary); }
+        .c-brand-kicker {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px; font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+        .c-header__right { display: flex; align-items: center; gap: 20px; }
+        .c-op { display: inline-flex; align-items: center; gap: 10px; }
+        .c-op__dot {
+            position: relative;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+        .c-op__dot::after {
+            content: ""; position: absolute; inset: -3px;
+            border-radius: 50%;
+            border: 1px solid var(--success);
+            opacity: 0.55;
+            animation: c-pulse 2600ms ease-out infinite;
+        }
+        @keyframes c-pulse {
+            0% { transform: scale(0.7); opacity: 0.65; }
+            70% { transform: scale(1.5); opacity: 0; }
+            100% { transform: scale(1.5); opacity: 0; }
+        }
+        .c-op__name {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 12.5px; font-weight: 600;
+            color: var(--text-primary);
+        }
+        .c-op__name::before {
+            content: "operator/";
+            color: var(--text-secondary); font-weight: 400;
+            margin-right: 4px;
+        }
+        .c-theme {
+            width: 30px; height: 30px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            transition: background-color 180ms ease, border-color 180ms ease;
+        }
+        .c-theme:hover { background: var(--bg-card-hover); border-color: var(--border-light); }
+        .c-theme__glyph {
+            position: relative;
+            width: 13px; height: 13px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+        }
+        .c-theme__glyph::before {
+            content: "";
+            position: absolute;
+            top: -1px; right: -3px;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--bg-container);
+        }
+        [data-theme="light"] .c-theme__glyph { background: var(--text-primary); }
+        [data-theme="light"] .c-theme__glyph::before { background: var(--bg-container); }
+
+        /* ── STAGE TABS ─────────────────────────────────────────────── */
+        .c-tabs {
+            position: fixed;
+            top: var(--temp-header-h);
+            left: 0; right: 0;
+            height: var(--temp-tabs-h);
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--temp-hairline);
+            z-index: 90;
+            display: flex;
+            justify-content: center;
+        }
+        .c-tabs__inner {
+            display: flex;
+            align-items: stretch;
+            max-width: 1200px;
+            width: 100%;
+            padding: 0 28px;
+            gap: 0;
+        }
+        .c-tab {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 4px;
+            min-width: 160px;
+            padding: 10px 22px;
+            background: transparent;
+            border: 0;
+            cursor: pointer;
+            color: var(--text-secondary);
+            font: inherit;
+            text-align: left;
+            transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                        background-color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .c-tab__eyebrow {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .c-tab__label {
+            font-size: 16px;
+            font-weight: 700;
+            color: inherit;
+            letter-spacing: -0.012em;
+        }
+        .c-tab__stage-num {
+            color: var(--text-secondary);
+            font-weight: 500;
+            margin-right: 8px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 14px;
+        }
+        .c-tab::after {
+            content: "";
+            position: absolute;
+            left: 22px;
+            right: 22px;
+            bottom: -1px;
+            height: 2.5px;
+            background: var(--brand-light);
+            transform: scaleX(0);
+            transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .c-tab:hover {
+            color: var(--text-primary);
+            background: var(--bg-card-hover);
+        }
+        .c-tab.is-active {
+            color: var(--text-primary);
+            background: var(--bg-section);
+            box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--brand-light) 30%, transparent);
+        }
+        .c-tab.is-active .c-tab__eyebrow {
+            color: var(--brand-light);
+        }
+        [data-theme="light"] .c-tab.is-active .c-tab__eyebrow {
+            color: var(--text-primary);
+        }
+        .c-tab.is-active::after {
+            transform: scaleX(1);
+            animation: c-underline 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        }
+        @keyframes c-underline {
+            0% { transform: scaleX(0); }
+            70% { transform: scaleX(1.04); }
+            100% { transform: scaleX(1); }
+        }
+        .c-tab__sep {
+            width: 1px;
+            background: var(--temp-hairline);
+            margin: 12px 0;
+        }
+
+        /* CTA pinned right of the tabs */
+        .c-tabs__cta-wrap {
+            display: flex;
+            align-items: center;
+            margin-left: auto;
+            padding: 14px 0 14px 12px;
+        }
+        .c-tabs__cta {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: var(--brand);
+            color: var(--text-on-primary);
+            border: 1px solid var(--brand);
+            border-radius: 6px;
+            font: inherit;
+            font-size: 12.5px;
+            font-weight: 700;
+            cursor: pointer;
+            letter-spacing: 0.01em;
+            transition: background-color 200ms ease, transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        [data-theme="light"] .c-tabs__cta { color: #EFFBDB; }
+        .c-tabs__cta:hover {
+            background: var(--brand-light);
+            transform: translateY(-1px);
+        }
+        .c-tabs__cta-plus {
+            display: inline-block;
+            width: 11px; height: 11px;
+            position: relative;
+        }
+        .c-tabs__cta-plus::before, .c-tabs__cta-plus::after {
+            content: ""; position: absolute;
+            background: currentColor; border-radius: 1px;
+        }
+        .c-tabs__cta-plus::before {
+            left: 50%; top: 0; bottom: 0; width: 1.4px; transform: translateX(-50%);
+        }
+        .c-tabs__cta-plus::after {
+            top: 50%; left: 0; right: 0; height: 1.4px; transform: translateY(-50%);
+        }
+
+        /* ── SUB-PILLS PER STAGE ────────────────────────────────────── */
+        .c-subpills {
+            margin-top: calc(var(--temp-header-h) + var(--temp-tabs-h));
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .c-subpills__inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 14px 28px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+        }
+        .c-subpills__hint {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-right: 6px;
+        }
+        .c-pill {
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 14px;
+            font: inherit;
+            font-size: 12.5px;
+            font-weight: 600;
+            letter-spacing: 0.005em;
+            cursor: pointer;
+            transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                        box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .c-pill:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            border-color: var(--border-light);
+        }
+        .c-pill.is-active {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border-color: var(--border-light);
+            box-shadow: inset 0 -2px 0 var(--brand-light), 0 1px 2px rgba(0,0,0,0.08);
+        }
+
+        /* ── CONTENT ────────────────────────────────────────────────── */
+        .c-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 32px 28px 64px;
+        }
+        .c-stage-pane {
+            display: none;
+            animation: c-fade-in 320ms cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+        .c-stage-pane.is-active { display: block; }
+        @keyframes c-fade-in {
+            from { opacity: 0; transform: translateY(4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Interior: spec-list (PLAN) */
+        .c-eyebrow {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--temp-hairline);
+            margin-bottom: 24px;
+        }
+        .c-eyebrow__label {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .c-eyebrow__action {
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 5px 12px;
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: background-color 200ms ease, border-color 200ms ease, transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .c-eyebrow__action:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            transform: translateY(-1px);
+        }
+
+        .c-hero {
+            display: flex; flex-direction: column; gap: 8px;
+            margin-bottom: 28px; max-width: 820px;
+        }
+        .c-hero__caption {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .c-hero__name {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            word-break: break-all;
+        }
+        .c-hero__type {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .c-hero__type strong { color: var(--text-primary); font-weight: 600; }
+
+        .c-speclist {
+            margin: 0; padding: 0;
+            display: flex; flex-direction: column;
+            max-width: 820px;
+        }
+        .c-spec-row {
+            position: relative;
+            display: grid;
+            grid-template-columns: 200px 1fr auto;
+            align-items: baseline;
+            gap: 20px;
+            padding: 14px 16px 14px 14px;
+            border-bottom: 1px solid var(--temp-hairline);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .c-spec-row::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 10px; bottom: 10px;
+            width: 2px;
+            border-radius: 2px;
+            background: var(--brand-light);
+            opacity: 0;
+            transform: scaleY(0.4);
+            transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .c-spec-row:hover {
+            background: var(--bg-card-hover);
+            transform: translateX(2px);
+        }
+        .c-spec-row:hover::before { opacity: 1; transform: scaleY(1); }
+        .c-spec-row:last-child { border-bottom: none; }
+        .c-spec-key {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .c-spec-value {
+            font-size: 13.5px;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        .c-spec-value--mono {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 13px;
+        }
+        .c-spec-hint {
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            letter-spacing: 0.02em;
+        }
+        .c-spec-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 9px;
+            border-radius: 9px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        .c-spec-pill__dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+        }
+
+        /* BUILD pane: apply console */
+        .c-build {
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            gap: 28px;
+            margin-top: 8px;
+        }
+        @media (max-width: 940px) {
+            .c-build { grid-template-columns: 1fr; }
+        }
+        .c-terminal {
+            background: var(--bg-terminal);
+            color: var(--text-terminal);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 12.5px;
+            line-height: 1.55;
+            padding: 16px 18px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            min-height: 280px;
+            overflow-y: auto;
+        }
+        .c-terminal-line { white-space: pre-wrap; }
+        .c-terminal-line .ok { color: #7ECF8C; }
+        .c-terminal-line .warn { color: #F0CA4A; }
+        .c-terminal-line .info { color: #B0B8CC; }
+        .c-terminal-line .em { color: #FFFFFF; font-weight: 600; }
+        .c-aside {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .c-side-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px 18px;
+        }
+        .c-side-card__label {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+        .c-side-card__big {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+        }
+        .c-side-card__meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        /* RUN pane — beacons preview */
+        .c-beacons-table {
+            border: 1px solid var(--temp-hairline);
+            border-radius: 6px;
+            overflow: hidden;
+            background: var(--bg-card);
+            margin-top: 8px;
+        }
+        .c-beacons-row {
+            display: grid;
+            grid-template-columns: 36px 1.4fr 1fr 1fr 1fr auto;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--temp-hairline);
+            font-size: 12.5px;
+            color: var(--text-primary);
+            transition: background-color 200ms ease;
+        }
+        .c-beacons-row:hover { background: var(--bg-card-hover); }
+        .c-beacons-row:last-child { border-bottom: none; }
+        .c-beacons-row.is-head {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            background: var(--bg-section);
+        }
+        .c-beacons-row .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            display: inline-block;
+        }
+        .c-beacons-row .mono {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 12px;
+        }
+
+        /* + NEW DEPLOYMENT TAKEOVER */
+        .scrim {
+            position: fixed;
+            inset: var(--temp-header-h) 0 0 0;
+            background: var(--temp-scrim);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            opacity: 0; pointer-events: none;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 200;
+        }
+        .scrim.is-open { opacity: 1; pointer-events: auto; }
+        .takeover {
+            position: fixed;
+            inset: var(--temp-header-h) 0 0 0;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 80px 24px 48px;
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 210;
+            overflow-y: auto;
+        }
+        .takeover.is-open { opacity: 1; pointer-events: auto; transform: translateY(0); }
+        .takeover__panel {
+            width: 100%;
+            max-width: 720px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 26px 30px 24px;
+            box-shadow: 0 22px 60px -20px rgba(0,0,0,0.55), 0 6px 20px -6px rgba(0,0,0,0.30);
+        }
+        .takeover__head {
+            display: flex; align-items: baseline; justify-content: space-between;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--temp-hairline);
+            margin-bottom: 18px;
+            gap: 10px;
+        }
+        .takeover__title { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+        .takeover__step {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px; font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .takeover__close {
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            color: var(--text-primary);
+            padding: 4px 10px;
+            font: inherit;
+            font-size: 11px; font-weight: 600;
+            cursor: pointer;
+            margin-left: 10px;
+            transition: background-color 200ms ease, border-color 200ms ease;
+        }
+        .takeover__close:hover { background: var(--bg-card-hover); border-color: var(--border-light); }
+        .takeover__field {
+            display: flex; flex-direction: column; gap: 6px;
+            margin-bottom: 14px;
+        }
+        .takeover__label {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px; font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .takeover__input {
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 9px 12px;
+            border-radius: 5px;
+            font: inherit; font-size: 13px;
+            transition: border-color 180ms ease, box-shadow 180ms ease;
+        }
+        .takeover__input:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+        .takeover__actions {
+            display: flex; justify-content: flex-end; gap: 10px;
+            margin-top: 18px; padding-top: 14px;
+            border-top: 1px solid var(--temp-hairline);
+        }
+        .c-btn {
+            font: inherit;
+            font-size: 12.5px; font-weight: 600;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-primary);
+            transition: background-color 200ms ease, border-color 200ms ease, transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .c-btn:hover { background: var(--bg-card-hover); border-color: var(--border-light); transform: translateY(-1px); }
+        .c-btn--primary {
+            background: var(--brand);
+            border-color: var(--brand);
+            color: var(--text-on-primary);
+        }
+        .c-btn--primary:hover {
+            background: var(--brand-light);
+            border-color: var(--brand-light);
+        }
+        [data-theme="light"] .c-btn--primary { color: #EFFBDB; }
+        [data-theme="light"] .c-btn--primary:hover { color: #EFFBDB; }
+
+        .preview-banner {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            z-index: 80;
+        }
+        .preview-banner b { color: var(--text-primary); font-weight: 700; }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- ── HEADER ─────────────────────────────────────────────────── -->
+    <header class="c-header" role="banner">
+        <div class="c-brand">
+            <span class="c-mark" aria-hidden="true"></span>
+            <div class="c-brand-text">
+                <span class="c-brand-name">Red Team Infrastructure</span>
+                <span class="c-brand-kicker">workflow plane</span>
+            </div>
+        </div>
+        <div class="c-header__right">
+            <div class="c-op">
+                <span class="c-op__dot" aria-hidden="true"></span>
+                <span class="c-op__name">harriss</span>
+            </div>
+            <button class="c-theme" type="button" aria-label="Toggle theme"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+                <span class="c-theme__glyph" aria-hidden="true"></span>
+            </button>
+        </div>
+    </header>
+
+    <!-- ── STAGE TABS ─────────────────────────────────────────────── -->
+    <nav class="c-tabs" aria-label="Workflow stages">
+        <div class="c-tabs__inner">
+            <button class="c-tab" data-stage="plan" type="button">
+                <span class="c-tab__eyebrow">Stage 1</span>
+                <span class="c-tab__label"><span class="c-tab__stage-num">01</span>Plan</span>
+            </button>
+            <button class="c-tab is-active" data-stage="build" type="button">
+                <span class="c-tab__eyebrow">Stage 2</span>
+                <span class="c-tab__label"><span class="c-tab__stage-num">02</span>Build</span>
+            </button>
+            <button class="c-tab" data-stage="run" type="button">
+                <span class="c-tab__eyebrow">Stage 3</span>
+                <span class="c-tab__label"><span class="c-tab__stage-num">03</span>Run</span>
+            </button>
+            <button class="c-tab" data-stage="clean" type="button">
+                <span class="c-tab__eyebrow">Stage 4</span>
+                <span class="c-tab__label"><span class="c-tab__stage-num">04</span>Clean</span>
+            </button>
+
+            <div class="c-tabs__cta-wrap">
+                <button class="c-tabs__cta" id="cta-new" type="button">
+                    <span class="c-tabs__cta-plus" aria-hidden="true"></span>
+                    <span>New deployment</span>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ── SUB-PILLS ──────────────────────────────────────────────── -->
+    <div class="c-subpills">
+        <div class="c-subpills__inner" id="subpills-row">
+            <!-- Populated by JS based on active stage -->
+        </div>
+    </div>
+
+    <!-- ── CONTENT ────────────────────────────────────────────────── -->
+    <main class="c-content">
+
+        <!-- PLAN — spec list -->
+        <section class="c-stage-pane" data-pane="plan">
+            <div class="c-eyebrow">
+                <span class="c-eyebrow__label">Plan · Configuration Summary</span>
+                <button class="c-eyebrow__action" type="button">Edit config</button>
+            </div>
+            <div class="c-hero">
+                <span class="c-hero__caption">project</span>
+                <span class="c-hero__name">goad_mini_dev_harriss_macbook_pro</span>
+                <span class="c-hero__type"><strong>GOAD Mini + Cobalt Strike</strong> &middot; ready for build</span>
+            </div>
+            <dl class="c-speclist">
+                <div class="c-spec-row">
+                    <dt class="c-spec-key">Deployment Type</dt>
+                    <dd class="c-spec-value">GOAD Mini + Cobalt Strike</dd>
+                    <dd class="c-spec-hint">Combined</dd>
+                </div>
+                <div class="c-spec-row">
+                    <dt class="c-spec-key">Environment</dt>
+                    <dd class="c-spec-value"><span class="c-spec-pill"><span class="c-spec-pill__dot" aria-hidden="true"></span>DEV</span></dd>
+                    <dd class="c-spec-hint">isolated</dd>
+                </div>
+                <div class="c-spec-row">
+                    <dt class="c-spec-key">AWS Region</dt>
+                    <dd class="c-spec-value c-spec-value--mono">eu-central-1</dd>
+                    <dd class="c-spec-hint">Frankfurt</dd>
+                </div>
+                <div class="c-spec-row">
+                    <dt class="c-spec-key">Management CIDR</dt>
+                    <dd class="c-spec-value c-spec-value--mono">82.35.149.127/32</dd>
+                    <dd class="c-spec-hint">single host</dd>
+                </div>
+                <div class="c-spec-row">
+                    <dt class="c-spec-key">Est. Monthly Cost</dt>
+                    <dd class="c-spec-value">~$260/mo</dd>
+                    <dd class="c-spec-hint">7 instances</dd>
+                </div>
+            </dl>
+        </section>
+
+        <!-- BUILD — apply terminal + status -->
+        <section class="c-stage-pane is-active" data-pane="build">
+            <div class="c-eyebrow">
+                <span class="c-eyebrow__label">Build · terraform apply</span>
+                <button class="c-eyebrow__action" type="button">Cancel apply</button>
+            </div>
+            <div class="c-hero">
+                <span class="c-hero__caption">project</span>
+                <span class="c-hero__name">goad_mini_dev_harriss_macbook_pro</span>
+                <span class="c-hero__type"><strong>Applying</strong> &middot; 4 of 7 resources provisioned</span>
+            </div>
+            <div class="c-build">
+                <div class="c-terminal" role="log" aria-live="polite">
+                    <div class="c-terminal-line"><span class="info">[12:32:14]</span> Initializing Terraform backend…</div>
+                    <div class="c-terminal-line"><span class="ok">[12:32:18] ✓</span> aws_vpc.c2 created</div>
+                    <div class="c-terminal-line"><span class="ok">[12:32:24] ✓</span> aws_subnet.public[0] created</div>
+                    <div class="c-terminal-line"><span class="ok">[12:32:25] ✓</span> aws_subnet.private[0] created</div>
+                    <div class="c-terminal-line"><span class="ok">[12:32:34] ✓</span> aws_nat_gateway.main created</div>
+                    <div class="c-terminal-line"><span class="info">[12:32:41]</span> aws_instance.c2_team_server: <span class="em">Creating…</span></div>
+                    <div class="c-terminal-line"><span class="warn">[12:32:48] ⋯</span> waiting on EC2 status checks</div>
+                </div>
+                <aside class="c-aside">
+                    <div class="c-side-card">
+                        <div class="c-side-card__label">Progress</div>
+                        <div class="c-side-card__big">4 / 7</div>
+                        <div class="c-side-card__meta">elapsed 02m 34s</div>
+                    </div>
+                    <div class="c-side-card">
+                        <div class="c-side-card__label">Est. cost</div>
+                        <div class="c-side-card__big">~$260/mo</div>
+                        <div class="c-side-card__meta">7 instances · eu-central-1</div>
+                    </div>
+                    <div class="c-side-card">
+                        <div class="c-side-card__label">Next action</div>
+                        <div class="c-side-card__big" style="font-size: 14px;">Ansible bootstrap</div>
+                        <div class="c-side-card__meta">runs after apply completes</div>
+                    </div>
+                </aside>
+            </div>
+        </section>
+
+        <!-- RUN — beacons -->
+        <section class="c-stage-pane" data-pane="run">
+            <div class="c-eyebrow">
+                <span class="c-eyebrow__label">Run · Active Beacons</span>
+                <button class="c-eyebrow__action" type="button">Refresh</button>
+            </div>
+            <div class="c-hero">
+                <span class="c-hero__caption">target deployment</span>
+                <span class="c-hero__name">c2_adhoc_dev_harriss_macbook_pro_01</span>
+                <span class="c-hero__type"><strong>3 beacons</strong> &middot; healthy</span>
+            </div>
+            <div class="c-beacons-table">
+                <div class="c-beacons-row is-head">
+                    <span></span>
+                    <span>Host</span>
+                    <span>User</span>
+                    <span>Process</span>
+                    <span>Last check-in</span>
+                    <span>Sleep</span>
+                </div>
+                <div class="c-beacons-row">
+                    <span class="dot"></span>
+                    <span class="mono">DC01.lab.local</span>
+                    <span class="mono">SYSTEM</span>
+                    <span class="mono">lsass.exe</span>
+                    <span class="mono">02s ago</span>
+                    <span class="mono">5s</span>
+                </div>
+                <div class="c-beacons-row">
+                    <span class="dot"></span>
+                    <span class="mono">SRV01.lab.local</span>
+                    <span class="mono">svc_sql</span>
+                    <span class="mono">sqlservr.exe</span>
+                    <span class="mono">14s ago</span>
+                    <span class="mono">30s</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- CLEAN -->
+        <section class="c-stage-pane" data-pane="clean">
+            <div class="c-eyebrow">
+                <span class="c-eyebrow__label">Clean · Audit + Teardown</span>
+                <button class="c-eyebrow__action" type="button">Run teardown</button>
+            </div>
+            <div class="c-hero">
+                <span class="c-hero__caption">deployment</span>
+                <span class="c-hero__name">c2_adhoc_dev_harriss_macbook_pro_01</span>
+                <span class="c-hero__type">Ready to destroy &middot; <strong>4 instances</strong> &middot; 24d uptime</span>
+            </div>
+            <dl class="c-speclist">
+                <div class="c-spec-row">
+                    <dt class="c-spec-key">Instances</dt>
+                    <dd class="c-spec-value c-spec-value--mono">4 EC2</dd>
+                    <dd class="c-spec-hint">~$0.34/h</dd>
+                </div>
+                <div class="c-spec-row">
+                    <dt class="c-spec-key">S3 state</dt>
+                    <dd class="c-spec-value c-spec-value--mono">redteam-state-prod / c2-adhoc.tfstate</dd>
+                    <dd class="c-spec-hint">~12 KB</dd>
+                </div>
+                <div class="c-spec-row">
+                    <dt class="c-spec-key">Secrets Manager</dt>
+                    <dd class="c-spec-value c-spec-value--mono">3 secrets</dd>
+                    <dd class="c-spec-hint">soft-delete</dd>
+                </div>
+                <div class="c-spec-row">
+                    <dt class="c-spec-key">Audit log</dt>
+                    <dd class="c-spec-value">Archived to S3 (immutable)</dd>
+                    <dd class="c-spec-hint">retain 90d</dd>
+                </div>
+            </dl>
+        </section>
+    </main>
+
+    <!-- ── + NEW DEPLOYMENT TAKEOVER ─────────────────────────────── -->
+    <div class="scrim" id="scrim"></div>
+    <div class="takeover" id="takeover" role="dialog" aria-modal="true">
+        <div class="takeover__panel">
+            <div class="takeover__head">
+                <div>
+                    <div class="takeover__title">New deployment</div>
+                </div>
+                <span class="takeover__step">Step 1 of 4</span>
+                <button class="takeover__close" id="takeover-close" type="button">Close ESC</button>
+            </div>
+            <div class="takeover__field">
+                <label class="takeover__label">Project name</label>
+                <input class="takeover__input" type="text" value="combined_adhoc_mini_dev_harriss_macbook_pro" autocomplete="off">
+            </div>
+            <div class="takeover__field">
+                <label class="takeover__label">Deployment type</label>
+                <input class="takeover__input" type="text" value="Combined · Ad-hoc + GOAD Mini" readonly>
+            </div>
+            <div class="takeover__field">
+                <label class="takeover__label">AWS region</label>
+                <input class="takeover__input" type="text" value="eu-central-1 — Frankfurt" readonly>
+            </div>
+            <div class="takeover__actions">
+                <button class="c-btn" type="button" id="takeover-cancel">Cancel</button>
+                <button class="c-btn c-btn--primary" type="button">Next →</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="preview-banner">Scaffold <b>C</b> &middot; workflow stages</div>
+
+    <script>
+    (function () {
+        'use strict';
+        const tabs = document.querySelectorAll('.c-tab');
+        const panes = document.querySelectorAll('.c-stage-pane');
+        const subRow = document.getElementById('subpills-row');
+
+        const subpills = {
+            plan:  ['Configuration', 'Pre-flight', 'Cost estimate', 'Pin variables'],
+            build: ['Apply log', 'Plan diff', 'Status', 'Failures'],
+            run:   ['Beacons', 'Terminal', 'Payloads', 'Activity', 'Listeners'],
+            clean: ['Audit log', 'Destroy', 'Settings', 'Snapshots']
+        };
+
+        function setStage(stage) {
+            tabs.forEach(t => t.classList.toggle('is-active', t.dataset.stage === stage));
+            panes.forEach(p => p.classList.toggle('is-active', p.dataset.pane === stage));
+            const pills = subpills[stage] || [];
+            subRow.innerHTML = `<span class="c-subpills__hint">${stage.toUpperCase()} sub-views</span>` +
+                pills.map((p, i) => `<button class="c-pill ${i===0?'is-active':''}" type="button">${p}</button>`).join('');
+        }
+        tabs.forEach(t => t.addEventListener('click', () => setStage(t.dataset.stage)));
+        // Pill click handler — switch active state within a stage
+        subRow.addEventListener('click', (e) => {
+            if (e.target.classList.contains('c-pill')) {
+                subRow.querySelectorAll('.c-pill').forEach(p => p.classList.remove('is-active'));
+                e.target.classList.add('is-active');
+            }
+        });
+        setStage('build');
+
+        // Takeover
+        const scrim = document.getElementById('scrim');
+        const takeover = document.getElementById('takeover');
+        const cta = document.getElementById('cta-new');
+        const closeBtn = document.getElementById('takeover-close');
+        const cancelBtn = document.getElementById('takeover-cancel');
+        function open() {
+            scrim.classList.add('is-open');
+            takeover.classList.add('is-open');
+        }
+        function close() {
+            scrim.classList.remove('is-open');
+            takeover.classList.remove('is-open');
+        }
+        cta.addEventListener('click', open);
+        closeBtn.addEventListener('click', close);
+        cancelBtn.addEventListener('click', close);
+        scrim.addEventListener('click', close);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && takeover.classList.contains('is-open')) close();
+        });
+    })();
+    </script>
+</body>
+</html>

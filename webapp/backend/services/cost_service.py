@@ -107,8 +107,18 @@ class CostService:
     # ------------------------------------------------------------------
     # AWS Cost Explorer — actual billed costs
     # ------------------------------------------------------------------
-    def get_aws_costs(self, project_name: str, force_refresh: bool = True) -> dict:
-        """Query AWS Cost Explorer for costs. Tries tag-filtered first, falls back to total account costs."""
+    def get_aws_costs(self, project_name: str, force_refresh: bool = True, region: Optional[str] = None) -> dict:
+        """Query AWS Cost Explorer for costs. Tries tag-filtered first, falls back to total account costs.
+
+        Args:
+            project_name: project tag value to filter by.
+            force_refresh: ignored here; reserved for cache control by callers.
+            region: optional AWS region (e.g. 'eu-central-1'). When provided,
+                Cost Explorer's REGION dimension is added to the filter so only
+                spend for that region is returned. Confirmed supported per
+                https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/API_GetCostAndUsage.html
+                (Dimensions key REGION).
+        """
         try:
             # Cost Explorer endpoint is global, always us-east-1
             ce = boto3.client("ce", region_name="us-east-1")
@@ -116,21 +126,34 @@ class CostService:
             end_date = datetime.now().date()
             start_date = end_date - timedelta(days=30)
 
+            # Build optional region dimension filter (used for both tag and fallback queries)
+            region_dim_filter = None
+            if region:
+                region_dim_filter = {
+                    "Dimensions": {"Key": "REGION", "Values": [region]}
+                }
+
             # Try tag-filtered query first
             tag_filtered = True
             try:
+                tag_filter = {
+                    "Tags": {
+                        "Key": "Project",
+                        "Values": [project_name],
+                    }
+                }
+                # Combine tag + region with AND when region is specified
+                combined_filter = (
+                    {"And": [tag_filter, region_dim_filter]}
+                    if region_dim_filter else tag_filter
+                )
                 response = ce.get_cost_and_usage(
                     TimePeriod={
                         "Start": start_date.isoformat(),
                         "End": end_date.isoformat(),
                     },
                     Granularity="DAILY",
-                    Filter={
-                        "Tags": {
-                            "Key": "Project",
-                            "Values": [project_name],
-                        }
-                    },
+                    Filter=combined_filter,
                     GroupBy=[
                         {"Type": "DIMENSION", "Key": "SERVICE"},
                     ],
@@ -147,9 +170,9 @@ class CostService:
             except Exception:
                 tag_filtered = False
 
-            # Fall back to total account costs (no tag filter)
+            # Fall back to total account costs (no tag filter, but keep region filter if set)
             if not tag_filtered:
-                response = ce.get_cost_and_usage(
+                fallback_kwargs = dict(
                     TimePeriod={
                         "Start": start_date.isoformat(),
                         "End": end_date.isoformat(),
@@ -160,6 +183,9 @@ class CostService:
                     ],
                     Metrics=["UnblendedCost"],
                 )
+                if region_dim_filter:
+                    fallback_kwargs["Filter"] = region_dim_filter
+                response = ce.get_cost_and_usage(**fallback_kwargs)
 
             daily_costs = []
             grand_total = 0.0
@@ -485,6 +511,61 @@ class CostService:
                 pass
 
         return projects
+
+    # ------------------------------------------------------------------
+    # Aggregate monthly burn across all (active) deployments
+    # ------------------------------------------------------------------
+    def get_aggregate_monthly_burn(
+        self,
+        region: Optional[str] = None,
+        include_destroyed: bool = False,
+    ) -> dict:
+        """Sum estimated monthly burn across deployments.
+
+        Per Decision #19, D5 Dashboard launchpad's cost trend tile shows
+        "all deployments" by default, with drill-down to per-deployment.
+
+        Args:
+            region: optional AWS region filter. Reserved for future use —
+                running estimates are computed from local resource records,
+                not Cost Explorer, so region filtering currently only
+                annotates the response. The Cost Explorer path
+                (`get_aws_costs`) does honour this argument when called
+                directly.
+            include_destroyed: when False (default) only deployments with
+                status in {running, success, active} are summed.
+
+        Returns:
+            dict with keys: monthly_total, deployments[], region_filter,
+            currency.
+        """
+        projects = self.get_all_projects_summary() or []
+        total = 0.0
+        per_project = []
+        for p in projects:
+            name = p.get("name") or p.get("project_name")
+            if not name:
+                continue
+            status = p.get("status", "unknown")
+            if not include_destroyed and status not in ("running", "success", "active"):
+                continue
+            try:
+                est = self.calculate_running_estimate(name)
+                monthly = est.get("estimated_monthly", 0) or 0 if est.get("available") else 0
+            except Exception:
+                monthly = 0
+            total += monthly
+            per_project.append({
+                "project_name": name,
+                "monthly": round(monthly, 2),
+                "status": status,
+            })
+        return {
+            "monthly_total": round(total, 2),
+            "currency": "USD",
+            "deployments": per_project,
+            "region_filter": region,
+        }
 
     # ------------------------------------------------------------------
     # Budget alert (lightweight — for Deployment Manager banner)

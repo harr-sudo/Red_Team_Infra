@@ -1,0 +1,1866 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TASTE Demo — Bolt-on Target (Blended catalog + per-host)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           TASTE DEMO — Bolt-on Target (blended)
+           One host, one scrollable spec-list, every compatibility state
+           in one place. Status-grouped sections — Installed (incl
+           PATCHED + AS_PATCHED_BUT_VULN) → Available → Incompatible →
+           Conflicts → Patched. Filter chips + Show-by selector compose
+           on top of the unified rhythm.
+           Composes Phase 2b primitives only.
+           Dials: 5/6/5.
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: var(--font-size-base);
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP ──────────────────────────────────────── */
+        :root {
+            --hypothesis-strip-height: 47px;
+            --top-utility-bar-height: 48px;
+            --demo-rail-top: calc(var(--hypothesis-strip-height) + var(--top-utility-bar-height));
+            --demo-rail-w: 220px;
+        }
+        .preview-strip {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            height: calc(var(--hypothesis-strip-height) - 1px);
+            box-sizing: border-box;
+        }
+        .preview-strip__text strong {
+            display: inline-block;
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+        .preview-strip__toggle {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .preview-strip__toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── TOP UTILITY BAR ───────────────────────────────────────── */
+        .top-utility-bar {
+            position: sticky;
+            top: var(--hypothesis-strip-height);
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 16px; height: var(--top-utility-bar-height);
+            padding: 0 24px;
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--border);
+            z-index: 95; font-family: var(--font-family-base);
+        }
+        .top-utility-bar__left,
+        .top-utility-bar__right { display: flex; align-items: center; gap: 14px; min-width: 0; }
+        .top-utility-bar__right { gap: 16px; }
+        .deployment-selector {
+            appearance: none; display: inline-flex; align-items: center; gap: 10px;
+            padding: 6px 12px; border-radius: 6px;
+            background: var(--bg-card); border: 1px solid var(--border-subtle);
+            color: var(--text-primary); font-family: var(--font-family-mono);
+            font-size: 12.5px; font-weight: 600; cursor: pointer;
+            min-width: 0; max-width: 420px;
+        }
+        .deployment-selector:hover { border-color: var(--border-light); background: var(--bg-card-hover); }
+        .deployment-selector__eyebrow {
+            font-family: var(--font-family-mono); font-size: 9.5px; font-weight: 700;
+            color: var(--text-secondary); letter-spacing: 0.14em; text-transform: uppercase;
+            flex-shrink: 0;
+        }
+        .deployment-selector__name { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .deployment-selector__caret { width: 7px; height: 7px; flex-shrink: 0; color: var(--text-secondary); }
+        .top-cost { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 1px; font-family: var(--font-family-mono); line-height: 1.1; }
+        .top-cost__value { font-size: 12.5px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+        .top-cost__caption { font-size: 8.5px; font-weight: 600; color: var(--text-secondary); letter-spacing: 0.14em; text-transform: uppercase; }
+        .top-operator {
+            appearance: none; display: inline-flex; align-items: center; gap: 8px;
+            padding: 5px 10px; border-radius: 999px;
+            background: var(--bg-card); border: 1px solid var(--border-subtle);
+            font-family: var(--font-family-mono); font-size: 12px;
+            color: var(--text-primary); cursor: pointer;
+        }
+        .top-operator:hover { border-color: var(--border-light); background: var(--bg-card-hover); }
+        .top-operator__name { font-weight: 600; color: var(--text-primary); }
+        .top-theme {
+            appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+            background: var(--bg-card); border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono); font-size: 10.5px; font-weight: 600;
+            letter-spacing: 0.1em; text-transform: uppercase;
+            padding: 5px 10px; border-radius: 999px; cursor: pointer;
+        }
+        .top-theme:hover { border-color: var(--brand-light); color: var(--text-primary); background: var(--bg-card-hover); }
+
+        /* ── LEFT RAIL ─────────────────────────────────────────────── */
+        main { margin-left: var(--demo-rail-w); }
+        .demo-rail {
+            position: fixed;
+            top: var(--demo-rail-top);
+            left: 0;
+            bottom: 0;
+            width: var(--demo-rail-w);
+            background: var(--bg-section);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 16px 12px 12px;
+            gap: 2px;
+            z-index: 90;
+            overflow-y: auto;
+            font-family: var(--font-family-base);
+        }
+        .demo-rail__brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 8px 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 10px;
+        }
+        .demo-rail__brand-mark {
+            width: 22px; height: 22px;
+            border: 1.5px solid var(--brand-light);
+            border-radius: 5px;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .demo-rail__brand-mark::after {
+            content: ""; position: absolute; inset: 5px;
+            background: var(--brand-light); border-radius: 2px;
+        }
+        .demo-rail__brand-text { display: flex; flex-direction: column; line-height: 1.2; }
+        .demo-rail__brand-eyebrow {
+            font-family: var(--font-family-mono); font-size: 10.5px;
+            font-weight: 700; color: var(--text-primary);
+            letter-spacing: 0.14em; text-transform: uppercase;
+        }
+        .demo-rail__brand-sub {
+            font-family: var(--font-family-mono); font-size: 9.5px;
+            font-weight: 500; color: var(--text-secondary);
+            letter-spacing: 0.12em; text-transform: uppercase; margin-top: 2px;
+        }
+        .demo-rail__group-label {
+            font-family: var(--font-family-mono); font-size: 9.5px;
+            font-weight: 600; color: var(--text-secondary);
+            letter-spacing: 0.14em; text-transform: uppercase;
+            padding: 10px 10px 6px;
+        }
+        .demo-rail__item {
+            appearance: none; background: transparent; border: 0;
+            position: relative; display: flex; align-items: center;
+            gap: 10px; padding: 9px 12px;
+            color: var(--text-secondary);
+            font-family: inherit; font-size: 13px; font-weight: 500;
+            border-radius: 6px; cursor: pointer;
+            text-align: left; width: 100%;
+        }
+        .demo-rail__item:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+        .demo-rail__item.is-active {
+            background: var(--bg-card-hover); color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__item.is-active::before {
+            content: ""; position: absolute;
+            left: -12px; top: 8px; bottom: 8px;
+            width: 2px; border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__icon { width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; color: currentColor; }
+        .demo-rail__icon svg { display: block; }
+        .demo-rail__label { flex: 1; white-space: nowrap; }
+        .demo-rail__caret {
+            width: 6px; height: 6px;
+            border-right: 1.4px solid currentColor;
+            border-bottom: 1.4px solid currentColor;
+            transform: rotate(-45deg); opacity: 0.55;
+            transition: transform 240ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__item.is-expanded .demo-rail__caret { transform: rotate(45deg); }
+        .demo-rail__children {
+            display: grid; grid-template-rows: 0fr;
+            transition: grid-template-rows 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__children > div { overflow: hidden; }
+        .demo-rail__children.is-open { grid-template-rows: 1fr; }
+        .demo-rail__child {
+            appearance: none; background: transparent; border: 0;
+            display: flex; align-items: center; gap: 8px;
+            margin: 2px 0; padding: 7px 12px 7px 36px;
+            font-family: inherit; font-size: 12.5px; font-weight: 500;
+            color: var(--text-secondary); border-radius: 5px;
+            cursor: pointer; width: 100%; text-align: left;
+            position: relative;
+        }
+        .demo-rail__child:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+        .demo-rail__child.is-active {
+            background: var(--bg-card-hover); color: var(--text-primary); font-weight: 600;
+        }
+        .demo-rail__child.is-active::before {
+            content: ""; position: absolute; left: 16px; top: 8px; bottom: 8px;
+            width: 2px; border-radius: 0 2px 2px 0; background: var(--brand-light);
+        }
+        .demo-rail__child-pill-new {
+            display: inline-block; margin-left: 6px;
+            padding: 1px 6px; background: var(--brand-light);
+            color: var(--text-inverse); border-radius: 999px;
+            font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase;
+            font-weight: 700;
+        }
+        .demo-rail__footer {
+            margin-top: auto; padding-top: 12px;
+            border-top: 1px solid var(--border-subtle);
+            display: flex; justify-content: center;
+        }
+        .demo-rail__version {
+            font-family: var(--font-family-mono); font-size: 9.5px;
+            font-weight: 500; color: var(--text-secondary);
+            letter-spacing: 0.14em; text-transform: uppercase;
+        }
+
+        /* ── PAGE SHELL ────────────────────────────────────────────── */
+        .bt-shell {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 30px 32px 80px;
+            animation: bt-fade-in 320ms var(--motion-easing-standard) both;
+        }
+
+        /* ── HOST HERO STRIP ───────────────────────────────────────── */
+        .bt-hero {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            gap: 20px;
+            padding: 20px 22px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            margin-bottom: 18px;
+        }
+        .bt-hero__icon {
+            width: 52px; height: 52px;
+            border-radius: 10px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-primary);
+            flex-shrink: 0;
+        }
+        .bt-hero__body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+        .bt-hero__kicker {
+            font-family: var(--font-family-mono);
+            font-size: 10px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .bt-hero__title {
+            margin: 0;
+            font-family: var(--font-family-mono);
+            font-size: 22px;
+            font-weight: var(--font-weight-bold);
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            line-height: 1.15;
+        }
+        .bt-hero__sub {
+            margin: 4px 0 0;
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+            display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        }
+        .bt-hero__sub strong { color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+        .bt-hero__refreshed {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+        .bt-hero__refresh-link {
+            background: transparent;
+            border: 0;
+            color: var(--text-primary);
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            font-weight: var(--font-weight-semibold);
+            cursor: pointer;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            padding: 0 0 0 4px;
+        }
+        .bt-hero__refresh-link:hover { color: var(--brand-light); }
+        .bt-hero__actions { display: inline-flex; gap: 10px; flex-shrink: 0; }
+
+        /* ── STAT TILES ────────────────────────────────────────────── */
+        .bt-summary {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+        .bt-summary__tile {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+            padding: 18px 16px 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 6px;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .bt-summary__tile:hover { border-color: var(--border-light); }
+        .bt-summary__num {
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-2xl);
+            font-weight: var(--font-weight-bold);
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+            line-height: 1.05;
+            letter-spacing: -0.015em;
+        }
+        .bt-summary__num--ok { color: var(--success-text); }
+        .bt-summary__num--warn { color: var(--warning-text); }
+        .bt-summary__num--danger { color: var(--danger-text); }
+        .bt-summary__label {
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-xs);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .bt-summary__pill {
+            margin-top: 4px;
+        }
+
+        /* ── FILTER BAR ────────────────────────────────────────────── */
+        .bt-filters {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 16px 18px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            margin-bottom: 18px;
+        }
+        .bt-filters__row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        .bt-filters__row--top {
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-subtle);
+            padding-bottom: 12px;
+            margin-bottom: 4px;
+        }
+        .bt-filters__rowlabel {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            min-width: 92px;
+        }
+        .bt-chip {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 11px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            border-radius: var(--radius-full);
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            font-weight: var(--font-weight-semibold);
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard),
+                        color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .bt-chip:hover {
+            border-color: var(--border-light);
+            color: var(--text-primary);
+        }
+        .bt-chip.is-active {
+            background: var(--bg-card-hover);
+            border-color: var(--brand-light);
+            color: var(--text-primary);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+        .bt-chip__count {
+            font-variant-numeric: tabular-nums;
+            color: var(--text-secondary);
+            font-weight: var(--font-weight-medium);
+            margin-left: 2px;
+        }
+        .bt-chip.is-active .bt-chip__count { color: var(--text-primary); }
+
+        .bt-filters__title {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .bt-filters__title small {
+            color: var(--text-secondary);
+            font-weight: var(--font-weight-medium);
+            margin-left: 8px;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+
+        /* ── SECTION CARD ──────────────────────────────────────────── */
+        .bt-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            margin-bottom: 16px;
+        }
+        .bt-section__header {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            width: 100%;
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 14px 18px 12px;
+            border-bottom: 1px solid var(--border-subtle);
+            cursor: pointer;
+            font-family: inherit;
+            text-align: left;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .bt-section__header:hover { background: var(--bg-card-hover); }
+        .bt-section__header-left {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 10px;
+        }
+        .bt-section__chevron {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-right: 1.6px solid currentColor;
+            border-bottom: 1.6px solid currentColor;
+            transform: rotate(-45deg);
+            transition: transform 220ms var(--motion-easing-standard);
+            color: var(--text-secondary);
+            margin-right: 2px;
+            position: relative;
+            top: -1px;
+        }
+        .bt-section[data-open="true"] .bt-section__chevron { transform: rotate(45deg); }
+        .bt-section__title {
+            margin: 0;
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-xs);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .bt-section__count {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            font-variant-numeric: tabular-nums;
+        }
+        .bt-section__hint {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-medium);
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+        .bt-section__body {
+            display: grid;
+            grid-template-rows: 1fr;
+            transition: grid-template-rows 320ms var(--motion-easing-standard);
+        }
+        .bt-section[data-open="false"] .bt-section__body {
+            grid-template-rows: 0fr;
+        }
+        .bt-section__body-inner { overflow: hidden; }
+
+        /* ── ROW EXTENSIONS (compose .spec-row) ────────────────────── */
+        .bt-row .spec-row__head {
+            grid-template-columns: 230px 1fr auto;
+            align-items: center;
+            cursor: default;
+            padding: 14px 18px 14px 16px;
+            gap: 18px;
+        }
+        .bt-row:hover .spec-row__head { transform: none; background: var(--bg-card-hover); }
+        .bt-row:hover .spec-row__head::before { opacity: 0.6; transform: scaleY(1); }
+
+        .bt-row__lead {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 0;
+        }
+        .bt-row__eyebrow {
+            display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+        }
+        .bt-row__title {
+            font-size: 13.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+            margin: 0;
+            line-height: 1.3;
+        }
+        .bt-row__hint {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .bt-row__hint strong {
+            color: var(--text-primary);
+            font-weight: var(--font-weight-semibold);
+        }
+        .bt-row__hint--ok strong { color: var(--success-text); }
+        .bt-row__hint--danger strong { color: var(--danger-text); }
+        .bt-row__actions {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            flex-wrap: nowrap;
+            opacity: 0.72;
+            transition: opacity var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .bt-row:hover .bt-row__actions,
+        .bt-row:focus-within .bt-row__actions {
+            opacity: 1;
+        }
+        .bt-row .spec-edit-btn {
+            font-size: 11px;
+            padding: 5px 11px;
+        }
+        .bt-row__why {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            background: transparent;
+            border: 0;
+            cursor: pointer;
+            padding: 0 4px;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+        .bt-row__why:hover { color: var(--text-primary); }
+
+        /* INSTALLED variants */
+        .bt-row[data-state="PATCHED"] .spec-row__head {
+            background: color-mix(in srgb, var(--success-bg) 32%, transparent);
+        }
+        .bt-row[data-state="PATCHED"] .spec-row__head::before {
+            background: var(--success);
+            opacity: 1;
+            transform: scaleY(1);
+        }
+        .bt-row[data-state="AS_PATCHED_BUT_VULN"] .spec-row__head {
+            background: color-mix(in srgb, var(--danger-bg) 42%, transparent);
+        }
+        .bt-row[data-state="AS_PATCHED_BUT_VULN"] .spec-row__head::before {
+            background: var(--danger);
+            opacity: 1;
+            transform: scaleY(1);
+        }
+        /* INCOMPATIBLE — dimmed */
+        .bt-row[data-state^="INCOMPATIBLE"] .spec-row__head,
+        .bt-row[data-state="MISSING_PREREQ"] .spec-row__head,
+        .bt-row[data-state="MISSING_SOFTWARE"] .spec-row__head {
+            opacity: 0.55;
+        }
+        .bt-row[data-state^="INCOMPATIBLE"]:hover .spec-row__head,
+        .bt-row[data-state="MISSING_PREREQ"]:hover .spec-row__head,
+        .bt-row[data-state="MISSING_SOFTWARE"]:hover .spec-row__head {
+            opacity: 0.85;
+        }
+        /* CONFLICT — red border */
+        .bt-row[data-state="CONFLICTS_WITH_INSTALLED"] .spec-row__head {
+            border-left: 2px solid var(--danger-border);
+        }
+        .bt-row[data-state="CONFLICTS_WITH_INSTALLED"] .spec-row__head::before { display: none; }
+
+        /* ── PILL VARIANTS ─────────────────────────────────────────── */
+        .spec-pill--cat {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border-color: var(--border-subtle);
+        }
+        .spec-pill--ttp {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border-color: var(--border-subtle);
+            cursor: help;
+        }
+        .spec-pill--success {
+            background: var(--success-bg);
+            color: var(--success-text);
+            border-color: var(--success-border);
+        }
+        .spec-pill--warn {
+            background: var(--warning-bg);
+            color: var(--warning-text);
+            border-color: var(--warning-border);
+        }
+        .spec-pill--danger {
+            background: var(--danger-bg);
+            color: var(--danger-text);
+            border-color: var(--danger-border);
+        }
+        .spec-pill--muted {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border-color: var(--border-subtle);
+        }
+        .spec-pill--no-detect {
+            background: var(--danger-bg);
+            color: var(--danger-text);
+            border-color: var(--danger-border);
+            padding: 2px 9px;
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent);
+        }
+
+        /* ── TOAST ─────────────────────────────────────────────────── */
+        .bt-toast {
+            position: fixed;
+            top: 80px;
+            right: 24px;
+            padding: 10px 14px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 12.5px;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-6px);
+            transition: opacity 240ms, transform 240ms;
+            z-index: 1000;
+        }
+        .bt-toast[data-show="true"] { opacity: 1; transform: translateY(0); }
+
+        /* ── CONFIRM TAKEOVER ──────────────────────────────────────── */
+        .bt-takeover-card { max-width: 560px; padding: 26px; }
+        .bt-takeover-card__eyebrow {
+            font-family: var(--font-family-mono); font-size: 9.5px;
+            font-weight: var(--font-weight-semibold); color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps); text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .bt-takeover-card h3 {
+            margin: 0 0 6px;
+            font-size: 16px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+        }
+        .bt-takeover-card p {
+            margin: 8px 0 0;
+            color: var(--text-secondary);
+            font-size: 13px;
+            line-height: 1.55;
+        }
+        .bt-takeover-card__list {
+            margin: 14px 0 0;
+            padding: 14px 0 0;
+            list-style: none;
+            font-size: 12.5px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .bt-takeover-card__list li {
+            padding: 6px 0;
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 14px;
+        }
+        .bt-takeover-card__list-key {
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            font-weight: var(--font-weight-semibold);
+        }
+        .bt-takeover-card__list-val { color: var(--text-primary); font-size: 12.5px; }
+        .bt-takeover-card__foot {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 18px;
+        }
+
+        /* ── ANIMATIONS ────────────────────────────────────────────── */
+        @keyframes bt-fade-in {
+            from { opacity: 0; transform: translateY(2px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes bt-spin {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .bt-shell, .bt-row__actions, .bt-section__body { transition: none; animation: none; }
+            .bt-section__chevron { transition: none; }
+        }
+        @media (max-width: 1020px) {
+            .bt-summary { grid-template-columns: repeat(2, 1fr); }
+            .bt-row .spec-row__head {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto auto auto;
+                gap: 10px;
+            }
+            .bt-row__actions { justify-content: flex-end; flex-wrap: wrap; }
+        }
+        @media (max-width: 880px) {
+            :root { --demo-rail-w: 64px; }
+            .demo-rail__label, .demo-rail__caret, .demo-rail__group-label,
+            .demo-rail__brand-text, .demo-rail__children, .demo-rail__version { display: none; }
+            .bt-hero { grid-template-columns: auto 1fr; }
+            .bt-hero__actions { grid-column: 1 / -1; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Inline icon defs -->
+    <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="icon-server" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="2" width="10" height="3.5" rx="0.5"/>
+                <rect x="2" y="6.5" width="10" height="3.5" rx="0.5"/>
+                <circle cx="4" cy="3.75" r="0.4" fill="currentColor"/>
+                <circle cx="4" cy="8.25" r="0.4" fill="currentColor"/>
+            </symbol>
+            <symbol id="icon-refresh" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11.5 3.5 A4.5 4.5 0 1 0 12 8"/>
+                <path d="M11.5 1.5 V4 H9"/>
+            </symbol>
+            <symbol id="icon-check" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 7.5 L5.5 11 L12 3.5"/>
+            </symbol>
+            <symbol id="icon-warn" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 2 L12.5 11.5 H1.5 Z"/>
+                <path d="M7 6 V8.5"/>
+                <circle cx="7" cy="10" r="0.3" fill="currentColor"/>
+            </symbol>
+            <symbol id="icon-x" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 3 L11 11 M11 3 L3 11"/>
+            </symbol>
+            <symbol id="icon-shield" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 1.5 L12 3 V7 Q12 10.5 7 12.5 Q2 10.5 2 7 V3 Z"/>
+            </symbol>
+            <symbol id="icon-clock" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="7" cy="7" r="5"/>
+                <path d="M7 4 V7 L9 9"/>
+            </symbol>
+            <symbol id="icon-bolt" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 1 L3 8 H7 L6 13 L11 6 H7 Z"/>
+            </symbol>
+            <symbol id="icon-caret-down" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 2.5 L4 5.5 L7 2.5"/>
+            </symbol>
+            <symbol id="icon-sun" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+                <circle cx="7" cy="7" r="3"/>
+                <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.6 2.6l1.05 1.05M10.35 10.35l1.05 1.05M2.6 11.4l1.05-1.05M10.35 3.65l1.05-1.05"/>
+            </symbol>
+        </defs>
+    </svg>
+
+    <header class="preview-strip">
+        <span class="preview-strip__text">
+            <strong>Bolt-on target demo</strong>
+            The bolt-on target page is one host's vulnerability state in one place — installed, patchable, available, blocked, and patched, all in a single scrollable spec-list sorted by what the operator can do next.
+        </span>
+        <button class="preview-strip__toggle" type="button"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+            Toggle theme
+        </button>
+    </header>
+
+    <!-- TOP UTILITY BAR -->
+    <div class="top-utility-bar" role="toolbar" aria-label="Workspace utilities">
+        <div class="top-utility-bar__left">
+            <button class="deployment-selector" type="button" id="deployment-selector">
+                <span class="deployment-selector__eyebrow">Deployment</span>
+                <span class="deployment-selector__name">goad_mini_dev_harriss_macbook_pro</span>
+                <span class="deployment-selector__caret" aria-hidden="true">
+                    <svg width="7" height="7" viewBox="0 0 8 8" fill="none">
+                        <path d="M1 2.5 L4 5.5 L7 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+            </button>
+        </div>
+        <div class="top-utility-bar__right">
+            <span class="top-cost" title="Estimated monthly cost (demo)">
+                <span class="top-cost__value">~$108/mo</span>
+                <span class="top-cost__caption">est / mo</span>
+            </span>
+            <button class="top-operator" type="button">
+                <span class="operator-dot" style="background: #3b82f6;" aria-hidden="true"></span>
+                <span class="top-operator__name">alice</span>
+                <span class="deployment-selector__caret" aria-hidden="true">
+                    <svg width="7" height="7" viewBox="0 0 8 8" fill="none">
+                        <path d="M1 2.5 L4 5.5 L7 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+            </button>
+            <button class="top-theme" type="button" id="theme-toggle">
+                <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+                    <circle cx="7" cy="7" r="3"/>
+                    <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.6 2.6l1.05 1.05M10.35 10.35l1.05 1.05M2.6 11.4l1.05-1.05M10.35 3.65l1.05-1.05"/>
+                </svg>
+                <span>Theme</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- LEFT RAIL -->
+    <nav class="demo-rail" aria-label="App navigation (demo)">
+        <div class="demo-rail__brand">
+            <span class="demo-rail__brand-mark" aria-hidden="true"></span>
+            <span class="demo-rail__brand-text">
+                <span class="demo-rail__brand-eyebrow">RED TEAM INFRA</span>
+                <span class="demo-rail__brand-sub">v3 · demo</span>
+            </span>
+        </div>
+
+        <span class="demo-rail__group-label">Workspace</span>
+
+        <button class="demo-rail__item" type="button">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="8.5" y="1.5" width="6" height="3" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="8.5" y="5.5" width="6" height="9" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="1.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+            </svg></span>
+            <span class="demo-rail__label">Dashboard</span>
+        </button>
+
+        <button class="demo-rail__item is-active is-expanded" type="button" data-demo-parent="deployments" aria-expanded="true">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="1.5" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="1.5" y="10" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <circle cx="4" cy="3.75" r="0.7" fill="currentColor"/>
+                <circle cx="4" cy="12.25" r="0.7" fill="currentColor"/>
+            </svg></span>
+            <span class="demo-rail__label">Deployments</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="demo-rail__children is-open" data-children-of="deployments">
+            <div>
+                <button class="demo-rail__child" type="button">Configure</button>
+                <button class="demo-rail__child" type="button">Deploy</button>
+                <button class="demo-rail__child" type="button">Manage</button>
+                <button class="demo-rail__child" type="button">Cleanup</button>
+                <button class="demo-rail__child is-active" type="button">
+                    Bolt-ons<span class="demo-rail__child-pill-new">NEW</span>
+                </button>
+            </div>
+        </div>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="operations">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
+                <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg></span>
+            <span class="demo-rail__label">Operations</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+
+        <button class="demo-rail__item" type="button">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.3"/>
+            </svg></span>
+            <span class="demo-rail__label">Settings</span>
+        </button>
+
+        <div class="demo-rail__footer">
+            <span class="demo-rail__version">v2.5.5</span>
+        </div>
+    </nav>
+
+    <div class="bt-toast" id="bt-toast" role="status" aria-live="polite"></div>
+
+    <main class="bt-shell">
+
+        <!-- HOST HERO -->
+        <section class="bt-hero" aria-label="Target host overview">
+            <span class="bt-hero__icon" aria-hidden="true">
+                <svg class="icon icon--lg" aria-hidden="true"><use href="#icon-server"/></svg>
+            </span>
+            <div class="bt-hero__body">
+                <span class="bt-hero__kicker">DC01.DOMAIN1.LOCAL</span>
+                <h1 class="bt-hero__title">Windows Server 2022 · Domain Controller</h1>
+                <p class="bt-hero__sub">
+                    <span class="spec-pill spec-pill--success"><span class="spec-pill__dot"></span> alive</span>
+                    <span>·</span>
+                    <strong>20348.2700</strong> · forest 2016 · PDC emulator · 10.1.10.10
+                    <span>·</span>
+                    <span class="bt-hero__refreshed">Facts refreshed 12m ago</span>
+                    <button class="bt-hero__refresh-link" type="button" onclick="btRefresh(this)">Refresh →</button>
+                </p>
+            </div>
+            <div class="bt-hero__actions">
+                <button class="spec-edit-btn" type="button" onclick="btToast('Host selector would open — list of 5 hosts in goad_mini lab')">
+                    Change target
+                </button>
+            </div>
+        </section>
+
+        <!-- STAT TILES -->
+        <div class="bt-summary" role="group" aria-label="Per-host bolt-on stats">
+            <div class="bt-summary__tile">
+                <span class="bt-summary__num">7</span>
+                <span class="bt-summary__label">Installed</span>
+            </div>
+            <div class="bt-summary__tile">
+                <span class="bt-summary__num bt-summary__num--ok">2</span>
+                <span class="bt-summary__label">Patched</span>
+            </div>
+            <div class="bt-summary__tile">
+                <span class="bt-summary__num bt-summary__num--danger">1</span>
+                <span class="bt-summary__label">Pending detection coverage</span>
+                <span class="bt-summary__pill">
+                    <span class="spec-pill spec-pill--danger" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> no rule</span>
+                </span>
+            </div>
+            <div class="bt-summary__tile">
+                <span class="bt-summary__num bt-summary__num--warn">8</span>
+                <span class="bt-summary__label">Available compatible</span>
+            </div>
+        </div>
+
+        <!-- FILTER BAR -->
+        <div class="bt-filters" aria-label="Filters">
+            <div class="bt-filters__row bt-filters__row--top">
+                <span class="bt-filters__title">Filters
+                    <small id="bt-active-count">22 bolt-ons shown · all states · all coverage · all categories</small>
+                </span>
+                <div class="seg-control" role="tablist" aria-label="Group bolt-ons by">
+                    <button class="seg-control__option is-active" data-mode="status" type="button">By status</button>
+                    <button class="seg-control__option" data-mode="mitre" type="button">MITRE</button>
+                    <button class="seg-control__option" data-mode="category" type="button">Category</button>
+                    <button class="seg-control__option" data-mode="recency" type="button">Recency</button>
+                </div>
+            </div>
+
+            <div class="bt-filters__row">
+                <span class="bt-filters__rowlabel">Category</span>
+                <button class="bt-chip is-active" data-group="cat" data-value="all">All<span class="bt-chip__count">22</span></button>
+                <button class="bt-chip" data-group="cat" data-value="identity">Identity<span class="bt-chip__count">5</span></button>
+                <button class="bt-chip" data-group="cat" data-value="access-control">Access control<span class="bt-chip__count">3</span></button>
+                <button class="bt-chip" data-group="cat" data-value="adcs">ADCS<span class="bt-chip__count">3</span></button>
+                <button class="bt-chip" data-group="cat" data-value="cve">Known CVE<span class="bt-chip__count">2</span></button>
+                <button class="bt-chip" data-group="cat" data-value="web-app">Web app<span class="bt-chip__count">1</span></button>
+                <button class="bt-chip" data-group="cat" data-value="protocol">Protocol<span class="bt-chip__count">3</span></button>
+                <button class="bt-chip" data-group="cat" data-value="credential">Credential<span class="bt-chip__count">2</span></button>
+                <button class="bt-chip" data-group="cat" data-value="service">Service<span class="bt-chip__count">1</span></button>
+                <button class="bt-chip" data-group="cat" data-value="cloud">Cloud<span class="bt-chip__count">1</span></button>
+                <button class="bt-chip" data-group="cat" data-value="endpoint">Endpoint<span class="bt-chip__count">1</span></button>
+            </div>
+
+            <div class="bt-filters__row">
+                <span class="bt-filters__rowlabel">Compatibility</span>
+                <button class="bt-chip is-active" data-group="state" data-value="all">All<span class="bt-chip__count">22</span></button>
+                <button class="bt-chip" data-group="state" data-value="INSTALLED">Installed<span class="bt-chip__count">5</span></button>
+                <button class="bt-chip" data-group="state" data-value="INSTALLABLE">Available<span class="bt-chip__count">5</span></button>
+                <button class="bt-chip" data-group="state" data-value="PATCHED">Patched<span class="bt-chip__count">2</span></button>
+                <button class="bt-chip" data-group="state" data-value="INCOMPATIBLE">Incompatible<span class="bt-chip__count">4</span></button>
+                <button class="bt-chip" data-group="state" data-value="CONFLICT">Conflicts<span class="bt-chip__count">2</span></button>
+                <button class="bt-chip" data-group="state" data-value="ALREADY_ELSEWHERE">Already installed elsewhere<span class="bt-chip__count">4</span></button>
+            </div>
+
+            <div class="bt-filters__row">
+                <span class="bt-filters__rowlabel">Coverage</span>
+                <button class="bt-chip is-active" data-group="cov" data-value="all">All<span class="bt-chip__count">22</span></button>
+                <button class="bt-chip" data-group="cov" data-value="covered">Covered<span class="bt-chip__count">12</span></button>
+                <button class="bt-chip" data-group="cov" data-value="partial">Partial<span class="bt-chip__count">5</span></button>
+                <button class="bt-chip" data-group="cov" data-value="no-rule">No-rule<span class="bt-chip__count">3</span></button>
+                <button class="bt-chip" data-group="cov" data-value="stale">Stale<span class="bt-chip__count">2</span></button>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <!-- SECTION 1 — INSTALLED (5 rows)                            -->
+        <!-- ════════════════════════════════════════════════════════ -->
+        <section class="bt-section" data-open="true" data-section="installed">
+            <button class="bt-section__header" type="button" onclick="btToggleSection(this)" aria-expanded="true">
+                <span class="bt-section__header-left">
+                    <span class="bt-section__chevron" aria-hidden="true"></span>
+                    <h2 class="bt-section__title">Installed · 5</h2>
+                </span>
+                <span class="bt-section__hint">Sorted by recency · 2 patched · 1 detection failed</span>
+            </button>
+            <div class="bt-section__body">
+            <div class="bt-section__body-inner">
+            <div class="spec-list" role="list">
+
+                <!-- Row 1: Kerberoasting (INSTALLED + covered) -->
+                <div class="spec-row bt-row" data-state="INSTALLED" data-cat="identity" data-cov="covered" data-vuln-id="bolton.identity.kerberoastable-svc">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Identity</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1558.003 Kerberoasting · Rule 1d276579-…-b1e2c4">T1558.003</span>
+                                <span class="spec-pill spec-pill--success" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Covered</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">Kerberoastable Service Account (svc_mssql)</div>
+                            <div class="bt-row__hint">
+                                <span class="operator-dot operator-dot--sm" style="background: #a31621;" aria-hidden="true"></span>
+                                Installed by <strong>harris</strong> · 3d ago · last verified 1h ago
+                            </div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="btOpenConfirm('patch','Kerberoastable Service Account')">Patch</button>
+                            <button class="spec-edit-btn" type="button" onclick="btOpenConfirm('uninstall','Kerberoastable Service Account')">Uninstall</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel for kerberoastable-svc')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: AdminSDHolder backdoor (INSTALLED + covered) -->
+                <div class="spec-row bt-row" data-state="INSTALLED" data-cat="access-control" data-cov="covered" data-vuln-id="bolton.acl.adminsdholder">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Access control</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1098 Account Manipulation · Rule 2c7a4f88-…-91e0a3">T1098</span>
+                                <span class="spec-pill spec-pill--success" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Covered</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">AdminSDHolder Backdoor ACE</div>
+                            <div class="bt-row__hint">
+                                <span class="operator-dot operator-dot--sm" style="background: #3b82f6;" aria-hidden="true"></span>
+                                Installed by <strong>alice</strong> · 2d ago · SDProp re-applies hourly
+                            </div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="btOpenConfirm('patch','AdminSDHolder Backdoor ACE')">Patch</button>
+                            <button class="spec-edit-btn" type="button" onclick="btOpenConfirm('uninstall','AdminSDHolder Backdoor ACE')">Uninstall</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 3: GPP cpassword (INSTALLED + no-rule) -->
+                <div class="spec-row bt-row" data-state="INSTALLED" data-cat="credential" data-cov="no-rule" data-vuln-id="bolton.gpo.gpp-cpassword">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Credential</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1552.006 Group Policy Preferences · No Elastic rule">T1552.006</span>
+                                <span class="spec-pill spec-pill--no-detect" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> No rule</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">GPP cpassword in SYSVOL</div>
+                            <div class="bt-row__hint">
+                                <span class="operator-dot operator-dot--sm" style="background: #a31621;" aria-hidden="true"></span>
+                                Installed by <strong>harris</strong> · 18h ago · generate rule from template?
+                            </div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="btOpenConfirm('patch','GPP cpassword in SYSVOL')">Patch</button>
+                            <button class="spec-edit-btn" type="button" onclick="btOpenConfirm('uninstall','GPP cpassword in SYSVOL')">Uninstall</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 4: PrintNightmare — PATCHED (Patch revert state) -->
+                <div class="spec-row bt-row" data-state="PATCHED" data-cat="cve" data-cov="covered" data-vuln-id="bolton.cve.printnightmare" data-rollback="true">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Known CVE</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1068 PrivEsc · CVE-2021-34527 · Rule 5cc6efb3-…-b3a1c2d">T1068</span>
+                                <span class="spec-pill spec-pill--success" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg> Detection verified</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">PrintNightmare — CVE-2021-34527</div>
+                            <div class="bt-row__hint bt-row__hint--ok">
+                                <span class="operator-dot operator-dot--sm" style="background: #3b82f6;" aria-hidden="true"></span>
+                                Installed by <strong>alice</strong> 1d ago · <strong>PATCHED 5h ago by harris</strong> — KB5005033 · exploit probe blocked
+                            </div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn" type="button" onclick="btOpenConfirm('patch_revert','PrintNightmare')">Patch revert</button>
+                            <button class="spec-edit-btn" type="button" onclick="btOpenConfirm('uninstall','PrintNightmare')">Uninstall</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 5: ESC1 — AS_PATCHED_BUT_VULN (red row) -->
+                <div class="spec-row bt-row" data-state="AS_PATCHED_BUT_VULN" data-cat="adcs" data-cov="covered" data-vuln-id="bolton.adcs.esc1">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">ADCS</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1649 Forge Certs · Rule 7b91ace4-…-d52f8a">T1649</span>
+                                <span class="spec-pill spec-pill--danger" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> AS_PATCHED_BUT_VULN</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">ADCS ESC1 — Enrollee Supplies Subject (DC-issued)</div>
+                            <div class="bt-row__hint bt-row__hint--danger">
+                                <span class="operator-dot operator-dot--sm" style="background: #a31621;" aria-hidden="true"></span>
+                                Patched by <strong>harris</strong> 22m ago — <strong>certipy esc1 still issued admin cert · agent intervention required</strong>
+                            </div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="btToast('Invoke Agent — would build context bundle + open agent panel')">Invoke Agent</button>
+                            <button class="spec-edit-btn" type="button" onclick="btOpenConfirm('patch_revert','ADCS ESC1')">Revert</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+            </div>
+            </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <!-- SECTION 2 — AVAILABLE TO INSTALL (5 rows)                -->
+        <!-- ════════════════════════════════════════════════════════ -->
+        <section class="bt-section" data-open="true" data-section="available">
+            <button class="bt-section__header" type="button" onclick="btToggleSection(this)" aria-expanded="true">
+                <span class="bt-section__header-left">
+                    <span class="bt-section__chevron" aria-hidden="true"></span>
+                    <h2 class="bt-section__title">Available to install · 5</h2>
+                </span>
+                <span class="bt-section__hint">Compatible with this host · 2 missing detection coverage</span>
+            </button>
+            <div class="bt-section__body">
+            <div class="bt-section__body-inner">
+            <div class="spec-list" role="list">
+
+                <!-- Row 1: AS-REP Roastable User -->
+                <div class="spec-row bt-row" data-state="INSTALLABLE" data-cat="identity" data-cov="covered" data-vuln-id="bolton.identity.asrep-roast">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Identity</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1558.004 AS-REP Roasting · Rule e8b3a7f1-…-cd12fe">T1558.004</span>
+                                <span class="spec-pill spec-pill--success" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Covered</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">AS-REP Roastable User</div>
+                            <div class="bt-row__hint">Est. install time: <strong>~20s</strong> · Quiet — sets DONT_REQ_PREAUTH on one user</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="btOpenInstall('AS-REP Roastable User','T1558.004','Identity')">Install</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: GPP cpassword on ws01 — already installed elsewhere -->
+                <div class="spec-row bt-row" data-state="INSTALLABLE" data-cat="access-control" data-cov="covered" data-vuln-id="bolton.acl.dcsync-rights">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Access control</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1003.006 DCSync · Rule 9a3b8e2c-…-f7d4a1">T1003.006</span>
+                                <span class="spec-pill spec-pill--success" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-shield"/></svg> Covered</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">DCSync ACL on Low-Priv User</div>
+                            <div class="bt-row__hint">Est. install time: <strong>~25s</strong> · Loud — adds Replicating Directory Changes</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="btOpenInstall('DCSync ACL on Low-Priv User','T1003.006','Access control')">Install</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 3: LLMNR / NBT-NS Poisoning -->
+                <div class="spec-row bt-row" data-state="INSTALLABLE" data-cat="protocol" data-cov="partial" data-vuln-id="bolton.protocol.llmnr-nbtns">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Protocol</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1557.001 LLMNR/NBT-NS poisoning · Rule a8d2bce9-…-65f01c (partial)">T1557.001</span>
+                                <span class="spec-pill spec-pill--warn" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> Partial</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">LLMNR / NBT-NS Poisoning (domain-wide)</div>
+                            <div class="bt-row__hint">Est. install time: <strong>~90s</strong> · Loud detection · domain-wide GPO push</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="btOpenInstall('LLMNR / NBT-NS Poisoning','T1557.001','Protocol')">Install</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 4: SMB Signing Not Required (no-rule, red badge) -->
+                <div class="spec-row bt-row" data-state="INSTALLABLE" data-cat="protocol" data-cov="no-rule" data-vuln-id="bolton.protocol.smb-signing-off">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Protocol</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1557.001 SMB relay precondition · No Elastic rule">T1557.001</span>
+                                <span class="spec-pill spec-pill--no-detect" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> No rule</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">SMB Signing Not Required</div>
+                            <div class="bt-row__hint">Est. install time: <strong>~15s</strong> · Quiet — registry param flip</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="btOpenInstall('SMB Signing Not Required','T1557.001','Protocol')">Install</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 5: PetitPotam stale -->
+                <div class="spec-row bt-row" data-state="INSTALLABLE" data-cat="protocol" data-cov="stale" data-vuln-id="bolton.protocol.petitpotam">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Protocol</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1187 Forced Auth · Rule 4d2a17ee-…-83cb91 (stale 142d)">T1187</span>
+                                <span class="spec-pill spec-pill--warn" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-clock"/></svg> Stale 142d</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">PetitPotam MS-EFSRPC Coercion</div>
+                            <div class="bt-row__hint">Est. install time: <strong>~1m</strong> · Disables NTLM fallback hardening</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn spec-edit-btn--save" type="button" onclick="btOpenInstall('PetitPotam MS-EFSRPC Coercion','T1187','Protocol')">Install</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+            </div>
+            </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <!-- SECTION 3 — INCOMPATIBLE (4 rows, collapsed)              -->
+        <!-- ════════════════════════════════════════════════════════ -->
+        <section class="bt-section" data-open="false" data-section="incompatible">
+            <button class="bt-section__header" type="button" onclick="btToggleSection(this)" aria-expanded="false">
+                <span class="bt-section__header-left">
+                    <span class="bt-section__chevron" aria-hidden="true"></span>
+                    <h2 class="bt-section__title">Incompatible · 4</h2>
+                </span>
+                <span class="bt-section__hint">Cannot install on this host — expand for reasons</span>
+            </button>
+            <div class="bt-section__body">
+            <div class="bt-section__body-inner">
+            <div class="spec-list" role="list">
+
+                <!-- Row 1: ZeroLogon — INCOMPATIBLE_OS -->
+                <div class="spec-row bt-row" data-state="INCOMPATIBLE_OS" data-cat="cve" data-cov="covered" data-vuln-id="bolton.cve.zerologon">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Known CVE</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1068 PrivEsc · CVE-2020-1472">T1068</span>
+                                <span class="spec-pill spec-pill--warn" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-x"/></svg> INCOMPATIBLE_OS</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">ZeroLogon — CVE-2020-1472</div>
+                            <div class="bt-row__hint">Requires Windows Server 2008–2019 unpatched; this host is <strong>Server 2022</strong> (already mitigated by vendor)</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="bt-row__why" type="button" onclick="btToast('Why: Requires Server 2008-2019; dc01 is Server 2022. No compatible host in this lab.')">Why?</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: ADCS ESC8 — INCOMPATIBLE_ROLE -->
+                <div class="spec-row bt-row" data-state="INCOMPATIBLE_ROLE" data-cat="adcs" data-cov="covered" data-vuln-id="bolton.adcs.esc8">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">ADCS</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1187 Forced Auth · ESC8 NTLM Relay">T1187</span>
+                                <span class="spec-pill spec-pill--warn" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-x"/></svg> INCOMPATIBLE_ROLE</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">ADCS ESC8 — HTTP Web Enrollment</div>
+                            <div class="bt-row__hint">Requires DC role; this is a member server — wait, this IS the DC, but no ca-host installed yet</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="bt-row__why" type="button" onclick="btToast('Why: ESC8 requires a separate ca-host (Web Enrollment endpoint). Provision ca01 first via bolton.adcs.install-adcs on srv01.')">Why?</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 3: DCSync ACL — MISSING_PREREQ -->
+                <div class="spec-row bt-row" data-state="MISSING_PREREQ" data-cat="access-control" data-cov="covered" data-vuln-id="bolton.acl.weak-pwpol-dcsync">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Access control</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1110 + T1003.006">T1110</span>
+                                <span class="spec-pill spec-pill--warn" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> MISSING_PREREQ</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">DCSync via Weak-Password-Policy Chain</div>
+                            <div class="bt-row__hint">Requires <strong>bolton.identity.weak-password-policy</strong> installed first — currently absent on dc01</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="bt-row__why" type="button" onclick="btToast('Install bolton.identity.weak-password-policy first (in Conflicts section — uninstall strong-pwpol-baseline to enable).')">Why?</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 4: NTLM Relay to LDAP — MISSING_SOFTWARE (linux-member) -->
+                <div class="spec-row bt-row" data-state="MISSING_SOFTWARE" data-cat="protocol" data-cov="covered" data-vuln-id="bolton.relay.ntlm-to-ldap">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Protocol</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1557.001 NTLM relay">T1557.001</span>
+                                <span class="spec-pill spec-pill--warn" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> MISSING_SOFTWARE</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">NTLM Relay to LDAP (no signing) scenario host</div>
+                            <div class="bt-row__hint">Requires <strong>ntlmrelayx</strong> on a linux-member host; no linux member in goad_mini · provision one first</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="bt-row__why" type="button" onclick="btToast('Provision a linux-member host first — bolton.relay.ntlm-to-ldap runs on that host, not on dc01.')">Why?</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+            </div>
+            </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <!-- SECTION 4 — CONFLICTS (2 rows, collapsed)                 -->
+        <!-- ════════════════════════════════════════════════════════ -->
+        <section class="bt-section" data-open="false" data-section="conflicts">
+            <button class="bt-section__header" type="button" onclick="btToggleSection(this)" aria-expanded="false">
+                <span class="bt-section__header-left">
+                    <span class="bt-section__chevron" aria-hidden="true"></span>
+                    <h2 class="bt-section__title">Conflicts · 2</h2>
+                </span>
+                <span class="bt-section__hint">Conflict with bolt-on already installed elsewhere</span>
+            </button>
+            <div class="bt-section__body">
+            <div class="bt-section__body-inner">
+            <div class="spec-list" role="list">
+
+                <!-- Row 1: Weak Password Policy — conflicts with strong-pwpol -->
+                <div class="spec-row bt-row" data-state="CONFLICTS_WITH_INSTALLED" data-cat="identity" data-cov="no-rule" data-vuln-id="bolton.identity.weak-password-policy">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Identity</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1110 Brute Force">T1110</span>
+                                <span class="spec-pill spec-pill--danger" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> CONFLICT</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">Weak Domain Password Policy</div>
+                            <div class="bt-row__hint">Conflicts with <strong>strong-pwpol-baseline</strong> already installed on dc01 — uninstall to proceed</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Jumps to installed strong-pwpol-baseline row — uninstall confirm would open')">View conflict</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: Unconstrained Delegation — conflicts with constrained-deg -->
+                <div class="spec-row bt-row" data-state="CONFLICTS_WITH_INSTALLED" data-cat="identity" data-cov="stale" data-vuln-id="bolton.delegation.unconstrained-dc01">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Identity</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1558.001 Golden Ticket">T1558.001</span>
+                                <span class="spec-pill spec-pill--danger" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-warn"/></svg> CONFLICT</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">Unconstrained Delegation on DC01</div>
+                            <div class="bt-row__hint">Conflicts with <strong>constrained-delegation-srv02</strong> installed by bob — different delegation models can't coexist on same DC</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Jumps to installed constrained-delegation-srv02 row')">View conflict</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+            </div>
+            </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <!-- SECTION 5 — ALREADY INSTALLED ELSEWHERE IN LAB (4)        -->
+        <!-- ════════════════════════════════════════════════════════ -->
+        <section class="bt-section" data-open="false" data-section="elsewhere">
+            <button class="bt-section__header" type="button" onclick="btToggleSection(this)" aria-expanded="false">
+                <span class="bt-section__header-left">
+                    <span class="bt-section__chevron" aria-hidden="true"></span>
+                    <h2 class="bt-section__title">Already installed elsewhere in lab · 4</h2>
+                </span>
+                <span class="bt-section__hint">Same bolt-on type running on a sibling host</span>
+            </button>
+            <div class="bt-section__body">
+            <div class="bt-section__body-inner">
+            <div class="spec-list" role="list">
+
+                <!-- Row 1: SQL Trusted Links on srv01 -->
+                <div class="spec-row bt-row" data-state="ALREADY_ELSEWHERE" data-cat="service" data-cov="partial" data-vuln-id="bolton.identity.sql-trusted-links">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Service</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1078.002">T1078.002</span>
+                                <span class="spec-pill spec-pill--muted" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg> On srv01</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">MSSQL Trusted Links Chain</div>
+                            <div class="bt-row__hint">Installed on <strong>srv01.domain1.local</strong> by bob · 4d ago</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Switch target → srv01.domain1.local')">View on srv01 →</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: LAPS readable on srv02 -->
+                <div class="spec-row bt-row" data-state="ALREADY_ELSEWHERE" data-cat="credential" data-cov="partial" data-vuln-id="bolton.identity.laps-readable">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Credential</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1552.001">T1552.001</span>
+                                <span class="spec-pill spec-pill--muted" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg> On srv02</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">LAPS Password World-Readable</div>
+                            <div class="bt-row__hint">Installed on <strong>srv02.domain1.local</strong> by alice · 5d ago</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Switch target → srv02.domain1.local')">View on srv02 →</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 3: Vulnerable Web App on srv02 -->
+                <div class="spec-row bt-row" data-state="ALREADY_ELSEWHERE" data-cat="web-app" data-cov="covered" data-vuln-id="bolton.web.vuln-iis">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Web app</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1190 Exploit Public-Facing App">T1190</span>
+                                <span class="spec-pill spec-pill--muted" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg> On srv02</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">Unpatched IIS Web App (uploads endpoint)</div>
+                            <div class="bt-row__hint">Installed on <strong>srv02.domain1.local</strong> by harris · 1w ago</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Switch target → srv02.domain1.local')">View on srv02 →</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 4: SSRF to Cloud IMDS on srv01 (Cloud) -->
+                <div class="spec-row bt-row" data-state="ALREADY_ELSEWHERE" data-cat="cloud" data-cov="no-rule" data-vuln-id="bolton.cloud.ssrf-imds">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Cloud</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1552.005 IMDS abuse">T1552.005</span>
+                                <span class="spec-pill spec-pill--muted" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg> On srv01</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">SSRF → AWS IMDS v1 fallback</div>
+                            <div class="bt-row__hint">Installed on <strong>srv01.domain1.local</strong> by alice · 3d ago</div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Switch target → srv01.domain1.local')">View on srv01 →</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+            </div>
+            </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <!-- SECTION 6 — PATCHED / ALREADY SECURED (2 rows, collapsed) -->
+        <!-- ════════════════════════════════════════════════════════ -->
+        <section class="bt-section" data-open="false" data-section="patched">
+            <button class="bt-section__header" type="button" onclick="btToggleSection(this)" aria-expanded="false">
+                <span class="bt-section__header-left">
+                    <span class="bt-section__chevron" aria-hidden="true"></span>
+                    <h2 class="bt-section__title">Already secured · 2</h2>
+                </span>
+                <span class="bt-section__hint">Detection verified · re-expose for repeat exercise</span>
+            </button>
+            <div class="bt-section__body">
+            <div class="bt-section__body-inner">
+            <div class="spec-list" role="list">
+
+                <!-- Row 1: Lateral Endpoint Auth Bypass — patched, rollback supported -->
+                <div class="spec-row bt-row" data-state="PATCHED" data-cat="endpoint" data-cov="covered" data-vuln-id="bolton.endpoint.lat-bypass" data-rollback="true">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Endpoint</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1556.003 Auth bypass">T1556.003</span>
+                                <span class="spec-pill spec-pill--success" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg> Detection verified</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">Lateral Endpoint Auth Bypass</div>
+                            <div class="bt-row__hint bt-row__hint--ok">
+                                Last patched <strong>5d ago</strong> by harris · rollback supported · exploit probe blocked
+                            </div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn" type="button" onclick="btOpenConfirm('patch_revert','Lateral Endpoint Auth Bypass')">Patch revert</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: NTLMv1 disable — patched, no revert -->
+                <div class="spec-row bt-row" data-state="PATCHED" data-cat="protocol" data-cov="covered" data-vuln-id="bolton.protocol.ntlmv1" data-rollback="false">
+                    <div class="spec-row__head">
+                        <div class="bt-row__lead">
+                            <div class="bt-row__eyebrow">
+                                <span class="spec-pill spec-pill--cat">Protocol</span>
+                                <span class="spec-pill spec-pill--ttp" title="T1557.001 LAN Manager downgrade">T1557.001</span>
+                                <span class="spec-pill spec-pill--success" style="font-size:9.5px"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check"/></svg> Detection verified</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__lead">
+                            <div class="bt-row__title">NTLMv1 Acceptance (disabled)</div>
+                            <div class="bt-row__hint bt-row__hint--ok">
+                                Last patched <strong>9d ago</strong> by alice · <span style="color:var(--text-secondary)">no revert path — vendor-deprecated protocol</span>
+                            </div>
+                        </div>
+                        <div class="bt-row__actions">
+                            <button class="spec-edit-btn" type="button" disabled title="No revert path — NTLMv1 is permanently deprecated">Patch revert</button>
+                            <button class="spec-edit-btn" type="button" onclick="btToast('Open detail panel')">Details</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+            </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- CONFIRM TAKEOVER -->
+    <div class="scrim-takeover" id="bt-takeover" onclick="btCloseTakeover()"></div>
+    <div class="takeover-card bt-takeover-card" id="bt-takeover-card" role="dialog" aria-modal="true">
+        <span class="bt-takeover-card__eyebrow" id="bt-confirm-eyebrow">Confirm</span>
+        <h3 id="bt-confirm-title">Confirm action</h3>
+        <p id="bt-confirm-body">Confirm body text.</p>
+        <ul class="bt-takeover-card__list" id="bt-confirm-list">
+            <li><span class="bt-takeover-card__list-key">Target</span><span class="bt-takeover-card__list-val">dc01.domain1.local</span></li>
+            <li><span class="bt-takeover-card__list-key">Verify</span><span class="bt-takeover-card__list-val">Synthetic probe + Elastic alert (5m window)</span></li>
+        </ul>
+        <div class="bt-takeover-card__foot">
+            <button class="spec-edit-btn" type="button" onclick="btCloseTakeover()">Cancel</button>
+            <button class="spec-edit-btn spec-edit-btn--save" id="bt-confirm-go" type="button">Confirm</button>
+        </div>
+    </div>
+
+    <script>
+        // ── TOAST ──────────────────────────────────────────────────
+        let btToastTimer = null;
+        function btToast(msg) {
+            const t = document.getElementById('bt-toast');
+            t.textContent = msg;
+            t.setAttribute('data-show', 'true');
+            window.clearTimeout(btToastTimer);
+            btToastTimer = window.setTimeout(() => t.setAttribute('data-show', 'false'), 2600);
+        }
+
+        // ── REFRESH STUB ───────────────────────────────────────────
+        function btRefresh(btn) {
+            btn.disabled = true;
+            const orig = btn.textContent;
+            btn.textContent = 'Refreshing…';
+            window.setTimeout(() => {
+                btn.disabled = false;
+                btn.textContent = orig;
+                btToast('Host facts refreshed — 22 bolt-ons re-evaluated in 96ms');
+            }, 1100);
+        }
+
+        // ── SECTION TOGGLE ─────────────────────────────────────────
+        function btToggleSection(headerBtn) {
+            const section = headerBtn.closest('.bt-section');
+            const open = section.getAttribute('data-open') === 'true';
+            section.setAttribute('data-open', open ? 'false' : 'true');
+            headerBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+        }
+
+        // ── FILTER LOGIC — three groups AND'd ─────────────────────
+        function btApplyFilters() {
+            const cat = document.querySelector('.bt-chip.is-active[data-group="cat"]')?.dataset.value || 'all';
+            const state = document.querySelector('.bt-chip.is-active[data-group="state"]')?.dataset.value || 'all';
+            const cov = document.querySelector('.bt-chip.is-active[data-group="cov"]')?.dataset.value || 'all';
+            let shown = 0, total = 0;
+            document.querySelectorAll('.spec-row.bt-row').forEach(row => {
+                total++;
+                const rState = row.dataset.state || '';
+                const rCat = row.dataset.cat || '';
+                const rCov = row.dataset.cov || '';
+                // State group: collapse INCOMPATIBLE_OS/ROLE/MISSING_PREREQ/MISSING_SOFTWARE → INCOMPATIBLE bucket
+                const stateBucket = (rState.startsWith('INCOMPATIBLE') || rState === 'MISSING_PREREQ' || rState === 'MISSING_SOFTWARE')
+                    ? 'INCOMPATIBLE'
+                    : (rState === 'CONFLICTS_WITH_INSTALLED' ? 'CONFLICT' : rState);
+                const cMatch = cat === 'all' || rCat === cat;
+                const sMatch = state === 'all' || stateBucket === state;
+                const vMatch = cov === 'all' || rCov === cov;
+                const match = cMatch && sMatch && vMatch;
+                row.style.display = match ? '' : 'none';
+                if (match) shown++;
+            });
+            const summary = document.getElementById('bt-active-count');
+            if (summary) {
+                const partsL = [];
+                if (cat !== 'all') partsL.push('cat: ' + cat);
+                if (state !== 'all') partsL.push('state: ' + state);
+                if (cov !== 'all') partsL.push('cov: ' + cov);
+                summary.textContent = shown + ' of ' + total + ' bolt-ons shown' + (partsL.length ? ' · ' + partsL.join(' · ') : ' · all filters');
+            }
+            // If any section has zero visible rows, hide its body section header hint
+            document.querySelectorAll('.bt-section').forEach(sec => {
+                const visible = sec.querySelectorAll('.spec-row.bt-row:not([style*="display: none"])').length;
+                // Subtle: dim sections with no matches
+                sec.style.opacity = visible === 0 && (cat !== 'all' || state !== 'all' || cov !== 'all') ? '0.5' : '1';
+            });
+        }
+        document.querySelectorAll('.bt-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                const group = chip.dataset.group;
+                document.querySelectorAll('.bt-chip[data-group="' + group + '"]').forEach(c => c.classList.remove('is-active'));
+                chip.classList.add('is-active');
+                btApplyFilters();
+            });
+        });
+
+        // ── SHOW-BY MODE SELECTOR ─────────────────────────────────
+        const SECTION_ORDER = {
+            status:   ['installed', 'available', 'incompatible', 'conflicts', 'elsewhere', 'patched'],
+            mitre:    ['installed', 'available', 'patched', 'incompatible', 'conflicts', 'elsewhere'],
+            category: ['installed', 'available', 'elsewhere', 'incompatible', 'conflicts', 'patched'],
+            recency:  ['installed', 'patched', 'available', 'conflicts', 'incompatible', 'elsewhere']
+        };
+        const SECTION_TITLES = {
+            status:   { installed: 'Installed', available: 'Available to install', incompatible: 'Incompatible', conflicts: 'Conflicts', elsewhere: 'Already installed elsewhere in lab', patched: 'Already secured' },
+            mitre:    { installed: 'Installed (grouped by MITRE)', available: 'Available (grouped by MITRE)', patched: 'Already secured (grouped by MITRE)', incompatible: 'Incompatible (grouped by MITRE)', conflicts: 'Conflicts (grouped by MITRE)', elsewhere: 'Elsewhere in lab (grouped by MITRE)' },
+            category: { installed: 'Installed (grouped by category)', available: 'Available (grouped by category)', elsewhere: 'Elsewhere in lab (grouped by category)', incompatible: 'Incompatible (grouped by category)', conflicts: 'Conflicts (grouped by category)', patched: 'Already secured (grouped by category)' },
+            recency:  { installed: 'Installed · most recent first', patched: 'Recently patched', available: 'Available · newest catalog entries first', conflicts: 'Conflicts', incompatible: 'Incompatible', elsewhere: 'Elsewhere in lab' }
+        };
+        document.querySelectorAll('.seg-control__option[data-mode]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.seg-control__option[data-mode]').forEach(b => b.classList.remove('is-active'));
+                btn.classList.add('is-active');
+                const mode = btn.dataset.mode;
+                const order = SECTION_ORDER[mode] || SECTION_ORDER.status;
+                const titles = SECTION_TITLES[mode] || SECTION_TITLES.status;
+                const main = document.querySelector('main.bt-shell');
+                // Reorder section nodes
+                order.forEach(key => {
+                    const sec = main.querySelector('.bt-section[data-section="' + key + '"]');
+                    if (sec) main.appendChild(sec);
+                    // Update title eyebrow per mode (keep count suffix)
+                    const titleEl = sec ? sec.querySelector('.bt-section__title') : null;
+                    if (titleEl && titles[key]) {
+                        const count = titleEl.textContent.split('·').slice(-1)[0].trim();
+                        titleEl.textContent = titles[key] + ' · ' + count;
+                    }
+                });
+                btToast('Grouped by ' + mode + ' — sections reordered');
+            });
+        });
+
+        // ── CONFIRM TAKEOVER ──────────────────────────────────────
+        function btOpenConfirm(op, name) {
+            const eyebrow = document.getElementById('bt-confirm-eyebrow');
+            const title = document.getElementById('bt-confirm-title');
+            const body = document.getElementById('bt-confirm-body');
+            const go = document.getElementById('bt-confirm-go');
+            if (op === 'patch') {
+                eyebrow.textContent = 'Vendor patch · dc01.domain1.local';
+                title.textContent = 'Patch ' + name;
+                body.textContent = 'Apply the vendor remediation. Framework triggers a synthetic exploit probe and verifies the matching Elastic detection rule fires.';
+                go.textContent = 'Patch ▸';
+            } else if (op === 'patch_revert') {
+                eyebrow.textContent = 'Patch revert · dc01.domain1.local';
+                title.textContent = 'Revert patch for ' + name;
+                body.textContent = 'Re-expose the underlying vulnerability for repeat exercise. Detection rule remains active and will fire on the next probe.';
+                go.textContent = 'Revert ▸';
+            } else {
+                eyebrow.textContent = 'Uninstall · dc01.domain1.local';
+                title.textContent = 'Uninstall ' + name;
+                body.textContent = 'Removes the bolt-on lab artifacts. Does NOT patch the underlying vulnerability — re-installable at any time.';
+                go.textContent = 'Uninstall ▸';
+            }
+            go.onclick = () => {
+                btToast(op + ' dispatched — view progress in Operations → Jobs');
+                btCloseTakeover();
+            };
+            document.getElementById('bt-takeover').setAttribute('data-open', 'true');
+            document.getElementById('bt-takeover-card').setAttribute('data-open', 'true');
+        }
+        function btOpenInstall(name, ttp, cat) {
+            const eyebrow = document.getElementById('bt-confirm-eyebrow');
+            const title = document.getElementById('bt-confirm-title');
+            const body = document.getElementById('bt-confirm-body');
+            const list = document.getElementById('bt-confirm-list');
+            const go = document.getElementById('bt-confirm-go');
+            eyebrow.textContent = 'Install confirm · dc01.domain1.local';
+            title.textContent = 'Install ' + name;
+            body.textContent = 'Detection coverage is verified before install. Synthetic probe runs after to confirm the exploit succeeds.';
+            list.innerHTML =
+                '<li><span class="bt-takeover-card__list-key">MITRE</span><span class="bt-takeover-card__list-val">' + ttp + '</span></li>' +
+                '<li><span class="bt-takeover-card__list-key">Category</span><span class="bt-takeover-card__list-val">' + cat + '</span></li>' +
+                '<li><span class="bt-takeover-card__list-key">Target</span><span class="bt-takeover-card__list-val">dc01.domain1.local</span></li>' +
+                '<li><span class="bt-takeover-card__list-key">Side effects</span><span class="bt-takeover-card__list-val">No reboot · No global GPO · One AD object</span></li>' +
+                '<li><span class="bt-takeover-card__list-key">Verify</span><span class="bt-takeover-card__list-val">Synthetic probe + Elastic alert check (5m window)</span></li>';
+            go.textContent = 'Install ▸';
+            go.onclick = () => {
+                btToast('Install dispatched — view progress in Operations → Jobs');
+                btCloseTakeover();
+            };
+            document.getElementById('bt-takeover').setAttribute('data-open', 'true');
+            document.getElementById('bt-takeover-card').setAttribute('data-open', 'true');
+        }
+        function btCloseTakeover() {
+            document.getElementById('bt-takeover').setAttribute('data-open', 'false');
+            document.getElementById('bt-takeover-card').setAttribute('data-open', 'false');
+            // Reset list to default
+            document.getElementById('bt-confirm-list').innerHTML =
+                '<li><span class="bt-takeover-card__list-key">Target</span><span class="bt-takeover-card__list-val">dc01.domain1.local</span></li>' +
+                '<li><span class="bt-takeover-card__list-key">Verify</span><span class="bt-takeover-card__list-val">Synthetic probe + Elastic alert (5m window)</span></li>';
+        }
+        document.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Escape') btCloseTakeover();
+        });
+
+        // ── THEME TOGGLE ──────────────────────────────────────────
+        document.getElementById('theme-toggle').addEventListener('click', () => {
+            const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', cur === 'light' ? 'dark' : 'light');
+        });
+
+        // ── LEFT RAIL EXPAND/COLLAPSE ─────────────────────────────
+        document.querySelectorAll('.demo-rail__item[data-demo-parent]').forEach(btn => {
+            btn.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                const parent = btn.dataset.demoParent;
+                const children = document.querySelector('[data-children-of="' + parent + '"]');
+                if (children) {
+                    const willOpen = !children.classList.contains('is-open');
+                    if (willOpen) {
+                        children.classList.add('is-open');
+                        btn.classList.add('is-expanded');
+                    } else {
+                        children.classList.remove('is-open');
+                        btn.classList.remove('is-expanded');
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>

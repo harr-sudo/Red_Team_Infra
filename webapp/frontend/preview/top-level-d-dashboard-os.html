@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Top-Level Scaffold D — Dashboard-as-OS (V3-native)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           SCAFFOLD D — DASHBOARD AS OS (V3 5/6/5)
+           Hypothesis: There is only one persistent page — the
+           Dashboard. Domain navigation disappears. Every widget on
+           the Dashboard is an entry point into a contextual overlay
+           (drawer or scrim takeover). Cmd-Esc returns to bare desktop.
+           Heavy use of the scrim-layer pattern from Phase 2b.
+           ============================================================ */
+
+        :root {
+            --temp-header-h: 52px;
+            --temp-hairline: var(--border-subtle);
+            --temp-scrim: rgba(8, 9, 14, 0.55);
+            --temp-drawer-w: 480px;
+        }
+        [data-theme="light"] { --temp-scrim: rgba(140, 160, 100, 0.32); }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+            overflow-x: hidden;
+        }
+
+        /* ── HEADER STRIP (corner-only chrome) ──────────────────────── */
+        .d-header {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--temp-header-h);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--temp-hairline);
+            box-shadow: inset 0 1px 0 0 var(--border-subtle);
+            z-index: 100;
+        }
+        .d-brand { display: flex; align-items: center; gap: 11px; }
+        .d-mark {
+            position: relative;
+            width: 22px; height: 22px;
+            border: 1.5px solid var(--brand);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .d-mark::before {
+            content: "";
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 8px; height: 8px;
+            background: var(--brand);
+            border-radius: 2px;
+            transform: translate(-50%, -50%);
+        }
+        .d-mark::after {
+            content: "";
+            position: absolute; inset: 0;
+            background: linear-gradient(115deg, transparent 35%,
+                color-mix(in srgb, var(--brand-light) 18%, transparent) 50%,
+                transparent 65%);
+            animation: d-shim 3500ms ease-in-out infinite;
+        }
+        @keyframes d-shim {
+            0%, 100% { opacity: 0; transform: translateX(-30%); }
+            50%      { opacity: 0.85; transform: translateX(0%); }
+        }
+        .d-brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+        .d-brand-name { font-size: 12.5px; font-weight: 700; color: var(--text-primary); }
+        .d-brand-kicker {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9px; font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+        .d-header__right { display: flex; align-items: center; gap: 16px; }
+        .d-op {
+            display: inline-flex; align-items: center; gap: 10px;
+            padding: 4px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 200ms ease;
+        }
+        .d-op:hover { background: var(--bg-card-hover); }
+        .d-op__dot {
+            position: relative;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+        .d-op__dot::after {
+            content: ""; position: absolute; inset: -3px;
+            border-radius: 50%;
+            border: 1px solid var(--success);
+            opacity: 0.55;
+            animation: d-pulse 2600ms ease-out infinite;
+        }
+        @keyframes d-pulse {
+            0% { transform: scale(0.7); opacity: 0.65; }
+            70% { transform: scale(1.5); opacity: 0; }
+            100% { transform: scale(1.5); opacity: 0; }
+        }
+        .d-op__name {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 12.5px; font-weight: 600;
+            color: var(--text-primary);
+        }
+        .d-op__name::before {
+            content: "operator/";
+            color: var(--text-secondary); font-weight: 400;
+            margin-right: 4px;
+        }
+        .d-theme {
+            width: 30px; height: 30px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            transition: background-color 180ms ease, border-color 180ms ease;
+        }
+        .d-theme:hover { background: var(--bg-card-hover); border-color: var(--border-light); }
+        .d-theme__glyph {
+            position: relative;
+            width: 13px; height: 13px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+        }
+        .d-theme__glyph::before {
+            content: "";
+            position: absolute;
+            top: -1px; right: -3px;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--bg-container);
+        }
+        [data-theme="light"] .d-theme__glyph { background: var(--text-primary); }
+        [data-theme="light"] .d-theme__glyph::before { background: var(--bg-container); }
+
+        /* ── DESKTOP (dashboard grid) ───────────────────────────────── */
+        .d-desktop {
+            margin-top: var(--temp-header-h);
+            padding: 32px 40px 96px;
+            min-height: calc(100vh - var(--temp-header-h));
+            max-width: 1240px;
+            margin-left: auto;
+            margin-right: auto;
+            transition: filter 300ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .d-desktop.is-dimmed {
+            filter: blur(2px) saturate(0.6);
+            transform: scale(0.99);
+        }
+        .d-greeting {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            margin: 0 0 6px;
+        }
+        .d-greeting__sub {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin: 0 0 28px;
+        }
+
+        .d-grid {
+            display: grid;
+            grid-template-columns: repeat(12, minmax(0, 1fr));
+            gap: 18px;
+            grid-auto-rows: minmax(140px, auto);
+        }
+        @media (max-width: 980px) {
+            .d-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+        }
+        @media (max-width: 640px) {
+            .d-grid { grid-template-columns: minmax(0, 1fr); }
+        }
+
+        .d-widget {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 18px 20px;
+            display: flex;
+            flex-direction: column;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            animation: d-fade-in 320ms cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+        @keyframes d-fade-in {
+            from { opacity: 0; transform: translateY(4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .d-widget:hover {
+            transform: translateY(-3px);
+            border-color: var(--border-light);
+            box-shadow: 0 12px 28px -10px rgba(0,0,0,0.45),
+                        0 3px 8px -3px rgba(0,0,0,0.20);
+        }
+        .d-widget__label {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .d-widget__hint {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            padding: 2px 6px;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+        }
+        .d-widget__big {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 30px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.018em;
+            line-height: 1.05;
+        }
+        .d-widget__caption {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 6px;
+        }
+
+        /* Widget spans */
+        .d-w-projects { grid-column: span 8; }
+        .d-w-beacons  { grid-column: span 4; }
+        .d-w-cost     { grid-column: span 4; }
+        .d-w-activity { grid-column: span 4; }
+        .d-w-cleanup  { grid-column: span 4; }
+        .d-w-settings { grid-column: span 4; }
+        .d-w-new      { grid-column: span 4; }
+        @media (max-width: 980px) {
+            .d-w-projects, .d-w-beacons, .d-w-cost,
+            .d-w-activity, .d-w-cleanup, .d-w-settings, .d-w-new {
+                grid-column: span 6;
+            }
+        }
+        @media (max-width: 640px) {
+            .d-w-projects, .d-w-beacons, .d-w-cost,
+            .d-w-activity, .d-w-cleanup, .d-w-settings, .d-w-new {
+                grid-column: span 1;
+            }
+        }
+
+        /* Project rows inside the Projects widget */
+        .d-projects-list {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .d-project-row {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            align-items: center;
+            gap: 14px;
+            padding: 10px 8px;
+            border-radius: 5px;
+            font-size: 12.5px;
+            color: var(--text-primary);
+            transition: background-color 180ms ease, transform 180ms ease;
+        }
+        .d-project-row:hover {
+            background: var(--bg-card-hover);
+            transform: translateX(2px);
+        }
+        .d-project-row .name {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 12.5px;
+        }
+        .d-project-row .meta {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+        .d-project-row .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 8px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+        }
+        .d-project-row .pill__dot {
+            width: 5px; height: 5px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+
+        /* New deployment widget — calmer dashed border CTA */
+        .d-widget.d-w-new {
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            background: transparent;
+            border-style: dashed;
+        }
+        .d-widget.d-w-new:hover {
+            border-color: var(--brand-light);
+            background: var(--bg-card-hover);
+        }
+        .d-new-plus {
+            display: inline-block;
+            width: 22px; height: 22px;
+            position: relative;
+            color: var(--brand-light);
+        }
+        .d-new-plus::before, .d-new-plus::after {
+            content: ""; position: absolute;
+            background: currentColor; border-radius: 1px;
+        }
+        .d-new-plus::before {
+            left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%);
+        }
+        .d-new-plus::after {
+            top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%);
+        }
+        .d-new-label {
+            font-size: 13.5px; font-weight: 700; color: var(--text-primary);
+        }
+        .d-new-caption {
+            font-size: 11.5px; color: var(--text-secondary);
+        }
+
+        /* Sparkline mini */
+        .d-spark { width: 100%; height: 36px; display: block; margin-top: 10px; }
+
+        /* Activity rows */
+        .d-activity-list { display: flex; flex-direction: column; gap: 2px; }
+        .d-activity-row {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 10px;
+            padding: 6px 4px;
+            font-size: 12px;
+            color: var(--text-primary);
+            border-radius: 4px;
+            transition: background-color 180ms ease;
+        }
+        .d-activity-row:hover { background: var(--bg-card-hover); }
+        .d-activity-row .time {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* ── SCRIM + DRAWER ─────────────────────────────────────────── */
+        .d-scrim {
+            position: fixed;
+            inset: var(--temp-header-h) 0 0 0;
+            background: var(--temp-scrim);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            opacity: 0; pointer-events: none;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 200;
+        }
+        .d-scrim.is-open { opacity: 1; pointer-events: auto; }
+
+        .d-drawer {
+            position: fixed;
+            top: var(--temp-header-h); bottom: 0;
+            right: 0;
+            width: min(var(--temp-drawer-w), 92vw);
+            background: var(--bg-card);
+            border-left: 1px solid var(--border);
+            box-shadow: -20px 0 60px -20px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            transform: translateX(100%);
+            transition: transform 320ms cubic-bezier(0.34, 1.20, 0.64, 1);
+            z-index: 220;
+            overflow: hidden;
+        }
+        .d-drawer.is-open { transform: translateX(0); }
+
+        .d-drawer__head {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 16px 20px 14px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .d-drawer__title {
+            display: flex; flex-direction: column;
+            line-height: 1.15;
+        }
+        .d-drawer__caption {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .d-drawer__name {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-top: 4px;
+        }
+        .d-drawer__close {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 4px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font: inherit;
+            font-size: 11px;
+            font-weight: 600;
+            transition: background-color 200ms ease, border-color 200ms ease;
+        }
+        .d-drawer__close:hover { background: var(--bg-card-hover); border-color: var(--border-light); }
+        .d-drawer__body {
+            padding: 16px 20px 28px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        .d-drawer__row {
+            display: grid;
+            grid-template-columns: 36px 1fr auto;
+            align-items: center;
+            gap: 14px;
+            padding: 12px 6px;
+            border-bottom: 1px solid var(--temp-hairline);
+            font-size: 12.5px;
+            transition: background-color 180ms ease;
+        }
+        .d-drawer__row:hover { background: var(--bg-card-hover); }
+        .d-drawer__row .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+        .d-drawer__row .name {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 12.5px;
+            color: var(--text-primary);
+            word-break: break-all;
+        }
+        .d-drawer__row .meta {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+        .d-drawer__row .sleep {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* ── PROJECT TAKEOVER (modal-takeover with spec-list) ──────── */
+        .d-takeover {
+            position: fixed;
+            inset: var(--temp-header-h) 0 0 0;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 56px 24px 48px;
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 230;
+            overflow-y: auto;
+        }
+        .d-takeover.is-open { opacity: 1; pointer-events: auto; transform: translateY(0); }
+
+        .d-takeover__panel {
+            width: 100%;
+            max-width: 820px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 28px 32px 28px;
+            box-shadow: 0 30px 80px -20px rgba(0,0,0,0.65), 0 8px 24px -8px rgba(0,0,0,0.35);
+        }
+        .d-takeover__head {
+            display: flex; align-items: baseline; justify-content: space-between;
+            gap: 12px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--temp-hairline);
+            margin-bottom: 22px;
+        }
+        .d-takeover__label {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px; font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .d-takeover__name {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            word-break: break-all;
+            display: block;
+            margin-top: 6px;
+        }
+        .d-takeover__type {
+            font-size: 13.5px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        .d-takeover__type strong { color: var(--text-primary); font-weight: 600; }
+        .d-takeover__close {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 4px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font: inherit; font-size: 11px; font-weight: 600;
+            transition: background-color 200ms ease, border-color 200ms ease;
+        }
+        .d-takeover__close:hover { background: var(--bg-card-hover); border-color: var(--border-light); }
+
+        .d-speclist {
+            margin: 0; padding: 0;
+            display: flex; flex-direction: column;
+        }
+        .d-spec-row {
+            position: relative;
+            display: grid;
+            grid-template-columns: 200px 1fr auto;
+            align-items: baseline;
+            gap: 20px;
+            padding: 14px 16px 14px 14px;
+            border-bottom: 1px solid var(--temp-hairline);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .d-spec-row::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 10px; bottom: 10px;
+            width: 2px;
+            border-radius: 2px;
+            background: var(--brand-light);
+            opacity: 0;
+            transform: scaleY(0.4);
+            transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .d-spec-row:hover {
+            background: var(--bg-card-hover);
+            transform: translateX(2px);
+        }
+        .d-spec-row:hover::before { opacity: 1; transform: scaleY(1); }
+        .d-spec-row:last-child { border-bottom: none; }
+        .d-spec-key {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .d-spec-value {
+            font-size: 13.5px;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        .d-spec-value--mono {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 13px;
+        }
+        .d-spec-hint {
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            letter-spacing: 0.02em;
+        }
+        .d-spec-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 9px;
+            border-radius: 9px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        .d-spec-pill__dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+        }
+
+        /* Hint chip at top center when desktop is dimmed */
+        .d-esc-hint {
+            position: fixed;
+            top: calc(var(--temp-header-h) + 18px);
+            left: 50%;
+            transform: translate(-50%, -6px);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 240ms ease, transform 240ms ease;
+            z-index: 240;
+        }
+        .d-esc-hint.is-on { opacity: 1; transform: translate(-50%, 0); }
+        .d-esc-hint kbd {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10px;
+            padding: 2px 6px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text-primary);
+        }
+
+        .preview-banner {
+            position: fixed;
+            bottom: 16px;
+            left: 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            z-index: 80;
+        }
+        .preview-banner b { color: var(--text-primary); font-weight: 700; }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- HEADER -->
+    <header class="d-header" role="banner">
+        <div class="d-brand">
+            <span class="d-mark" aria-hidden="true"></span>
+            <div class="d-brand-text">
+                <span class="d-brand-name">Red Team Infrastructure</span>
+                <span class="d-brand-kicker">desktop</span>
+            </div>
+        </div>
+        <div class="d-header__right">
+            <div class="d-op" id="op-chip">
+                <span class="d-op__dot" aria-hidden="true"></span>
+                <span class="d-op__name">harriss</span>
+            </div>
+            <button class="d-theme" type="button" aria-label="Toggle theme"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+                <span class="d-theme__glyph" aria-hidden="true"></span>
+            </button>
+        </div>
+    </header>
+
+    <!-- DESKTOP / DASHBOARD -->
+    <main class="d-desktop" id="desktop">
+        <h1 class="d-greeting">Good afternoon, harriss.</h1>
+        <p class="d-greeting__sub">May 18, 2026 · 2 deployments live · 4 beacons checked in</p>
+
+        <div class="d-grid">
+            <!-- Projects -->
+            <article class="d-widget d-w-projects" data-open="project">
+                <div class="d-widget__label">
+                    <span>Projects (2 live)</span>
+                    <span class="d-widget__hint">open ↗</span>
+                </div>
+                <div class="d-projects-list">
+                    <div class="d-project-row" data-project="c2_adhoc_dev_harriss_macbook_pro_01">
+                        <span class="name">c2_adhoc_dev_harriss_macbook_pro_01</span>
+                        <span class="meta">4 instances · 24d</span>
+                        <span class="pill"><span class="pill__dot" aria-hidden="true"></span>Running</span>
+                    </div>
+                    <div class="d-project-row" data-project="goad_mini_dev_harriss_macbook_pro">
+                        <span class="name">goad_mini_dev_harriss_macbook_pro</span>
+                        <span class="meta">5 instances · 19d</span>
+                        <span class="pill"><span class="pill__dot" aria-hidden="true"></span>Running</span>
+                    </div>
+                </div>
+            </article>
+
+            <!-- Beacons widget -->
+            <article class="d-widget d-w-beacons" data-open="beacons">
+                <div class="d-widget__label">
+                    <span>Beacons</span>
+                    <span class="d-widget__hint">drawer</span>
+                </div>
+                <div class="d-widget__big">4</div>
+                <div class="d-widget__caption">3 healthy · 1 dim</div>
+            </article>
+
+            <!-- Cost -->
+            <article class="d-widget d-w-cost" data-open="cost">
+                <div class="d-widget__label">
+                    <span>Monthly burn</span>
+                    <span class="d-widget__hint">trend</span>
+                </div>
+                <div class="d-widget__big">$407</div>
+                <div class="d-widget__caption">+3% vs last week</div>
+                <svg class="d-spark" viewBox="0 0 240 36" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline points="0,24 16,22 32,23 48,18 64,20 80,15 96,17 112,12 128,14 144,9 160,11 176,7 192,8 208,4 224,6 240,3"
+                        fill="none" stroke="var(--brand-light)" stroke-width="1.5"
+                        stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </article>
+
+            <!-- Activity -->
+            <article class="d-widget d-w-activity" data-open="activity">
+                <div class="d-widget__label">
+                    <span>Activity</span>
+                    <span class="d-widget__hint">drawer</span>
+                </div>
+                <div class="d-activity-list">
+                    <div class="d-activity-row"><span class="time">12:32</span><span>GET /api/version</span></div>
+                    <div class="d-activity-row"><span class="time">12:30</span><span>/preview opened</span></div>
+                    <div class="d-activity-row"><span class="time">12:15</span><span>v1.0.0 tagged</span></div>
+                </div>
+            </article>
+
+            <!-- Cleanup -->
+            <article class="d-widget d-w-cleanup" data-open="cleanup">
+                <div class="d-widget__label">
+                    <span>Cleanup</span>
+                    <span class="d-widget__hint">drawer</span>
+                </div>
+                <div class="d-widget__big">2</div>
+                <div class="d-widget__caption">orphan resources detected</div>
+            </article>
+
+            <!-- Settings -->
+            <article class="d-widget d-w-settings" data-open="settings">
+                <div class="d-widget__label">
+                    <span>Settings</span>
+                    <span class="d-widget__hint">drawer</span>
+                </div>
+                <div class="d-widget__big" style="font-size: 18px;">AWS · GitHub · S3</div>
+                <div class="d-widget__caption">3 integrations connected</div>
+            </article>
+
+            <!-- New deployment -->
+            <article class="d-widget d-w-new" data-open="new">
+                <span class="d-new-plus" aria-hidden="true"></span>
+                <span class="d-new-label">New deployment</span>
+                <span class="d-new-caption">Wizard opens above desktop</span>
+            </article>
+        </div>
+    </main>
+
+    <!-- ESC hint -->
+    <div class="d-esc-hint" id="esc-hint">
+        <kbd>ESC</kbd> return to desktop
+    </div>
+
+    <!-- SCRIM -->
+    <div class="d-scrim" id="scrim"></div>
+
+    <!-- DRAWER: Beacons -->
+    <aside class="d-drawer" id="drawer-beacons" aria-hidden="true">
+        <div class="d-drawer__head">
+            <div class="d-drawer__title">
+                <span class="d-drawer__caption">Operations</span>
+                <span class="d-drawer__name">Beacons</span>
+            </div>
+            <button class="d-drawer__close" data-close-drawer type="button">Close ESC</button>
+        </div>
+        <div class="d-drawer__body">
+            <div class="d-drawer__row">
+                <span class="dot" aria-hidden="true"></span>
+                <span>
+                    <span class="name">DC01.lab.local</span>
+                    <span class="meta">SYSTEM · lsass.exe · 02s ago</span>
+                </span>
+                <span class="sleep">5s</span>
+            </div>
+            <div class="d-drawer__row">
+                <span class="dot" aria-hidden="true"></span>
+                <span>
+                    <span class="name">SRV01.lab.local</span>
+                    <span class="meta">svc_sql · sqlservr.exe · 14s ago</span>
+                </span>
+                <span class="sleep">30s</span>
+            </div>
+            <div class="d-drawer__row">
+                <span class="dot" style="background: var(--text-muted);" aria-hidden="true"></span>
+                <span>
+                    <span class="name">WS01.lab.local</span>
+                    <span class="meta">jdoe · explorer.exe · 3m ago</span>
+                </span>
+                <span class="sleep">5m</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- DRAWER: Activity -->
+    <aside class="d-drawer" id="drawer-activity" aria-hidden="true">
+        <div class="d-drawer__head">
+            <div class="d-drawer__title">
+                <span class="d-drawer__caption">Audit · last 24h</span>
+                <span class="d-drawer__name">Activity</span>
+            </div>
+            <button class="d-drawer__close" data-close-drawer type="button">Close ESC</button>
+        </div>
+        <div class="d-drawer__body">
+            <div class="d-drawer__row"><span></span><span><span class="name">harriss</span><span class="meta">GET /api/version · 12:32</span></span><span class="sleep">ok</span></div>
+            <div class="d-drawer__row"><span></span><span><span class="name">harriss</span><span class="meta">opened preview · 12:30</span></span><span class="sleep">ok</span></div>
+            <div class="d-drawer__row"><span></span><span><span class="name">harriss</span><span class="meta">v1.0.0 tagged · 12:15</span></span><span class="sleep">ok</span></div>
+            <div class="d-drawer__row"><span></span><span><span class="name">harriss</span><span class="meta">refactor merged · 11:45</span></span><span class="sleep">ok</span></div>
+        </div>
+    </aside>
+
+    <!-- DRAWER: Cleanup / Cost / Settings — share the lightweight pattern -->
+    <aside class="d-drawer" id="drawer-cleanup" aria-hidden="true">
+        <div class="d-drawer__head">
+            <div class="d-drawer__title">
+                <span class="d-drawer__caption">Maintenance</span>
+                <span class="d-drawer__name">Cleanup · orphan resources</span>
+            </div>
+            <button class="d-drawer__close" data-close-drawer type="button">Close ESC</button>
+        </div>
+        <div class="d-drawer__body">
+            <div class="d-drawer__row"><span></span><span><span class="name">old_test_lab_v0_3</span><span class="meta">EBS volume · 32 GiB · ~$3.20/mo</span></span><span class="sleep">delete</span></div>
+            <div class="d-drawer__row"><span></span><span><span class="name">cs-staging-key-pair</span><span class="meta">unused since Apr 04</span></span><span class="sleep">delete</span></div>
+        </div>
+    </aside>
+
+    <aside class="d-drawer" id="drawer-cost" aria-hidden="true">
+        <div class="d-drawer__head">
+            <div class="d-drawer__title">
+                <span class="d-drawer__caption">Cost · 14d trend</span>
+                <span class="d-drawer__name">Monthly burn — $407</span>
+            </div>
+            <button class="d-drawer__close" data-close-drawer type="button">Close ESC</button>
+        </div>
+        <div class="d-drawer__body">
+            <div class="d-drawer__row"><span></span><span><span class="name">c2_adhoc</span><span class="meta">4 instances · eu-central-1</span></span><span class="sleep">$147</span></div>
+            <div class="d-drawer__row"><span></span><span><span class="name">goad_mini</span><span class="meta">5 instances · eu-central-1</span></span><span class="sleep">$260</span></div>
+        </div>
+    </aside>
+
+    <aside class="d-drawer" id="drawer-settings" aria-hidden="true">
+        <div class="d-drawer__head">
+            <div class="d-drawer__title">
+                <span class="d-drawer__caption">Integrations</span>
+                <span class="d-drawer__name">Settings</span>
+            </div>
+            <button class="d-drawer__close" data-close-drawer type="button">Close ESC</button>
+        </div>
+        <div class="d-drawer__body">
+            <div class="d-drawer__row"><span></span><span><span class="name">AWS</span><span class="meta">eu-central-1 · IAM redteam-deploy</span></span><span class="sleep">edit</span></div>
+            <div class="d-drawer__row"><span></span><span><span class="name">GitHub</span><span class="meta">harr-sudo/Red_Team_Infra</span></span><span class="sleep">edit</span></div>
+            <div class="d-drawer__row"><span></span><span><span class="name">S3 state</span><span class="meta">redteam-state-prod</span></span><span class="sleep">edit</span></div>
+        </div>
+    </aside>
+
+    <!-- TAKEOVER: project full spec-list -->
+    <div class="d-takeover" id="takeover-project" aria-hidden="true">
+        <div class="d-takeover__panel">
+            <div class="d-takeover__head">
+                <div>
+                    <span class="d-takeover__label">project · spec</span>
+                    <span class="d-takeover__name" id="t-name">c2_adhoc_dev_harriss_macbook_pro_01</span>
+                    <span class="d-takeover__type"><strong>C2 Ad-hoc</strong> · running smoothly · 24d uptime</span>
+                </div>
+                <button class="d-takeover__close" data-close-takeover type="button">Close ESC</button>
+            </div>
+            <dl class="d-speclist">
+                <div class="d-spec-row">
+                    <dt class="d-spec-key">Deployment Type</dt>
+                    <dd class="d-spec-value">C2 Ad-hoc</dd>
+                    <dd class="d-spec-hint">single team server</dd>
+                </div>
+                <div class="d-spec-row">
+                    <dt class="d-spec-key">Environment</dt>
+                    <dd class="d-spec-value"><span class="d-spec-pill"><span class="d-spec-pill__dot" aria-hidden="true"></span>DEV</span></dd>
+                    <dd class="d-spec-hint">isolated</dd>
+                </div>
+                <div class="d-spec-row">
+                    <dt class="d-spec-key">AWS Region</dt>
+                    <dd class="d-spec-value d-spec-value--mono">eu-central-1</dd>
+                    <dd class="d-spec-hint">Frankfurt</dd>
+                </div>
+                <div class="d-spec-row">
+                    <dt class="d-spec-key">Instances</dt>
+                    <dd class="d-spec-value d-spec-value--mono">4 EC2</dd>
+                    <dd class="d-spec-hint">~$147/mo</dd>
+                </div>
+                <div class="d-spec-row">
+                    <dt class="d-spec-key">Beacons</dt>
+                    <dd class="d-spec-value">3 healthy / 1 dim</dd>
+                    <dd class="d-spec-hint">4 total</dd>
+                </div>
+                <div class="d-spec-row">
+                    <dt class="d-spec-key">Uptime</dt>
+                    <dd class="d-spec-value d-spec-value--mono">24d 06h 14m</dd>
+                    <dd class="d-spec-hint">since Apr 24</dd>
+                </div>
+            </dl>
+        </div>
+    </div>
+
+    <!-- TAKEOVER: new deployment -->
+    <div class="d-takeover" id="takeover-new" aria-hidden="true">
+        <div class="d-takeover__panel">
+            <div class="d-takeover__head">
+                <div>
+                    <span class="d-takeover__label">new deployment · step 1 of 4</span>
+                    <span class="d-takeover__name">Untitled</span>
+                    <span class="d-takeover__type">Pick a deployment shape to start</span>
+                </div>
+                <button class="d-takeover__close" data-close-takeover type="button">Close ESC</button>
+            </div>
+            <dl class="d-speclist">
+                <div class="d-spec-row">
+                    <dt class="d-spec-key">Shape</dt>
+                    <dd class="d-spec-value">Combined · Ad-hoc + GOAD Mini</dd>
+                    <dd class="d-spec-hint">recommended</dd>
+                </div>
+                <div class="d-spec-row">
+                    <dt class="d-spec-key">Project name</dt>
+                    <dd class="d-spec-value d-spec-value--mono">combined_adhoc_mini_dev_harriss_macbook_pro</dd>
+                    <dd class="d-spec-hint">click to edit</dd>
+                </div>
+                <div class="d-spec-row">
+                    <dt class="d-spec-key">AWS Region</dt>
+                    <dd class="d-spec-value d-spec-value--mono">eu-central-1</dd>
+                    <dd class="d-spec-hint">Frankfurt</dd>
+                </div>
+                <div class="d-spec-row">
+                    <dt class="d-spec-key">Est. Monthly Cost</dt>
+                    <dd class="d-spec-value">~$407/mo</dd>
+                    <dd class="d-spec-hint">9 instances</dd>
+                </div>
+            </dl>
+        </div>
+    </div>
+
+    <div class="preview-banner">Scaffold <b>D</b> &middot; dashboard-as-OS</div>
+
+    <script>
+    (function () {
+        'use strict';
+        const desktop = document.getElementById('desktop');
+        const scrim = document.getElementById('scrim');
+        const escHint = document.getElementById('esc-hint');
+        const widgets = document.querySelectorAll('.d-widget');
+        const drawers = {
+            beacons:  document.getElementById('drawer-beacons'),
+            activity: document.getElementById('drawer-activity'),
+            cleanup:  document.getElementById('drawer-cleanup'),
+            cost:     document.getElementById('drawer-cost'),
+            settings: document.getElementById('drawer-settings')
+        };
+        const takeoverProject = document.getElementById('takeover-project');
+        const takeoverNew = document.getElementById('takeover-new');
+
+        function openLayer(node) {
+            scrim.classList.add('is-open');
+            desktop.classList.add('is-dimmed');
+            escHint.classList.add('is-on');
+            node.classList.add('is-open');
+            node.setAttribute('aria-hidden', 'false');
+        }
+        function closeAll() {
+            scrim.classList.remove('is-open');
+            desktop.classList.remove('is-dimmed');
+            escHint.classList.remove('is-on');
+            Object.values(drawers).forEach(d => {
+                d.classList.remove('is-open');
+                d.setAttribute('aria-hidden', 'true');
+            });
+            [takeoverProject, takeoverNew].forEach(t => {
+                t.classList.remove('is-open');
+                t.setAttribute('aria-hidden', 'true');
+            });
+        }
+
+        widgets.forEach(w => {
+            w.addEventListener('click', (e) => {
+                const kind = w.dataset.open;
+                if (kind === 'project') {
+                    // If the click came from a row, surface the project name
+                    const row = e.target.closest('.d-project-row');
+                    if (row) {
+                        document.getElementById('t-name').textContent = row.dataset.project;
+                    }
+                    openLayer(takeoverProject);
+                } else if (kind === 'new') {
+                    openLayer(takeoverNew);
+                } else if (drawers[kind]) {
+                    openLayer(drawers[kind]);
+                }
+            });
+        });
+
+        scrim.addEventListener('click', closeAll);
+        document.querySelectorAll('[data-close-drawer], [data-close-takeover]').forEach(btn => {
+            btn.addEventListener('click', closeAll);
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeAll();
+        });
+    })();
+    </script>
+</body>
+</html>

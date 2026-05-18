@@ -1,0 +1,445 @@
+"""Bolt-on host facts service — Phase 1 (Agent B).
+
+Gathers per-host facts (OS, role, services, KBs, installed bolt-ons) and
+caches them on disk so the compatibility evaluator can run a tight loop
+over the whole catalog without round-tripping to the target.
+
+STUB / Phase 1 disclaimer
+-------------------------
+Real Ansible setup-module collection is OUT OF SCOPE for Phase 1. The
+``gather_facts`` function here consults a static lookup table of fake
+hosts. Phase 2 will replace ``_probe_host`` with a real SSH-to-jumpbox +
+``ansible -m setup`` execution following the same pattern as
+``webapp/backend/routes/goad.py::provision_goad``.
+
+Cache layout
+------------
+::
+
+    webapp/state/bolton/host_facts/<lab>/<host>.yaml
+
+- 5-minute TTL based on ``gathered_at``
+- atomic write (write to ``.tmp`` then ``os.replace``)
+- per-host filelock (``<host>.yaml.lock``) prevents racing refreshes
+- on install/uninstall/patch hooks, ``invalidate_facts`` drops the YAML
+
+Pydantic
+--------
+Agent A is producing ``webapp/bolton/schema.py`` with Pydantic v2 models.
+This module avoids hard-importing pydantic so the test suite can run in
+environments where pydantic is not installed. A tiny ``_Model`` shim
+provides a ``model_dump`` method and dict-style access for tests.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import threading
+import time
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Callable
+
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - PyYAML is in requirements.txt
+    yaml = None  # type: ignore
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Storage paths
+# ──────────────────────────────────────────────────────────────────────
+
+# Resolve project root: this file lives at webapp/backend/services/
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+STATE_ROOT = _PROJECT_ROOT / "webapp" / "state" / "bolton" / "host_facts"
+
+# 5-minute TTL per BOLTON_REFINEMENT_compatibility.md §2.4
+FACTS_TTL_SECONDS = 5 * 60
+
+# Per-host locks for refresh serialization. Held only while writing.
+_HOST_LOCKS: dict[str, threading.Lock] = {}
+_HOST_LOCKS_GUARD = threading.Lock()
+
+
+def _host_lock(lab: str, host: str) -> threading.Lock:
+    key = f"{lab}/{host}"
+    with _HOST_LOCKS_GUARD:
+        lock = _HOST_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _HOST_LOCKS[key] = lock
+        return lock
+
+
+# ──────────────────────────────────────────────────────────────────────
+# HostFacts model (dataclass with .model_dump() compat layer)
+# ──────────────────────────────────────────────────────────────────────
+
+@dataclass
+class HostFacts:
+    """Per-host bolt-on compatibility facts.
+
+    Field names mirror BOLTON_REFINEMENT_compatibility.md §2.2. This is a
+    plain dataclass to avoid a runtime pydantic dependency; Agent A's
+    schema may import or duck-type this if needed.
+    """
+
+    host: str
+    lab: str
+    os_family: str  # 'windows' | 'linux' | 'macos'
+    os_version: str
+    role: str  # 'domain_controller' | 'member_server' | 'workstation' | 'standalone'
+    gathered_at: datetime
+    domain_function_level: str | None = None
+    installed_services: dict[str, str] = field(default_factory=dict)
+    applied_kbs: list[str] = field(default_factory=list)
+    installed_boltons: list[str] = field(default_factory=list)
+    active_gpos: list[str] = field(default_factory=list)
+    network_subnet: str | None = None
+    # Patched CVEs — populated from applied_kbs via cve_kb_map at gather time.
+    patched_cves: list[str] = field(default_factory=list)
+
+    # ── Pydantic-compatible API for downstream code ───────────────────
+    def model_dump(self, mode: str = "python") -> dict[str, Any]:  # noqa: ARG002
+        out: dict[str, Any] = {}
+        for k, v in asdict(self).items():
+            if isinstance(v, datetime):
+                out[k] = v.isoformat()
+            else:
+                out[k] = v
+        return out
+
+    def is_fresh(self, now: datetime | None = None) -> bool:
+        now = now or datetime.now(timezone.utc)
+        age = (now - self.gathered_at).total_seconds()
+        return age <= FACTS_TTL_SECONDS
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Mocked Ansible probe (Phase 1 stub)
+# ──────────────────────────────────────────────────────────────────────
+
+# Static lookup table — keyed by host (case-insensitive). In Phase 2 this
+# is replaced by a real ``ansible -m setup`` invocation over SSH to the
+# jumpbox.
+_MOCK_HOST_FACTS: dict[str, dict[str, Any]] = {
+    "dc01": {
+        "os_family": "windows",
+        "os_version": "2019",
+        "role": "domain_controller",
+        "domain_function_level": "2016",
+        "installed_services": {"adcs": "ADCS-Cert-Authority", "iis": "10.0", "smb": "SMBv3"},
+        "applied_kbs": ["KB5005010", "KB5034441"],
+        "installed_boltons": [],
+        "active_gpos": ["Default Domain Policy"],
+        "network_subnet": "10.0.10.0/24",
+        "patched_cves": ["CVE-2021-34527"],
+    },
+    "dc02": {
+        "os_family": "windows",
+        "os_version": "2022",
+        "role": "domain_controller",
+        "domain_function_level": "2016",
+        "installed_services": {"smb": "SMBv3"},
+        "applied_kbs": [],
+        "installed_boltons": [],
+        "active_gpos": ["Default Domain Policy"],
+        "network_subnet": "10.0.10.0/24",
+        "patched_cves": [],
+    },
+    "srv01": {
+        "os_family": "windows",
+        "os_version": "2019",
+        "role": "member_server",
+        "domain_function_level": "2016",
+        "installed_services": {"iis": "10.0"},
+        "applied_kbs": [],
+        "installed_boltons": [],
+        "active_gpos": [],
+        "network_subnet": "10.0.11.0/24",
+        "patched_cves": [],
+    },
+    "ws01": {
+        "os_family": "windows",
+        "os_version": "10",
+        "role": "workstation",
+        "domain_function_level": "2016",
+        "installed_services": {},
+        "applied_kbs": [],
+        "installed_boltons": [],
+        "active_gpos": [],
+        "network_subnet": "10.0.11.0/24",
+        "patched_cves": [],
+    },
+    "ca01": {
+        "os_family": "windows",
+        "os_version": "2019",
+        "role": "member_server",
+        "domain_function_level": "2016",
+        "installed_services": {"adcs": "ADCS-Cert-Authority"},
+        "applied_kbs": [],
+        "installed_boltons": [],
+        "active_gpos": [],
+        "network_subnet": "10.0.11.0/24",
+        "patched_cves": [],
+    },
+    "linux01": {
+        "os_family": "linux",
+        "os_version": "22.04",
+        "role": "standalone",
+        "domain_function_level": None,
+        "installed_services": {"docker": "24.0"},
+        "applied_kbs": [],
+        "installed_boltons": [],
+        "active_gpos": [],
+        "network_subnet": "10.0.12.0/24",
+        "patched_cves": [],
+    },
+}
+
+
+def _mock_lookup(host: str) -> dict[str, Any] | None:
+    """Phase 1 stub — look up canned facts for a host name."""
+    return _MOCK_HOST_FACTS.get(host.lower())
+
+
+def _probe_host(lab: str, host: str) -> dict[str, Any]:
+    """STUB. Phase 2 will replace this with a real Ansible setup probe.
+
+    Returns the raw dict of facts (without ``gathered_at`` / ``lab`` /
+    ``host`` — those are filled in by ``gather_facts``).
+    """
+    canned = _mock_lookup(host)
+    if canned is not None:
+        return dict(canned)
+    # Unknown host — return a "minimal viable" fact set marked as
+    # standalone Linux so compatibility logic still works in tests.
+    return {
+        "os_family": "linux",
+        "os_version": "unknown",
+        "role": "standalone",
+        "domain_function_level": None,
+        "installed_services": {},
+        "applied_kbs": [],
+        "installed_boltons": [],
+        "active_gpos": [],
+        "network_subnet": None,
+        "patched_cves": [],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Atomic YAML write + cache layer
+# ──────────────────────────────────────────────────────────────────────
+
+def _facts_path(lab: str, host: str) -> Path:
+    return STATE_ROOT / lab / f"{host}.yaml"
+
+
+def _serialize(facts: HostFacts) -> str:
+    payload = facts.model_dump()
+    if yaml is not None:
+        return yaml.safe_dump(payload, sort_keys=True)
+    return json.dumps(payload, sort_keys=True, indent=2)
+
+
+def _deserialize(path: Path) -> HostFacts | None:
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    try:
+        if yaml is not None:
+            data = yaml.safe_load(text) or {}
+        else:
+            data = json.loads(text)
+    except Exception:
+        return None
+    try:
+        gathered_at_raw = data.pop("gathered_at", None)
+        if isinstance(gathered_at_raw, str):
+            # Allow trailing Z + microseconds
+            iso = gathered_at_raw.rstrip("Z")
+            try:
+                gathered_at = datetime.fromisoformat(iso)
+            except ValueError:
+                return None
+            if gathered_at.tzinfo is None:
+                gathered_at = gathered_at.replace(tzinfo=timezone.utc)
+        elif isinstance(gathered_at_raw, datetime):
+            gathered_at = gathered_at_raw
+            if gathered_at.tzinfo is None:
+                gathered_at = gathered_at.replace(tzinfo=timezone.utc)
+        else:
+            return None
+        return HostFacts(gathered_at=gathered_at, **data)
+    except TypeError:
+        # Schema drift — treat as missing.
+        return None
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content)
+    os.replace(tmp, path)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Public API
+# ──────────────────────────────────────────────────────────────────────
+
+def get_cached_facts(lab: str, host: str) -> HostFacts | None:
+    """Read the cached YAML for (lab, host).
+
+    Returns None when the file is missing OR the cached facts are older
+    than ``FACTS_TTL_SECONDS``. A stale-but-present cache is treated as a
+    miss so callers re-probe.
+    """
+    path = _facts_path(lab, host)
+    facts = _deserialize(path)
+    if facts is None:
+        return None
+    if not facts.is_fresh():
+        return None
+    return facts
+
+
+def gather_facts(lab: str, host: str, force_refresh: bool = False) -> HostFacts:
+    """Return host facts. Reads from cache when fresh, else probes.
+
+    STUB / Phase 1: probing is a static lookup in ``_MOCK_HOST_FACTS``.
+    """
+    if not force_refresh:
+        cached = get_cached_facts(lab, host)
+        if cached is not None:
+            return cached
+
+    # Refresh — serialize per-host to avoid two threads writing the same
+    # YAML simultaneously. We deliberately re-check the cache inside the
+    # lock so a second waiter doesn't re-probe.
+    with _host_lock(lab, host):
+        if not force_refresh:
+            cached = get_cached_facts(lab, host)
+            if cached is not None:
+                return cached
+        raw = _probe_host(lab, host)
+        facts = HostFacts(
+            host=host,
+            lab=lab,
+            gathered_at=datetime.now(timezone.utc),
+            **raw,
+        )
+        _atomic_write(_facts_path(lab, host), _serialize(facts))
+        return facts
+
+
+def invalidate_facts(lab: str, host: str | None = None) -> int:
+    """Drop cached YAML for one host or every host in the lab.
+
+    Returns the number of files removed. Never raises — invalidation must
+    be best-effort because it's wired into install/uninstall completion
+    hooks.
+    """
+    removed = 0
+    lab_dir = STATE_ROOT / lab
+    if not lab_dir.exists():
+        return 0
+    try:
+        if host is None:
+            for entry in lab_dir.glob("*.yaml"):
+                try:
+                    entry.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+        else:
+            path = _facts_path(lab, host)
+            if path.exists():
+                try:
+                    path.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return removed
+
+
+def gather_facts_async(
+    lab: str,
+    host: str,
+    callback: Callable[[HostFacts], None] | None = None,
+) -> str:
+    """Background variant of ``gather_facts`` — returns a job id.
+
+    A thread is spawned that sleeps ~200 ms then writes the mocked
+    result. Used by the UI to refresh in the background without blocking
+    the request thread. Phase 2 swaps the sleep for a real Ansible call.
+    """
+    job_id = f"factjob_{int(time.time() * 1000)}_{host}"
+
+    def _run():
+        try:
+            time.sleep(0.2)
+            facts = gather_facts(lab, host, force_refresh=True)
+            if callback is not None:
+                try:
+                    callback(facts)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
+    return job_id
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Lab-state helpers (used by compatibility module)
+# ──────────────────────────────────────────────────────────────────────
+
+def list_lab_hosts(lab: str) -> list[str]:
+    """List every host that has a cached facts file in this lab."""
+    lab_dir = STATE_ROOT / lab
+    if not lab_dir.exists():
+        return []
+    return sorted(p.stem for p in lab_dir.glob("*.yaml"))
+
+
+def build_installed_boltons_map(lab: str) -> dict[str, list[str]]:
+    """Return ``{host: [installed_bolton_ids]}`` for every cached host.
+
+    Used by ``evaluate_compatibility`` to detect cross-host conflicts.
+    """
+    out: dict[str, list[str]] = {}
+    for host in list_lab_hosts(lab):
+        path = _facts_path(lab, host)
+        facts = _deserialize(path)
+        if facts is None:
+            continue
+        out[host] = list(facts.installed_boltons)
+    return out
+
+
+@contextmanager
+def _stub_mock_host(name: str, payload: dict[str, Any]):
+    """Test helper — temporarily install a host into ``_MOCK_HOST_FACTS``.
+
+    Tests use this to drive ``gather_facts`` without monkeypatching.
+    """
+    previous = _MOCK_HOST_FACTS.get(name.lower())
+    _MOCK_HOST_FACTS[name.lower()] = payload
+    try:
+        yield
+    finally:
+        if previous is None:
+            _MOCK_HOST_FACTS.pop(name.lower(), None)
+        else:
+            _MOCK_HOST_FACTS[name.lower()] = previous

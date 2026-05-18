@@ -1,0 +1,1454 @@
+<!DOCTYPE html>
+<html data-theme="light" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Header — Taste-skill V3 (calm professional)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           HEADER — TASTE-SKILL V3 (calm professional)
+           Dials: VARIANCE=5 | MOTION=6 | DENSITY=5
+           - VARIANCE 5: balanced, considered, type-weight + spacing
+             designed but never asymmetric drama
+           - MOTION   6: more noticeable hover (250-320ms with spring
+             overshoot allowed on micro-feedback), one gentle
+             continuous shimmer per major element (brand, dial spec,
+             cost amount, sparkline), animated underline; no magnetic
+             chips, no scribbles, no particles — still calmer than V4
+           - DENSITY  5: airy, generous padding, captions optional,
+             breathing room between chips
+           Vanilla CSS only. palette.css tokens only. Dual-theme.
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* ── COMMAND BAR ───────────────────────────────────────────────
+           Taller, airier than V1. Balanced grid (no asymmetric drama).
+           Single hairline rule + a faint inset top highlight for depth.
+           ───────────────────────────────────────────────────────────── */
+        .global-header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 64px;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: center;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border);
+            box-shadow: inset 0 1px 0 0 var(--border-subtle);
+            z-index: 100;
+            font-size: 13px;
+            letter-spacing: 0.01em;
+            padding: 0 28px;
+        }
+
+        /* ── BRAND CLUSTER ─────────────────────────────────────────────
+           Considered type pairing: bold name + uppercase mono caption.
+           No rotation, no flair — just a clean square mark.
+           ───────────────────────────────────────────────────────────── */
+        .gh-brand {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .gh-brand-mark {
+            position: relative;
+            width: 26px;
+            height: 26px;
+            border: 1.5px solid var(--brand);
+            border-radius: 5px;
+            flex-shrink: 0;
+            overflow: hidden;
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .gh-brand-mark::before {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            background: var(--brand);
+            border-radius: 2px;
+            transform: translate(-50%, -50%);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        /* Continuous subtle alpha sweep — must read as static at first
+           glance. No rotation, no particle drift (that's V4 territory). */
+        .gh-brand-mark::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: 4px;
+            background: linear-gradient(
+                115deg,
+                transparent 35%,
+                color-mix(in srgb, var(--brand-light) 18%, transparent) 50%,
+                transparent 65%
+            );
+            pointer-events: none;
+            animation: v3-brand-shimmer 3500ms ease-in-out infinite;
+            will-change: opacity, transform;
+        }
+        @keyframes v3-brand-shimmer {
+            0%, 100% { opacity: 0; transform: translateX(-30%); }
+            45%      { opacity: 0.85; transform: translateX(0%); }
+            55%      { opacity: 0.85; transform: translateX(0%); }
+        }
+        .gh-brand:hover .gh-brand-mark {
+            border-color: var(--brand-light);
+        }
+        .gh-brand:hover .gh-brand-mark::before {
+            background: var(--brand-light);
+        }
+
+        .gh-brand-text {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.15;
+        }
+        .gh-brand-name {
+            font-size: 13.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+        }
+        .gh-brand-kicker {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 10px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-top: 3px;
+        }
+
+        /* ── CHIP RAIL ─────────────────────────────────────────────────
+           Generous gaps, NO vertical divider rails (calmer than V1).
+           Each chip is its own little island.
+           ───────────────────────────────────────────────────────────── */
+        .gh-rail {
+            display: flex;
+            align-items: center;
+            gap: 22px;
+        }
+
+        .gh-chip {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 6px 4px;
+        }
+
+        /* Stacked label pattern — value over optional caption.
+           Captions allowed but smaller and spaced wider.            */
+        .gh-stack {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.1;
+            min-width: 0;
+        }
+        .gh-stack-value {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            white-space: nowrap;
+        }
+        .gh-stack-caption {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+
+        /* ── DEPLOYMENT SELECTOR — CUSTOM LISTBOX COMBOBOX ─────────────
+           Replaces native <select> which renders poorly on Mac.
+           Fully styled trigger + positioned <ul role="listbox">.
+           Keyboard-navigable. ARIA-compliant.
+           ───────────────────────────────────────────────────────────── */
+        .gh-deploy {
+            position: relative;
+        }
+
+        .gh-deploy-label {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+
+        /* Combobox trigger — looks like a styled input */
+        .gh-combobox {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 240px;
+            padding: 7px 32px 7px 12px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: pointer;
+            text-align: left;
+            transform: translateY(0);
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .gh-combobox:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+            transform: translateY(-1px);
+        }
+        .gh-combobox:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 28%, transparent);
+        }
+        .gh-combobox[aria-expanded="true"] {
+            border-color: var(--brand);
+            background: var(--bg-card-hover);
+        }
+
+        /* CSS-drawn chevron — two borders forming a down-arrow */
+        .gh-combobox-chevron {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            width: 7px;
+            height: 7px;
+            border-right: 1.5px solid var(--text-secondary);
+            border-bottom: 1.5px solid var(--text-secondary);
+            transform: translateY(-70%) rotate(45deg);
+            pointer-events: none;
+            transition: border-color 180ms ease, transform 200ms ease;
+        }
+        .gh-combobox:hover .gh-combobox-chevron {
+            border-color: var(--text-primary);
+        }
+        .gh-combobox[aria-expanded="true"] .gh-combobox-chevron {
+            transform: translateY(-30%) rotate(-135deg);
+            border-color: var(--brand-light);
+        }
+
+        /* Listbox panel */
+        .gh-listbox {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            right: 0;
+            min-width: 240px;
+            margin: 0;
+            padding: 4px;
+            list-style: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.35),
+                        0 2px 6px -2px rgba(0, 0, 0, 0.25);
+            z-index: 200;
+            opacity: 0;
+            transform: translateY(-4px);
+            pointer-events: none;
+            transition: opacity 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .gh-listbox[data-open="true"] {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        .gh-option {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 12px;
+            font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-primary);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 140ms ease, color 140ms ease;
+            user-select: none;
+        }
+        .gh-option:hover,
+        .gh-option[data-active="true"] {
+            background: var(--bg-card-hover);
+        }
+        .gh-option[aria-selected="true"] {
+            color: var(--text-primary);
+            background: var(--bg-section);
+        }
+        .gh-option[aria-selected="true"]::before {
+            content: "";
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+            flex-shrink: 0;
+        }
+        .gh-option:not([aria-selected="true"])::before {
+            content: "";
+            width: 6px;
+            height: 6px;
+            flex-shrink: 0;
+        }
+
+        /* ── COST CHIP ─────────────────────────────────────────────────
+           Tabular nums, slightly larger value than V1, calmer caption.
+           ───────────────────────────────────────────────────────────── */
+        .gh-cost-value {
+            font-variant-numeric: tabular-nums;
+            font-size: 14.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.015em;
+        }
+        .gh-cost-currency {
+            color: var(--text-muted);
+            font-weight: 400;
+            margin-right: 1px;
+            letter-spacing: 0;
+        }
+
+        /* ── OPERATOR CHIP ─────────────────────────────────────────────
+           Single subtle pulse on the dot. Name in mono, prefix muted.
+           ───────────────────────────────────────────────────────────── */
+        .gh-operator-dot {
+            position: relative;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            flex-shrink: 0;
+        }
+        .gh-operator-dot::after {
+            content: "";
+            position: absolute;
+            inset: -3px;
+            border-radius: 50%;
+            border: 1px solid var(--success);
+            opacity: 0.55;
+            animation: gh-pulse 2600ms ease-out infinite;
+            will-change: transform, opacity;
+        }
+        @keyframes gh-pulse {
+            0%   { transform: scale(0.7); opacity: 0.65; }
+            70%  { transform: scale(1.5); opacity: 0; }
+            100% { transform: scale(1.5); opacity: 0; }
+        }
+        .gh-operator-name {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .gh-operator-name::before {
+            content: "operator/";
+            color: var(--text-muted);
+            font-weight: 400;
+            margin-right: 4px;
+            letter-spacing: 0.04em;
+        }
+
+        /* ── THEME TOGGLE ──────────────────────────────────────────────
+           Square button with CSS-drawn moon glyph. Subtle focus
+           shimmer ring (≤200ms, the one shimmer allowed at MOTION=4).
+           ───────────────────────────────────────────────────────────── */
+        .gh-theme-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            cursor: pointer;
+            padding: 0;
+            transition: border-color 180ms ease,
+                        background-color 180ms ease,
+                        box-shadow 180ms ease;
+        }
+        .gh-theme-toggle:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+        }
+        .gh-theme-toggle:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 28%, transparent);
+        }
+
+        .gh-theme-glyph {
+            position: relative;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+            transition: background-color 180ms ease;
+        }
+        .gh-theme-glyph::before {
+            content: "";
+            position: absolute;
+            top: -1px;
+            right: -3px;
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            background: var(--bg-container);
+            transition: background-color 180ms ease;
+        }
+        [data-theme="light"] .gh-theme-glyph {
+            background: var(--text-primary);
+        }
+        [data-theme="light"] .gh-theme-glyph::before {
+            background: var(--bg-container);
+        }
+        .gh-theme-toggle:hover .gh-theme-glyph {
+            background: var(--text-primary);
+        }
+
+        /* ── DEMO BODY ─────────────────────────────────────────────────
+           Generous padding, large max-width, calm copy.
+           ───────────────────────────────────────────────────────────── */
+        .demo-main {
+            padding: 112px 40px 48px;
+            max-width: 760px;
+            margin: 0 auto;
+        }
+        .demo-main h2 {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin: 0 0 14px;
+            letter-spacing: -0.012em;
+        }
+        .demo-main p {
+            color: var(--text-secondary);
+            line-height: 1.65;
+            margin: 0 0 14px;
+            font-size: 14px;
+        }
+        .demo-main code {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 12px;
+            padding: 2px 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 3px;
+            color: var(--text-primary);
+        }
+        .demo-toggle-btn {
+            margin-top: 20px;
+            padding: 9px 16px;
+            font-size: 12.5px;
+            font-weight: 600;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 180ms ease,
+                        border-color 180ms ease,
+                        box-shadow 180ms ease;
+        }
+        .demo-toggle-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+        .demo-toggle-btn:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 28%, transparent);
+        }
+
+        /* Reduced motion: kill pulse + transitions + new shimmers */
+        @media (prefers-reduced-motion: reduce) {
+            .gh-operator-dot::after,
+            .gh-brand-mark::after {
+                animation: none;
+            }
+            .gh-brand-mark::after { opacity: 0; }
+            .gh-combobox, .gh-combobox-chevron, .gh-listbox, .gh-option,
+            .gh-theme-toggle, .gh-theme-glyph, .demo-toggle-btn,
+            .gh-brand-mark, .gh-brand-mark::before {
+                transition: none;
+            }
+            .gh-combobox:hover { transform: none; }
+        }
+
+        /* ── FLOATING VARIANT SWITCHER ────────────────────────────────
+           Fixed bottom-right pill that lets the viewer jump between
+           taste-skill variants without returning to the compare page.
+           Palette tokens only; safe in both themes.
+           ──────────────────────────────────────────────────────────── */
+        .variant-switcher {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            font-size: 12px;
+        }
+        .variant-switcher__label {
+            color: var(--text-muted);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 0 8px 0 4px;
+            border-right: 1px solid var(--border);
+            margin-right: 4px;
+        }
+        .variant-switcher__btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 600;
+            transition: background 120ms, color 120ms;
+        }
+        .variant-switcher__btn:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .variant-switcher__btn.is-active {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+        .variant-switcher__dials {
+            color: var(--text-muted);
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 10.5px;
+            font-weight: 400;
+        }
+        .variant-switcher__btn.is-active .variant-switcher__dials {
+            color: var(--text-secondary);
+        }
+        .variant-switcher__sep {
+            width: 1px;
+            height: 16px;
+            background: var(--border);
+            margin: 0 4px;
+        }
+        .variant-switcher__btn--compare {
+            color: var(--text-muted);
+            font-weight: 400;
+            font-size: 11px;
+        }
+        .variant-switcher__btn--compare:hover {
+            color: var(--text-primary);
+        }
+        @media (max-width: 720px) {
+            .variant-switcher__dials,
+            .variant-switcher__label { display: none; }
+        }
+
+        /* ============================================================
+           V3 LAYOUT EXTENSION — full dashboard mock, calm SaaS admin
+           DENSITY=5 (airy), MOTION=6 (250-320ms transitions, hover
+           lifts -2px with spring overshoot on micro-feedback,
+           continuous gentle shimmer on brand/dial-spec/cost/sparkline,
+           animated underline), VARIANCE=5 (balanced, symmetric
+           grid; type-weight and whitespace do the work, not borders).
+           Palette tokens only. Dual-theme. Anti-emoji.
+           ============================================================ */
+
+        /* Widen demo body & soften vertical rhythm for the layout. */
+        .demo-main { max-width: 1200px; padding-bottom: 64px; }
+
+        /* Animation primitives shared by the section ------------------- */
+        @keyframes v3-fade-in {
+            from { opacity: 0; transform: translateY(2px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes v3-sparkline-draw {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+        @keyframes v3-underline-in {
+            0%   { transform: scaleX(0); box-shadow: none; }
+            70%  { transform: scaleX(1.04); box-shadow: 0 0 6px color-mix(in srgb, var(--brand-light) 55%, transparent); }
+            100% { transform: scaleX(1); box-shadow: none; }
+        }
+        /* MOTION=6: very subtle continuous shimmer on the dollar amount.
+           Tiny background-position drift — reads as static at first glance. */
+        @keyframes v3-cost-shimmer {
+            0%, 100% { background-position: 0% 50%; }
+            50%      { background-position: 100% 50%; }
+        }
+        /* MOTION=6: gentle breathing on the sparkline stroke dasharray. */
+        @keyframes v3-spark-breath {
+            0%, 100% { stroke-dasharray: 600 0; stroke-dashoffset: 0; opacity: 0.92; }
+            50%      { stroke-dasharray: 580 20; stroke-dashoffset: -8; opacity: 1; }
+        }
+        /* MOTION=6: barely-perceptible border shimmer on dial-spec card. */
+        @keyframes v3-dial-border-shimmer {
+            0%, 100% { border-color: var(--border); }
+            50%      { border-color: var(--border-light); }
+        }
+
+        /* ── SECTION 1: STACKED NAV + SUB-PILLS ────────────────────────
+           No rail dividers, generous horizontal spacing, animated
+           underline draw on the active item.
+           ───────────────────────────────────────────────────────────── */
+        .layout-nav {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin: 6px 0 18px;
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 13.5px;
+            letter-spacing: 0.005em;
+        }
+        .layout-nav__item {
+            position: relative;
+            padding: 12px 14px 14px;
+            margin: 0 14px 0 0;
+            color: var(--text-secondary);
+            font-weight: 600;
+            text-decoration: none;
+            transition: color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+                        opacity 180ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .layout-nav__item:last-of-type { margin-right: 0; }
+        .layout-nav__item:hover {
+            color: var(--text-primary);
+            opacity: 0.92;
+        }
+        .layout-nav__item:focus-visible {
+            outline: none;
+            color: var(--text-primary);
+            border-radius: 3px;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 28%, transparent);
+        }
+        .layout-nav__item::after {
+            content: "";
+            position: absolute;
+            left: 14px;
+            right: 14px;
+            bottom: -1px;
+            height: 2px;
+            background: var(--brand-light);
+            transform: scaleX(0);
+            transform-origin: center;
+            transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .layout-nav__item.is-active {
+            color: var(--text-primary);
+        }
+        .layout-nav__item.is-active::after {
+            transform: scaleX(1);
+            animation: v3-underline-in 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        /* Sub-pills — softer, slightly larger, gentle shadow on active.  */
+        .layout-subpills {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 0 0 32px;
+        }
+        .layout-subpills__hint {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-right: 6px;
+        }
+        .layout-subpills__pill {
+            appearance: none;
+            -webkit-appearance: none;
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 7px 16px;
+            font: inherit;
+            font-size: 12.5px;
+            font-weight: 600;
+            letter-spacing: 0.005em;
+            cursor: pointer;
+            transition: background-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+                        box-shadow 180ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .layout-subpills__pill:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            color: var(--text-primary);
+        }
+        .layout-subpills__pill:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 28%, transparent);
+        }
+        .layout-subpills__pill.is-active {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border-color: var(--border-light);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08),
+                        inset 0 -2px 0 var(--brand-light);
+        }
+
+        /* ── DASHBOARD GRID — symmetric 3-col, airy gutter ─────────────
+           V3 stays balanced rather than asymmetric. Wraps cleanly on
+           narrow viewports.
+           ───────────────────────────────────────────────────────────── */
+        .layout-dashboard {
+            position: relative;
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 22px;
+            margin-bottom: 32px;
+        }
+        @media (max-width: 980px) {
+            .layout-dashboard {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        /* Card shell — used by panels in this section ------------------ */
+        .v3-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            transform: translateY(0);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            animation: v3-fade-in 280ms cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+        .v3-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--border-light);
+            box-shadow: 0 8px 20px -10px rgba(0, 0, 0, 0.35),
+                        0 2px 4px -2px rgba(0, 0, 0, 0.18);
+        }
+        .v3-card__title {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin: 0 0 16px;
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+        }
+
+        /* ── DEPLOYMENT CARDS — whitespace separators, no borders ─────  */
+        .deploy-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .deploy-card {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 16px 18px;
+            background: var(--bg-input);
+            border: 1px solid var(--border-subtle);
+            border-radius: 6px;
+            text-decoration: none;
+            color: inherit;
+            transform: translateY(0);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .deploy-card:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            box-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.38),
+                        0 2px 4px -2px rgba(0, 0, 0, 0.18);
+            transform: translateY(-3px);
+        }
+        .deploy-card__name {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+            word-break: break-all;
+        }
+        .deploy-card__status {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+        .deploy-card__meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 10.5px;
+            color: var(--text-muted);
+            letter-spacing: 0.06em;
+        }
+        .deploy-card__meta span { white-space: nowrap; }
+
+        /* CTA — outlined, calmer than V2's would be. */
+        .deploy-card--cta {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 16px 18px;
+            background: transparent;
+            border: 1px dashed var(--border-light);
+            border-radius: 6px;
+            text-decoration: none;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transform: translateY(0);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .deploy-card--cta:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--brand-light);
+            color: var(--text-primary);
+            transform: translateY(-3px);
+        }
+        .deploy-card--cta__plus {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            position: relative;
+        }
+        .deploy-card--cta__plus::before,
+        .deploy-card--cta__plus::after {
+            content: "";
+            position: absolute;
+            background: currentColor;
+            border-radius: 1px;
+        }
+        .deploy-card--cta__plus::before {
+            left: 50%; top: 0; bottom: 0; width: 1.5px; transform: translateX(-50%);
+        }
+        .deploy-card--cta__plus::after {
+            top: 50%; left: 0; right: 0; height: 1.5px; transform: translateY(-50%);
+        }
+
+        /* ── RECENT ACTIVITY — soft dividers, hover-row background ────  */
+        .activity-list {
+            display: flex;
+            flex-direction: column;
+        }
+        .activity-row {
+            position: relative;
+            display: grid;
+            grid-template-columns: auto 1fr;
+            align-items: baseline;
+            gap: 14px;
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            transform: translateX(0);
+            transition: background-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 180ms cubic-bezier(0.4, 0, 0.2, 1);
+            min-height: 32px;
+        }
+        /* Left-border accent revealed on hover (160-200ms entrance). */
+        .activity-row::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 6px;
+            bottom: 6px;
+            width: 2px;
+            border-radius: 2px;
+            background: var(--brand-light);
+            opacity: 0;
+            transform: scaleY(0.4);
+            transform-origin: center;
+            transition: opacity 180ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            pointer-events: none;
+        }
+        .activity-row:last-child { border-bottom: none; }
+        .activity-row:hover {
+            background: var(--bg-card-hover);
+            transform: translateX(2px);
+        }
+        .activity-row:hover::before {
+            opacity: 1;
+            transform: scaleY(1);
+        }
+        .activity-row__time {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 11.5px;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-muted);
+            letter-spacing: 0.02em;
+        }
+        .activity-row__text {
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+        .activity-row__op {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        /* ── COST TREND TILE ──────────────────────────────────────────  */
+        .cost-tile {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .cost-tile__big {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-variant-numeric: tabular-nums;
+            font-size: 38px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.03em;
+            line-height: 1.05;
+            /* MOTION=6: ticker-style subtle background drift. A barely
+               visible bright stripe slowly traverses the number. The
+               fallback color above keeps contrast safe in both themes. */
+            background: linear-gradient(
+                90deg,
+                var(--text-primary) 0%,
+                var(--text-primary) 42%,
+                color-mix(in srgb, var(--brand-light) 65%, var(--text-primary)) 50%,
+                var(--text-primary) 58%,
+                var(--text-primary) 100%
+            );
+            background-size: 220% 100%;
+            background-position: 0% 50%;
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: v3-cost-shimmer 3000ms ease-in-out infinite;
+            will-change: background-position;
+        }
+        .cost-tile__caption {
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            margin-top: -4px;
+        }
+        .cost-tile__delta {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 11.5px;
+            color: var(--text-muted);
+            letter-spacing: 0.02em;
+        }
+        .cost-tile__caret {
+            display: inline-block;
+            width: 0;
+            height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-bottom: 5px solid var(--text-muted);
+        }
+        .cost-tile__spark {
+            width: 100%;
+            height: 56px;
+            display: block;
+            animation: v3-sparkline-draw 800ms cubic-bezier(0.4, 0, 0.2, 1) 120ms both;
+        }
+        /* MOTION=6: gentle continuous dasharray "breathing" on the
+           sparkline. Stroke-width stays 1.5px; only the dash and a
+           tiny offset/opacity oscillate. */
+        .cost-tile__spark polyline {
+            animation: v3-spark-breath 2800ms ease-in-out 920ms infinite;
+            will-change: stroke-dasharray, stroke-dashoffset, opacity;
+        }
+        .cost-tile__spark-foot {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+
+        /* ── SECTION 3: DIAL SPEC CARD (floating, top-right) ──────────  */
+        .layout-content {
+            position: relative;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 240px;
+            gap: 28px;
+            align-items: start;
+        }
+        @media (max-width: 980px) {
+            .layout-content { grid-template-columns: minmax(0, 1fr); }
+        }
+        .dial-spec {
+            position: sticky;
+            top: 88px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            box-shadow: 0 4px 14px -8px rgba(0, 0, 0, 0.35),
+                        0 2px 4px -2px rgba(0, 0, 0, 0.18);
+            transform: scale(1);
+            /* MOTION=6: fade-in + barely-perceptible border shimmer
+               (loops at 3s — just enough to feel "alive") + spring
+               overshoot scale on hover (1.015 max, very subtle). */
+            animation:
+                v3-fade-in 240ms cubic-bezier(0.4, 0, 0.2, 1) both,
+                v3-dial-border-shimmer 3000ms ease-in-out 600ms infinite;
+            transition: transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .dial-spec:hover {
+            transform: scale(1.015);
+            box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.38),
+                        0 2px 4px -2px rgba(0, 0, 0, 0.18);
+        }
+        .dial-spec__title {
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+        }
+        .dial-spec__caption {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .dial-spec__feel {
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            line-height: 1.55;
+            margin-top: 4px;
+        }
+        @media (max-width: 980px) {
+            .dial-spec { position: static; }
+        }
+
+        /* Reduced motion: kill draws, lifts, continuous shimmers and
+           spring transitions. All MOTION=6 additions (brand shimmer,
+           cost shimmer, sparkline breathing, dial-spec border shimmer,
+           card lifts, activity translateX, dial-spec hover scale) must
+           strip back to a plain static appearance. */
+        @media (prefers-reduced-motion: reduce) {
+            .v3-card, .dial-spec, .cost-tile__spark,
+            .cost-tile__spark polyline,
+            .cost-tile__big,
+            .layout-nav__item.is-active::after {
+                animation: none;
+            }
+            /* Cost number falls back to plain text colour — strip the
+               gradient/clip so contrast is guaranteed. */
+            .cost-tile__big {
+                background: none;
+                -webkit-text-fill-color: var(--text-primary);
+                color: var(--text-primary);
+            }
+            .layout-nav__item, .layout-subpills__pill,
+            .deploy-card, .deploy-card--cta,
+            .activity-row, .activity-row::before,
+            .v3-card, .dial-spec {
+                transition: none;
+            }
+            /* No transforms on hover under reduced-motion. */
+            .v3-card:hover,
+            .deploy-card:hover,
+            .deploy-card--cta:hover,
+            .activity-row:hover,
+            .dial-spec:hover {
+                transform: none;
+            }
+            .activity-row::before { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <header class="global-header" role="banner">
+        <!-- LEFT: brand cluster -->
+        <div class="gh-brand">
+            <span class="gh-brand-mark" aria-hidden="true"></span>
+            <div class="gh-brand-text">
+                <span class="gh-brand-name">Red Team Infrastructure</span>
+                <span class="gh-brand-kicker">control plane</span>
+            </div>
+        </div>
+
+        <!-- RIGHT: chip rail -->
+        <div class="gh-rail">
+            <!-- Deployment selector — custom combobox listbox -->
+            <div class="gh-chip gh-deploy">
+                <span class="gh-deploy-label" id="gh-deploy-label">deployment</span>
+                <div class="gh-combobox-wrap">
+                    <button
+                        type="button"
+                        class="gh-combobox"
+                        id="gh-combobox"
+                        role="combobox"
+                        aria-haspopup="listbox"
+                        aria-expanded="false"
+                        aria-controls="gh-listbox"
+                        aria-labelledby="gh-deploy-label"
+                    >
+                        <span class="gh-combobox-value" id="gh-combobox-value">c2-adhoc-dev-harriss</span>
+                        <span class="gh-combobox-chevron" aria-hidden="true"></span>
+                    </button>
+                    <ul
+                        class="gh-listbox"
+                        id="gh-listbox"
+                        role="listbox"
+                        aria-labelledby="gh-deploy-label"
+                        tabindex="-1"
+                        data-open="false"
+                    >
+                        <li role="option" class="gh-option" data-value="c2-adhoc-dev-harriss" aria-selected="true">c2-adhoc-dev-harriss</li>
+                        <li role="option" class="gh-option" data-value="goad-light-lab01" aria-selected="false">goad-light-lab01</li>
+                        <li role="option" class="gh-option" data-value="combined-full-engagement-acme" aria-selected="false">combined-full-engagement-acme</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Cost indicator -->
+            <div class="gh-chip">
+                <div class="gh-stack">
+                    <span class="gh-stack-value gh-cost-value">
+                        <span class="gh-cost-currency">$</span>407<span class="gh-cost-currency">/mo</span>
+                    </span>
+                    <span class="gh-stack-caption">monthly burn</span>
+                </div>
+            </div>
+
+            <!-- Operator badge -->
+            <div class="gh-chip">
+                <span class="gh-operator-dot" aria-hidden="true"></span>
+                <div class="gh-stack">
+                    <span class="gh-operator-name">harriss</span>
+                    <span class="gh-stack-caption">session active</span>
+                </div>
+            </div>
+
+            <!-- Theme toggle -->
+            <button
+                class="gh-theme-toggle"
+                type="button"
+                aria-label="Toggle theme"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')"
+            >
+                <span class="gh-theme-glyph" aria-hidden="true"></span>
+            </button>
+        </div>
+    </header>
+
+    <main class="demo-main">
+        <!-- Section 1 — stacked nav + sub-pills (V3: no rails, animated underline) -->
+        <nav class="layout-nav" role="navigation" aria-label="Primary">
+            <a href="#" class="layout-nav__item is-active">Dashboard</a>
+            <a href="#" class="layout-nav__item">Deployments</a>
+            <a href="#" class="layout-nav__item">Operations</a>
+            <a href="#" class="layout-nav__item">Architecture</a>
+            <a href="#" class="layout-nav__item">Settings</a>
+        </nav>
+        <div class="layout-subpills" role="tablist" aria-label="Deployments sub-views">
+            <span class="layout-subpills__hint">Active when on a merged tab:</span>
+            <button role="tab" class="layout-subpills__pill is-active">Configure</button>
+            <button role="tab" class="layout-subpills__pill">Deploy</button>
+            <button role="tab" class="layout-subpills__pill">Manage</button>
+        </div>
+
+        <!-- Two-column wrap so the dial-spec card can sticky to the right -->
+        <div class="layout-content">
+            <div class="layout-content__main">
+                <h2>Header preview &mdash; Taste-skill V3</h2>
+                <p>Variant V3 &mdash; dials 5/6/5 &mdash; calm professional. The dropdown is a custom listbox (works identically on Mac/Linux/Windows).</p>
+                <p>Density pulls back from V1's compact rail: chips are spaced by gap (no vertical rules), padding is generous, captions breathe. Motion sits in the 6-band &mdash; 250&ndash;320ms hover transitions with light spring overshoot on micro-feedback, one gentle continuous shimmer per major element (brand mark, cost amount, sparkline, dial spec border), animated underline; still no scroll-driven, magnetic, or particle behaviour. Variance is balanced rather than asymmetric: type-weight and spacing are designed, but the layout reads as considered, not theatrical.</p>
+
+                <!-- Section 2 — mock dashboard content (symmetric 3-col grid) -->
+                <section class="layout-dashboard" aria-label="Dashboard overview">
+                    <!-- Deployments -->
+                    <article class="v3-card" style="animation-delay: 40ms;">
+                        <h3 class="v3-card__title">Deployments</h3>
+                        <div class="deploy-stack">
+                            <a href="#" class="deploy-card">
+                                <span class="deploy-card__name">c2_adhoc_dev_harriss_macbook_pro_01</span>
+                                <span class="deploy-card__status">C2 Ad-hoc &middot; running smoothly</span>
+                                <span class="deploy-card__meta">
+                                    <span>4 instances</span>
+                                    <span>eu-central-1</span>
+                                    <span>24d uptime</span>
+                                </span>
+                            </a>
+                            <a href="#" class="deploy-card">
+                                <span class="deploy-card__name">goad_mini_dev_harriss_macbook_pro</span>
+                                <span class="deploy-card__status">GOAD Mini &middot; lab provisioned</span>
+                                <span class="deploy-card__meta">
+                                    <span>5 instances</span>
+                                    <span>eu-central-1</span>
+                                    <span>19d uptime</span>
+                                </span>
+                            </a>
+                            <button type="button" class="deploy-card--cta" aria-label="Add deployment">
+                                <span class="deploy-card--cta__plus" aria-hidden="true"></span>
+                                <span>Create new deployment</span>
+                            </button>
+                        </div>
+                    </article>
+
+                    <!-- Recent activity -->
+                    <article class="v3-card" style="animation-delay: 80ms;">
+                        <h3 class="v3-card__title">Recent activity</h3>
+                        <div class="activity-list">
+                            <div class="activity-row">
+                                <span class="activity-row__time">12:32</span>
+                                <span class="activity-row__text"><span class="activity-row__op">harriss</span> &middot; GET /api/version</span>
+                            </div>
+                            <div class="activity-row">
+                                <span class="activity-row__time">12:30</span>
+                                <span class="activity-row__text"><span class="activity-row__op">harriss</span> &middot; /preview/header opened</span>
+                            </div>
+                            <div class="activity-row">
+                                <span class="activity-row__time">12:15</span>
+                                <span class="activity-row__text"><span class="activity-row__op">harriss</span> &middot; v1.0.0 tagged</span>
+                            </div>
+                            <div class="activity-row">
+                                <span class="activity-row__time">11:45</span>
+                                <span class="activity-row__text"><span class="activity-row__op">harriss</span> &middot; refactor/test-framework merged</span>
+                            </div>
+                            <div class="activity-row">
+                                <span class="activity-row__time">10:20</span>
+                                <span class="activity-row__text"><span class="activity-row__op">harriss</span> &middot; pre-flight checks passed</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <!-- Cost trend -->
+                    <article class="v3-card" style="animation-delay: 120ms;">
+                        <h3 class="v3-card__title">Cost trend</h3>
+                        <div class="cost-tile">
+                            <span class="cost-tile__big">$407</span>
+                            <span class="cost-tile__caption">Monthly burn</span>
+                            <span class="cost-tile__delta">
+                                <span class="cost-tile__caret" aria-hidden="true"></span>
+                                +3% vs last week
+                            </span>
+                            <svg class="cost-tile__spark" viewBox="0 0 280 56" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+                                <polyline
+                                    points="0,38 20,34 40,36 60,30 80,32 100,26 120,28 140,22 160,24 180,18 200,20 220,14 240,16 260,10 280,12"
+                                    fill="none"
+                                    stroke="var(--brand-light)"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                />
+                            </svg>
+                            <span class="cost-tile__spark-foot">Last 14 days</span>
+                        </div>
+                    </article>
+                </section>
+
+                <button class="demo-toggle-btn" type="button"
+                        onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+                    Toggle theme
+                </button>
+            </div>
+
+            <!-- Section 3 — dial spec card (floating, sticky top-right) -->
+            <aside class="dial-spec" aria-label="Variant dial spec">
+                <span class="dial-spec__title">V3 &mdash; 5 &middot; 6 &middot; 5</span>
+                <span class="dial-spec__caption">Variance &middot; Motion &middot; Density</span>
+                <span class="dial-spec__feel">Calm production SaaS admin &mdash; institutional, unhurried.</span>
+            </aside>
+        </div>
+    </main>
+
+    <script>
+    (function () {
+        'use strict';
+
+        const combobox = document.getElementById('gh-combobox');
+        const listbox = document.getElementById('gh-listbox');
+        const valueEl = document.getElementById('gh-combobox-value');
+        const options = Array.from(listbox.querySelectorAll('[role="option"]'));
+
+        let activeIndex = options.findIndex(o => o.getAttribute('aria-selected') === 'true');
+        if (activeIndex < 0) activeIndex = 0;
+
+        function setActive(idx) {
+            options.forEach((o, i) => {
+                o.removeAttribute('data-active');
+                if (i === idx) {
+                    o.setAttribute('data-active', 'true');
+                    o.scrollIntoView({ block: 'nearest' });
+                }
+            });
+            activeIndex = idx;
+        }
+
+        function openListbox() {
+            listbox.setAttribute('data-open', 'true');
+            combobox.setAttribute('aria-expanded', 'true');
+            setActive(activeIndex);
+            // Defer focus so the opening transition feels right
+            requestAnimationFrame(() => listbox.focus());
+        }
+
+        function closeListbox(returnFocus) {
+            listbox.setAttribute('data-open', 'false');
+            combobox.setAttribute('aria-expanded', 'false');
+            options.forEach(o => o.removeAttribute('data-active'));
+            if (returnFocus) combobox.focus();
+        }
+
+        function selectOption(idx) {
+            options.forEach((o, i) => {
+                o.setAttribute('aria-selected', i === idx ? 'true' : 'false');
+            });
+            valueEl.textContent = options[idx].dataset.value;
+            activeIndex = idx;
+            closeListbox(true);
+        }
+
+        // Trigger interactions
+        combobox.addEventListener('click', (e) => {
+            e.preventDefault();
+            const isOpen = combobox.getAttribute('aria-expanded') === 'true';
+            isOpen ? closeListbox(false) : openListbox();
+        });
+
+        combobox.addEventListener('keydown', (e) => {
+            switch (e.key) {
+                case 'Enter':
+                case ' ':
+                case 'ArrowDown':
+                    e.preventDefault();
+                    openListbox();
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    openListbox();
+                    setActive(options.length - 1);
+                    break;
+            }
+        });
+
+        // Listbox keyboard nav
+        listbox.addEventListener('keydown', (e) => {
+            switch (e.key) {
+                case 'ArrowDown':
+                    e.preventDefault();
+                    setActive((activeIndex + 1) % options.length);
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    setActive((activeIndex - 1 + options.length) % options.length);
+                    break;
+                case 'Home':
+                    e.preventDefault();
+                    setActive(0);
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    setActive(options.length - 1);
+                    break;
+                case 'Enter':
+                case ' ':
+                    e.preventDefault();
+                    selectOption(activeIndex);
+                    break;
+                case 'Escape':
+                    e.preventDefault();
+                    closeListbox(true);
+                    break;
+                case 'Tab':
+                    closeListbox(false);
+                    break;
+            }
+        });
+
+        // Option mouse handlers
+        options.forEach((opt, i) => {
+            opt.addEventListener('mouseenter', () => setActive(i));
+            opt.addEventListener('click', (e) => {
+                e.preventDefault();
+                selectOption(i);
+            });
+        });
+
+        // Click-outside closes
+        document.addEventListener('mousedown', (e) => {
+            if (combobox.getAttribute('aria-expanded') !== 'true') return;
+            if (combobox.contains(e.target) || listbox.contains(e.target)) return;
+            closeListbox(false);
+        });
+    })();
+    </script>
+
+    <!-- Floating variant switcher: jump between V1/V2/V3 in full-width view -->
+    <aside class="variant-switcher" role="group" aria-label="Taste-skill variant">
+        <span class="variant-switcher__label">Variant</span>
+        <a href="/preview/header?variant=taste"    class="variant-switcher__btn" data-variant="v1" aria-pressed="false">V1 <span class="variant-switcher__dials">6/3/6</span></a>
+        <a href="/preview/header?variant=taste-v2" class="variant-switcher__btn" data-variant="v2" aria-pressed="false">V2 <span class="variant-switcher__dials">8/2/7</span></a>
+        <a href="/preview/header?variant=taste-v3" class="variant-switcher__btn is-active" data-variant="v3" aria-pressed="true">V3 <span class="variant-switcher__dials">5/6/5</span></a>
+        <a href="/preview/header?variant=taste-v4" class="variant-switcher__btn" data-variant="v4" aria-pressed="false">V4 <span class="variant-switcher__dials">10/10/7</span></a>
+        <span class="variant-switcher__sep" aria-hidden="true"></span>
+        <a href="/preview/header" class="variant-switcher__btn variant-switcher__btn--compare">&#8592; Compare</a>
+    </aside>
+</body>
+</html>

@@ -1,0 +1,193 @@
+"""Operator profile store + lookup.
+
+Profile data lives at ~/.dashboard/operators.json — a simple list of
+{id, display, color, created}. No password / session — identity is
+asserted by the unsigned cookie `dashboard_operator=<id>` set by the
+operator from the header chip. Trust boundary is AWS IAM + SSH access
+upstream of the dashboard.
+"""
+import json
+import os
+import pwd
+import re
+import threading
+from datetime import datetime
+from pathlib import Path
+
+_STORE_PATH = Path.home() / ".dashboard" / "operators.json"
+_LOCK = threading.RLock()
+
+DEFAULT_COLORS = ["#a31621", "#3b82f6", "#0d9488", "#7c3aed", "#ea580c", "#65a30d"]
+
+# 6-hex-char color literal validator. The frontend swatch picker only emits
+# values from DEFAULT_COLORS, but the PATCH endpoint accepts arbitrary input
+# from any client so we validate strictly.
+_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _ensure_store():
+    _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not _STORE_PATH.exists():
+        # Seed with the SSH user as the default operator
+        try:
+            user = pwd.getpwuid(os.getuid()).pw_name
+        except Exception:
+            user = "operator"
+        seed = {
+            "operators": [{
+                "id": user,
+                "display": user.capitalize(),
+                "color": DEFAULT_COLORS[0],
+                "created": datetime.utcnow().isoformat() + "Z",
+            }],
+            "default": user,
+        }
+        _STORE_PATH.write_text(json.dumps(seed, indent=2))
+
+
+def load():
+    with _LOCK:
+        _ensure_store()
+        return json.loads(_STORE_PATH.read_text())
+
+
+def save(data):
+    with _LOCK:
+        _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _STORE_PATH.write_text(json.dumps(data, indent=2))
+
+
+def list_operators():
+    return load()["operators"]
+
+
+def get(op_id):
+    return next((o for o in list_operators() if o["id"] == op_id), None)
+
+
+def add(op_id, display, color):
+    """Add a new operator. Returns the created entry."""
+    op_id = (op_id or "").strip().lower()
+    if not op_id or not op_id.replace("-", "").replace("_", "").isalnum():
+        raise ValueError("operator id must be alphanumeric with optional -/_ separators")
+    with _LOCK:
+        data = load()
+        if any(o["id"] == op_id for o in data["operators"]):
+            raise ValueError(f"operator '{op_id}' already exists")
+        if len(data["operators"]) >= 32:
+            raise ValueError("too many operators (max 32)")
+        entry = {
+            "id": op_id,
+            "display": display or op_id.capitalize(),
+            "color": color or DEFAULT_COLORS[len(data["operators"]) % len(DEFAULT_COLORS)],
+            "created": datetime.utcnow().isoformat() + "Z",
+        }
+        data["operators"].append(entry)
+        save(data)
+        return entry
+
+
+def update(op_id, *, display=None, color=None):
+    """Rename and/or recolor an existing operator. Returns the updated entry.
+
+    Only ``display`` and ``color`` are mutable — the ``id`` is the audit-log
+    join key and must never change. Pass ``None`` for fields you don't want
+    to touch; an empty/whitespace ``display`` is also treated as no-op
+    (callers shouldn't blank out display names).
+
+    Raises ValueError for unknown id or invalid color literal.
+    """
+    if color is not None:
+        if not isinstance(color, str) or not _COLOR_RE.match(color):
+            raise ValueError("color must be a 6-hex-char '#RRGGBB' literal")
+    with _LOCK:
+        data = load()
+        entry = next((o for o in data["operators"] if o["id"] == op_id), None)
+        if entry is None:
+            raise ValueError(f"operator '{op_id}' not found")
+        if display is not None:
+            d = str(display).strip()
+            if d:
+                entry["display"] = d
+        if color is not None:
+            entry["color"] = color
+        save(data)
+        return entry
+
+
+def remove(op_id):
+    with _LOCK:
+        data = load()
+        before = len(data["operators"])
+        data["operators"] = [o for o in data["operators"] if o["id"] != op_id]
+        if len(data["operators"]) == before:
+            raise ValueError(f"operator '{op_id}' not found")
+        if len(data["operators"]) == 0:
+            raise ValueError("cannot remove the last operator")
+        if data.get("default") == op_id:
+            data["default"] = data["operators"][0]["id"]
+        save(data)
+
+
+def get_default():
+    data = load()
+    default_id = data.get("default")
+    if default_id:
+        return default_id
+    ops = data.get("operators") or []
+    return ops[0]["id"] if ops else None
+
+
+def get_last_active(op_id):
+    """Return the ISO timestamp of the most recent audit-log action by
+    ``op_id``, or None if the operator has never acted.
+
+    Imported lazily to avoid a circular dependency: audit_service is a peer
+    module that does not import operator_service, but the Flask app wires
+    both into the same package and we'd rather not invert that.
+    """
+    from webapp.backend.services import audit_service
+    rows = audit_service.read_recent(limit=500, op_filter=op_id)
+    return rows[0]["ts"] if rows else None
+
+
+def get_last_active_map():
+    """Bulk variant — single audit-log scan returning a map of
+    ``{op_id: {"last_active": iso_or_None, "action_count": int}}`` for every
+    known operator. O(N audit entries) once, vs O(N operators * N entries)
+    if callers loop over get_last_active().
+
+    Unknown operators (entries in audit log whose id no longer exists in the
+    operator store) are silently ignored — they don't get a slot in the map.
+    """
+    from webapp.backend.services import audit_service
+    ids = {o["id"] for o in list_operators()}
+    out = {oid: {"last_active": None, "action_count": 0} for oid in ids}
+    # 500 is the same cap used by the activity feed; sufficient for typical
+    # ops history and bounded so a runaway audit log doesn't tank this call.
+    for entry in audit_service.read_recent(limit=500):
+        op = entry.get("op")
+        if op not in out:
+            continue
+        slot = out[op]
+        slot["action_count"] += 1
+        # read_recent is most-recent-first, so the first hit IS last_active.
+        if slot["last_active"] is None:
+            slot["last_active"] = entry.get("ts")
+    return out
+
+
+def resolve_from_request(request):
+    """Read the dashboard_operator cookie, fall back to default. Returns the
+    full operator dict or a synthesized 'unknown' record (never None)."""
+    cookie_id = request.cookies.get("dashboard_operator")
+    if cookie_id:
+        op = get(cookie_id)
+        if op:
+            return op
+    default_id = get_default()
+    if default_id:
+        op = get(default_id)
+        if op:
+            return op
+    return {"id": "unknown", "display": "Unknown", "color": "#666666", "created": None}

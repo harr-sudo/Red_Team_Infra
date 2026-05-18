@@ -1,0 +1,2093 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TASTE Demo — Configure Sub-Pill (V3-native)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           TASTE DEMO SET A — CONFIGURE SUB-PILL (V3-native)
+           Hypothesis: Configure is symmetric with Deploy summary —
+           same spec-list shape, but in editing mode by default. The
+           form is the spec-list. Every row is its current value PLUS
+           an inline editor; row-level Save / Discard; page-level
+           Save / Discard / Plan diff. The diff pane materializes
+           below when requested, showing terraform plan output.
+           Dials: 5/6/5 — balanced, motion expressive, density airy.
+           Palette tokens only. Anti-emoji (SVG sprites).
+           ============================================================ */
+
+        :root {
+            --temp-rail: var(--brand-light);
+            --temp-hairline: var(--border-subtle);
+            --temp-op-harris: #6EA8C2;
+            --temp-diff-add: var(--success);
+            --temp-diff-rem: var(--danger);
+        }
+        [data-theme="light"] {
+            --temp-op-harris: #2E5870;
+        }
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+            padding-bottom: 100px; /* leave room for sticky footer */
+        }
+
+        /* ── HYPOTHESIS STRIP ───────────────────────────────────────── */
+        .preview-strip {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 12px 28px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .preview-strip__text strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 10px;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+        .preview-strip__toggle {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 11px;
+            border-radius: 5px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background-color 200ms var(--motion-easing-standard),
+                        border-color 200ms var(--motion-easing-standard);
+        }
+        .preview-strip__toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── SUB-PILL NAV (mock — Configure is active) ─────────────── */
+        .subpill-nav {
+            display: flex;
+            gap: 4px;
+            padding: 14px 32px 0;
+            max-width: 920px;
+            margin: 0 auto;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .subpill {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            padding: 9px 16px 12px;
+            font: inherit;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            position: relative;
+            transition: color 200ms var(--motion-easing-standard);
+        }
+        .subpill::after {
+            content: "";
+            position: absolute;
+            left: 12px;
+            right: 12px;
+            bottom: -1px;
+            height: 2px;
+            background: transparent;
+            border-radius: 1px;
+            transition: background-color 280ms var(--motion-easing-standard);
+        }
+        .subpill:hover { color: var(--text-primary); }
+        .subpill.is-active {
+            color: var(--text-primary);
+        }
+        .subpill.is-active::after {
+            background: var(--brand-light);
+        }
+
+        /* ── PAGE FRAME ─────────────────────────────────────────────── */
+        .cfg-shell {
+            max-width: 920px;
+            margin: 0 auto;
+            padding: 26px 32px 60px;
+        }
+
+        /* ── EYEBROW ROW (mirrors deploy-summary-v3-a) ──────────────── */
+        .cfg-eyebrow {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--temp-hairline);
+            margin-bottom: 24px;
+        }
+        .cfg-eyebrow__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .cfg-eyebrow__op {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+        .cfg-eyebrow__op-name {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .operator-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 22%, transparent);
+        }
+
+        /* ── HERO (project identity) ────────────────────────────────── */
+        .cfg-hero {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 26px;
+            animation: cfg-fade-in 320ms var(--motion-easing-standard) both;
+        }
+        .cfg-hero__caption {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .cfg-hero__name {
+            font-family: var(--font-family-mono);
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            word-break: break-all;
+            line-height: 1.2;
+        }
+        .cfg-hero__meta {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 2px;
+        }
+        .cfg-hero__type {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .cfg-hero__type strong {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .cfg-status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 11px;
+            border-radius: 999px;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            background: var(--success-bg);
+            color: var(--success-text);
+            border: 1px solid var(--success-border);
+        }
+        .cfg-status-pill__dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+
+        /* ── DIRTY-STATE BANNER ─────────────────────────────────────── */
+        .dirty-banner {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 10px 14px;
+            background: var(--warning-bg);
+            border: 1px solid var(--warning-border);
+            color: var(--warning-text);
+            border-radius: 8px;
+            font-size: 12px;
+            margin-bottom: 18px;
+            animation: cfg-fade-in 280ms var(--motion-easing-standard) both;
+        }
+        .dirty-banner.is-shown { display: flex; }
+        .dirty-banner__text strong {
+            font-weight: 700;
+            margin-right: 4px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+        .dirty-count {
+            font-family: var(--font-family-mono);
+            font-weight: 700;
+        }
+
+        /* ── SPEC LIST ──────────────────────────────────────────────── */
+        .spec-list {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .spec-row {
+            position: relative;
+            padding: 0;
+            border-bottom: 1px solid var(--temp-hairline);
+            transition: background-color 280ms var(--motion-easing-standard),
+                        opacity 280ms var(--motion-easing-standard);
+            animation: cfg-fade-in 280ms var(--motion-easing-standard) both;
+        }
+        .spec-row:nth-child(1) { animation-delay: 40ms; }
+        .spec-row:nth-child(2) { animation-delay: 80ms; }
+        .spec-row:nth-child(3) { animation-delay: 120ms; }
+        .spec-row:nth-child(4) { animation-delay: 160ms; }
+        .spec-row:nth-child(5) { animation-delay: 200ms; }
+        .spec-row:nth-child(6) { animation-delay: 240ms; }
+        .spec-row:nth-child(7) { animation-delay: 280ms; }
+        .spec-row:nth-child(8) { animation-delay: 320ms; }
+        .spec-row:nth-child(9) { animation-delay: 360ms; }
+        .spec-row:last-child { border-bottom: none; }
+
+        .spec-row__head {
+            position: relative;
+            display: grid;
+            grid-template-columns: 220px 1fr auto 24px;
+            align-items: baseline;
+            gap: 20px;
+            padding: 14px 16px 14px 14px;
+            cursor: pointer;
+            transition: background-color 280ms var(--motion-easing-standard),
+                        transform 280ms var(--motion-easing-standard);
+        }
+        .spec-row__head::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 10px;
+            bottom: 10px;
+            width: 2px;
+            border-radius: 2px;
+            background: var(--temp-rail);
+            opacity: 0;
+            transform: scaleY(0.4);
+            transform-origin: center;
+            transition: opacity 200ms var(--motion-easing-standard),
+                        transform 200ms var(--motion-easing-spring);
+            pointer-events: none;
+        }
+        .spec-row:hover .spec-row__head {
+            background: var(--bg-card-hover);
+            transform: translateX(2px);
+        }
+        .spec-row:hover .spec-row__head::before,
+        .spec-row.is-editing .spec-row__head::before,
+        .spec-row.is-dirty .spec-row__head::before {
+            opacity: 1;
+            transform: scaleY(1);
+        }
+        .spec-row.is-editing .spec-row__head {
+            background: var(--bg-card-hover);
+            cursor: default;
+        }
+        .spec-row.is-dirty .spec-row__head::before {
+            background: var(--warning);
+        }
+
+        /* Sibling dim when something is being edited */
+        .spec-list.has-editing .spec-row:not(.is-editing) {
+            opacity: 0.45;
+        }
+        .spec-list.has-editing .spec-row:not(.is-editing) .spec-row__head {
+            pointer-events: none;
+        }
+
+        .spec-row__key {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            white-space: nowrap;
+            margin: 0;
+        }
+        .spec-row__value {
+            font-size: 13.5px;
+            color: var(--text-primary);
+            font-weight: 500;
+            min-width: 0;
+            word-break: break-word;
+            margin: 0;
+        }
+        .spec-row__value--mono {
+            font-family: var(--font-family-mono);
+            font-variant-numeric: tabular-nums;
+            font-size: 13px;
+        }
+        .spec-row__hint {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            letter-spacing: 0.02em;
+            margin: 0;
+        }
+        .spec-row__hint--dirty {
+            color: var(--warning-text);
+            font-weight: 700;
+        }
+        .spec-row__action {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            padding: 0;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            background: transparent;
+            color: var(--text-secondary);
+            opacity: 0.4;
+            cursor: pointer;
+            transition: opacity 280ms var(--motion-easing-standard),
+                        color 280ms var(--motion-easing-standard),
+                        background-color 280ms var(--motion-easing-standard),
+                        border-color 280ms var(--motion-easing-standard);
+        }
+        .spec-row__action svg { display: block; }
+        .spec-row:hover .spec-row__action,
+        .spec-row.is-editing .spec-row__action {
+            opacity: 1;
+            color: var(--text-primary);
+            border-color: var(--border-subtle);
+            background: var(--bg-input);
+        }
+        .spec-row__action:hover {
+            border-color: var(--brand-light);
+        }
+
+        /* ── INLINE EDITOR ──────────────────────────────────────────── */
+        .spec-row__editor {
+            display: none;
+            padding: 6px 16px 18px 14px;
+        }
+        .spec-row.is-editing .spec-row__editor {
+            display: block;
+            animation: cfg-edit-in 240ms var(--motion-easing-standard) both;
+        }
+        @keyframes cfg-edit-in {
+            from { opacity: 0; transform: translateY(-2px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .editor-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+        .editor-label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .editor-input {
+            width: 100%;
+            box-sizing: border-box;
+            appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 10px 12px;
+            border-radius: 6px;
+            font: inherit;
+            font-family: var(--font-family-mono);
+            font-size: 13px;
+            transition: border-color 280ms var(--motion-easing-standard);
+        }
+        .editor-input:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+        }
+        .editor-hint {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+        .editor-seg {
+            display: inline-flex;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+            background: var(--bg-input);
+            flex-wrap: wrap;
+        }
+        .editor-seg__btn {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            border-left: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 7px 12px;
+            font: inherit;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            font-family: var(--font-family-mono);
+            cursor: pointer;
+            transition: background-color 280ms var(--motion-easing-standard),
+                        color 280ms var(--motion-easing-standard);
+        }
+        .editor-seg__btn:first-child { border-left: 0; }
+        .editor-seg__btn:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+        .editor-seg__btn.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+        .editor-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .editor-toggle__switch {
+            position: relative;
+            width: 32px;
+            height: 18px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            transition: background-color 200ms var(--motion-easing-standard),
+                        border-color 200ms var(--motion-easing-standard);
+        }
+        .editor-toggle__switch::after {
+            content: "";
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+            transition: transform 200ms var(--motion-easing-spring),
+                        background-color 200ms var(--motion-easing-standard);
+        }
+        .editor-toggle input { display: none; }
+        .editor-toggle input:checked + .editor-toggle__switch {
+            background: var(--brand-light);
+            border-color: var(--brand-light);
+        }
+        .editor-toggle input:checked + .editor-toggle__switch::after {
+            transform: translateX(14px);
+            background: var(--text-on-primary);
+        }
+        .editor-toggle__label {
+            font-size: 12.5px;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        .editor-foot {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-top: 10px;
+        }
+        .btn {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 6px 14px;
+            border-radius: 5px;
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 280ms var(--motion-easing-standard),
+                        border-color 280ms var(--motion-easing-standard),
+                        transform 280ms var(--motion-easing-spring);
+        }
+        .btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            transform: translateY(-1px);
+        }
+        .btn:focus-visible {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+        .btn--primary {
+            background: var(--brand-light);
+            border-color: var(--brand-light);
+            /* --text-inverse (dark navy in dark, cream in light) pairs
+               with the olive --brand-light at >=8.6:1 in both themes.
+               --text-on-primary (#FFFFFF) would fail dark mode at 2.17:1. */
+            color: var(--text-inverse);
+        }
+        .btn--primary:hover {
+            background: var(--brand);
+            border-color: var(--brand);
+        }
+        .btn--danger {
+            color: var(--danger-text);
+            border-color: var(--danger-border);
+        }
+        .btn--danger:hover {
+            background: var(--danger-bg);
+            border-color: var(--danger);
+        }
+
+        /* ── PLAN DIFF PANE ─────────────────────────────────────────── */
+        .plan-pane {
+            margin-top: 28px;
+            display: none;
+            border: 1px solid var(--temp-hairline);
+            border-radius: 10px;
+            overflow: hidden;
+            animation: cfg-fade-in 320ms var(--motion-easing-standard) both;
+        }
+        .plan-pane.is-open { display: block; }
+        .plan-pane__head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 12px 16px;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .plan-pane__head-text {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .plan-pane__eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .plan-pane__title {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+        }
+        .plan-summary {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11.5px;
+            font-weight: 600;
+        }
+        .plan-summary__add { color: var(--success-text); }
+        .plan-summary__chg { color: var(--warning-text); }
+        .plan-summary__rem { color: var(--danger-text); }
+        .plan-summary__sep { color: var(--text-secondary); }
+        .plan-pane__body {
+            background: var(--bg-terminal);
+            color: var(--text-terminal);
+            padding: 16px 18px;
+            font-family: var(--font-family-mono);
+            font-size: 12px;
+            line-height: 1.55;
+            overflow-x: auto;
+            white-space: pre;
+        }
+        .plan-add  { color: var(--terminal-success); }
+        .plan-rem  { color: var(--terminal-danger); }
+        .plan-chg  { color: var(--terminal-warning); }
+        .plan-cmt  { color: var(--terminal-muted); }
+        .plan-resource { color: var(--terminal-info); }
+
+        /* ── STICKY FOOTER ──────────────────────────────────────────── */
+        .cfg-foot {
+            position: fixed;
+            left: var(--demo-rail-w);
+            right: 0;
+            bottom: 0;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: center;
+            gap: 16px;
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-top: 1px solid var(--border);
+            box-shadow: 0 -8px 24px -8px color-mix(in srgb, var(--bg-body) 70%, transparent);
+            z-index: 50;
+        }
+        .cfg-foot__crumb {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+        .cfg-foot__crumb strong {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .cfg-foot__crumb--dirty strong {
+            color: var(--warning-text);
+        }
+        .cfg-foot__buttons {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .btn--tertiary {
+            background: transparent;
+            border-color: transparent;
+            color: var(--text-primary);
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            text-decoration-color: var(--border-light);
+            text-decoration-thickness: 1px;
+        }
+        .btn--tertiary:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border);
+            transform: none;
+        }
+        .btn--primary[disabled] {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            background: var(--bg-card);
+            border-color: var(--border);
+            color: var(--text-secondary);
+        }
+
+        /* ── ANIMATION KEYFRAME ─────────────────────────────────────── */
+        @keyframes cfg-fade-in {
+            from { opacity: 0; transform: translateY(3px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .cfg-hero, .spec-row, .dirty-banner, .plan-pane {
+                animation: none;
+            }
+            .spec-row__head, .spec-row__head::before, .spec-row__action,
+            .btn, .editor-toggle__switch, .editor-toggle__switch::after,
+            .editor-seg__btn, .subpill::after {
+                transition: none;
+            }
+            .spec-row:hover .spec-row__head, .btn:hover {
+                transform: none;
+            }
+        }
+        @media (max-width: 720px) {
+            .spec-row__head {
+                grid-template-columns: 1fr auto;
+                grid-template-rows: auto auto;
+                gap: 4px;
+            }
+            .spec-row__hint { grid-column: 1; }
+            .spec-row__action {
+                grid-row: 1 / 3;
+                grid-column: 2;
+                align-self: center;
+            }
+            .cfg-foot {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+        }
+    
+        /* ── DEMO LEFT-RAIL (vertical app-level nav stub) ───────────── */
+        :root {
+            --demo-rail-w: 220px;
+            --hypothesis-strip-height: 47px;
+            --top-utility-bar-height: 48px;
+            --demo-rail-top: calc(var(--hypothesis-strip-height) + var(--top-utility-bar-height));
+        }
+        main {
+            margin-left: var(--demo-rail-w);
+        }
+
+        /* ── TOP UTILITY BAR ─────────────────────────────────────────
+           Full-width chrome strip below the hypothesis strip. Houses
+           deployment selector (left) and cost / operator / theme
+           (right). Sticky so it stays above content while page scrolls.
+           Background matches rail (var(--bg-section)) for unified chrome.
+           ─────────────────────────────────────────────────────────── */
+        .top-utility-bar {
+            position: sticky;
+            top: var(--hypothesis-strip-height);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            height: var(--top-utility-bar-height);
+            padding: 0 24px;
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--border);
+            z-index: 95;
+            font-family: var(--font-family-base);
+        }
+        .top-utility-bar__left,
+        .top-utility-bar__right {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            min-width: 0;
+        }
+        .top-utility-bar__right { gap: 16px; }
+
+        /* Deployment selector */
+        .deployment-selector {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-primary);
+            font-family: var(--font-family-mono);
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+            min-width: 0;
+            max-width: 420px;
+            transition: border-color 200ms var(--motion-easing-standard),
+                        background-color 200ms var(--motion-easing-standard);
+        }
+        .deployment-selector:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+        }
+        .deployment-selector__eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+        .deployment-selector__name {
+            color: var(--text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .deployment-selector__caret {
+            width: 7px;
+            height: 7px;
+            flex-shrink: 0;
+            color: var(--text-secondary);
+        }
+        .deployment-selector__caret svg { display: block; }
+        .deployment-selector[aria-expanded="true"] .deployment-selector__caret {
+            transform: rotate(180deg);
+        }
+
+        /* Deployment selector dropdown menu (decorative) */
+        .deployment-menu {
+            position: fixed;
+            top: calc(var(--hypothesis-strip-height) + var(--top-utility-bar-height) - 4px);
+            left: 24px;
+            min-width: 320px;
+            padding: 6px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 12px 28px -10px rgba(0, 0, 0, 0.35);
+            opacity: 0;
+            transform: translateY(-4px);
+            pointer-events: none;
+            transition: opacity 220ms var(--motion-easing-standard),
+                        transform 220ms var(--motion-easing-standard);
+            z-index: 110;
+        }
+        .deployment-menu[data-open="true"] {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        .deployment-menu__item {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 8px 10px;
+            border-radius: 5px;
+            font-family: var(--font-family-mono);
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-primary);
+            cursor: pointer;
+            text-align: left;
+            transition: background-color 180ms var(--motion-easing-standard);
+        }
+        .deployment-menu__item:hover {
+            background: var(--bg-card-hover);
+        }
+        .deployment-menu__item.is-current {
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+        .deployment-menu__item.is-current::before {
+            content: "";
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+            flex-shrink: 0;
+        }
+        .deployment-menu__item:not(.is-current)::before {
+            content: "";
+            width: 6px;
+            height: 6px;
+            flex-shrink: 0;
+        }
+
+        /* Cost chip (top bar) */
+        .top-cost {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 1px;
+            font-family: var(--font-family-mono);
+            line-height: 1.1;
+        }
+        .top-cost__value {
+            font-size: 12.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+        }
+        .top-cost__caption {
+            font-size: 8.5px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+
+        /* Operator chip (top bar) */
+        .top-operator {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 10px;
+            border-radius: 999px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            font-family: var(--font-family-mono);
+            font-size: 12px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: border-color 200ms var(--motion-easing-standard),
+                        background-color 200ms var(--motion-easing-standard);
+        }
+        .top-operator:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+        }
+        .top-operator__name {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .top-operator__caret {
+            width: 7px;
+            height: 7px;
+            color: var(--text-secondary);
+        }
+        .top-operator__caret svg { display: block; }
+
+        /* Theme toggle (top bar) */
+        .top-theme {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 5px 10px;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: border-color 200ms var(--motion-easing-standard),
+                        color 200ms var(--motion-easing-standard),
+                        background-color 200ms var(--motion-easing-standard);
+        }
+        .top-theme:hover {
+            border-color: var(--brand-light);
+            color: var(--text-primary);
+            background: var(--bg-card-hover);
+        }
+        .top-theme__glyph {
+            width: 13px;
+            height: 13px;
+            display: inline-flex;
+        }
+        .top-theme__glyph svg { display: block; }
+
+        @media (max-width: 720px) {
+            .top-utility-bar { padding: 0 14px; }
+            .deployment-selector { max-width: 220px; }
+            .deployment-selector__eyebrow { display: none; }
+            .top-cost__caption { display: none; }
+            .top-operator__name { display: none; }
+        }
+        .demo-rail {
+            position: fixed;
+            top: var(--demo-rail-top);
+            left: 0;
+            bottom: 0;
+            width: var(--demo-rail-w);
+            background: var(--bg-section);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 16px 12px 12px;
+            gap: 2px;
+            z-index: 90;
+            overflow-y: auto;
+            font-family: var(--font-family-base);
+        }
+        .demo-rail__brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 8px 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 10px;
+        }
+        .demo-rail__brand-mark {
+            width: 22px;
+            height: 22px;
+            border: 1.5px solid var(--brand-light);
+            border-radius: 5px;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .demo-rail__brand-mark::after {
+            content: "";
+            position: absolute;
+            inset: 5px;
+            background: var(--brand-light);
+            border-radius: 2px;
+        }
+        .demo-rail__brand-text {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.2;
+            min-width: 0;
+        }
+        .demo-rail__brand-eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .demo-rail__brand-sub {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+        .demo-rail__group-label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 10px 10px 6px;
+        }
+        .demo-rail__item {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 12px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            text-align: left;
+            width: 100%;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__item:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .demo-rail__item.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__item.is-active::before {
+            content: "";
+            position: absolute;
+            left: -12px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__item:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px var(--brand-light);
+        }
+        .demo-rail__icon {
+            width: 16px;
+            height: 16px;
+            display: inline-flex;
+            color: currentColor;
+            flex-shrink: 0;
+        }
+        .demo-rail__icon svg { display: block; }
+        .demo-rail__label {
+            flex: 1;
+            white-space: nowrap;
+        }
+        .demo-rail__caret {
+            width: 6px;
+            height: 6px;
+            border-right: 1.4px solid currentColor;
+            border-bottom: 1.4px solid currentColor;
+            transform: rotate(-45deg);
+            opacity: 0.55;
+            transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__item.is-expanded .demo-rail__caret {
+            transform: rotate(45deg);
+        }
+        .demo-rail__children {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__children > div { overflow: hidden; }
+        .demo-rail__children.is-open {
+            grid-template-rows: 1fr;
+        }
+        .demo-rail__child {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 2px 0 2px 0;
+            padding: 7px 12px 7px 36px;
+            font-family: inherit;
+            font-size: 12.5px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            text-align: left;
+            position: relative;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .demo-rail__child:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .demo-rail__child.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .demo-rail__child.is-active::before {
+            content: "";
+            position: absolute;
+            left: 16px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .demo-rail__child:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px var(--brand-light);
+        }
+        .demo-rail__footer {
+            margin-top: auto;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-subtle);
+            display: flex;
+            justify-content: center;
+        }
+        .demo-rail__version {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .demo-rail-toast {
+            position: fixed;
+            top: 18px;
+            right: 18px;
+            padding: 10px 14px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 12.5px;
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-6px);
+            transition: opacity 240ms, transform 240ms;
+            z-index: 1000;
+        }
+        .demo-rail-toast[data-show="true"] {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        @media (max-width: 880px) {
+            :root { --demo-rail-w: 64px; }
+            .demo-rail__label,
+            .demo-rail__caret,
+            .demo-rail__group-label,
+            .demo-rail__brand-text,
+            .demo-rail__children,
+            .demo-rail__version {
+                display: none;
+            }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .demo-rail__item,
+            .demo-rail__child,
+            .demo-rail__caret,
+            .demo-rail__children {
+                transition-duration: 0.01ms !important;
+            }
+        }
+</style>
+</head>
+<body>
+    <svg id="icon-defs" width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="icon-edit-pencil" viewBox="0 0 14 14">
+                <path d="M9.5 1.5 L12.5 4.5 L4 13 H1 V10 Z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linejoin="round"/>
+                <path d="M8 3 L11 6" stroke="currentColor" stroke-width="1.2"/>
+            </symbol>
+            <symbol id="icon-diff" viewBox="0 0 14 14">
+                <path d="M3 2 V12" stroke="currentColor" stroke-width="1.2"/>
+                <path d="M3 5 H7 a2 2 0 0 1 2 2 V12" stroke="currentColor" stroke-width="1.2" fill="none"/>
+                <circle cx="3" cy="2" r="1.2" stroke="currentColor" stroke-width="1" fill="none"/>
+                <circle cx="3" cy="12" r="1.2" stroke="currentColor" stroke-width="1" fill="none"/>
+                <circle cx="9" cy="12" r="1.2" stroke="currentColor" stroke-width="1" fill="none"/>
+            </symbol>
+        </defs>
+    </svg>
+
+    <!-- HYPOTHESIS STRIP -->
+    <header class="preview-strip" role="banner">
+        <div class="preview-strip__text">
+            <strong>Configure demo</strong>
+            Configure is symmetric with Deploy summary — same spec-list shape, but in editing mode by default. The form is the spec-list.
+        </div>
+        <button class="preview-strip__toggle" type="button" id="theme-toggle">Toggle theme</button>
+    </header>
+
+    <!-- TOP UTILITY BAR — deployment selector + cost + operator + theme -->
+    <div class="top-utility-bar" role="toolbar" aria-label="Workspace utilities">
+        <div class="top-utility-bar__left">
+            <button class="deployment-selector" type="button" id="deployment-selector" aria-haspopup="menu" aria-expanded="false" aria-controls="deployment-menu">
+                <span class="deployment-selector__eyebrow">Project</span>
+                <span class="deployment-selector__name" id="deployment-selector-name">goad_mini_dev_harriss_macbook_pro</span>
+                <span class="deployment-selector__caret" aria-hidden="true">
+                    <svg width="7" height="7" viewBox="0 0 8 8" fill="none">
+                        <path d="M1 2.5 L4 5.5 L7 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+            </button>
+        </div>
+        <div class="top-utility-bar__right">
+            <span class="top-cost" title="Estimated monthly cost (demo)">
+                <span class="top-cost__value">~$340/mo</span>
+                <span class="top-cost__caption">est / mo</span>
+            </span>
+            <button class="top-operator" type="button" data-demo-nav="operator menu" aria-haspopup="menu">
+                <span class="operator-dot" style="background: #3b82f6;" aria-hidden="true"></span>
+                <span class="top-operator__name">alice</span>
+                <span class="top-operator__caret" aria-hidden="true">
+                    <svg width="7" height="7" viewBox="0 0 8 8" fill="none">
+                        <path d="M1 2.5 L4 5.5 L7 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+            </button>
+            <button class="top-theme" type="button" data-demo-theme aria-label="Toggle theme">
+                <span class="top-theme__glyph" aria-hidden="true">
+                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                        <circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.3"/>
+                        <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.6 2.6l1.05 1.05M10.35 10.35l1.05 1.05M2.6 11.4l1.05-1.05M10.35 3.65l1.05-1.05" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    </svg>
+                </span>
+                <span>Theme</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Deployment selector dropdown (decorative — demo only) -->
+    <div class="deployment-menu" id="deployment-menu" role="menu" aria-labelledby="deployment-selector">
+        <button class="deployment-menu__item is-current" type="button" role="menuitem" data-project="goad_mini_dev_harriss_macbook_pro">goad_mini_dev_harriss_macbook_pro</button>
+        <button class="deployment-menu__item" type="button" role="menuitem" data-project="c2_adhoc_dev_harriss_macbook_pro_01">c2_adhoc_dev_harriss_macbook_pro_01</button>
+        <button class="deployment-menu__item" type="button" role="menuitem" data-project="goad_full_stage_redteam_lab">goad_full_stage_redteam_lab</button>
+        <button class="deployment-menu__item" type="button" role="menuitem" data-project="combined_adhoc_mini_dev_purple">combined_adhoc_mini_dev_purple</button>
+    </div>
+
+    <!-- Demo left rail (vertical app-level nav stub) — see demo-rail init script below. -->
+    <nav class="demo-rail" aria-label="App navigation (demo)">
+        <div class="demo-rail__brand">
+            <span class="demo-rail__brand-mark" aria-hidden="true"></span>
+            <span class="demo-rail__brand-text">
+                <span class="demo-rail__brand-eyebrow">RED TEAM INFRA</span>
+                <span class="demo-rail__brand-sub">v3 · demo</span>
+            </span>
+        </div>
+
+        <span class="demo-rail__group-label">Workspace</span>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="dashboard" data-demo-nav="Dashboard">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="8.5" y="1.5" width="6" height="3" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="8.5" y="5.5" width="6" height="9" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="1.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                </svg></span>
+            <span class="demo-rail__label">Dashboard</span>
+        </button>
+
+        <button class="demo-rail__item is-active is-expanded" type="button" data-demo-parent="deployments" aria-expanded="true">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.5" y="1.5" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <rect x="1.5" y="10" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                    <circle cx="4" cy="3.75" r="0.7" fill="currentColor"/>
+                    <circle cx="4" cy="12.25" r="0.7" fill="currentColor"/>
+                </svg></span>
+            <span class="demo-rail__label">Deployments</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="demo-rail__children is-open" data-children-of="deployments">
+            <div>
+                <button class="demo-rail__child is-active" type="button" data-demo-sub="configure" data-demo-nav="Configure">Configure</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="deploy" data-demo-nav="Deploy">Deploy</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="manage" data-demo-nav="Manage">Manage</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="cleanup" data-demo-nav="Cleanup">Cleanup</button>
+            </div>
+        </div>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="operations" aria-expanded="false">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4M12.6 12.6l-1.4-1.4M4.8 4.8L3.4 3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg></span>
+            <span class="demo-rail__label">Operations</span>
+            <span class="demo-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="demo-rail__children" data-children-of="operations">
+            <div>
+                <button class="demo-rail__child" type="button" data-demo-sub="beacons" data-demo-nav="Beacons">Beacons</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="terminal" data-demo-nav="Terminal">Terminal</button>
+                <button class="demo-rail__child" type="button" data-demo-sub="payloads" data-demo-nav="Payloads">Payloads</button>
+            </div>
+        </div>
+
+        <button class="demo-rail__item" type="button" data-demo-parent="settings" data-demo-nav="Settings">
+            <span class="demo-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M2.5 8 a5.5 5.5 0 0 1 0.5 -2.3 L1.8 4.6 L3.6 2.8 L4.7 3.5 a5.5 5.5 0 0 1 2.3 -1 L7.4 1.3 H8.6 L9 2.5 a5.5 5.5 0 0 1 2.3 1 L12.4 2.8 L14.2 4.6 L13.5 5.7 a5.5 5.5 0 0 1 0.5 2.3 a5.5 5.5 0 0 1 -0.5 2.3 L14.2 11.4 L12.4 13.2 L11.3 12.5 a5.5 5.5 0 0 1 -2.3 1 L8.6 14.7 H7.4 L7 13.5 a5.5 5.5 0 0 1 -2.3 -1 L3.6 13.2 L1.8 11.4 L2.5 10.3 a5.5 5.5 0 0 1 -0.5 -2.3 Z" stroke="currentColor" stroke-width="1.1" fill="none"/>
+                </svg></span>
+            <span class="demo-rail__label">Settings</span>
+        </button>
+
+        <div class="demo-rail__footer">
+            <span class="demo-rail__version">v2.5.5</span>
+        </div>
+    </nav>
+    <div class="demo-rail-toast" id="demo-rail-toast" role="status" aria-live="polite"></div>
+
+    <main class="cfg-shell">
+        <div class="cfg-eyebrow">
+            <span class="cfg-eyebrow__label">Editing deployment</span>
+            <span class="cfg-eyebrow__op">
+                <span class="operator-dot" style="background: var(--temp-op-harris);"></span>
+                <span><span class="cfg-eyebrow__op-name">harris</span> &middot; last saved 12m ago</span>
+            </span>
+        </div>
+
+        <section class="cfg-hero" aria-label="Deployment identity">
+            <span class="cfg-hero__caption">project</span>
+            <span class="cfg-hero__name">goad_mini_dev_harriss_macbook_pro</span>
+            <div class="cfg-hero__meta">
+                <span class="cfg-hero__type"><strong>GOAD Mini + Cobalt Strike</strong> &middot; 7 instances</span>
+                <span class="cfg-status-pill"><span class="cfg-status-pill__dot"></span>RUNNING</span>
+            </div>
+        </section>
+
+        <div class="dirty-banner" id="dirty-banner" role="status">
+            <span class="dirty-banner__text">
+                <strong>Unsaved changes</strong>
+                <span class="dirty-count" id="dirty-count">0</span> field(s) modified. Click <em>Plan diff</em> to preview what terraform would do.
+            </span>
+            <button class="btn btn--primary" type="button" id="dirty-banner-save">Save changes</button>
+        </div>
+
+        <dl class="spec-list" id="spec-list" aria-label="Deployment configuration">
+
+            <!-- deployment_type -->
+            <div class="spec-row" data-field="deployment_type" data-original="goad-mini">
+                <div class="spec-row__head" tabindex="0" role="button" aria-label="Edit deployment type">
+                    <dt class="spec-row__key">Deployment Type</dt>
+                    <dd class="spec-row__value" data-value-display>GOAD Mini + Cobalt Strike</dd>
+                    <dd class="spec-row__hint" data-hint-default>combined</dd>
+                    <button class="spec-row__action" type="button" aria-label="Edit">
+                        <svg width="14" height="14"><use href="#icon-edit-pencil"/></svg>
+                    </button>
+                </div>
+                <div class="spec-row__editor">
+                    <div class="editor-field">
+                        <label class="editor-label">Deployment type</label>
+                        <div class="editor-seg" role="radiogroup">
+                            <button class="editor-seg__btn" type="button" data-val="c2-adhoc">C2 ad-hoc</button>
+                            <button class="editor-seg__btn is-active" type="button" data-val="goad-mini">GOAD mini</button>
+                            <button class="editor-seg__btn" type="button" data-val="goad-light">GOAD light</button>
+                            <button class="editor-seg__btn" type="button" data-val="combined-adhoc-mini">Combined</button>
+                        </div>
+                        <span class="editor-hint">Changing type rebuilds VPC and security groups. Existing resources will be replaced.</span>
+                    </div>
+                    <div class="editor-foot">
+                        <button class="btn" type="button" data-cancel>Cancel</button>
+                        <button class="btn btn--primary" type="button" data-save>Save row</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- project_name -->
+            <div class="spec-row" data-field="project_name" data-original="goad_mini_dev_harriss_macbook_pro">
+                <div class="spec-row__head" tabindex="0" role="button" aria-label="Edit project name">
+                    <dt class="spec-row__key">Project Name</dt>
+                    <dd class="spec-row__value spec-row__value--mono" data-value-display>goad_mini_dev_harriss_macbook_pro</dd>
+                    <dd class="spec-row__hint" data-hint-default>read-only after apply</dd>
+                    <button class="spec-row__action" type="button" aria-label="Edit">
+                        <svg width="14" height="14"><use href="#icon-edit-pencil"/></svg>
+                    </button>
+                </div>
+                <div class="spec-row__editor">
+                    <div class="editor-field">
+                        <label class="editor-label">Project name</label>
+                        <input class="editor-input" type="text" value="goad_mini_dev_harriss_macbook_pro" data-input/>
+                        <span class="editor-hint">Lowercase, underscores only. Used as the AWS resource prefix.</span>
+                    </div>
+                    <div class="editor-foot">
+                        <button class="btn" type="button" data-cancel>Cancel</button>
+                        <button class="btn btn--primary" type="button" data-save>Save row</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- environment -->
+            <div class="spec-row" data-field="environment" data-original="dev">
+                <div class="spec-row__head" tabindex="0" role="button" aria-label="Edit environment">
+                    <dt class="spec-row__key">Environment</dt>
+                    <dd class="spec-row__value" data-value-display>dev</dd>
+                    <dd class="spec-row__hint" data-hint-default>isolated</dd>
+                    <button class="spec-row__action" type="button" aria-label="Edit">
+                        <svg width="14" height="14"><use href="#icon-edit-pencil"/></svg>
+                    </button>
+                </div>
+                <div class="spec-row__editor">
+                    <div class="editor-field">
+                        <label class="editor-label">Environment</label>
+                        <div class="editor-seg" role="radiogroup">
+                            <button class="editor-seg__btn is-active" type="button" data-val="dev">Dev</button>
+                            <button class="editor-seg__btn" type="button" data-val="stage">Stage</button>
+                            <button class="editor-seg__btn" type="button" data-val="prod">Prod</button>
+                        </div>
+                        <span class="editor-hint">Tags resources and gates destructive operations.</span>
+                    </div>
+                    <div class="editor-foot">
+                        <button class="btn" type="button" data-cancel>Cancel</button>
+                        <button class="btn btn--primary" type="button" data-save>Save row</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- region -->
+            <div class="spec-row" data-field="region" data-original="eu-central-1">
+                <div class="spec-row__head" tabindex="0" role="button" aria-label="Edit region">
+                    <dt class="spec-row__key">AWS Region</dt>
+                    <dd class="spec-row__value spec-row__value--mono" data-value-display>eu-central-1</dd>
+                    <dd class="spec-row__hint" data-hint-default>Frankfurt</dd>
+                    <button class="spec-row__action" type="button" aria-label="Edit">
+                        <svg width="14" height="14"><use href="#icon-edit-pencil"/></svg>
+                    </button>
+                </div>
+                <div class="spec-row__editor">
+                    <div class="editor-field">
+                        <label class="editor-label">Region</label>
+                        <input class="editor-input" type="text" value="eu-central-1" data-input/>
+                        <span class="editor-hint">Changing region destroys and recreates ALL resources. Locked unless deployment is destroyed first.</span>
+                    </div>
+                    <div class="editor-foot">
+                        <button class="btn" type="button" data-cancel>Cancel</button>
+                        <button class="btn btn--primary" type="button" data-save disabled>Locked</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- management_cidr -->
+            <div class="spec-row" data-field="management_cidr" data-original="82.35.149.127/32">
+                <div class="spec-row__head" tabindex="0" role="button" aria-label="Edit management CIDR">
+                    <dt class="spec-row__key">Management CIDR</dt>
+                    <dd class="spec-row__value spec-row__value--mono" data-value-display>82.35.149.127/32</dd>
+                    <dd class="spec-row__hint" data-hint-default>single host</dd>
+                    <button class="spec-row__action" type="button" aria-label="Edit">
+                        <svg width="14" height="14"><use href="#icon-edit-pencil"/></svg>
+                    </button>
+                </div>
+                <div class="spec-row__editor">
+                    <div class="editor-field">
+                        <label class="editor-label">Management CIDR</label>
+                        <input class="editor-input" type="text" value="82.35.149.127/32" data-input/>
+                        <span class="editor-hint">Operator IP(s) allowed SSH/RDP through the bastion. Comma-separated CIDRs allowed.</span>
+                    </div>
+                    <div class="editor-foot">
+                        <button class="btn" type="button" data-cancel>Cancel</button>
+                        <button class="btn btn--primary" type="button" data-save>Save row</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ssh_keys -->
+            <div class="spec-row" data-field="ssh_keys" data-original="auto">
+                <div class="spec-row__head" tabindex="0" role="button" aria-label="Edit SSH keys">
+                    <dt class="spec-row__key">SSH Keys</dt>
+                    <dd class="spec-row__value" data-value-display>Auto-generated</dd>
+                    <dd class="spec-row__hint" data-hint-default>ed25519</dd>
+                    <button class="spec-row__action" type="button" aria-label="Edit">
+                        <svg width="14" height="14"><use href="#icon-edit-pencil"/></svg>
+                    </button>
+                </div>
+                <div class="spec-row__editor">
+                    <div class="editor-field">
+                        <label class="editor-label">SSH key strategy</label>
+                        <div class="editor-seg" role="radiogroup">
+                            <button class="editor-seg__btn is-active" type="button" data-val="auto">Auto-generate</button>
+                            <button class="editor-seg__btn" type="button" data-val="byo">Bring your own</button>
+                        </div>
+                        <span class="editor-hint">Auto-generate writes a fresh ed25519 keypair to AWS Secrets Manager.</span>
+                    </div>
+                    <div class="editor-foot">
+                        <button class="btn" type="button" data-cancel>Cancel</button>
+                        <button class="btn btn--primary" type="button" data-save>Save row</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GOAD IP range (type-specific) -->
+            <div class="spec-row" data-field="goad_ip_range" data-original="192.168.56.0/24">
+                <div class="spec-row__head" tabindex="0" role="button" aria-label="Edit GOAD IP range">
+                    <dt class="spec-row__key">GOAD IP Range</dt>
+                    <dd class="spec-row__value spec-row__value--mono" data-value-display>192.168.56.0/24</dd>
+                    <dd class="spec-row__hint" data-hint-default>peered VPC subnet</dd>
+                    <button class="spec-row__action" type="button" aria-label="Edit">
+                        <svg width="14" height="14"><use href="#icon-edit-pencil"/></svg>
+                    </button>
+                </div>
+                <div class="spec-row__editor">
+                    <div class="editor-field">
+                        <label class="editor-label">GOAD IP range</label>
+                        <input class="editor-input" type="text" value="192.168.56.0/24" data-input/>
+                        <span class="editor-hint">Used by Ansible inventory; placeholder <code style="font-family:var(--font-family-mono);">{{ip_range}}</code> resolves to this.</span>
+                    </div>
+                    <div class="editor-foot">
+                        <button class="btn" type="button" data-cancel>Cancel</button>
+                        <button class="btn btn--primary" type="button" data-save>Save row</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CloudFront domain fronting toggle -->
+            <div class="spec-row" data-field="domain_fronting" data-original="false">
+                <div class="spec-row__head" tabindex="0" role="button" aria-label="Edit domain fronting">
+                    <dt class="spec-row__key">Domain Fronting</dt>
+                    <dd class="spec-row__value" data-value-display>Disabled</dd>
+                    <dd class="spec-row__hint" data-hint-default>CloudFront proxy off</dd>
+                    <button class="spec-row__action" type="button" aria-label="Edit">
+                        <svg width="14" height="14"><use href="#icon-edit-pencil"/></svg>
+                    </button>
+                </div>
+                <div class="spec-row__editor">
+                    <div class="editor-field">
+                        <label class="editor-toggle">
+                            <input type="checkbox" data-toggle/>
+                            <span class="editor-toggle__switch"></span>
+                            <span class="editor-toggle__label">Hide redirector IPs behind a CloudFront distribution</span>
+                        </label>
+                        <span class="editor-hint">Caching is disabled by design — C2 beacons require live origin pulls. ACM cert auto-provisioned in us-east-1.</span>
+                    </div>
+                    <div class="editor-foot">
+                        <button class="btn" type="button" data-cancel>Cancel</button>
+                        <button class="btn btn--primary" type="button" data-save>Save row</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- est cost (read-only, derived) -->
+            <div class="spec-row" data-field="est_cost" data-readonly="true">
+                <div class="spec-row__head" style="cursor:default;">
+                    <dt class="spec-row__key">Est. Monthly Cost</dt>
+                    <dd class="spec-row__value spec-row__value--mono" style="font-weight:700; font-size: 15px;" data-value-display>~$260/mo</dd>
+                    <dd class="spec-row__hint" data-hint-default>derived &middot; 7 instances</dd>
+                    <span></span>
+                </div>
+            </div>
+        </dl>
+
+        <!-- PLAN DIFF PANE (collapsed by default) -->
+        <section class="plan-pane" id="plan-pane" aria-label="Terraform plan preview">
+            <header class="plan-pane__head">
+                <div class="plan-pane__head-text">
+                    <span class="plan-pane__eyebrow">Terraform plan preview</span>
+                    <span class="plan-pane__title">Plan diff &middot; <span id="plan-target">goad_mini_dev_harriss_macbook_pro</span></span>
+                </div>
+                <div class="plan-summary">
+                    <span class="plan-summary__add" id="plan-add-count">+0</span>
+                    <span class="plan-summary__sep">&middot;</span>
+                    <span class="plan-summary__chg" id="plan-chg-count">~0</span>
+                    <span class="plan-summary__sep">&middot;</span>
+                    <span class="plan-summary__rem" id="plan-rem-count">-0</span>
+                </div>
+            </header>
+            <pre class="plan-pane__body" id="plan-body"><span class="plan-cmt"># terraform plan -var-file=../configs/terraform.tfvars</span>
+<span class="plan-cmt"># Refreshing state... (no actual API calls made — preview only)</span>
+
+<span class="plan-cmt"># No changes pending. Edit any row above and save to see the plan diff.</span>
+</pre>
+        </section>
+    </main>
+
+    <!-- STICKY FOOTER -->
+    <footer class="cfg-foot" role="contentinfo">
+        <div class="cfg-foot__crumb" id="cfg-foot-crumb">
+            <span><strong id="cfg-foot-state">No unsaved changes.</strong></span>
+            <span>&middot;</span>
+            <span>Last applied: <strong>2026-05-18 09:14 UTC</strong></span>
+        </div>
+        <div class="cfg-foot__buttons">
+            <button class="btn btn--tertiary" type="button" id="btn-plan-diff">Plan diff</button>
+            <button class="btn btn--danger" type="button" id="btn-discard" disabled>Discard</button>
+            <button class="btn btn--primary" type="button" id="btn-save" disabled>Save changes</button>
+        </div>
+    </footer>
+
+    <script>
+        (function () {
+            // ── Theme toggle ────────────────────────────────────────────
+            document.getElementById('theme-toggle').addEventListener('click', function () {
+                var html = document.documentElement;
+                html.setAttribute('data-theme', html.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+            });
+
+            // ── Spec-list interactivity ─────────────────────────────────
+            var specList = document.getElementById('spec-list');
+            var dirtyState = {}; // field -> {original, current, displayCurrent}
+
+            function rowOf(el) {
+                return el.closest('.spec-row');
+            }
+
+            function setEditing(row, on) {
+                if (on) {
+                    // Close any currently editing
+                    document.querySelectorAll('.spec-row.is-editing').forEach(function (r) {
+                        if (r !== row) setEditing(r, false);
+                    });
+                    row.classList.add('is-editing');
+                    specList.classList.add('has-editing');
+                    var input = row.querySelector('[data-input]');
+                    if (input) { setTimeout(function () { input.focus(); input.select(); }, 80); }
+                } else {
+                    row.classList.remove('is-editing');
+                    if (!document.querySelector('.spec-row.is-editing')) {
+                        specList.classList.remove('has-editing');
+                    }
+                }
+            }
+
+            // Open editor on row head click (when not editing)
+            specList.addEventListener('click', function (e) {
+                if (e.target.closest('[data-cancel], [data-save], .editor-seg__btn, [data-input], [data-toggle], .editor-toggle')) return;
+                var head = e.target.closest('.spec-row__head');
+                if (!head) return;
+                var row = rowOf(head);
+                if (!row || row.dataset.readonly === 'true') return;
+                if (row.classList.contains('is-editing')) return;
+                setEditing(row, true);
+            });
+
+            // Keyboard activation on row head
+            specList.addEventListener('keydown', function (e) {
+                if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('spec-row__head')) {
+                    var row = rowOf(e.target);
+                    if (row && row.dataset.readonly !== 'true' && !row.classList.contains('is-editing')) {
+                        e.preventDefault();
+                        setEditing(row, true);
+                    }
+                }
+                if (e.key === 'Escape' && rowOf(e.target) && rowOf(e.target).classList.contains('is-editing')) {
+                    setEditing(rowOf(e.target), false);
+                }
+            });
+
+            // Segmented control inside editor — pick active
+            specList.addEventListener('click', function (e) {
+                var btn = e.target.closest('.editor-seg__btn');
+                if (!btn) return;
+                btn.parentElement.querySelectorAll('.editor-seg__btn').forEach(function (b) {
+                    b.classList.remove('is-active');
+                });
+                btn.classList.add('is-active');
+            });
+
+            // Cancel — close editor, no change
+            specList.addEventListener('click', function (e) {
+                if (!e.target.matches('[data-cancel]')) return;
+                setEditing(rowOf(e.target), false);
+            });
+
+            // Save row — capture new value, mark dirty
+            specList.addEventListener('click', function (e) {
+                if (!e.target.matches('[data-save]')) return;
+                if (e.target.disabled) return;
+                var row = rowOf(e.target);
+                if (!row) return;
+                var field = row.dataset.field;
+                var newDisplay, newValue;
+                var seg = row.querySelector('.editor-seg .is-active');
+                var input = row.querySelector('[data-input]');
+                var toggle = row.querySelector('[data-toggle]');
+                if (seg) {
+                    newValue = seg.dataset.val;
+                    newDisplay = seg.textContent.trim();
+                } else if (input) {
+                    newValue = input.value;
+                    newDisplay = input.value;
+                } else if (toggle) {
+                    newValue = toggle.checked ? 'true' : 'false';
+                    newDisplay = toggle.checked ? 'Enabled' : 'Disabled';
+                }
+                row.querySelector('[data-value-display]').textContent = newDisplay;
+                if (newValue !== row.dataset.original) {
+                    row.classList.add('is-dirty');
+                    var hint = row.querySelector('.spec-row__hint');
+                    if (hint && !hint.classList.contains('spec-row__hint--dirty')) {
+                        hint.dataset.savedDefault = hint.textContent;
+                        hint.textContent = 'unsaved';
+                        hint.classList.add('spec-row__hint--dirty');
+                    }
+                    dirtyState[field] = { original: row.dataset.original, current: newValue, display: newDisplay };
+                } else {
+                    row.classList.remove('is-dirty');
+                    var hint2 = row.querySelector('.spec-row__hint');
+                    if (hint2 && hint2.dataset.savedDefault) {
+                        hint2.textContent = hint2.dataset.savedDefault;
+                        hint2.classList.remove('spec-row__hint--dirty');
+                    }
+                    delete dirtyState[field];
+                }
+                setEditing(row, false);
+                renderDirtyState();
+            });
+
+            // ── Dirty state UI ──────────────────────────────────────────
+            var dirtyBanner = document.getElementById('dirty-banner');
+            var dirtyCountEl = document.getElementById('dirty-count');
+            var saveBtn = document.getElementById('btn-save');
+            var discardBtn = document.getElementById('btn-discard');
+            var footState = document.getElementById('cfg-foot-state');
+            var footCrumb = document.getElementById('cfg-foot-crumb');
+
+            function renderDirtyState() {
+                var n = Object.keys(dirtyState).length;
+                dirtyCountEl.textContent = n;
+                if (n > 0) {
+                    dirtyBanner.classList.add('is-shown');
+                    saveBtn.disabled = false;
+                    discardBtn.disabled = false;
+                    footState.textContent = n + ' unsaved change' + (n === 1 ? '' : 's');
+                    footCrumb.classList.add('cfg-foot__crumb--dirty');
+                } else {
+                    dirtyBanner.classList.remove('is-shown');
+                    saveBtn.disabled = true;
+                    discardBtn.disabled = true;
+                    footState.textContent = 'No unsaved changes.';
+                    footCrumb.classList.remove('cfg-foot__crumb--dirty');
+                }
+            }
+
+            // ── Save all (page-level) ───────────────────────────────────
+            saveBtn.addEventListener('click', function () {
+                // Commit: update originals, clear dirty markers
+                Object.keys(dirtyState).forEach(function (field) {
+                    var row = specList.querySelector('[data-field="' + field + '"]');
+                    if (!row) return;
+                    row.dataset.original = dirtyState[field].current;
+                    row.classList.remove('is-dirty');
+                    var hint = row.querySelector('.spec-row__hint');
+                    if (hint && hint.dataset.savedDefault) {
+                        hint.textContent = hint.dataset.savedDefault;
+                        hint.classList.remove('spec-row__hint--dirty');
+                    }
+                });
+                dirtyState = {};
+                renderDirtyState();
+                flashToast('Saved — configuration committed.');
+                hidePlan();
+            });
+
+            // ── Discard ─────────────────────────────────────────────────
+            discardBtn.addEventListener('click', function () {
+                Object.keys(dirtyState).forEach(function (field) {
+                    var row = specList.querySelector('[data-field="' + field + '"]');
+                    if (!row) return;
+                    // Restore display from original value (rough; for the demo we re-derive from the dataset)
+                    row.classList.remove('is-dirty');
+                    var hint = row.querySelector('.spec-row__hint');
+                    if (hint && hint.dataset.savedDefault) {
+                        hint.textContent = hint.dataset.savedDefault;
+                        hint.classList.remove('spec-row__hint--dirty');
+                    }
+                    // Best-effort: restore display using the segmented control's matching button or the original raw text.
+                    var disp = row.querySelector('[data-value-display]');
+                    var orig = row.dataset.original;
+                    var segBtn = row.querySelector('.editor-seg__btn[data-val="' + orig + '"]');
+                    if (segBtn) {
+                        disp.textContent = segBtn.textContent.trim();
+                        row.querySelectorAll('.editor-seg__btn').forEach(function (b) { b.classList.remove('is-active'); });
+                        segBtn.classList.add('is-active');
+                    } else if (row.querySelector('[data-input]')) {
+                        row.querySelector('[data-input]').value = orig;
+                        disp.textContent = orig;
+                    } else if (row.querySelector('[data-toggle]')) {
+                        var t = row.querySelector('[data-toggle]');
+                        t.checked = orig === 'true';
+                        disp.textContent = t.checked ? 'Enabled' : 'Disabled';
+                    }
+                });
+                dirtyState = {};
+                renderDirtyState();
+                flashToast('Changes discarded.');
+                hidePlan();
+            });
+
+            document.getElementById('dirty-banner-save').addEventListener('click', function () {
+                saveBtn.click();
+            });
+
+            // ── Plan diff toggle ────────────────────────────────────────
+            var planPane = document.getElementById('plan-pane');
+            var planBody = document.getElementById('plan-body');
+            var planAddCount = document.getElementById('plan-add-count');
+            var planChgCount = document.getElementById('plan-chg-count');
+            var planRemCount = document.getElementById('plan-rem-count');
+            var planBtn = document.getElementById('btn-plan-diff');
+
+            function hidePlan() {
+                planPane.classList.remove('is-open');
+                planBtn.textContent = 'Plan diff';
+            }
+
+            planBtn.addEventListener('click', function () {
+                if (planPane.classList.contains('is-open')) {
+                    hidePlan();
+                    return;
+                }
+                renderPlan();
+                planPane.classList.add('is-open');
+                planBtn.textContent = 'Hide plan';
+                setTimeout(function () {
+                    planPane.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }, 50);
+            });
+
+            function renderPlan() {
+                var dirtyFields = Object.keys(dirtyState);
+                if (dirtyFields.length === 0) {
+                    planAddCount.textContent = '+0';
+                    planChgCount.textContent = '~0';
+                    planRemCount.textContent = '-0';
+                    planBody.innerHTML =
+                        '<span class="plan-cmt"># terraform plan -var-file=../configs/terraform.tfvars</span>\n' +
+                        '<span class="plan-cmt"># Refreshing state... (no actual API calls made — preview only)</span>\n\n' +
+                        '<span class="plan-cmt"># No changes pending. Edit any row above and save to see the plan diff.</span>\n';
+                    return;
+                }
+                // Build a heuristic diff
+                var changes = 0, adds = 0, removes = 0;
+                var lines = [];
+                lines.push('<span class="plan-cmt"># terraform plan -var-file=../configs/terraform.tfvars</span>');
+                lines.push('<span class="plan-cmt"># Refreshing state for ' + dirtyFields.length + ' modified variable(s)...</span>');
+                lines.push('');
+                lines.push('<span class="plan-resource">Terraform will perform the following actions:</span>');
+                lines.push('');
+                dirtyFields.forEach(function (f) {
+                    var st = dirtyState[f];
+                    if (f === 'deployment_type') {
+                        lines.push('  <span class="plan-rem">- module.c2_team_server.aws_instance.this</span>     (destroy)');
+                        lines.push('  <span class="plan-add">+ module.goad.aws_instance.dc01</span>              (create)');
+                        lines.push('  <span class="plan-add">+ module.goad.aws_instance.jumpbox</span>           (create)');
+                        lines.push('  <span class="plan-chg">~ module.vpc.aws_security_group.c2</span>          (rename + update rules)');
+                        adds += 2; removes += 1; changes += 1;
+                    } else if (f === 'project_name') {
+                        lines.push('  <span class="plan-chg">~ tags.Project</span> on 7 resources');
+                        lines.push('    <span class="plan-rem">- "' + st.original + '"</span>');
+                        lines.push('    <span class="plan-add">+ "' + st.current + '"</span>');
+                        changes += 7;
+                    } else if (f === 'environment') {
+                        lines.push('  <span class="plan-chg">~ tags.Environment</span> on 7 resources');
+                        lines.push('    <span class="plan-rem">- "' + st.original + '"</span>');
+                        lines.push('    <span class="plan-add">+ "' + st.current + '"</span>');
+                        changes += 7;
+                    } else if (f === 'management_cidr') {
+                        lines.push('  <span class="plan-chg">~ module.vpc.aws_security_group_rule.bastion_ssh_ingress</span>');
+                        lines.push('    <span class="plan-rem">- cidr_blocks = ["' + st.original + '"]</span>');
+                        lines.push('    <span class="plan-add">+ cidr_blocks = ["' + st.current + '"]</span>');
+                        changes += 1;
+                    } else if (f === 'ssh_keys') {
+                        lines.push('  <span class="plan-chg">~ module.dashboard_server.aws_secretsmanager_secret_version.ssh_key</span>');
+                        lines.push('    <span class="plan-cmt"># secret value will change (sensitive)</span>');
+                        changes += 1;
+                    } else if (f === 'goad_ip_range') {
+                        lines.push('  <span class="plan-chg">~ local.goad_ansible_inventory</span>');
+                        lines.push('    <span class="plan-rem">- ip_range = "' + st.original + '"</span>');
+                        lines.push('    <span class="plan-add">+ ip_range = "' + st.current + '"</span>');
+                        changes += 1;
+                    } else if (f === 'domain_fronting') {
+                        if (st.current === 'true') {
+                            lines.push('  <span class="plan-add">+ module.domain_fronting.aws_cloudfront_distribution.this</span>');
+                            lines.push('  <span class="plan-add">+ module.domain_fronting.aws_acm_certificate.cloudfront</span>   (us-east-1)');
+                            lines.push('  <span class="plan-chg">~ module.proxy_redirector.aws_security_group_rule.cf_ingress</span>');
+                            adds += 2; changes += 1;
+                        } else {
+                            lines.push('  <span class="plan-rem">- module.domain_fronting.aws_cloudfront_distribution.this</span>');
+                            lines.push('  <span class="plan-rem">- module.domain_fronting.aws_acm_certificate.cloudfront</span>');
+                            removes += 2;
+                        }
+                    } else {
+                        lines.push('  <span class="plan-chg">~ var.' + f + '</span>');
+                        changes += 1;
+                    }
+                });
+                lines.push('');
+                lines.push('<span class="plan-cmt">Plan: ' + adds + ' to add, ' + changes + ' to change, ' + removes + ' to destroy.</span>');
+                planAddCount.textContent = '+' + adds;
+                planChgCount.textContent = '~' + changes;
+                planRemCount.textContent = '-' + removes;
+                planBody.innerHTML = lines.join('\n');
+            }
+
+            // ── Tiny toast helper ───────────────────────────────────────
+            var toastEl = null;
+            function flashToast(msg) {
+                if (toastEl) { toastEl.remove(); toastEl = null; }
+                toastEl = document.createElement('div');
+                toastEl.style.cssText = 'position:fixed;bottom:88px;left:50%;transform:translateX(-50%);' +
+                    'background:var(--bg-card);border:1px solid var(--border-light);' +
+                    'color:var(--text-primary);padding:9px 16px;border-radius:8px;' +
+                    'font-family:var(--font-family-mono);font-size:12px;font-weight:600;' +
+                    'box-shadow:0 8px 24px -8px rgba(0,0,0,0.4);z-index:200;' +
+                    'animation:cfg-fade-in 280ms cubic-bezier(0.4,0,0.2,1) both;';
+                toastEl.textContent = msg;
+                document.body.appendChild(toastEl);
+                setTimeout(function () { if (toastEl) { toastEl.remove(); toastEl = null; } }, 2200);
+            }
+        })();
+    
+        // ── Demo left rail — non-routing nav + theme toggle + toast ────
+        (function demoRailInit() {
+            const toast = document.getElementById('demo-rail-toast');
+            let toastTimer = null;
+            function showToast(label) {
+                if (!toast || !label) return;
+                toast.textContent = 'Navigating to ' + label + ' — open the standalone demo to view';
+                toast.setAttribute('data-show', 'true');
+                window.clearTimeout(toastTimer);
+                toastTimer = window.setTimeout(() => toast.setAttribute('data-show', 'false'), 2400);
+            }
+            // Parent items — clicking a non-active parent expands its children (if any)
+            document.querySelectorAll('.demo-rail__item[data-demo-parent]').forEach(btn => {
+                btn.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    const parent = btn.dataset.demoParent;
+                    const children = document.querySelector('[data-children-of="' + parent + '"]');
+                    if (children) {
+                        // Toggle expand for this parent; collapse others (only one open at a time)
+                        const willOpen = !children.classList.contains('is-open');
+                        document.querySelectorAll('.demo-rail__children').forEach(c => c.classList.remove('is-open'));
+                        document.querySelectorAll('.demo-rail__item[data-demo-parent]').forEach(i => {
+                            if (i !== btn) i.classList.remove('is-expanded');
+                        });
+                        if (willOpen) {
+                            children.classList.add('is-open');
+                            btn.classList.add('is-expanded');
+                            btn.setAttribute('aria-expanded', 'true');
+                        } else {
+                            btn.classList.remove('is-expanded');
+                            btn.setAttribute('aria-expanded', 'false');
+                        }
+                        return;
+                    }
+                    // Leaf parent (no children) — emit nav toast
+                    if (btn.classList.contains('is-active')) return;
+                    showToast(btn.dataset.demoNav);
+                });
+            });
+            // Sub-pills (children) — emit nav toast for non-active
+            document.querySelectorAll('.demo-rail__child').forEach(btn => {
+                btn.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    if (btn.classList.contains('is-active')) return;
+                    showToast(btn.dataset.demoNav);
+                });
+            });
+            // Theme toggle (top utility bar)
+            const themeBtn = document.querySelector('.top-utility-bar [data-demo-theme]');
+            if (themeBtn) {
+                themeBtn.addEventListener('click', () => {
+                    const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+                    document.documentElement.setAttribute('data-theme', cur === 'light' ? 'dark' : 'light');
+                });
+            }
+            // Operator chip (top utility bar)
+            const opBtn = document.querySelector('.top-operator');
+            if (opBtn) {
+                opBtn.addEventListener('click', () => showToast('operator menu'));
+            }
+            // Deployment selector dropdown (decorative — visual open, no real nav)
+            const dsBtn = document.getElementById('deployment-selector');
+            const dsMenu = document.getElementById('deployment-menu');
+            const dsName = document.getElementById('deployment-selector-name');
+            if (dsBtn && dsMenu) {
+                const closeMenu = () => {
+                    dsMenu.setAttribute('data-open', 'false');
+                    dsBtn.setAttribute('aria-expanded', 'false');
+                };
+                dsBtn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    const open = dsMenu.getAttribute('data-open') === 'true';
+                    dsMenu.setAttribute('data-open', open ? 'false' : 'true');
+                    dsBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+                });
+                dsMenu.querySelectorAll('.deployment-menu__item').forEach(item => {
+                    item.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        const proj = item.dataset.project || '';
+                        dsMenu.querySelectorAll('.deployment-menu__item').forEach(i => i.classList.remove('is-current'));
+                        item.classList.add('is-current');
+                        if (dsName) dsName.textContent = proj;
+                        closeMenu();
+                        showToast('Switched to ' + proj);
+                    });
+                });
+                document.addEventListener('click', (ev) => {
+                    if (!dsMenu.contains(ev.target) && ev.target !== dsBtn) closeMenu();
+                });
+                document.addEventListener('keydown', (ev) => {
+                    if (ev.key === 'Escape') closeMenu();
+                });
+            }
+        })();
+    </script>
+</body>
+</html>

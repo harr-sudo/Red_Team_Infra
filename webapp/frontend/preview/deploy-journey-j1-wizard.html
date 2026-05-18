@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Deploy Journey J1 — Linear Wizard</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           DEPLOY JOURNEY — J1 LINEAR WIZARD
+           Hypothesis: A first-time operator does best when shown one
+           decision at a time. Five steps, takeover surface, dot
+           progress. The dashboard behind is dimmed and blurred so the
+           operator knows old context is paused, not gone.
+           Visual family: Composition A — mono caps eyebrow, hairline
+           rules, single-column rhythm, monochrome line SVG glyphs.
+           ============================================================ */
+
+        :root {
+            --temp-rail: var(--brand-light);
+            --temp-hairline: var(--border-subtle);
+            --temp-scrim: rgba(8, 9, 14, 0.55);
+            --temp-scrim-blur: 8px;
+        }
+        [data-theme="light"] {
+            --temp-scrim: rgba(140, 160, 100, 0.32);
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+            overflow-x: hidden;
+        }
+
+        /* ── HYPOTHESIS STRIP ──────────────────────────────────────── */
+        .preview-hypothesis {
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            position: relative;
+            z-index: 50;
+        }
+        .preview-hypothesis strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+
+        /* ── BACKDROP MOCK (faded dashboard behind) ─────────────────── */
+        .dash-mock {
+            position: fixed;
+            inset: 42px 0 0 0;
+            padding: 36px 48px;
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            gap: 24px;
+            pointer-events: none;
+            z-index: 1;
+            transition: filter 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .dash-mock.is-dimmed {
+            filter: blur(var(--temp-scrim-blur));
+            opacity: 0.28;
+        }
+        .dash-mock__rail {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .dash-mock__rail-item {
+            height: 28px;
+            border-radius: 4px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+        }
+        .dash-mock__main {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .dash-mock__header {
+            height: 44px;
+            border-radius: 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+        }
+        .dash-mock__grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+        }
+        .dash-mock__card {
+            height: 140px;
+            border-radius: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+        }
+        .dash-mock__row {
+            height: 160px;
+            border-radius: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+        }
+
+        /* ── SCRIM ──────────────────────────────────────────────────── */
+        .scrim {
+            position: fixed;
+            inset: 42px 0 0 0;
+            background: var(--temp-scrim);
+            backdrop-filter: blur(var(--temp-scrim-blur));
+            -webkit-backdrop-filter: blur(var(--temp-scrim-blur));
+            z-index: 10;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .scrim.is-open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* ── WIZARD SURFACE ─────────────────────────────────────────── */
+        .wizard {
+            position: fixed;
+            inset: 42px 0 0 0;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 56px 24px 32px;
+            z-index: 20;
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+            overflow-y: auto;
+        }
+        .wizard.is-open {
+            pointer-events: auto;
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .wizard__frame {
+            width: 100%;
+            max-width: 720px;
+            display: flex;
+            flex-direction: column;
+            gap: 28px;
+        }
+
+        /* Progress dots */
+        .wiz-progress {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .wiz-progress__dots {
+            display: flex;
+            gap: 12px;
+        }
+        .wiz-progress__dot {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            padding: 0;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-secondary);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            transition: color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .wiz-progress__dot-circle {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            border: 1.5px solid var(--border-light);
+            background: transparent;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .wiz-progress__dot.is-done .wiz-progress__dot-circle {
+            background: var(--brand-light);
+            border-color: var(--brand-light);
+        }
+        .wiz-progress__dot.is-active {
+            color: var(--text-primary);
+        }
+        .wiz-progress__dot.is-active .wiz-progress__dot-circle {
+            border-color: var(--brand-light);
+            background: var(--brand-light);
+            transform: scale(1.25);
+        }
+        .wiz-progress__dot:hover .wiz-progress__dot-circle {
+            border-color: var(--brand-light);
+        }
+        .wiz-progress__dot:focus-visible {
+            outline: none;
+        }
+        .wiz-progress__dot:focus-visible .wiz-progress__dot-circle {
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+        .wiz-progress__close {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 5px 12px;
+            border-radius: 5px;
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .wiz-progress__close:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* Step content */
+        .wiz-step {
+            display: none;
+            flex-direction: column;
+            gap: 22px;
+            animation: wiz-fade 320ms cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+        .wiz-step.is-active { display: flex; }
+
+        .wiz-step__eyebrow {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .wiz-step__title {
+            font-size: 21px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            margin: 0;
+            line-height: 1.25;
+        }
+        .wiz-step__lede {
+            font-size: 13.5px;
+            color: var(--text-secondary);
+            line-height: 1.55;
+            margin: 0;
+        }
+
+        /* Radio card group (family / type) */
+        .wiz-cards {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+            background: var(--temp-hairline);
+            border: 1px solid var(--temp-hairline);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .wiz-card {
+            position: relative;
+            display: grid;
+            grid-template-columns: 22px 1fr auto;
+            align-items: center;
+            gap: 14px;
+            padding: 14px 16px;
+            cursor: pointer;
+            background: var(--bg-body);
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .wiz-card::before {
+            content: "";
+            position: absolute;
+            left: 0; top: 10px; bottom: 10px;
+            width: 2px;
+            border-radius: 2px;
+            background: var(--temp-rail);
+            opacity: 0;
+            transform: scaleY(0.4);
+            transform-origin: center;
+            transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .wiz-card:hover {
+            background: var(--bg-card-hover);
+            transform: translateX(2px);
+        }
+        .wiz-card:hover::before {
+            opacity: 1;
+            transform: scaleY(1);
+        }
+        .wiz-card input[type="radio"] {
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border: 1.5px solid var(--border-light);
+            border-radius: 50%;
+            margin: 0;
+            cursor: pointer;
+            position: relative;
+            background: var(--bg-body);
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .wiz-card input[type="radio"]:checked {
+            border-color: var(--brand-light);
+        }
+        .wiz-card input[type="radio"]:checked::after {
+            content: "";
+            position: absolute;
+            inset: 2.5px;
+            background: var(--brand-light);
+            border-radius: 50%;
+        }
+        .wiz-card.is-checked {
+            background: var(--bg-card-hover);
+        }
+        .wiz-card.is-checked::before {
+            opacity: 1;
+            transform: scaleY(1);
+        }
+        .wiz-card__body {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 0;
+        }
+        .wiz-card__title {
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+        }
+        .wiz-card__desc {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            line-height: 1.45;
+        }
+        .wiz-card__hint {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        /* Form fields */
+        .wiz-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .wiz-field__label {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .wiz-field__input,
+        .wiz-field__select {
+            appearance: none;
+            -webkit-appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 10px 12px;
+            border-radius: 6px;
+            font: inherit;
+            font-size: 13px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .wiz-field__input:focus,
+        .wiz-field__select:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+        }
+        .wiz-field__hint {
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            letter-spacing: 0.02em;
+        }
+        .wiz-field--row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+        }
+        .wiz-field--row .wiz-field {
+            gap: 6px;
+        }
+
+        /* Toggle row (step 5 conditional) */
+        .wiz-toggle {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: center;
+            gap: 16px;
+            padding: 14px 16px;
+            background: var(--bg-body);
+            border: 1px solid var(--temp-hairline);
+            border-radius: 6px;
+            transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .wiz-toggle:hover { border-color: var(--border-light); }
+        .wiz-toggle__title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .wiz-toggle__desc {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            line-height: 1.45;
+            margin-top: 4px;
+        }
+        .wiz-toggle__switch {
+            appearance: none;
+            width: 36px;
+            height: 20px;
+            border-radius: 10px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            cursor: pointer;
+            position: relative;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .wiz-toggle__switch::after {
+            content: "";
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+            transition: transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .wiz-toggle__switch:checked {
+            background: color-mix(in srgb, var(--brand-light) 30%, var(--bg-input));
+            border-color: var(--brand-light);
+        }
+        .wiz-toggle__switch:checked::after {
+            transform: translateX(16px);
+            background: var(--brand-light);
+        }
+
+        /* Footer nav */
+        .wiz-foot {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 18px;
+            border-top: 1px solid var(--temp-hairline);
+        }
+        .wiz-foot__crumb {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .wiz-foot__buttons { display: flex; gap: 10px; }
+        .wiz-btn {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 8px 16px;
+            border-radius: 6px;
+            font: inherit;
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .wiz-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            transform: translateY(-1px);
+        }
+        .wiz-btn:focus-visible {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+        .wiz-btn--primary {
+            background: var(--brand-light);
+            border-color: var(--brand-light);
+            color: var(--text-inverse);
+        }
+        .wiz-btn--primary:hover {
+            background: var(--brand);
+            border-color: var(--brand);
+        }
+        .wiz-btn[disabled] {
+            opacity: 0.45;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Step 5 summary (handoff to Composition A) */
+        .wiz-summary {
+            display: none;
+            flex-direction: column;
+            gap: 22px;
+            animation: wiz-fade 320ms cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+        .wiz-summary.is-active { display: flex; }
+        .wiz-summary__list {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .wiz-summary__row {
+            display: grid;
+            grid-template-columns: 200px 1fr auto;
+            align-items: baseline;
+            gap: 20px;
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .wiz-summary__row:last-child { border-bottom: none; }
+        .wiz-summary__key {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .wiz-summary__value {
+            font-size: 13.5px;
+            color: var(--text-primary);
+            font-weight: 500;
+            word-break: break-word;
+        }
+        .wiz-summary__value--mono {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 13px;
+        }
+        .wiz-summary__hint {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+
+        /* Theme toggle */
+        .preview-theme-toggle {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            padding: 8px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            z-index: 100;
+        }
+        .preview-theme-toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* "+ New Deployment" trigger pinned to top-right of mock */
+        .dash-trigger {
+            position: fixed;
+            top: 56px;
+            right: 56px;
+            z-index: 5;
+            padding: 8px 14px;
+            background: var(--brand-light);
+            border: 1px solid var(--brand-light);
+            color: var(--text-inverse);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            letter-spacing: 0.06em;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .dash-trigger:hover {
+            transform: translateY(-1px);
+        }
+        .dash-trigger.is-hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        @keyframes wiz-fade {
+            from { opacity: 0; transform: translateY(6px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="preview-hypothesis">
+        <strong>Journey J1</strong>
+        One decision per step — five-step wizard with progress dots, takeover surface, and a dimmed/blurred dashboard backdrop.
+    </header>
+
+    <!-- ── DASHBOARD BACKDROP MOCK ── -->
+    <div class="dash-mock" id="dashMock">
+        <aside class="dash-mock__rail">
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+            <div class="dash-mock__rail-item"></div>
+        </aside>
+        <main class="dash-mock__main">
+            <div class="dash-mock__header"></div>
+            <div class="dash-mock__grid">
+                <div class="dash-mock__card"></div>
+                <div class="dash-mock__card"></div>
+                <div class="dash-mock__card"></div>
+            </div>
+            <div class="dash-mock__row"></div>
+            <div class="dash-mock__row"></div>
+        </main>
+    </div>
+
+    <button class="dash-trigger" id="dashTrigger" type="button">+ New Deployment</button>
+
+    <div class="scrim" id="scrim"></div>
+
+    <!-- ── WIZARD ── -->
+    <div class="wizard is-open" id="wizard" role="dialog" aria-modal="true" aria-label="New deployment wizard">
+        <div class="wizard__frame">
+            <!-- Progress -->
+            <div class="wiz-progress">
+                <div class="wiz-progress__dots" role="tablist" aria-label="Wizard progress">
+                    <button class="wiz-progress__dot is-active" data-step="1" type="button">
+                        <span class="wiz-progress__dot-circle"></span>Family
+                    </button>
+                    <button class="wiz-progress__dot" data-step="2" type="button">
+                        <span class="wiz-progress__dot-circle"></span>Type
+                    </button>
+                    <button class="wiz-progress__dot" data-step="3" type="button">
+                        <span class="wiz-progress__dot-circle"></span>Identity
+                    </button>
+                    <button class="wiz-progress__dot" data-step="4" type="button">
+                        <span class="wiz-progress__dot-circle"></span>Network
+                    </button>
+                    <button class="wiz-progress__dot" data-step="5" type="button">
+                        <span class="wiz-progress__dot-circle"></span>Review
+                    </button>
+                </div>
+                <button class="wiz-progress__close" id="wizClose" type="button">Cancel</button>
+            </div>
+
+            <!-- STEP 1 — Family -->
+            <section class="wiz-step is-active" data-step-pane="1">
+                <span class="wiz-step__eyebrow">Step 1 / 5</span>
+                <h2 class="wiz-step__title">Pick a deployment family</h2>
+                <p class="wiz-step__lede">What are you building? You can change the specific type next.</p>
+                <div class="wiz-cards" role="radiogroup" aria-label="Deployment family">
+                    <label class="wiz-card">
+                        <input type="radio" name="family" value="c2">
+                        <span class="wiz-card__body">
+                            <span class="wiz-card__title">Red team C2</span>
+                            <span class="wiz-card__desc">Cobalt Strike team server with redirectors and bastion. Real engagements.</span>
+                        </span>
+                        <span class="wiz-card__hint">3 types</span>
+                    </label>
+                    <label class="wiz-card">
+                        <input type="radio" name="family" value="goad">
+                        <span class="wiz-card__body">
+                            <span class="wiz-card__title">Training lab (GOAD)</span>
+                            <span class="wiz-card__desc">Vulnerable Active Directory environments. Isolated. No outbound C2.</span>
+                        </span>
+                        <span class="wiz-card__hint">5 types</span>
+                    </label>
+                    <label class="wiz-card">
+                        <input type="radio" name="family" value="combined">
+                        <span class="wiz-card__body">
+                            <span class="wiz-card__title">Combined</span>
+                            <span class="wiz-card__desc">C2 + GOAD on peered VPCs. End-to-end attack chain rehearsal.</span>
+                        </span>
+                        <span class="wiz-card__hint">3 types</span>
+                    </label>
+                </div>
+            </section>
+
+            <!-- STEP 2 — Type -->
+            <section class="wiz-step" data-step-pane="2">
+                <span class="wiz-step__eyebrow">Step 2 / 5 · <span id="step2Family">choose family first</span></span>
+                <h2 class="wiz-step__title">Pick the specific type</h2>
+                <p class="wiz-step__lede">Each type packages different hosts, sizes, and provisioning.</p>
+                <div class="wiz-cards" role="radiogroup" aria-label="Specific deployment type" id="step2Cards">
+                    <!-- populated by JS based on family pick -->
+                </div>
+            </section>
+
+            <!-- STEP 3 — Identity -->
+            <section class="wiz-step" data-step-pane="3">
+                <span class="wiz-step__eyebrow">Step 3 / 5</span>
+                <h2 class="wiz-step__title">Name this deployment</h2>
+                <p class="wiz-step__lede">Used for tagging AWS resources and S3 state. Lowercase, underscores, no spaces.</p>
+                <div class="wiz-field">
+                    <label class="wiz-field__label" for="projectName">Project name</label>
+                    <input class="wiz-field__input" id="projectName" type="text" value="goad_mini_dev_harriss_macbook_pro" autocomplete="off" spellcheck="false">
+                    <span class="wiz-field__hint">Will tag every EC2 instance, security group, and S3 key.</span>
+                </div>
+                <div class="wiz-field">
+                    <label class="wiz-field__label" for="environment">Environment</label>
+                    <select class="wiz-field__select" id="environment">
+                        <option value="dev" selected>DEV — isolated, throwaway</option>
+                        <option value="staging">STAGING — pre-production</option>
+                        <option value="prod">PROD — production engagement</option>
+                    </select>
+                    <span class="wiz-field__hint">Drives cost-tracking and protection flags.</span>
+                </div>
+            </section>
+
+            <!-- STEP 4 — Network -->
+            <section class="wiz-step" data-step-pane="4">
+                <span class="wiz-step__eyebrow">Step 4 / 5</span>
+                <h2 class="wiz-step__title">Network placement</h2>
+                <p class="wiz-step__lede">Region drives latency and instance availability. Management CIDR is the only IP allowed SSH/RDP to the bastion.</p>
+                <div class="wiz-field--row">
+                    <div class="wiz-field">
+                        <label class="wiz-field__label" for="region">AWS region</label>
+                        <select class="wiz-field__select" id="region">
+                            <option value="eu-central-1" selected>eu-central-1 — Frankfurt</option>
+                            <option value="eu-west-1">eu-west-1 — Ireland</option>
+                            <option value="eu-west-2">eu-west-2 — London</option>
+                            <option value="us-east-1">us-east-1 — N. Virginia</option>
+                            <option value="us-west-2">us-west-2 — Oregon</option>
+                        </select>
+                        <span class="wiz-field__hint">CDK/ACM features pinned to us-east-1.</span>
+                    </div>
+                    <div class="wiz-field">
+                        <label class="wiz-field__label" for="cidr">Management CIDR</label>
+                        <input class="wiz-field__input" id="cidr" type="text" value="82.35.149.127/32" autocomplete="off" spellcheck="false">
+                        <span class="wiz-field__hint">Your laptop's IP. /32 = exact host.</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- STEP 5 — Type-specific options + handoff -->
+            <section class="wiz-step" data-step-pane="5">
+                <span class="wiz-step__eyebrow">Step 5 / 5</span>
+                <h2 class="wiz-step__title">Final options</h2>
+                <p class="wiz-step__lede" id="step5Lede">Type-specific switches. Defaults are safe.</p>
+                <div id="step5Options" style="display: flex; flex-direction: column; gap: 12px;">
+                    <!-- populated by JS based on family -->
+                </div>
+            </section>
+
+            <!-- Review (final) -->
+            <section class="wiz-summary" data-step-pane="review">
+                <span class="wiz-step__eyebrow">Review</span>
+                <h2 class="wiz-step__title">Ready to deploy</h2>
+                <p class="wiz-step__lede">Everything below was set by the wizard. Edit any value or hit Deploy.</p>
+                <dl class="wiz-summary__list" id="reviewList">
+                    <!-- populated on entry -->
+                </dl>
+            </section>
+
+            <!-- Footer -->
+            <div class="wiz-foot">
+                <span class="wiz-foot__crumb" id="crumb">Step 1 of 5 — Family</span>
+                <div class="wiz-foot__buttons">
+                    <button class="wiz-btn" id="btnBack" type="button" disabled>Back</button>
+                    <button class="wiz-btn wiz-btn--primary" id="btnNext" type="button">Continue</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="preview-theme-toggle" type="button"
+            onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+        Toggle theme
+    </button>
+
+    <script>
+    (function () {
+        'use strict';
+
+        const TYPES = {
+            c2: [
+                { id: 'c2-adhoc', title: 'C2 — Ad-hoc', desc: '1 team server, 2 redirectors, bastion. Smallest C2 footprint.', hint: '5 hosts' },
+                { id: 'c2-purple', title: 'C2 — Purple', desc: '2 team servers for blue/purple-team redundancy.', hint: '7 hosts' },
+                { id: 'c2-full', title: 'C2 — Full', desc: '3 team servers, phase-based. Largest C2 deployment.', hint: '9 hosts' }
+            ],
+            goad: [
+                { id: 'goad-mini', title: 'GOAD Mini', desc: '2 hosts. DC + member server. Fastest stand-up.', hint: '2 hosts' },
+                { id: 'goad-light', title: 'GOAD Light', desc: '4 hosts. Two domains, basic trust scenarios.', hint: '4 hosts' },
+                { id: 'goad-sccm', title: 'GOAD SCCM', desc: '4 hosts. SCCM/MECM site for cred recovery practice.', hint: '4 hosts' },
+                { id: 'goad-full', title: 'GOAD Full', desc: '5 hosts. Three domains, cross-forest trusts.', hint: '5 hosts' },
+                { id: 'goad-nha', title: 'GOAD NHA', desc: '5 hosts. Ninja Hack Academy curriculum environment.', hint: '5 hosts' }
+            ],
+            combined: [
+                { id: 'combined-adhoc-mini', title: 'Combined — Adhoc + Mini', desc: 'C2 ad-hoc peered with GOAD Mini. Light-weight rehearsal.', hint: '7 hosts' },
+                { id: 'combined-adhoc-light', title: 'Combined — Adhoc + Light', desc: 'C2 ad-hoc peered with GOAD Light. Two domains.', hint: '9 hosts' },
+                { id: 'combined-full-full', title: 'Combined — Full + Full', desc: 'C2 Full peered with GOAD Full. Largest combined.', hint: '14 hosts' }
+            ]
+        };
+
+        const FAMILY_LABEL = { c2: 'Red team C2', goad: 'Training lab', combined: 'Combined' };
+
+        const state = {
+            step: 1,
+            family: 'goad',
+            type: 'goad-mini',
+            projectName: 'goad_mini_dev_harriss_macbook_pro',
+            environment: 'dev',
+            region: 'eu-central-1',
+            cidr: '82.35.149.127/32',
+            options: { cdn: false, fronting: false, ipRange: '10.10.0.0/16' }
+        };
+
+        // Pre-select goad family + goad-mini so initial state matches sample data
+        document.querySelector('.wiz-card input[value="goad"]').checked = true;
+        document.querySelectorAll('.wiz-card').forEach(c => {
+            if (c.querySelector('input').checked) c.classList.add('is-checked');
+        });
+
+        // ── Step 1 family wiring ──
+        document.querySelectorAll('.wiz-card input[name="family"]').forEach(r => {
+            r.addEventListener('change', () => {
+                state.family = r.value;
+                document.querySelectorAll('.wiz-card').forEach(c => c.classList.remove('is-checked'));
+                r.closest('.wiz-card').classList.add('is-checked');
+                renderStep2Cards();
+                renderStep5Options();
+                document.getElementById('step2Family').textContent = FAMILY_LABEL[state.family];
+            });
+        });
+
+        // ── Step 2 cards rendered when entering step 2 (or family changes) ──
+        function renderStep2Cards() {
+            const host = document.getElementById('step2Cards');
+            const types = TYPES[state.family] || [];
+            host.innerHTML = types.map(t => `
+                <label class="wiz-card">
+                    <input type="radio" name="type" value="${t.id}" ${t.id === state.type ? 'checked' : ''}>
+                    <span class="wiz-card__body">
+                        <span class="wiz-card__title">${t.title}</span>
+                        <span class="wiz-card__desc">${t.desc}</span>
+                    </span>
+                    <span class="wiz-card__hint">${t.hint}</span>
+                </label>
+            `).join('');
+            host.querySelectorAll('.wiz-card').forEach(c => {
+                if (c.querySelector('input').checked) c.classList.add('is-checked');
+                c.querySelector('input').addEventListener('change', () => {
+                    state.type = c.querySelector('input').value;
+                    host.querySelectorAll('.wiz-card').forEach(x => x.classList.remove('is-checked'));
+                    c.classList.add('is-checked');
+                    renderStep5Options();
+                });
+            });
+            if (!types.find(t => t.id === state.type) && types.length) {
+                state.type = types[0].id;
+            }
+        }
+
+        // ── Step 5 cascade ──
+        function renderStep5Options() {
+            const host = document.getElementById('step5Options');
+            const lede = document.getElementById('step5Lede');
+            if (state.family === 'c2' || state.family === 'combined') {
+                lede.textContent = 'Domain fronting and CDN proxy are optional. Both default to off.';
+                host.innerHTML = `
+                    <label class="wiz-toggle">
+                        <span>
+                            <span class="wiz-toggle__title">Domain fronting</span>
+                            <span class="wiz-toggle__desc">CloudFront CDN proxy hides redirector IPs behind CloudFront edge IPs. Caching off.</span>
+                        </span>
+                        <input class="wiz-toggle__switch" type="checkbox" ${state.options.fronting ? 'checked' : ''}>
+                    </label>
+                    <label class="wiz-toggle">
+                        <span>
+                            <span class="wiz-toggle__title">CDN proxy</span>
+                            <span class="wiz-toggle__desc">Route 53 + CloudFront for HTTPS redirector traffic. Adds ~$25/mo.</span>
+                        </span>
+                        <input class="wiz-toggle__switch" type="checkbox" ${state.options.cdn ? 'checked' : ''}>
+                    </label>
+                `;
+            } else {
+                lede.textContent = 'IP ranges for the AD lab. Defaults follow upstream GOAD.';
+                host.innerHTML = `
+                    <div class="wiz-field">
+                        <label class="wiz-field__label" for="ipRange">Lab IP range</label>
+                        <input class="wiz-field__input" id="ipRange" type="text" value="${state.options.ipRange}" autocomplete="off" spellcheck="false">
+                        <span class="wiz-field__hint">Used for DC, workstations, and member servers.</span>
+                    </div>
+                `;
+            }
+            host.querySelectorAll('.wiz-toggle__switch').forEach((sw, i) => {
+                sw.addEventListener('change', () => {
+                    if (i === 0) state.options.fronting = sw.checked;
+                    if (i === 1) state.options.cdn = sw.checked;
+                });
+            });
+        }
+
+        // ── Identity field wiring ──
+        document.getElementById('projectName').addEventListener('input', e => state.projectName = e.target.value);
+        document.getElementById('environment').addEventListener('change', e => state.environment = e.target.value);
+        document.getElementById('region').addEventListener('change', e => state.region = e.target.value);
+        document.getElementById('cidr').addEventListener('input', e => state.cidr = e.target.value);
+
+        // ── Step navigation ──
+        const dots = document.querySelectorAll('.wiz-progress__dot');
+        const steps = document.querySelectorAll('.wiz-step');
+        const summary = document.querySelector('.wiz-summary');
+        const crumb = document.getElementById('crumb');
+        const btnBack = document.getElementById('btnBack');
+        const btnNext = document.getElementById('btnNext');
+        const STEP_LABELS = ['Family', 'Type', 'Identity', 'Network', 'Options', 'Review'];
+
+        function goToStep(n) {
+            state.step = n;
+            steps.forEach(s => s.classList.remove('is-active'));
+            summary.classList.remove('is-active');
+            if (n === 'review') {
+                summary.classList.add('is-active');
+                renderReview();
+            } else {
+                const pane = document.querySelector(`[data-step-pane="${n}"]`);
+                if (pane) pane.classList.add('is-active');
+                if (n === 2) renderStep2Cards();
+                if (n === 5) renderStep5Options();
+            }
+            dots.forEach(d => {
+                const dn = parseInt(d.dataset.step, 10);
+                d.classList.toggle('is-active', n !== 'review' && dn === n);
+                d.classList.toggle('is-done', (typeof n === 'number' && dn < n) || n === 'review');
+            });
+            btnBack.disabled = (n === 1);
+            btnNext.textContent = (n === 5) ? 'Review' : (n === 'review') ? 'Deploy' : 'Continue';
+            if (n === 'review') {
+                crumb.textContent = 'Final review — ready to deploy';
+            } else {
+                crumb.textContent = `Step ${n} of 5 — ${STEP_LABELS[n - 1]}`;
+            }
+        }
+
+        function renderReview() {
+            const list = document.getElementById('reviewList');
+            const type = (TYPES[state.family] || []).find(t => t.id === state.type);
+            const rows = [
+                ['Deployment Type', type ? type.title : state.type, FAMILY_LABEL[state.family]],
+                ['Project Name', state.projectName, ''],
+                ['Environment', state.environment.toUpperCase(), 'isolated'],
+                ['AWS Region', state.region, 'Frankfurt'],
+                ['Management CIDR', state.cidr, 'single host'],
+                ['SSH Keys', 'Auto-generated', 'ed25519'],
+                ['Est. Monthly Cost', '~$260/mo', `${type ? type.hint : ''}`]
+            ];
+            list.innerHTML = rows.map(([k, v, h]) => `
+                <div class="wiz-summary__row">
+                    <dt class="wiz-summary__key">${k}</dt>
+                    <dd class="wiz-summary__value ${k === 'Management CIDR' || k === 'AWS Region' || k === 'Project Name' ? 'wiz-summary__value--mono' : ''}">${v}</dd>
+                    <dd class="wiz-summary__hint">${h}</dd>
+                </div>
+            `).join('');
+        }
+
+        btnNext.addEventListener('click', () => {
+            if (state.step === 5) goToStep('review');
+            else if (state.step === 'review') {
+                btnNext.textContent = 'Deploying…';
+                btnNext.disabled = true;
+            } else goToStep(state.step + 1);
+        });
+        btnBack.addEventListener('click', () => {
+            if (state.step === 'review') goToStep(5);
+            else if (state.step > 1) goToStep(state.step - 1);
+        });
+        dots.forEach(d => d.addEventListener('click', () => goToStep(parseInt(d.dataset.step, 10))));
+
+        // ── Open / close (showing backdrop dim) ──
+        const dashMock = document.getElementById('dashMock');
+        const scrim = document.getElementById('scrim');
+        const wizard = document.getElementById('wizard');
+        const dashTrigger = document.getElementById('dashTrigger');
+        const wizClose = document.getElementById('wizClose');
+
+        function openWizard() {
+            dashMock.classList.add('is-dimmed');
+            scrim.classList.add('is-open');
+            wizard.classList.add('is-open');
+            dashTrigger.classList.add('is-hidden');
+        }
+        function closeWizard() {
+            dashMock.classList.remove('is-dimmed');
+            scrim.classList.remove('is-open');
+            wizard.classList.remove('is-open');
+            dashTrigger.classList.remove('is-hidden');
+        }
+
+        dashTrigger.addEventListener('click', openWizard);
+        wizClose.addEventListener('click', closeWizard);
+
+        // Start open by default — this is a preview, the journey is what we're showing
+        openWizard();
+        renderStep2Cards();
+        renderStep5Options();
+    })();
+    </script>
+</body>
+</html>

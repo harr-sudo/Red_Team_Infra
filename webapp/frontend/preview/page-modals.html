@@ -1,0 +1,1244 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TASTE Demo D2 — Modals showcase (V3-native)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           DEMO D2 — MODALS SHOWCASE (V3-NATIVE)
+           Hypothesis: Every modal in the app shares the same V3 chrome —
+           scrim + centered card + header/body/footer — only the body
+           differs.
+           ============================================================ */
+
+        :root {
+            --temp-page-max: 1080px;
+            --temp-hairline: var(--border-subtle);
+            --temp-op-alice:   #3b82f6;
+            --temp-op-harris:  #a31621;
+            --temp-op-bob:     #0d9488;
+            --temp-scrim-z:    200;
+        }
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP ───────────────────────────────────────── */
+        .pm-hypothesis {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 12px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .pm-hypothesis__text { flex: 1; min-width: 0; }
+        .pm-hypothesis__text strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin-right: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+        .pm-theme-toggle {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            padding: 5px 12px;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pm-theme-toggle:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* ── PAGE SHELL (dashboard mock backdrop) ───────────────────── */
+        .pm-shell {
+            max-width: var(--temp-page-max);
+            margin: 0 auto;
+            padding: 36px 32px 64px;
+            transition: filter 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        body[data-modal-open="true"] .pm-shell {
+            filter: blur(8px);
+            opacity: 0.32;
+            pointer-events: none;
+        }
+
+        .pm-pagehead {
+            margin-bottom: 28px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .pm-pagehead__eyebrow {
+            display: block;
+            margin-bottom: 6px;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .pm-pagehead__title {
+            margin: 0 0 4px 0;
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+        }
+        .pm-pagehead__desc {
+            margin: 0;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* Dashboard mock — fake widgets behind modals */
+        .pm-mock {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+            margin-bottom: 28px;
+        }
+        .pm-mock__card {
+            padding: 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+        }
+        .pm-mock__eye {
+            display: block;
+            margin-bottom: 6px;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            /* Layer note: .pm-mock__card paints --bg-card. --text-secondary
+               passes AA on --bg-card in both themes. */
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .pm-mock__val {
+            font-family: var(--font-family-mono);
+            font-size: 21px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+        }
+        .pm-mock__hint {
+            margin-top: 6px;
+            font-size: 11.5px;
+            color: var(--text-secondary);
+        }
+
+        /* ── TRIGGER GRID ───────────────────────────────────────────── */
+        .pm-trigger-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 14px;
+        }
+        .pm-trigger {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 18px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+            color: var(--text-primary);
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+            transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .pm-trigger:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            transform: translateY(-2px);
+        }
+        .pm-trigger:focus-visible {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+        .pm-trigger__eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            /* Layer note: .pm-trigger paints --bg-card / --bg-card-hover.
+               --text-secondary passes AA on both layers in both themes. */
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .pm-trigger__title {
+            font-size: 14.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .pm-trigger__desc {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        /* ── SCRIM + MODAL CHROME (shared) ──────────────────────────── */
+        .pm-scrim {
+            position: fixed;
+            inset: 0;
+            background: var(--scrim);
+            backdrop-filter: var(--scrim-blur);
+            -webkit-backdrop-filter: var(--scrim-blur);
+            z-index: calc(var(--temp-scrim-z) - 1);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pm-scrim[data-open="true"] {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .pm-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, calc(-50% + 8px));
+            width: calc(100% - 48px);
+            max-width: 540px;
+            max-height: calc(100vh - 96px);
+            overflow-y: auto;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            box-shadow: 0 16px 64px rgba(0, 0, 0, 0.4);
+            z-index: var(--temp-scrim-z);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pm-modal[data-open="true"] {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translate(-50%, -50%);
+        }
+        .pm-modal--sm { max-width: 420px; }
+        .pm-modal--lg { max-width: 720px; }
+
+        .pm-modal__head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 20px 24px 14px 24px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .pm-modal__head-text { min-width: 0; }
+        .pm-modal__head-eyebrow {
+            display: block;
+            margin-bottom: 4px;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            /* Layer note: head sits inside .pm-modal (--bg-card).
+               --text-secondary passes AA in both themes. */
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .pm-modal__head-title {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .pm-modal__close {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            width: 28px;
+            height: 28px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
+        }
+        .pm-modal__close:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            color: var(--text-primary);
+        }
+
+        .pm-modal__body {
+            padding: 18px 24px;
+        }
+        .pm-modal__foot {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            padding: 14px 24px 18px 24px;
+            border-top: 1px solid var(--temp-hairline);
+        }
+        .pm-modal__foot--left {
+            justify-content: space-between;
+        }
+
+        .pm-btn {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            padding: 7px 14px;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 200ms ease, border-color 200ms ease;
+        }
+        .pm-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+        .pm-btn--primary {
+            background: var(--brand-light);
+            border-color: var(--brand-light);
+            color: var(--text-on-primary);
+        }
+        .pm-btn--primary:hover {
+            background: var(--brand);
+            border-color: var(--brand);
+        }
+        .pm-btn--danger {
+            background: var(--danger);
+            border-color: var(--danger);
+            color: var(--text-on-primary);
+        }
+        .pm-btn--danger:hover {
+            background: color-mix(in srgb, var(--danger) 85%, black);
+        }
+
+        /* ── FORM FIELDS (Add operator) ─────────────────────────────── */
+        .pm-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+        .pm-field__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .pm-field__input {
+            width: 100%;
+            box-sizing: border-box;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 9px 12px;
+            border-radius: var(--radius-xs);
+            font-family: var(--font-family-mono);
+            font-size: 13px;
+            transition: border-color 200ms ease, box-shadow 200ms ease;
+        }
+        .pm-field__input:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+        }
+        .pm-color-picker {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .pm-color-swatch {
+            appearance: none;
+            width: 26px;
+            height: 26px;
+            border: 2px solid transparent;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        border-color 200ms ease;
+        }
+        .pm-color-swatch:hover { transform: scale(1.1); }
+        .pm-color-swatch.is-active {
+            border-color: var(--text-primary);
+            transform: scale(1.05);
+        }
+        .pm-color-swatch:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 36%, transparent);
+        }
+
+        /* ── OPERATOR ROW (management modal) ─────────────────────────── */
+        .pm-op-list {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+        }
+        .pm-op-row {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            gap: 14px;
+            padding: 12px 4px;
+            border-bottom: 1px solid var(--temp-hairline);
+        }
+        .pm-op-row:last-child { border-bottom: none; }
+        .pm-op-row[data-editing="true"] {
+            grid-template-columns: 1fr;
+            gap: 12px;
+            padding: 14px 12px;
+            background: var(--bg-card-hover);
+            border-radius: var(--radius-xs);
+            margin: 4px 0;
+        }
+        .pm-op-row__id {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        .pm-op-dot {
+            position: relative;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .pm-op-dot::after {
+            content: "";
+            position: absolute;
+            inset: -3px;
+            border-radius: 50%;
+            border: 1px solid currentColor;
+            opacity: 0.45;
+        }
+        .pm-op-row__name {
+            font-family: var(--font-family-mono);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .pm-op-row__meta {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            /* Layer note: row sits on --bg-card (or --bg-card-hover when
+               editing). --text-secondary passes AA on both. */
+            color: var(--text-secondary);
+        }
+        .pm-op-row__actions {
+            display: flex;
+            gap: 6px;
+        }
+        .pm-op-row__action {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            padding: 4px 10px;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 200ms ease, border-color 200ms ease;
+        }
+        .pm-op-row__action:hover {
+            background: var(--bg-input);
+            border-color: var(--border-light);
+        }
+        .pm-op-row__action--danger {
+            color: var(--danger-text);
+            border-color: var(--danger-border);
+        }
+        .pm-op-row__action--danger:hover {
+            background: var(--danger-bg);
+            border-color: var(--danger);
+        }
+        .pm-op-row__editor-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+        }
+        .pm-op-row__editor-grid .pm-field {
+            margin-bottom: 0;
+        }
+        .pm-op-row__editor-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 6px;
+            margin-top: 4px;
+        }
+
+        /* ── DELETE CONFIRM ─────────────────────────────────────────── */
+        .pm-confirm {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .pm-confirm__warn {
+            padding: 12px 14px;
+            background: var(--danger-bg);
+            border: 1px solid var(--danger-border);
+            border-radius: var(--radius-xs);
+            color: var(--danger-text);
+            font-size: 12.5px;
+        }
+        .pm-confirm__warn strong {
+            display: block;
+            margin-bottom: 4px;
+            color: var(--danger-text);
+        }
+        .pm-confirm__target {
+            font-family: var(--font-family-mono);
+            font-size: 12.5px;
+            color: var(--text-primary);
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            padding: 8px 10px;
+        }
+        .pm-confirm__stage {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            /* Layer note: sits inside .pm-modal (--bg-card). --text-secondary
+               passes AA in both themes. */
+            color: var(--text-secondary);
+        }
+
+        /* ── VERSION FOOTER ─────────────────────────────────────────── */
+        .pm-version-grid {
+            display: grid;
+            grid-template-columns: 110px 1fr;
+            row-gap: 8px;
+            column-gap: 16px;
+            font-family: var(--font-family-mono);
+        }
+        .pm-version-grid dt {
+            margin: 0;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+        .pm-version-grid dd {
+            margin: 0;
+            font-size: 12.5px;
+            color: var(--text-primary);
+        }
+        .pm-version-link {
+            display: inline-block;
+            margin-top: 12px;
+            font-family: var(--font-family-base);
+            font-size: 12.5px;
+            color: var(--info-text);
+            text-decoration: none;
+            border-bottom: 1px solid var(--border-subtle);
+            padding-bottom: 1px;
+        }
+        .pm-version-link:hover {
+            border-bottom-color: var(--info-text);
+        }
+
+        /* ── ARCHITECTURE VIEWER ────────────────────────────────────── */
+        .pm-arch-body {
+            display: grid;
+            grid-template-columns: 1fr 240px;
+            gap: 18px;
+            padding: 18px 24px;
+        }
+        @media (max-width: 720px) {
+            .pm-arch-body { grid-template-columns: 1fr; }
+        }
+        .pm-arch-canvas {
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            padding: 18px;
+            min-height: 280px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-primary);
+        }
+        .pm-arch-notes {
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+        .pm-arch-notes h4 {
+            margin: 0 0 8px 0;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .pm-arch-notes p { margin: 0 0 10px 0; }
+        .pm-arch-select {
+            appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-family: var(--font-family-mono);
+            font-size: 12px;
+            padding: 5px 28px 5px 10px;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                              linear-gradient(135deg, currentColor 50%, transparent 50%);
+            background-position: calc(100% - 14px) 50%, calc(100% - 8px) 50%;
+            background-size: 6px 6px;
+            background-repeat: no-repeat;
+        }
+        .pm-arch-select:focus {
+            outline: none;
+            border-color: var(--brand-light);
+        }
+        .pm-modal__head-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* ── TOAST STACK ────────────────────────────────────────────── */
+        .pm-toast-stack {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 1100;
+            display: flex;
+            flex-direction: column-reverse;
+            gap: 10px;
+            max-width: 360px;
+            pointer-events: none;
+        }
+        .pm-toast {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--brand-light);
+            border-radius: var(--radius);
+            padding: 12px 14px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+            pointer-events: auto;
+            position: relative;
+            overflow: hidden;
+            animation: pm-toast-in 240ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .pm-toast--success { border-left-color: var(--success); }
+        .pm-toast--info    { border-left-color: var(--info); }
+        .pm-toast--danger  { border-left-color: var(--danger); }
+        .pm-toast--leaving { animation: pm-toast-out 200ms cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+
+        .pm-toast__icon {
+            flex-shrink: 0;
+            width: 18px;
+            height: 18px;
+            color: var(--text-primary);
+        }
+        .pm-toast--success .pm-toast__icon { color: var(--success); }
+        .pm-toast--info    .pm-toast__icon { color: var(--info); }
+        .pm-toast--danger  .pm-toast__icon { color: var(--danger); }
+        .pm-toast__body { min-width: 0; flex: 1; }
+        .pm-toast__title {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 2px;
+        }
+        .pm-toast__msg {
+            font-size: 12px;
+            /* Layer note: .pm-toast paints --bg-card. --text-secondary
+               passes AA on --bg-card in both themes. */
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+        .pm-toast__progress {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 2px;
+            background: var(--brand-light);
+            width: 100%;
+            transform-origin: left;
+            animation: pm-toast-progress 4000ms linear forwards;
+        }
+        .pm-toast--success .pm-toast__progress { background: var(--success); }
+        .pm-toast--info    .pm-toast__progress { background: var(--info); }
+        .pm-toast--danger  .pm-toast__progress { background: var(--danger); }
+
+        @keyframes pm-toast-in {
+            from { opacity: 0; transform: translateX(100%); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes pm-toast-out {
+            to { opacity: 0; transform: translateX(100%); }
+        }
+        @keyframes pm-toast-progress {
+            from { transform: scaleX(1); }
+            to   { transform: scaleX(0); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .pm-trigger, .pm-scrim, .pm-modal, .pm-toast,
+            .pm-color-swatch, .pm-btn, .pm-modal__close, .pm-op-row__action {
+                transition: none;
+                animation: none;
+            }
+            .pm-trigger:hover { transform: none; }
+        }
+    </style>
+</head>
+<body>
+    <header class="pm-hypothesis">
+        <div class="pm-hypothesis__text">
+            <strong>Demo D2 — Modals</strong>
+            Every modal in the app shares the same V3 chrome — scrim + centered card + header/body/footer — only the body differs.
+        </div>
+        <button class="pm-theme-toggle" type="button" id="theme-toggle">Toggle theme</button>
+    </header>
+
+    <main class="pm-shell">
+        <header class="pm-pagehead">
+            <span class="pm-pagehead__eyebrow">DESIGN · OVERLAY SYSTEM</span>
+            <h1 class="pm-pagehead__title">Modals Showcase</h1>
+            <p class="pm-pagehead__desc">Six modal variants on the shared V3 chrome. Click any tile to open. Scrim, Escape, and close button all dismiss.</p>
+        </header>
+
+        <!-- Dashboard mock — visible behind modals when open -->
+        <section class="pm-mock" aria-hidden="true">
+            <div class="pm-mock__card">
+                <span class="pm-mock__eye">DEPLOY · ACTIVE</span>
+                <span class="pm-mock__val">4</span>
+                <div class="pm-mock__hint">2 c2 · 2 goad</div>
+            </div>
+            <div class="pm-mock__card">
+                <span class="pm-mock__eye">SPEND · MTD</span>
+                <span class="pm-mock__val">$147.82</span>
+                <div class="pm-mock__hint">$8.69 daily avg</div>
+            </div>
+            <div class="pm-mock__card">
+                <span class="pm-mock__eye">BEACONS · LIVE</span>
+                <span class="pm-mock__val">7</span>
+                <div class="pm-mock__hint">3 stale (over 1h)</div>
+            </div>
+            <div class="pm-mock__card">
+                <span class="pm-mock__eye">OPS · ONLINE</span>
+                <span class="pm-mock__val">3</span>
+                <div class="pm-mock__hint">alice · harris · bob</div>
+            </div>
+        </section>
+
+        <div class="pm-trigger-grid">
+            <button class="pm-trigger" data-open-modal="add-operator">
+                <span class="pm-trigger__eyebrow">MODAL · FORM</span>
+                <span class="pm-trigger__title">Add operator</span>
+                <span class="pm-trigger__desc">Single form: ID + display name + color picker.</span>
+            </button>
+            <button class="pm-trigger" data-open-modal="manage-operators">
+                <span class="pm-trigger__eyebrow">MODAL · LIST</span>
+                <span class="pm-trigger__title">Manage operators</span>
+                <span class="pm-trigger__desc">List of operators with inline editor expanded for one row.</span>
+            </button>
+            <button class="pm-trigger" data-open-modal="delete-confirm">
+                <span class="pm-trigger__eyebrow">MODAL · DESTRUCTIVE</span>
+                <span class="pm-trigger__title">Delete confirm</span>
+                <span class="pm-trigger__desc">Two-stage confirmation for irreversible actions.</span>
+            </button>
+            <button class="pm-trigger" data-open-modal="version-footer">
+                <span class="pm-trigger__eyebrow">MODAL · INFO</span>
+                <span class="pm-trigger__title">Version footer</span>
+                <span class="pm-trigger__desc">Minimal build metadata + changelog link.</span>
+            </button>
+            <button class="pm-trigger" data-open-modal="architecture">
+                <span class="pm-trigger__eyebrow">MODAL · REFERENCE</span>
+                <span class="pm-trigger__title">Architecture viewer</span>
+                <span class="pm-trigger__desc">Diagram + deployment-type selector + notes panel.</span>
+            </button>
+            <button class="pm-trigger" id="trigger-toast">
+                <span class="pm-trigger__eyebrow">EPHEMERAL · STACK</span>
+                <span class="pm-trigger__title">Toast notifications</span>
+                <span class="pm-trigger__desc">Three stacked toasts (success / info / error) auto-dismiss.</span>
+            </button>
+        </div>
+    </main>
+
+    <!-- ═══════════════════ MODALS ═══════════════════ -->
+
+    <!-- Shared scrim -->
+    <div class="pm-scrim" id="scrim" aria-hidden="true"></div>
+
+    <!-- 1. Add operator -->
+    <div class="pm-modal pm-modal--sm" id="modal-add-operator" role="dialog" aria-modal="true" aria-labelledby="add-op-title">
+        <div class="pm-modal__head">
+            <div class="pm-modal__head-text">
+                <span class="pm-modal__head-eyebrow">OPERATORS · NEW</span>
+                <h2 class="pm-modal__head-title" id="add-op-title">Add operator</h2>
+            </div>
+            <button class="pm-modal__close" type="button" data-close-modal aria-label="Close">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                    <path d="M3 3 L11 11 M11 3 L3 11"/>
+                </svg>
+            </button>
+        </div>
+        <div class="pm-modal__body">
+            <div class="pm-field">
+                <label class="pm-field__label" for="add-op-id">Operator ID</label>
+                <input class="pm-field__input" id="add-op-id" type="text" placeholder="e.g. carol" value="">
+            </div>
+            <div class="pm-field">
+                <label class="pm-field__label" for="add-op-name">Display name</label>
+                <input class="pm-field__input" id="add-op-name" type="text" placeholder="e.g. Carol Vance" value="">
+            </div>
+            <div class="pm-field">
+                <span class="pm-field__label">Color</span>
+                <div class="pm-color-picker" role="radiogroup" aria-label="Operator color">
+                    <button type="button" class="pm-color-swatch is-active" style="background: var(--temp-op-alice);" aria-label="Blue" role="radio" aria-checked="true"></button>
+                    <button type="button" class="pm-color-swatch" style="background: var(--temp-op-harris);" aria-label="Burgundy" role="radio"></button>
+                    <button type="button" class="pm-color-swatch" style="background: var(--temp-op-bob);" aria-label="Teal" role="radio"></button>
+                    <button type="button" class="pm-color-swatch" style="background: #7c3aed;" aria-label="Purple" role="radio"></button>
+                    <button type="button" class="pm-color-swatch" style="background: #ea580c;" aria-label="Orange" role="radio"></button>
+                    <button type="button" class="pm-color-swatch" style="background: #ca8a04;" aria-label="Amber" role="radio"></button>
+                </div>
+            </div>
+        </div>
+        <div class="pm-modal__foot">
+            <button class="pm-btn" type="button" data-close-modal>Cancel</button>
+            <button class="pm-btn pm-btn--primary" type="button" data-close-modal>Add operator</button>
+        </div>
+    </div>
+
+    <!-- 2. Manage operators -->
+    <div class="pm-modal pm-modal--lg" id="modal-manage-operators" role="dialog" aria-modal="true" aria-labelledby="manage-op-title">
+        <div class="pm-modal__head">
+            <div class="pm-modal__head-text">
+                <span class="pm-modal__head-eyebrow">OPERATORS · ROSTER</span>
+                <h2 class="pm-modal__head-title" id="manage-op-title">Manage operators</h2>
+            </div>
+            <button class="pm-modal__close" type="button" data-close-modal aria-label="Close">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                    <path d="M3 3 L11 11 M11 3 L3 11"/>
+                </svg>
+            </button>
+        </div>
+        <div class="pm-modal__body">
+            <ul class="pm-op-list">
+                <li class="pm-op-row">
+                    <div class="pm-op-row__id">
+                        <span class="pm-op-dot" style="background: var(--temp-op-alice); color: var(--temp-op-alice);"></span>
+                        <div>
+                            <div class="pm-op-row__name">alice</div>
+                            <div class="pm-op-row__meta">Alice Mercer · 12 actions today</div>
+                        </div>
+                    </div>
+                    <span class="pm-op-row__meta">online · 2m ago</span>
+                    <div class="pm-op-row__actions">
+                        <button class="pm-op-row__action" type="button">Edit</button>
+                        <button class="pm-op-row__action pm-op-row__action--danger" type="button">Remove</button>
+                    </div>
+                </li>
+                <li class="pm-op-row" data-editing="true">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span class="pm-op-dot" style="background: var(--temp-op-harris); color: var(--temp-op-harris);"></span>
+                        <strong class="pm-op-row__name">harris</strong>
+                        <span class="pm-op-row__meta">— editing</span>
+                    </div>
+                    <div class="pm-op-row__editor-grid">
+                        <div class="pm-field">
+                            <label class="pm-field__label">Display name</label>
+                            <input class="pm-field__input" type="text" value="Harris Khalid">
+                        </div>
+                        <div class="pm-field">
+                            <label class="pm-field__label">Role</label>
+                            <input class="pm-field__input" type="text" value="lead">
+                        </div>
+                        <div class="pm-field">
+                            <span class="pm-field__label">Color</span>
+                            <div class="pm-color-picker">
+                                <button type="button" class="pm-color-swatch" style="background: var(--temp-op-alice);" aria-label="Blue"></button>
+                                <button type="button" class="pm-color-swatch is-active" style="background: var(--temp-op-harris);" aria-label="Burgundy"></button>
+                                <button type="button" class="pm-color-swatch" style="background: var(--temp-op-bob);" aria-label="Teal"></button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="pm-op-row__editor-actions">
+                        <button class="pm-btn" type="button">Cancel</button>
+                        <button class="pm-btn pm-btn--primary" type="button">Save changes</button>
+                    </div>
+                </li>
+                <li class="pm-op-row">
+                    <div class="pm-op-row__id">
+                        <span class="pm-op-dot" style="background: var(--temp-op-bob); color: var(--temp-op-bob);"></span>
+                        <div>
+                            <div class="pm-op-row__name">bob</div>
+                            <div class="pm-op-row__meta">Bob Tan · 4 actions today</div>
+                        </div>
+                    </div>
+                    <span class="pm-op-row__meta">online · 7m ago</span>
+                    <div class="pm-op-row__actions">
+                        <button class="pm-op-row__action" type="button">Edit</button>
+                        <button class="pm-op-row__action pm-op-row__action--danger" type="button">Remove</button>
+                    </div>
+                </li>
+            </ul>
+        </div>
+        <div class="pm-modal__foot pm-modal__foot--left">
+            <button class="pm-btn" type="button">Add operator</button>
+            <button class="pm-btn pm-btn--primary" type="button" data-close-modal>Done</button>
+        </div>
+    </div>
+
+    <!-- 3. Delete confirm -->
+    <div class="pm-modal pm-modal--sm" id="modal-delete-confirm" role="dialog" aria-modal="true" aria-labelledby="del-title">
+        <div class="pm-modal__head">
+            <div class="pm-modal__head-text">
+                <span class="pm-modal__head-eyebrow">DESTROY · CONFIRM</span>
+                <h2 class="pm-modal__head-title" id="del-title">Destroy deployment</h2>
+            </div>
+            <button class="pm-modal__close" type="button" data-close-modal aria-label="Close">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                    <path d="M3 3 L11 11 M11 3 L3 11"/>
+                </svg>
+            </button>
+        </div>
+        <div class="pm-modal__body">
+            <div class="pm-confirm">
+                <div class="pm-confirm__warn">
+                    <strong>This action cannot be undone</strong>
+                    All EC2 instances, EBS volumes, and DNS records for this deployment will be terminated.
+                </div>
+                <div class="pm-confirm__target">c2_adhoc_dev_harriss_macbook_pro_01</div>
+                <div class="pm-confirm__stage">
+                    <span id="del-stage-text">Stage 1 of 2 — type the deployment name to confirm</span>
+                </div>
+                <div class="pm-field" style="margin-bottom: 0;">
+                    <label class="pm-field__label">Deployment name</label>
+                    <input class="pm-field__input" id="del-confirm-input" type="text" placeholder="c2_adhoc_dev_harriss_macbook_pro_01">
+                </div>
+            </div>
+        </div>
+        <div class="pm-modal__foot">
+            <button class="pm-btn" type="button" data-close-modal>Cancel</button>
+            <button class="pm-btn pm-btn--danger" id="del-confirm-btn" type="button" disabled style="opacity: 0.5;">Destroy</button>
+        </div>
+    </div>
+
+    <!-- 4. Version footer -->
+    <div class="pm-modal pm-modal--sm" id="modal-version-footer" role="dialog" aria-modal="true" aria-labelledby="ver-title">
+        <div class="pm-modal__head">
+            <div class="pm-modal__head-text">
+                <span class="pm-modal__head-eyebrow">BUILD · METADATA</span>
+                <h2 class="pm-modal__head-title" id="ver-title">Dashboard build</h2>
+            </div>
+            <button class="pm-modal__close" type="button" data-close-modal aria-label="Close">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                    <path d="M3 3 L11 11 M11 3 L3 11"/>
+                </svg>
+            </button>
+        </div>
+        <div class="pm-modal__body">
+            <dl class="pm-version-grid">
+                <dt>Version</dt><dd>v2.4.0-preview</dd>
+                <dt>Commit</dt><dd>a4f7e2c</dd>
+                <dt>Built</dt><dd>2026-05-17T19:42Z</dd>
+                <dt>Branch</dt><dd>refactor/dashboard-m-v3-native-phase3</dd>
+                <dt>Python</dt><dd>3.12.4</dd>
+                <dt>Terraform</dt><dd>1.9.4</dd>
+            </dl>
+            <a class="pm-version-link" href="#" onclick="event.preventDefault();">View full changelog →</a>
+        </div>
+        <div class="pm-modal__foot">
+            <button class="pm-btn pm-btn--primary" type="button" data-close-modal>Close</button>
+        </div>
+    </div>
+
+    <!-- 5. Architecture viewer -->
+    <div class="pm-modal pm-modal--lg" id="modal-architecture" role="dialog" aria-modal="true" aria-labelledby="arch-title">
+        <div class="pm-modal__head">
+            <div class="pm-modal__head-text">
+                <span class="pm-modal__head-eyebrow">REFERENCE · ARCHITECTURE</span>
+                <h2 class="pm-modal__head-title" id="arch-title">Deployment architecture</h2>
+            </div>
+            <div class="pm-modal__head-controls">
+                <select class="pm-arch-select" id="arch-select-mini">
+                    <option value="c2-adhoc">c2-adhoc</option>
+                    <option value="combined-adhoc-mini">combined-adhoc-mini</option>
+                    <option value="goad-mini">goad-mini</option>
+                </select>
+                <button class="pm-modal__close" type="button" data-close-modal aria-label="Close">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                        <path d="M3 3 L11 11 M11 3 L3 11"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <div class="pm-arch-body">
+            <div class="pm-arch-canvas" id="arch-canvas-mini">
+                <svg viewBox="0 0 320 240" width="100%" height="240" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+                    <rect x="40" y="40" width="80" height="40" rx="4"/>
+                    <text x="80" y="65" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" stroke="none" text-anchor="middle">Bastion</text>
+                    <rect x="200" y="40" width="80" height="40" rx="4"/>
+                    <text x="240" y="65" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" stroke="none" text-anchor="middle">Redirector</text>
+                    <rect x="200" y="160" width="80" height="40" rx="4"/>
+                    <text x="240" y="185" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" stroke="none" text-anchor="middle">C2 server</text>
+                    <path d="M120 60 H200" stroke-dasharray="3 3"/>
+                    <path d="M240 80 V160"/>
+                </svg>
+            </div>
+            <aside class="pm-arch-notes">
+                <h4>c2-adhoc</h4>
+                <p>Single-team-server adhoc engagement profile. One Cobalt Strike team server in a private subnet, one Nginx redirector in DMZ, one Windows bastion for operator access.</p>
+                <p><strong>Instances:</strong> 3 (1× t3.medium, 2× t3.small)</p>
+                <p><strong>Est. monthly:</strong> ~$95</p>
+            </aside>
+        </div>
+    </div>
+
+    <!-- 6. Toast stack -->
+    <div class="pm-toast-stack" id="toast-stack" aria-live="polite"></div>
+
+    <script>
+        // --- Theme toggle -----------------------------------------------------
+        document.getElementById('theme-toggle').addEventListener('click', () => {
+            const html = document.documentElement;
+            html.setAttribute('data-theme', html.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+        });
+
+        // --- Modal open / close ----------------------------------------------
+        const scrim = document.getElementById('scrim');
+        const modals = {
+            'add-operator':       document.getElementById('modal-add-operator'),
+            'manage-operators':   document.getElementById('modal-manage-operators'),
+            'delete-confirm':     document.getElementById('modal-delete-confirm'),
+            'version-footer':     document.getElementById('modal-version-footer'),
+            'architecture':       document.getElementById('modal-architecture')
+        };
+
+        function openModal(name) {
+            Object.values(modals).forEach(m => m.setAttribute('data-open', 'false'));
+            const m = modals[name];
+            if (!m) return;
+            scrim.setAttribute('data-open', 'true');
+            m.setAttribute('data-open', 'true');
+            document.body.setAttribute('data-modal-open', 'true');
+        }
+        function closeAllModals() {
+            scrim.setAttribute('data-open', 'false');
+            Object.values(modals).forEach(m => m.setAttribute('data-open', 'false'));
+            document.body.removeAttribute('data-modal-open');
+        }
+
+        document.querySelectorAll('[data-open-modal]').forEach(btn => {
+            btn.addEventListener('click', () => openModal(btn.getAttribute('data-open-modal')));
+        });
+        document.querySelectorAll('[data-close-modal]').forEach(btn => {
+            btn.addEventListener('click', closeAllModals);
+        });
+        scrim.addEventListener('click', closeAllModals);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeAllModals();
+        });
+
+        // --- Color swatches ---------------------------------------------------
+        document.querySelectorAll('.pm-color-picker').forEach(picker => {
+            picker.addEventListener('click', (e) => {
+                const sw = e.target.closest('.pm-color-swatch');
+                if (!sw) return;
+                picker.querySelectorAll('.pm-color-swatch').forEach(s => {
+                    s.classList.remove('is-active');
+                    s.removeAttribute('aria-checked');
+                });
+                sw.classList.add('is-active');
+                sw.setAttribute('aria-checked', 'true');
+            });
+        });
+
+        // --- Delete-confirm two-stage gate ------------------------------------
+        const delInput = document.getElementById('del-confirm-input');
+        const delBtn = document.getElementById('del-confirm-btn');
+        const delStageText = document.getElementById('del-stage-text');
+        const delTarget = 'c2_adhoc_dev_harriss_macbook_pro_01';
+        let delStage = 1;
+
+        delInput.addEventListener('input', () => {
+            if (delInput.value === delTarget) {
+                delStage = 2;
+                delBtn.disabled = false;
+                delBtn.style.opacity = '1';
+                delStageText.textContent = 'Stage 2 of 2 — name matches. Click Destroy to confirm.';
+            } else {
+                delStage = 1;
+                delBtn.disabled = true;
+                delBtn.style.opacity = '0.5';
+                delStageText.textContent = 'Stage 1 of 2 — type the deployment name to confirm';
+            }
+        });
+
+        // --- Architecture select sync (within demo modal) ---------------------
+        const archSelect = document.getElementById('arch-select-mini');
+        const archCanvas = document.getElementById('arch-canvas-mini');
+        const archNotes = document.querySelector('#modal-architecture .pm-arch-notes');
+        const archData = {
+            'c2-adhoc': {
+                notes: `<h4>c2-adhoc</h4>
+                        <p>Single-team-server adhoc engagement profile. One Cobalt Strike team server in a private subnet, one Nginx redirector in DMZ, one Windows bastion for operator access.</p>
+                        <p><strong>Instances:</strong> 3 (1× t3.medium, 2× t3.small)</p>
+                        <p><strong>Est. monthly:</strong> ~$95</p>`,
+                svg: `<svg viewBox="0 0 320 240" width="100%" height="240" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+                        <rect x="40" y="40" width="80" height="40" rx="4"/>
+                        <text x="80" y="65" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" stroke="none" text-anchor="middle">Bastion</text>
+                        <rect x="200" y="40" width="80" height="40" rx="4"/>
+                        <text x="240" y="65" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" stroke="none" text-anchor="middle">Redirector</text>
+                        <rect x="200" y="160" width="80" height="40" rx="4"/>
+                        <text x="240" y="185" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" stroke="none" text-anchor="middle">C2 server</text>
+                        <path d="M120 60 H200" stroke-dasharray="3 3"/>
+                        <path d="M240 80 V160"/>
+                      </svg>`
+            },
+            'combined-adhoc-mini': {
+                notes: `<h4>combined-adhoc-mini</h4>
+                        <p>C2 adhoc engagement peered with a GOAD Mini AD lab. Two VPCs joined via VPC peering; cross-VPC traffic constrained to the management CIDR.</p>
+                        <p><strong>Instances:</strong> 6 (3 C2 + 3 GOAD)</p>
+                        <p><strong>Est. monthly:</strong> ~$180</p>`,
+                svg: `<svg viewBox="0 0 320 240" width="100%" height="240" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+                        <rect x="20" y="30" width="120" height="180" rx="4" stroke-dasharray="2 4"/>
+                        <text x="80" y="25" font-family="ui-monospace, monospace" font-size="9" fill="currentColor" stroke="none" text-anchor="middle">C2 VPC</text>
+                        <rect x="40" y="50" width="80" height="34" rx="4"/>
+                        <text x="80" y="71" font-family="ui-monospace, monospace" font-size="9" fill="currentColor" stroke="none" text-anchor="middle">Redirector</text>
+                        <rect x="40" y="100" width="80" height="34" rx="4"/>
+                        <text x="80" y="121" font-family="ui-monospace, monospace" font-size="9" fill="currentColor" stroke="none" text-anchor="middle">C2 server</text>
+                        <rect x="40" y="150" width="80" height="34" rx="4"/>
+                        <text x="80" y="171" font-family="ui-monospace, monospace" font-size="9" fill="currentColor" stroke="none" text-anchor="middle">Bastion</text>
+                        <rect x="180" y="30" width="120" height="180" rx="4" stroke-dasharray="2 4"/>
+                        <text x="240" y="25" font-family="ui-monospace, monospace" font-size="9" fill="currentColor" stroke="none" text-anchor="middle">GOAD VPC</text>
+                        <rect x="200" y="50" width="80" height="34" rx="4"/>
+                        <text x="240" y="71" font-family="ui-monospace, monospace" font-size="9" fill="currentColor" stroke="none" text-anchor="middle">DC01</text>
+                        <rect x="200" y="100" width="80" height="34" rx="4"/>
+                        <text x="240" y="121" font-family="ui-monospace, monospace" font-size="9" fill="currentColor" stroke="none" text-anchor="middle">SRV01</text>
+                        <rect x="200" y="150" width="80" height="34" rx="4"/>
+                        <text x="240" y="171" font-family="ui-monospace, monospace" font-size="9" fill="currentColor" stroke="none" text-anchor="middle">Jumpbox</text>
+                        <path d="M140 120 H180" stroke-dasharray="4 3"/>
+                      </svg>`
+            },
+            'goad-mini': {
+                notes: `<h4>goad-mini</h4>
+                        <p>Standalone GOAD Mini lab — 2 domain controllers and 1 member server in a single forest. No C2 infrastructure deployed.</p>
+                        <p><strong>Instances:</strong> 4 (1 Jumpbox + 3 AD)</p>
+                        <p><strong>Est. monthly:</strong> ~$110</p>`,
+                svg: `<svg viewBox="0 0 320 240" width="100%" height="240" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+                        <rect x="120" y="20" width="80" height="34" rx="4"/>
+                        <text x="160" y="41" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" stroke="none" text-anchor="middle">Jumpbox</text>
+                        <rect x="40" y="100" width="80" height="34" rx="4"/>
+                        <text x="80" y="121" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" stroke="none" text-anchor="middle">DC01</text>
+                        <rect x="200" y="100" width="80" height="34" rx="4"/>
+                        <text x="240" y="121" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" stroke="none" text-anchor="middle">DC02</text>
+                        <rect x="120" y="180" width="80" height="34" rx="4"/>
+                        <text x="160" y="201" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" stroke="none" text-anchor="middle">SRV01</text>
+                        <path d="M160 54 L80 100"/>
+                        <path d="M160 54 L240 100"/>
+                        <path d="M120 117 H200" stroke-dasharray="3 3"/>
+                        <path d="M80 134 L160 180"/>
+                        <path d="M240 134 L160 180"/>
+                      </svg>`
+            }
+        };
+        archSelect.addEventListener('change', () => {
+            const data = archData[archSelect.value];
+            archCanvas.innerHTML = data.svg;
+            archNotes.innerHTML = data.notes;
+        });
+
+        // --- Toasts -----------------------------------------------------------
+        const toastStack = document.getElementById('toast-stack');
+        const toastDefs = [
+            {
+                variant: 'success',
+                title: 'Deployment provisioned',
+                msg: 'c2_adhoc_dev_harriss_macbook_pro_01 is live.',
+                icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="8"/><path d="M6 10.5 L9 13.5 L14 7"/></svg>'
+            },
+            {
+                variant: 'info',
+                title: 'Cost data refreshed',
+                msg: 'MTD spend updated from Cost Explorer.',
+                icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="8"/><path d="M10 6.5 V11 M10 14 V14.5"/></svg>'
+            },
+            {
+                variant: 'danger',
+                title: 'Redirector handshake failed',
+                msg: 'Listener tls_443 reported a TLS handshake error.',
+                icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2 L18 17 L2 17 Z"/><path d="M10 8 V12 M10 14 V14.5"/></svg>'
+            }
+        ];
+
+        function showToast(def, i) {
+            const t = document.createElement('div');
+            t.className = 'pm-toast pm-toast--' + def.variant;
+            t.innerHTML = `
+                <span class="pm-toast__icon">${def.icon}</span>
+                <div class="pm-toast__body">
+                    <div class="pm-toast__title">${def.title}</div>
+                    <div class="pm-toast__msg">${def.msg}</div>
+                </div>
+                <span class="pm-toast__progress"></span>
+            `;
+            toastStack.appendChild(t);
+            setTimeout(() => {
+                t.classList.add('pm-toast--leaving');
+                t.addEventListener('animationend', () => t.remove(), { once: true });
+            }, 4000);
+        }
+
+        document.getElementById('trigger-toast').addEventListener('click', () => {
+            toastDefs.forEach((d, i) => setTimeout(() => showToast(d, i), i * 220));
+        });
+    </script>
+</body>
+</html>
