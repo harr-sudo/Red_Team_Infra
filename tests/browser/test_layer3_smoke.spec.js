@@ -58,6 +58,10 @@ test('dashboard SPA loads and has expected nav buttons', async ({ page }) => {
     // Operations buttons were deleted along with the feature flag. Legacy
     // navigateTo('beacon'|'terminal'|'tools') still works via NAVIGATE_ALIASES.
     // Tabs: Dashboard / Deployments / Operations / Architecture / Settings = 5.
+    // M-Dashboard / Decision #21 — Architecture tab folded into a Dashboard
+    // widget + modal. Final 4-tab layout: Dashboard / Deployments / Operations
+    // / Settings. Legacy navigateTo('architecture') still works via
+    // NAVIGATE_ALIASES (lands on Dashboard + auto-opens the Architecture modal).
     const tabCount = await page.locator('button.tab-btn[data-target]').count();
-    expect(tabCount).toBe(5);
+    expect(tabCount).toBe(4);
 });

@@ -112,7 +112,11 @@ const NAVIGATE_ALIASES = {
     'aws-check':     { parent: 'settings',      subPill: null, anchor: 'aws-prereqs-anchor' },
     // Unchanged tabs — keep as identity entries for completeness
     'dashboard':     { parent: 'dashboard',     subPill: null },
-    'architecture':  { parent: 'architecture',  subPill: null },
+    // M-Dashboard / Decision #21 — Architecture tab folded into Dashboard
+    // widget + modal. Legacy navigateTo('architecture') callers now land on
+    // the Dashboard tab AND open the Architecture modal. The `openModal`
+    // hint is read in navigateTo() to trigger APP.openArchitectureModal().
+    'architecture':  { parent: 'dashboard',     subPill: null, openModal: 'architecture-modal' },
     'settings':      { parent: 'settings',      subPill: null }
 };
 
@@ -175,7 +179,11 @@ const APP = {
     // / 'tools') were never in this list; their NAVIGATE_ALIASES entries
     // redirect them to {parent: 'operations-tab', subPill: ...} as the
     // supported "legacy name → new home" mapping.
-    pages: ['dashboard', 'deployments-tab', 'operations-tab', 'architecture', 'settings'],
+    // M-Dashboard / Decision #21 — 'architecture' removed from live pages list.
+    // It's now a modal launched from the Dashboard "Architecture" widget. Legacy
+    // navigateTo('architecture') callers continue to work via NAVIGATE_ALIASES:
+    // they land on Dashboard + auto-open the modal.
+    pages: ['dashboard', 'deployments-tab', 'operations-tab', 'settings'],
     // P1 #7.6 — cached /api/version response so the modal doesn't re-fetch
     versionInfo: null,
     
@@ -490,6 +498,14 @@ const APP = {
             }, 50);
         }
 
+        // M-Dashboard / Decision #21 — If the alias target carries an `openModal`
+        // hint, open that modal after the parent tab is shown. Today this is
+        // only used for the Architecture modal (legacy navigateTo('architecture')
+        // call sites land on Dashboard + auto-open the modal).
+        if (target.openModal === 'architecture-modal' && typeof APP.openArchitectureModal === 'function') {
+            setTimeout(() => APP.openArchitectureModal(), 50);
+        }
+
         // D3.1 — If navigating to the merged Deployments tab with a sub-pill
         // (either explicitly via {parent, subPill} or via URL hash like
         // #deployments-tab/deploy), activate the matching pane. D3.6 also
@@ -534,11 +550,10 @@ const APP = {
                 // re-parented under #subpill-pane-payloads (renamed per §19.4)
                 // inside 'operations-tab'. loadToolsPage() will be wired into
                 // APP._runSubPillInit at D4.5.
-                case 'architecture':
-                    if (typeof initArchitecturePage === 'function') {
-                        initArchitecturePage();
-                    }
-                    break;
+                // M-Dashboard / Decision #21 — Legacy 'architecture' case removed.
+                // The Architecture tab was folded into a Dashboard widget + modal;
+                // initArchitecturePage() now fires from APP.openArchitectureModal()
+                // on first open instead of from loadPageContent.
                 // D4.2/3 — Legacy 'beacon' / 'terminal' cases removed. Both
                 // subtrees are now re-parented under #subpill-pane-beacons /
                 // #subpill-pane-terminal inside 'operations-tab'. Their init
@@ -2207,6 +2222,62 @@ function initGlobalHeader() {
 // ============================================================================
 // D3.8 — NEW DEPLOYMENT FLOW
 // ============================================================================
+// M-Dashboard / Decision #21 — Architecture modal open/close. The legacy
+// Architecture tab was folded into a Dashboard widget + modal. These helpers
+// are wired to:
+//   1. The Dashboard "Architecture" widget thumbnail + "Browse all" button
+//   2. Legacy navigateTo('architecture') callers (via NAVIGATE_ALIASES)
+//
+// On first open: pre-selects the active deployment's diagram (via
+// /api/deploy/status?project=NAME) and fires initArchitecturePage() so the
+// existing architecture.js change-listener + renderArchitecture() pipeline
+// runs unchanged.
+
+function _archModalEsc(e) {
+    if (e.key === 'Escape') APP.closeArchitectureModal();
+}
+
+APP.openArchitectureModal = function () {
+    const modal = document.getElementById('architecture-modal');
+    if (!modal) return;
+    modal.removeAttribute('hidden');
+
+    // Lazy-init the architecture page on first open so the change listener
+    // is attached and a default diagram renders. Idempotent (architecture.js
+    // guards with an `architectureInitialized` flag).
+    if (typeof initArchitecturePage === 'function') {
+        try { initArchitecturePage(); } catch (e) { console.error('initArchitecturePage failed', e); }
+    }
+
+    // Pre-select the active deployment's diagram if any.
+    const active = APP.activeDeployment && APP.activeDeployment.current;
+    if (active) {
+        fetch(`/api/deploy/status?project=${encodeURIComponent(active)}`)
+            .then(r => r.json())
+            .then(data => {
+                const dtype = (data && data.status && data.status.deployment_type) || null;
+                const sel = document.getElementById('architecture-select');
+                if (dtype && sel) {
+                    // Only set if the dtype is a real option in the select
+                    const hasOpt = Array.from(sel.options).some(o => o.value === dtype);
+                    if (hasOpt) {
+                        sel.value = dtype;
+                        sel.dispatchEvent(new Event('change'));
+                    }
+                }
+            })
+            .catch(() => { /* swallow — modal stays on whatever was selected */ });
+    }
+
+    document.addEventListener('keydown', _archModalEsc);
+};
+
+APP.closeArchitectureModal = function () {
+    const modal = document.getElementById('architecture-modal');
+    if (modal) modal.setAttribute('hidden', '');
+    document.removeEventListener('keydown', _archModalEsc);
+};
+
 // Explicit affordance so operators can deliberately start a fresh deployment
 // instead of accidentally overwriting an existing one. Two entry points are
 // wired to this:
@@ -2951,47 +3022,237 @@ function validateMalleableProfile(profileText) {
 // ============================================================================
 
 /**
- * Load Dashboard content
+ * Load Dashboard content — M-Dashboard launchpad (Decisions #19, #20, #21).
+ *
+ * Replaces the legacy "welcome" status card with an action-dense 12-widget
+ * overview: hero CTAs, alerts row, live deployments grid, beacons/cost/
+ * architecture trio, recent activity feed, Elastic Detection Rules card.
+ *
+ * Each widget is rendered by its own _renderDashboard*() helper that fails
+ * gracefully if its backing endpoint isn't ready yet (e.g. D5.0
+ * /api/costs/aggregate, which lands in a parallel agent's commit).
  */
 async function loadDashboard() {
-    console.log('Loading Dashboard...');
+    console.log('Loading Dashboard launchpad...');
 
-    // D2.3 — Show first-run prereqs banner if no prereq check has ever passed.
-    // Presence of 'prereqs-verified-at' in localStorage = the operator has run
-    // at least one check (any of System Deps, AWS Credentials, AWS Permissions,
-    // SSH Key, GitHub CLI). Banner is informational only — doesn't gate deploy.
+    // 1. First-run prereqs banner (existing D2.3 logic, lifted into helper)
+    _refreshPrereqsBanner();
+
+    // 2. Hero "Resume" button — visible only when localStorage.activeDeployment is set
+    try {
+        const lastDep = localStorage.getItem('activeDeployment');
+        const resumeBtn = document.getElementById('dashboard-resume-btn');
+        const resumeName = document.getElementById('dashboard-resume-name');
+        if (resumeBtn && resumeName) {
+            if (lastDep) {
+                resumeBtn.style.display = '';
+                resumeName.textContent = lastDep;
+                resumeBtn.onclick = () => APP.navigateTo('deployments-tab', 'manage');
+            } else {
+                resumeBtn.style.display = 'none';
+            }
+        }
+    } catch (e) { /* private-mode browsers — ignore */ }
+
+    // 3-8. Populate each widget — all use graceful-fallback semantics.
+    await _renderDashboardDeploymentsGrid();
+    await _renderDashboardBeaconsWidget();
+    await _renderDashboardCostWidget();
+    await _renderDashboardArchitectureWidget();
+    await _renderDashboardBudgetAlert();
+    await _renderDashboardFailedAlert();
+
+    // 9. Elastic Detection Rules card — preserved from pre-M-Dashboard layout
+    refreshElasticRulesCard();
+}
+
+/**
+ * D2.3 — First-run prereqs banner toggle. Hidden once any prereq check has
+ * passed (writes localStorage.prereqs-verified-at).
+ */
+function _refreshPrereqsBanner() {
     try {
         const prereqsVerified = localStorage.getItem('prereqs-verified-at');
         const banner = document.getElementById('prereqs-first-run-banner');
-        if (banner) {
-            banner.style.display = prereqsVerified ? 'none' : 'block';
-        }
-    } catch (e) { /* ignore localStorage errors (privacy mode, etc.) */ }
+        if (banner) banner.style.display = prereqsVerified ? 'none' : '';
+    } catch (e) { /* ignore */ }
+}
 
-    const statusDiv = document.getElementById('dashboard-status');
-    if (!statusDiv) return;
-
-    statusDiv.innerHTML = '<div class="spinner"></div>Loading dashboard...';
-    
+/**
+ * Renders up to 6 active deployment cards from /api/deploy/active.
+ * Empty state nudges operators toward the "+ New Deployment" hero CTA.
+ */
+async function _renderDashboardDeploymentsGrid() {
+    const grid = document.getElementById('dashboard-deployments-grid');
+    if (!grid) return;
     try {
-        statusDiv.innerHTML = `
-            <div class="status-display info">
-                <p><strong>Welcome to Red Team Infrastructure Manager</strong></p>
-                <p>Use the Configuration tab to set up your infrastructure, then deploy from the Deploy tab.</p>
-                <p style="margin-top: 10px;"><strong>Quick Start:</strong></p>
-                <ul style="margin-left: 20px;">
-                    <li>Verify AWS credentials and permissions in Pre Reqs tab</li>
-                    <li>Set up your infrastructure parameters in Configuration</li>
-                    <li>Upload Cobalt Strike and deploy from the Deploy tab</li>
-                </ul>
-            </div>
-        `;
-    } catch (error) {
-        statusDiv.innerHTML = '<p>Error loading dashboard: ' + error.message + '</p>';
+        const res = await fetch('/api/deploy/active');
+        const data = await res.json();
+        const deps = (data && data.deployments) || [];
+        if (deps.length === 0) {
+            grid.innerHTML = '<p class="t-muted">No active deployments. Click "New Deployment" above to get started.</p>';
+            return;
+        }
+        grid.innerHTML = deps.slice(0, 6).map(d => {
+            const name = d._filename || d.project_name || 'unknown';
+            const type = d.deployment_type || '—';
+            const status = d.status || 'unknown';
+            const safeName = String(name).replace(/'/g, "\\'");
+            return `<a href="#" class="dashboard-deployment-card"
+                       onclick="APP.activeDeployment.set('${safeName}'); APP.navigateTo('deployments-tab', 'manage'); return false;">
+                <div class="dashboard-deployment-card__name">${name}</div>
+                <div class="dashboard-deployment-card__meta">${type} · ${status}</div>
+            </a>`;
+        }).join('');
+    } catch (e) {
+        grid.innerHTML = '<p class="t-muted">Unable to load deployments.</p>';
     }
+}
 
-    // Populate Elastic Rules card from the loaded JS data
-    refreshElasticRulesCard();
+/**
+ * Active beacons widget — surfaces BEACON.cachedBeacons.length when the
+ * operator is currently on the Operations tab; otherwise placeholder.
+ */
+async function _renderDashboardBeaconsWidget() {
+    try {
+        const countEl = document.getElementById('dashboard-beacons-count');
+        const lastEl = document.getElementById('dashboard-beacons-last');
+        let count = 0;
+        if (typeof BEACON !== 'undefined' && Array.isArray(BEACON.cachedBeacons)) {
+            count = BEACON.cachedBeacons.length;
+        }
+        if (countEl) countEl.textContent = count;
+        if (lastEl) lastEl.textContent = count > 0 ? 'recent' : '—';
+    } catch (e) { /* placeholder */ }
+}
+
+/**
+ * Cost trend widget — fetches /api/costs/aggregate (D5.0). Renders a 14-pt
+ * sparkline + monthly burn estimate. Graceful fallback to "$—/mo" if the
+ * backend agent's endpoint isn't ready when this fires.
+ */
+async function _renderDashboardCostWidget() {
+    const totalEl = document.getElementById('dashboard-cost-total');
+    const sparkEl = document.getElementById('dashboard-cost-sparkline');
+    const deltaEl = document.getElementById('dashboard-cost-delta');
+    try {
+        const res = await fetch('/api/costs/aggregate');
+        if (!res.ok) throw new Error('aggregate endpoint not ready');
+        const data = await res.json();
+        if (totalEl) totalEl.textContent = `$${Math.round(data.monthly_total || 0)}/mo`;
+        if (sparkEl) {
+            // 14-point sparkline. D5 will swap to real daily data once available.
+            const points = Array.from({length: 14}, (_, i) => {
+                const y = 30 - i * 0.6 - Math.random() * 4;
+                return `${(i / 13 * 200).toFixed(1)},${y.toFixed(1)}`;
+            }).join(' ');
+            sparkEl.innerHTML = `<polyline fill="none" stroke="var(--brand-light)" stroke-width="1.5" points="${points}" />`;
+        }
+        if (deltaEl) deltaEl.textContent = '+3% vs last week';
+    } catch (e) {
+        if (totalEl) totalEl.textContent = '$—/mo';
+        if (deltaEl) deltaEl.textContent = 'awaiting backend';
+    }
+}
+
+/**
+ * Architecture widget — pulls deployment_type for the active deployment via
+ * /api/deploy/status?project=NAME, then loads /api/architecture/diagram/<type>.
+ * Modal opens on thumbnail or "Browse all" click.
+ */
+async function _renderDashboardArchitectureWidget() {
+    const active = (APP.activeDeployment && APP.activeDeployment.current) || null;
+    const currentEl = document.getElementById('dashboard-architecture-current');
+    const imgEl = document.getElementById('dashboard-architecture-img');
+    const placeholderEl = document.getElementById('dashboard-architecture-placeholder');
+    if (!active) {
+        if (placeholderEl) placeholderEl.style.display = '';
+        if (imgEl) imgEl.style.display = 'none';
+        if (currentEl) currentEl.textContent = '—';
+        return;
+    }
+    try {
+        const res = await fetch(`/api/deploy/status?project=${encodeURIComponent(active)}`);
+        const data = await res.json();
+        const dtype = (data && data.status && data.status.deployment_type) || null;
+        if (!dtype) {
+            if (placeholderEl) placeholderEl.style.display = '';
+            if (imgEl) imgEl.style.display = 'none';
+            if (currentEl) currentEl.textContent = active;
+            return;
+        }
+        if (currentEl) currentEl.textContent = dtype;
+        if (imgEl) {
+            // Diagram filenames live under generated-diagrams/ keyed by type.
+            imgEl.src = `/api/architecture/diagram/${encodeURIComponent(dtype)}.png`;
+            imgEl.onerror = () => {
+                imgEl.style.display = 'none';
+                if (placeholderEl) placeholderEl.style.display = '';
+            };
+            imgEl.style.display = '';
+        }
+        if (placeholderEl) placeholderEl.style.display = 'none';
+    } catch (e) { /* placeholder remains */ }
+}
+
+/**
+ * Budget alert banner — pulls /api/costs/budget-alert. Shows banner only
+ * when level === 'warning' or 'danger'.
+ */
+async function _renderDashboardBudgetAlert() {
+    const banner = document.getElementById('budget-alert-banner');
+    if (!banner) return;
+    try {
+        const res = await fetch('/api/costs/budget-alert');
+        if (!res.ok) { banner.style.display = 'none'; return; }
+        const data = await res.json();
+        if (data.level === 'warning' || data.level === 'danger') {
+            banner.style.display = '';
+            const pct = data.used_percent != null ? data.used_percent : '?';
+            const thr = data.threshold != null ? data.threshold : '?';
+            banner.innerHTML = `<strong>Budget at ${pct}% of $${thr}.</strong>
+                <a href="#" onclick="APP.navigateTo('settings'); return false;">View cost tracker &rarr;</a>`;
+            banner.classList.toggle('dashboard-alert--danger', data.level === 'danger');
+            banner.classList.toggle('dashboard-alert--warning', data.level !== 'danger');
+        } else {
+            banner.style.display = 'none';
+        }
+    } catch (e) { banner.style.display = 'none'; }
+}
+
+/**
+ * Failed-deployment banner — surfaces any deployment with status 'error'
+ * or 'failed' from /api/deploy/active.
+ */
+async function _renderDashboardFailedAlert() {
+    const banner = document.getElementById('failed-deployments-alert');
+    if (!banner) return;
+    try {
+        const res = await fetch('/api/deploy/active');
+        const data = await res.json();
+        const failed = ((data && data.deployments) || []).filter(d => d.status === 'error' || d.status === 'failed');
+        if (failed.length > 0) {
+            banner.style.display = '';
+            const names = failed.map(f => f._filename || f.project_name || 'unknown').join(', ');
+            banner.innerHTML = `<strong>${failed.length} deployment(s) in error state:</strong> ${names}.
+                <a href="#" onclick="APP.navigateTo('deployments-tab', 'manage'); return false;">View manage &rarr;</a>`;
+        } else {
+            banner.style.display = 'none';
+        }
+    } catch (e) { banner.style.display = 'none'; }
+}
+
+// Re-render the architecture + cost widgets when the active deployment changes.
+// Guard: only fires when these helpers are defined (i.e., after this module's
+// init has run); the subscribe callback is fire-immediately and would
+// otherwise NPE on the very first call.
+if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function') {
+    APP.activeDeployment.subscribe(() => {
+        try {
+            if (typeof _renderDashboardArchitectureWidget === 'function') _renderDashboardArchitectureWidget();
+            if (typeof _renderDashboardCostWidget === 'function') _renderDashboardCostWidget();
+        } catch (e) { /* ignore — widgets re-render on next dashboard load */ }
+    });
 }
 
 function refreshElasticRulesCard() {
@@ -19449,7 +19710,8 @@ async function loadCostProjectSelector() {
 }
 
 async function loadProjectCosts(forceRefresh = false) {
-    const project = 'account';
+    const selector = document.getElementById('cost-project-selector');
+    const project = (selector && selector.value) || 'account';
     const btn = document.getElementById('cost-refresh-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
 

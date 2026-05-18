@@ -4373,6 +4373,35 @@ def get_project_resources(project_name: str):
         }), 500
 
 
+def _query_us_east_1_resources():
+    """Query us-east-1 for cross-region resources (CloudFront ACM certs).
+
+    CloudFront requires its ACM certificates to live in us-east-1 regardless
+    of where the rest of the infra is deployed. The primary `/resources/...`
+    endpoints currently build their boto3 clients against `eu-central-1`,
+    so these certs would otherwise be invisible. Returns a dict of resource
+    lists tagged with their source region — never raises (logs and returns
+    an empty list on any error so the primary handler stays healthy).
+    """
+    import boto3
+    out = {'acm_us_east_1': []}
+    try:
+        acm_us = boto3.client('acm', region_name='us-east-1')
+        certs = acm_us.list_certificates(MaxItems=100).get('CertificateSummaryList', [])
+        for c in certs:
+            out['acm_us_east_1'].append({
+                'arn': c.get('CertificateArn'),
+                'domain': c.get('DomainName'),
+                'status': c.get('Status'),
+                'in_use': c.get('InUse'),
+                'region': 'us-east-1',
+            })
+    except Exception as e:
+        # Don't fail the whole handler if cross-region ACM is unreachable
+        print(f"[deploy] us-east-1 ACM query failed: {e}")
+    return out
+
+
 @bp.route('/resources/all-projects', methods=['GET'])
 def get_all_project_resources():
     """
@@ -4380,17 +4409,21 @@ def get_all_project_resources():
     """
     try:
         resources_file = project_root / "logs" / "deployment_resources.json"
-        
+
+        # Always include cross-region resources (CloudFront ACM lives in us-east-1)
+        cross_region = _query_us_east_1_resources()
+
         if not resources_file.exists():
             return jsonify({
                 "success": True,
                 "projects": [],
+                "acm_us_east_1": cross_region.get("acm_us_east_1", []),
                 "message": "No deployments found"
             })
-        
+
         with open(resources_file, 'r') as f:
             all_deployments = json.load(f)
-        
+
         projects = []
         for project_name, data in all_deployments.items():
             projects.append({
@@ -4400,16 +4433,17 @@ def get_all_project_resources():
                 "region": data.get('region'),
                 "resource_count": data.get('resource_count', len(data.get('resources', [])))
             })
-        
+
         # Sort by deployment time (newest first)
         projects.sort(key=lambda x: x.get('deployed_at', ''), reverse=True)
-        
+
         return jsonify({
             "success": True,
             "projects": projects,
-            "total_projects": len(projects)
+            "total_projects": len(projects),
+            "acm_us_east_1": cross_region.get("acm_us_east_1", []),
         })
-        
+
     except Exception as e:
         return jsonify({
             "success": False,

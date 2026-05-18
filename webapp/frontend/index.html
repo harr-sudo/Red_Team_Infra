@@ -101,49 +101,125 @@
                  routed here via NAVIGATE_ALIASES in app.js. Final 5-tab layout:
                  Dashboard / Deployments / Operations / Architecture / Settings. -->
             <button class="tab-btn" data-target="operations-tab">Operations</button>
-            <button class="tab-btn" data-target="architecture">Architecture</button>
+            <!-- M-Dashboard / Decision #21 — Architecture tab folded into a Dashboard
+                 widget + modal. Legacy navigateTo('architecture') callers continue to
+                 work via NAVIGATE_ALIASES (app.js) which now opens the modal instead. -->
             <button class="tab-btn" data-target="settings">Settings</button>
         </nav>
 
         <!-- Tab Content Container -->
         <div id="tab-container">
 
-            <!-- Dashboard Page -->
+            <!-- Dashboard Page — M-Dashboard launchpad (Decisions #19, #20, #21).
+                 12-widget action-dense overview. Architecture tab is folded into
+                 the widget + modal (Decision #21); legacy callers go through
+                 NAVIGATE_ALIASES -> openArchitectureModal(). -->
             <div class="tab-page active" data-page="dashboard">
                 <h2 class="page-title">Infrastructure Overview</h2>
 
-                <!-- D2.3 — First-run prerequisites banner. Shown when localStorage
-                     'prereqs-verified-at' is absent. Cleared after any prereq check
-                     succeeds. Link routes through APP.navigateTo('aws-check'),
-                     which the NAVIGATE_ALIASES map redirects to Settings + anchor. -->
-                <div id="prereqs-first-run-banner" class="callout callout--warning" style="display: none; margin-bottom: 16px;">
-                    <strong>Prerequisites not verified.</strong>
-                    Run the AWS &amp; SSH prerequisite checks in
-                    <a href="#" onclick="APP.navigateTo('aws-check'); return false;" style="color: inherit; text-decoration: underline;">Settings &rarr; AWS &amp; SSH Prerequisites</a>
-                    before your first deployment.
+                <!-- Region notice (preserved from pre-M-Dashboard layout) -->
+                <div class="dashboard-region-notice">
+                    <strong>Region:</strong> All deployments, resource queries, and purge operations are restricted to <strong>eu-central-1</strong> (Frankfurt).
+                    <span class="dashboard-region-notice__hint">Note: If CloudFront domain fronting is enabled, ACM certificates are provisioned in us-east-1 (AWS requirement for CloudFront).</span>
                 </div>
 
-                <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
-                    <strong style="color: var(--gold);">Region:</strong> All deployments, resource queries, and purge operations are restricted to <strong>eu-central-1</strong> (Frankfurt).
-                    <span style="margin-left: 8px; opacity: 0.8;">Note: If CloudFront domain fronting is enabled, ACM certificates are provisioned in us-east-1 (AWS requirement for CloudFront).</span>
-                </div>
-                <div id="dashboard-status">
-                    <p>Loading...</p>
-                </div>
+                <!-- 1. Hero CTAs row — primary "New Deployment" + secondary "Resume" -->
+                <section class="dashboard-hero">
+                    <button class="dashboard-hero__primary" type="button" onclick="APP.startNewDeployment()">
+                        <span class="dashboard-hero__icon" aria-hidden="true">+</span>
+                        <div class="dashboard-hero__text">
+                            <div class="dashboard-hero__title">New Deployment</div>
+                            <div class="dashboard-hero__subtitle">Configure + deploy C2 / GOAD / Combined</div>
+                        </div>
+                    </button>
+                    <button class="dashboard-hero__resume" id="dashboard-resume-btn" type="button" style="display: none;">
+                        <div class="dashboard-hero__resume-label">Resume</div>
+                        <div class="dashboard-hero__resume-name" id="dashboard-resume-name">&mdash;</div>
+                    </button>
+                </section>
 
-                <!-- Elastic Detection Rules Card -->
-                <div class="section-card" style="margin-top: 16px;">
-                    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                        <h3 style="margin: 0;">Elastic Detection Rules</h3>
-                        <span id="elastic-rules-count" class="badge badge-info" style="font-size: 0.85em;">—</span>
-                        <span id="elastic-rules-date" class="t-muted" style="font-size: 0.85em;">Last updated: —</span>
-                        <button class="btn btn-sm btn-info" id="btn-update-elastic-rules" onclick="updateElasticRules()">Update Rules</button>
-                        <span id="elastic-rules-status" class="t-muted" style="font-size: 0.85em;"></span>
+                <!-- 2. Alerts row — shown only when relevant -->
+                <section class="dashboard-alerts">
+                    <!-- D2.3 — First-run prerequisites banner. Shown when localStorage
+                         'prereqs-verified-at' is absent. Cleared after any prereq check
+                         succeeds. Link routes through APP.navigateTo('aws-check'),
+                         which the NAVIGATE_ALIASES map redirects to Settings + anchor. -->
+                    <div id="prereqs-first-run-banner" class="dashboard-alert dashboard-alert--warning" style="display: none;">
+                        <strong>Prerequisites not verified.</strong>
+                        Run the AWS &amp; SSH prerequisite checks in
+                        <a href="#" onclick="APP.navigateTo('aws-check'); return false;">Settings &rarr; AWS &amp; SSH Prerequisites</a>
+                        before your first deployment.
                     </div>
-                    <p class="t-muted" style="margin-top: 8px; font-size: 0.88em;">
+                    <div id="budget-alert-banner" class="dashboard-alert dashboard-alert--warning" style="display: none;"></div>
+                    <div id="failed-deployments-alert" class="dashboard-alert dashboard-alert--danger" style="display: none;"></div>
+                </section>
+
+                <!-- 3. Live deployments grid -->
+                <section class="dashboard-widget">
+                    <h3 class="dashboard-widget__title">Live Deployments</h3>
+                    <div id="dashboard-deployments-grid" class="dashboard-deployments-grid">
+                        <p class="t-muted">Loading...</p>
+                    </div>
+                </section>
+
+                <!-- 4. 3-col widget row: Active Beacons + Cost Trend + Architecture -->
+                <section class="dashboard-widget-row">
+                    <div class="dashboard-widget dashboard-widget--compact">
+                        <h3 class="dashboard-widget__title">Active Beacons</h3>
+                        <div id="dashboard-beacons-widget">
+                            <div class="dashboard-stat-big" id="dashboard-beacons-count">&mdash;</div>
+                            <div class="dashboard-stat-caption">Last callback: <span id="dashboard-beacons-last">&mdash;</span></div>
+                            <a href="#" onclick="APP.navigateTo('operations-tab', 'beacons'); return false;" class="dashboard-stat-link">Open beacons &rarr;</a>
+                        </div>
+                    </div>
+                    <div class="dashboard-widget dashboard-widget--compact">
+                        <h3 class="dashboard-widget__title">Cost Trend (14d)</h3>
+                        <div id="dashboard-cost-widget">
+                            <div class="dashboard-stat-big" id="dashboard-cost-total">&mdash;</div>
+                            <svg id="dashboard-cost-sparkline" viewBox="0 0 200 40" class="dashboard-cost-sparkline" preserveAspectRatio="none" aria-hidden="true"></svg>
+                            <div class="dashboard-cost-delta" id="dashboard-cost-delta">&mdash;</div>
+                            <a href="#" onclick="APP.navigateTo('settings'); return false;" class="dashboard-stat-link">Cost tracker &rarr;</a>
+                        </div>
+                    </div>
+                    <div class="dashboard-widget dashboard-widget--compact" id="dashboard-architecture-widget">
+                        <h3 class="dashboard-widget__title">Architecture</h3>
+                        <div class="dashboard-architecture-thumb" id="dashboard-architecture-thumb" onclick="APP.openArchitectureModal()">
+                            <img id="dashboard-architecture-img" alt="Architecture diagram" style="display: none;">
+                            <div class="dashboard-architecture-placeholder" id="dashboard-architecture-placeholder">
+                                Pick a deployment to see its architecture.
+                            </div>
+                        </div>
+                        <div class="dashboard-architecture-meta">
+                            <span id="dashboard-architecture-current">&mdash;</span>
+                            <button class="btn btn-secondary btn-sm" type="button" onclick="APP.openArchitectureModal()">Browse all &rarr;</button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 5. Recent activity feed (placeholder pre-P1#4) -->
+                <section class="dashboard-widget">
+                    <h3 class="dashboard-widget__title">Recent Activity</h3>
+                    <div id="dashboard-activity-feed">
+                        <p class="t-muted">
+                            Operator audit log will appear here once the audit middleware lands (P1 #4).
+                            For now: see deployment history in the Deployments tab &rarr; Manage sub-pill.
+                        </p>
+                    </div>
+                </section>
+
+                <!-- 6. Elastic Detection Rules card (preserved, polished for launchpad) -->
+                <section class="dashboard-widget" id="dashboard-elastic-rules-widget">
+                    <h3 class="dashboard-widget__title">Elastic Detection Rules</h3>
+                    <div class="dashboard-elastic-rules-row">
+                        <span id="elastic-rules-count" class="badge badge-info">&mdash;</span>
+                        <span id="elastic-rules-date" class="t-muted">Last updated: &mdash;</span>
+                        <button class="btn btn-sm btn-info" id="btn-update-elastic-rules" type="button" onclick="updateElasticRules()">Update Rules</button>
+                        <span id="elastic-rules-status" class="t-muted"></span>
+                    </div>
+                    <p class="t-muted dashboard-elastic-rules-help">
                         Pulls latest Elastic SIEM detection rules from GitHub and regenerates the OPSEC command mappings.
                     </p>
-                </div>
+                </section>
             </div>
 
             <!-- D3 — Deployments merged tab (Configure / Deploy / Manage sub-pills).
@@ -2302,44 +2378,56 @@ ns-143.awsdns-17.org
             <!-- D2 — Pre Reqs content moved into Settings tab below as a section card. -->
 
             <!-- Settings Page -->
-            <!-- Architecture Docs Page -->
-            <div class="tab-page" data-page="architecture">
-                <h2 class="page-title">Infrastructure Architecture</h2>
+            <!-- M-Dashboard / Decision #21 — Architecture content folded into a modal
+                 launched from the Dashboard "Architecture" widget. The legacy
+                 .tab-page wrapper was deleted; the inner deployment selector +
+                 markdown render still live here so initArchitecturePage() and
+                 architecture.js keep working unchanged. The modal is hidden by
+                 default via the `hidden` attribute + .modal[hidden] CSS rule. -->
+            <div id="architecture-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="architecture-modal-title">
+                <div class="modal__backdrop" onclick="APP.closeArchitectureModal()"></div>
+                <div class="modal__content">
+                    <header class="modal__header">
+                        <h2 id="architecture-modal-title">Infrastructure Architecture</h2>
+                        <button class="modal__close" type="button" onclick="APP.closeArchitectureModal()" aria-label="Close">&times;</button>
+                    </header>
+                    <div class="modal__body">
+                        <div class="section-card" style="margin-bottom: 20px;">
+                            <label for="architecture-select" style="display: block; font-weight: 600; margin-bottom: 10px; color: var(--text-secondary);">Select Deployment Architecture:</label>
+                            <select id="architecture-select" class="form-select">
+                                <optgroup label="Full C2 Infrastructure (Internet-Facing Ops)">
+                                    <option value="c2-adhoc">C2 Ad-Hoc: Single Server + Redirectors</option>
+                                    <option value="c2-adhoc-domain-fronting">C2 Ad-Hoc: Domain Fronting Mode</option>
+                                    <option value="ssl-options">SSL/TLS Options Comparison</option>
+                                    <option value="c2-purple">C2 Purple Team: Redundant Servers</option>
+                                    <option value="c2-full">C2 Full Red Team: Phase-Based Operations</option>
+                                </optgroup>
+                                <optgroup label="GOAD Training Labs (with Cobalt Strike)">
+                                    <option value="goad-mini">GOAD Mini + CS: 1 VM, 1 Domain</option>
+                                    <option value="goad-light">GOAD Light + CS: 3 VMs, 2 Domains</option>
+                                    <option value="goad-full">GOAD Full + CS: 5 VMs, 3 Domains, 2 Forests</option>
+                                    <option value="goad-sccm">GOAD SCCM + CS: 4 VMs, SCCM Lab</option>
+                                    <option value="goad-nha">GOAD NHA + CS: 5 VMs, Challenge Lab</option>
+                                </optgroup>
+                                <optgroup label="Full C2 + GOAD Lab (Realistic Training)">
+                                    <option value="combined-mini">Full C2 Ad-Hoc + GOAD Mini</option>
+                                    <option value="combined-light">Full C2 Ad-Hoc + GOAD Light</option>
+                                    <option value="combined-full">Full C2 Red Team + GOAD Full</option>
+                                </optgroup>
+                                <optgroup label="Component Architecture (Technical Details)">
+                                    <option value="attack-box">Windows Attack Box - Detailed Architecture</option>
+                                    <option value="s3-storage">S3 Deployment Storage - Security Architecture</option>
+                                    <option value="iam-security">IAM Security - Roles &amp; Permissions</option>
+                                    <option value="ssh-key-management">SSH Key Management - Automation</option>
+                                </optgroup>
+                            </select>
+                        </div>
 
-                <div class="section-card" style="margin-bottom: 20px;">
-                    <label for="architecture-select" style="display: block; font-weight: 600; margin-bottom: 10px; color: var(--gold-muted);">Select Deployment Architecture:</label>
-                    <select id="architecture-select" class="form-select">
-                        <optgroup label="Full C2 Infrastructure (Internet-Facing Ops)">
-                            <option value="c2-adhoc">C2 Ad-Hoc: Single Server + Redirectors</option>
-                            <option value="c2-adhoc-domain-fronting">C2 Ad-Hoc: Domain Fronting Mode</option>
-                            <option value="ssl-options">SSL/TLS Options Comparison</option>
-                            <option value="c2-purple">C2 Purple Team: Redundant Servers</option>
-                            <option value="c2-full">C2 Full Red Team: Phase-Based Operations</option>
-                        </optgroup>
-                        <optgroup label="GOAD Training Labs (with Cobalt Strike)">
-                            <option value="goad-mini">GOAD Mini + CS: 1 VM, 1 Domain</option>
-                            <option value="goad-light">GOAD Light + CS: 3 VMs, 2 Domains</option>
-                            <option value="goad-full">GOAD Full + CS: 5 VMs, 3 Domains, 2 Forests</option>
-                            <option value="goad-sccm">GOAD SCCM + CS: 4 VMs, SCCM Lab</option>
-                            <option value="goad-nha">GOAD NHA + CS: 5 VMs, Challenge Lab</option>
-                        </optgroup>
-                        <optgroup label="Full C2 + GOAD Lab (Realistic Training)">
-                            <option value="combined-mini">Full C2 Ad-Hoc + GOAD Mini</option>
-                            <option value="combined-light">Full C2 Ad-Hoc + GOAD Light</option>
-                            <option value="combined-full">Full C2 Red Team + GOAD Full</option>
-                        </optgroup>
-                        <optgroup label="Component Architecture (Technical Details)">
-                            <option value="attack-box">Windows Attack Box - Detailed Architecture</option>
-                            <option value="s3-storage">S3 Deployment Storage - Security Architecture</option>
-                            <option value="iam-security">IAM Security - Roles & Permissions</option>
-                            <option value="ssh-key-management">SSH Key Management - Automation</option>
-                        </optgroup>
-                    </select>
-                </div>
-
-                <div class="arch-content-area">
-                    <div id="markdown-content" class="markdown-content">
-                        <p style="color: var(--text-muted); text-align: center; padding: 40px 0;">Select an architecture above to view documentation</p>
+                        <div class="arch-content-area">
+                            <div id="markdown-content" class="markdown-content">
+                                <p class="t-muted" style="text-align: center; padding: 40px 0;">Select an architecture above to view documentation</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
