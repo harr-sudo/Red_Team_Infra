@@ -47,6 +47,16 @@
                             tabindex="-1"
                             hidden></ul>
                     </div>
+                    <!-- D3.8 — Explicit "New Deployment" entry. Pairs with the
+                         banner at the top of the Configure sub-pane. Wired in
+                         app.js initGlobalHeader() to APP.startNewDeployment(). -->
+                    <button class="global-header__new-deployment-btn"
+                            type="button"
+                            id="global-new-deployment-btn"
+                            title="Start a new deployment"
+                            aria-label="New deployment">
+                        + New
+                    </button>
                 </div>
                 <!-- Cost indicator -->
                 <div class="global-header__chip global-header__cost" id="global-cost-chip"
@@ -160,6 +170,15 @@
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="configure" id="subpill-pane-configure">
                         <!-- D3.2: Configuration tab content re-parents here -->
+                    <!-- D3.8 — Explicit "New Deployment" banner. Pairs with the
+                         "+ New" button in the global header. Both wired to
+                         APP.startNewDeployment() in app.js. -->
+                    <div class="configure-new-deployment-banner" id="configure-new-deployment-banner">
+                        <button class="btn btn-primary" id="configure-new-deployment-btn" type="button">
+                            + New Deployment
+                        </button>
+                        <span class="t-muted">Or edit the deployment currently selected in the header.</span>
+                    </div>
                     <h2 class="page-title">Configuration Editor</h2>
 
                     <!-- What to Deploy Section -->

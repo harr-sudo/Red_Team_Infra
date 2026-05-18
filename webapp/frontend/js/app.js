@@ -2075,7 +2075,82 @@ function initGlobalHeader() {
 
     // Refresh cost whenever the active deployment changes.
     APP.activeDeployment.subscribe(_refreshGlobalCost);
+
+    // D3.8 — Wire the "+ New" button in the global header to start a fresh
+    // deployment flow. Paired with the prominent banner button at the top
+    // of the Configure sub-pane (#configure-new-deployment-btn).
+    const newBtn = document.getElementById('global-new-deployment-btn');
+    if (newBtn && !newBtn.dataset.ghWired) {
+        newBtn.addEventListener('click', () => APP.startNewDeployment());
+        newBtn.dataset.ghWired = '1';
+    }
+    const bannerBtn = document.getElementById('configure-new-deployment-btn');
+    if (bannerBtn && !bannerBtn.dataset.ghWired) {
+        bannerBtn.addEventListener('click', () => APP.startNewDeployment());
+        bannerBtn.dataset.ghWired = '1';
+    }
 }
+
+// ============================================================================
+// D3.8 — NEW DEPLOYMENT FLOW
+// ============================================================================
+// Explicit affordance so operators can deliberately start a fresh deployment
+// instead of accidentally overwriting an existing one. Two entry points are
+// wired to this:
+//   1. Global header "+ New" button (#global-new-deployment-btn)
+//   2. Banner at the top of the Configure sub-pane (#configure-new-deployment-btn)
+//
+// Navigates to Deployments > Configure, blanks the form, pre-fills a sensible
+// project_name default, focuses + selects the project_name input, and clears
+// the active deployment in the global picker (form is no longer tied to one).
+
+APP.startNewDeployment = function () {
+    // 1. Navigate to the Configure sub-pill (forces tab + sub-pill activation).
+    APP.navigateTo('deployments-tab', 'configure');
+
+    // 2. Clear the form to a fresh state (lightweight blanking — no backend
+    //    DELETE, no confirm dialog; that's what clearConfig() is for).
+    APP.resetConfigForm();
+
+    // 3. Pre-fill project_name with a recognizable placeholder so the operator
+    //    sees a fresh value to overwrite. Format: new_<env>_<short-suffix>.
+    const projectInput = document.getElementById('project-name');
+    if (projectInput) {
+        const env = document.getElementById('environment')?.value || 'dev';
+        const suffix = (Date.now() % 100000).toString(36);
+        projectInput.value = `new_${env}_${suffix}`;
+        projectInput.focus();
+        projectInput.select();
+    }
+
+    // 4. Clear the global active-deployment picker so the form isn't tied to
+    //    an existing deployment.
+    APP.activeDeployment.set(null);
+};
+
+/**
+ * D3.8 — Lightweight form reset. Unlike clearConfig() (which prompts +
+ * DELETEs the saved terraform.tfvars on the backend), this just blanks the
+ * user-editable fields in memory so the operator can start fresh.
+ */
+APP.resetConfigForm = function () {
+    // Reset deployment-type to its default (c2-adhoc) and cascade visibility
+    // changes via the existing onchange handler.
+    const dt = document.getElementById('deployment-type');
+    if (dt) {
+        dt.value = 'c2-adhoc';
+        dt.dispatchEvent(new Event('change'));
+    }
+    // Clear project name — startNewDeployment will re-set it immediately after.
+    const pn = document.getElementById('project-name');
+    if (pn) pn.value = '';
+    // Reset environment to 'dev'.
+    const env = document.getElementById('environment');
+    if (env) env.value = 'dev';
+    // Blank obvious credential/identifier fields that may have stale state.
+    ['primary-domain', 'admin-email', 'attack-box-password', 'cs-teamserver-password']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+};
 
 /**
  * D1.3 — Fetch deployments from /api/deploy/active and populate the listbox.

@@ -4133,3 +4133,380 @@ body { padding-top: 64px; }
 .subpill-pane[hidden] {
     display: none;
 }
+
+/* ============================================================================
+   === D3.8 — V3 polish on Deployments sub-views ===
+   ============================================================================
+
+   The Configure / Deploy / Manage sub-panes were re-parented VERBATIM from
+   the legacy flat tabs in D3.2–D3.4. Their internals still used legacy
+   styling (15px text, 200ms ease transitions, low-density padding, ad-hoc
+   borders) and looked disconnected from the new V3 chrome (global header
+   + pill switcher).
+
+   This block applies V3 design tokens — 13px base, 600 weight on values,
+   9.5px mono caps captions, 280ms cubic-bezier(0.4, 0, 0.2, 1) hover
+   transitions, --brand backgrounds with --brand-light hover, --bg-input
+   inputs with --border-focus on focus, --border-subtle row separators,
+   --bg-card-hover on table rows. All rules are scoped to
+   `.tab-page[data-page="deployments-tab"]` so they cannot leak into other
+   tabs.
+
+   Note: many re-parented elements carry inline `style="..."` attributes
+   (e.g., `style="font-size: 1.2em;"`, `style="color: var(--gold);"`).
+   CSS rules without !important won't override those. Where this is load-
+   bearing for visual coherence, we use a tightly-scoped !important — the
+   scoping selector keeps the cascade clean.
+
+   Plan refs: §17 P2 #11 + Decision #16 (interleaved polish), §28.2.
+   ============================================================================ */
+
+/* ── 1. SUB-PANE BASE TYPE SCALE ──────────────────────────────────────── */
+/* Drop default text from 15px to 13px to align with V3 density.        */
+.tab-page[data-page="deployments-tab"] .subpill-pane {
+    font-size: 13px;
+}
+.tab-page[data-page="deployments-tab"] .subpill-pane h2.page-title {
+    font-size: 1.5em;
+    letter-spacing: -0.005em;
+}
+.tab-page[data-page="deployments-tab"] .subpill-pane h3 {
+    font-size: 1.05em;
+    letter-spacing: -0.003em;
+}
+.tab-page[data-page="deployments-tab"] .subpill-pane h4 {
+    font-size: 0.95em;
+}
+.tab-page[data-page="deployments-tab"] .subpill-pane h5 {
+    font-size: 0.85em;
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin: 0 0 8px 0;
+}
+
+/* ── 2. SECTION CARDS — airy V3 density ─────────────────────────────── */
+.tab-page[data-page="deployments-tab"] .section-card,
+.tab-page[data-page="deployments-tab"] .upload-section,
+.tab-page[data-page="deployments-tab"] .deploy-selector,
+.tab-page[data-page="deployments-tab"] .config-summary,
+.tab-page[data-page="deployments-tab"] .lifecycle-card {
+    padding: 18px 20px;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="deployments-tab"] .section-card--compact {
+    padding: 14px 16px;
+}
+.tab-page[data-page="deployments-tab"] .section-card h3,
+.tab-page[data-page="deployments-tab"] .upload-section h4,
+.tab-page[data-page="deployments-tab"] .deploy-selector h3,
+.tab-page[data-page="deployments-tab"] .config-summary h4,
+.tab-page[data-page="deployments-tab"] .lifecycle-card h4 {
+    /* V3 — headings sit on light card surfaces in both themes; --text-primary
+       is the only safe choice. (Legacy used --gold / --gold-muted which
+       resolves to olive on cream in light mode → ~2:1 contrast.) */
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+/* ── 3. FORM INPUTS — V3 13px + --border-focus on focus ─────────────── */
+.tab-page[data-page="deployments-tab"] .form-group input,
+.tab-page[data-page="deployments-tab"] .form-group select,
+.tab-page[data-page="deployments-tab"] .form-group textarea {
+    font-size: 13px;
+    padding: 11px 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="deployments-tab"] .form-group input:focus,
+.tab-page[data-page="deployments-tab"] .form-group select:focus,
+.tab-page[data-page="deployments-tab"] .form-group textarea:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+.tab-page[data-page="deployments-tab"] .form-group label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+.tab-page[data-page="deployments-tab"] .form-group small {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+/* ── 4. DEPLOY-SELECTOR (custom V3 dropdown at the top of Configure) ── */
+.tab-page[data-page="deployments-tab"] .deploy-selector {
+    border-left: 3px solid var(--brand-light);
+}
+.tab-page[data-page="deployments-tab"] .deploy-selector select {
+    font-size: 13px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="deployments-tab"] .deploy-selector select:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+.tab-page[data-page="deployments-tab"] .deploy-selector select:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+
+/* ── 5. BUTTONS — V3 transition + focus-visible rings ───────────────── */
+.tab-page[data-page="deployments-tab"] .btn {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 16px;
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="deployments-tab"] .btn:hover {
+    transform: translateY(-1px);
+}
+.tab-page[data-page="deployments-tab"] .btn:active {
+    transform: translateY(0);
+}
+.tab-page[data-page="deployments-tab"] .btn:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+.tab-page[data-page="deployments-tab"] .btn-sm {
+    font-size: 11.5px;
+    padding: 5px 11px;
+}
+/* Primary uses --brand bg w/ --brand-light hover (V3 spec).             */
+.tab-page[data-page="deployments-tab"] .btn-primary {
+    background: var(--brand);
+    color: var(--text-inverse);
+}
+.tab-page[data-page="deployments-tab"] .btn-primary:hover {
+    background: var(--brand-light);
+}
+/* Secondary uses --bg-input + --border for a quiet ghost look.          */
+.tab-page[data-page="deployments-tab"] .btn-secondary {
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+}
+.tab-page[data-page="deployments-tab"] .btn-secondary:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--brand-light);
+    color: var(--text-primary);
+}
+
+/* ── 6. STATUS DISPLAYS ──────────────────────────────────────────────── */
+.tab-page[data-page="deployments-tab"] .status-display {
+    font-size: 13px;
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="deployments-tab"] .status-display.success,
+.tab-page[data-page="deployments-tab"] .status-display.error,
+.tab-page[data-page="deployments-tab"] .status-display.warning,
+.tab-page[data-page="deployments-tab"] .status-display.info {
+    padding: 13px 16px;
+    border-radius: 6px;
+}
+
+/* ── 7. CALLOUTS — slightly tighter type + V3 transition ────────────── */
+.tab-page[data-page="deployments-tab"] .callout {
+    font-size: 13px;
+    padding: 12px 16px;
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── 8. CHECKBOXES + RADIOS — accent + cursor ──────────────────────── */
+.tab-page[data-page="deployments-tab"] input[type="checkbox"],
+.tab-page[data-page="deployments-tab"] input[type="radio"] {
+    accent-color: var(--brand);
+    cursor: pointer;
+}
+.tab-page[data-page="deployments-tab"] input[type="checkbox"]:focus-visible,
+.tab-page[data-page="deployments-tab"] input[type="radio"]:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+
+/* ── 9. TABLES — V3 row separators + hover ─────────────────────────── */
+.tab-page[data-page="deployments-tab"] table {
+    font-size: 13px;
+}
+.tab-page[data-page="deployments-tab"] table th {
+    /* 9.5px mono caps captions — V3 header treatment.                    */
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 11px 12px;
+}
+.tab-page[data-page="deployments-tab"] table td {
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 11px 12px;
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="deployments-tab"] table tbody tr {
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="deployments-tab"] table tbody tr:hover {
+    background: var(--bg-card-hover);
+}
+
+/* ── 10. DETAILS / COLLAPSIBLES ─────────────────────────────────────── */
+.tab-page[data-page="deployments-tab"] details.details-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="deployments-tab"] details.details-card:hover {
+    border-color: var(--border);
+}
+.tab-page[data-page="deployments-tab"] details summary {
+    font-size: 13px;
+    transition: color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="deployments-tab"] details summary:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: 3px;
+}
+
+/* ── 11. CONFIG SUMMARY GRID (Deploy sub-pane) ──────────────────────── */
+.tab-page[data-page="deployments-tab"] .config-summary {
+    border-left: 3px solid var(--brand-light);
+}
+.tab-page[data-page="deployments-tab"] .summary-grid > * {
+    font-size: 13px;
+}
+
+/* ── 12. DEPLOYMENT OVERVIEW BANNER ─────────────────────────────────── */
+/* The .deployment-overview keeps its brand background (intentional accent
+   in V3 — operator's eye lands here first). Just tighten type + apply the
+   V3 hover transition to internal grid items. */
+.tab-page[data-page="deployments-tab"] .deployment-overview {
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="deployments-tab"] .deployment-overview .overview-grid > * {
+    font-size: 13px;
+}
+
+/* ── 13. LIFECYCLE CARDS (Manage sub-pane) ──────────────────────────── */
+.tab-page[data-page="deployments-tab"] .lifecycle-card {
+    border-left: 3px solid var(--brand-light);
+}
+.tab-page[data-page="deployments-tab"] .lifecycle-card p {
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+/* ── 14. RESOURCE LIST FILTER ROW (Manage sub-pane) ─────────────────── */
+.tab-page[data-page="deployments-tab"] #resource-type-filter,
+.tab-page[data-page="deployments-tab"] #resource-search {
+    font-size: 13px;
+    padding: 8px 11px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 5px;
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="deployments-tab"] #resource-type-filter:focus,
+.tab-page[data-page="deployments-tab"] #resource-search:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+.tab-page[data-page="deployments-tab"] #resource-type-filter:focus-visible,
+.tab-page[data-page="deployments-tab"] #resource-search:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+
+/* ── 15. MESSAGE BOX (form save/validate feedback) ──────────────────── */
+.tab-page[data-page="deployments-tab"] .message {
+    font-size: 13px;
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================================================
+   D3.8 — "+ New Deployment" entry points
+   ============================================================================
+   Two paired buttons: a ghost-style "+ New" in the global header, and a
+   prominent banner button at the top of the Configure sub-pane. Both
+   wired in app.js to APP.startNewDeployment().
+   ============================================================================ */
+
+/* ── Global header "+ New" — small ghost button ─────────────────────── */
+.global-header__new-deployment-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 11px;
+    border-radius: 5px;
+    cursor: pointer;
+    letter-spacing: 0.01em;
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.global-header__new-deployment-btn:hover {
+    border-color: var(--brand-light);
+    color: var(--text-primary);
+    background: var(--bg-card-hover);
+    transform: translateY(-1px);
+}
+.global-header__new-deployment-btn:active {
+    transform: translateY(0);
+}
+.global-header__new-deployment-btn:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+
+/* ── Configure sub-pane banner ───────────────────────────────────────── */
+.configure-new-deployment-banner {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 18px;
+    margin-bottom: 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-left: 3px solid var(--brand-light);
+    border-radius: 6px;
+}
+.configure-new-deployment-banner .btn-primary {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 16px;
+}
+.configure-new-deployment-banner .t-muted {
+    font-size: 12.5px;
+    color: var(--text-muted);
+}
+
