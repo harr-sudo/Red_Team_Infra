@@ -284,7 +284,10 @@ const APP = {
             })
             .catch(() => setUnknown());
 
-        // Footer click + keyboard activation
+        // Footer click + keyboard activation. Close handlers (backdrop, ✕
+        // button, Esc key) are wired automatically by APP.modal.open() via
+        // [data-modal-close] + per-instance escHandler — no ad-hoc wiring
+        // needed here (M-Redesign Agent 2 v2.0.0).
         const openHandler = (e) => {
             e.preventDefault();
             openVersionModal();
@@ -292,19 +295,6 @@ const APP = {
         footer.addEventListener('click', openHandler);
         footer.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') openHandler(e);
-        });
-
-        // Close handlers — buttons + backdrop click + Escape key
-        modal.querySelectorAll('[data-version-modal-close]').forEach(el => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                closeVersionModal();
-            });
-        });
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && !modal.hasAttribute('hidden')) {
-                closeVersionModal();
-            }
         });
     },
 
@@ -1936,6 +1926,13 @@ APP.setActiveSubPill = function (parentTabName, subPillName) {
         const isMatch = pane.dataset.subpillPane === subPillName;
         if (isMatch) {
             pane.removeAttribute('hidden');
+            // M-Redesign Agent 3 — re-trigger the .subpill-pane CSS keyframe
+            // animation by clearing & forcing a reflow. Without this, switching
+            // back to a previously-visited pane does NOT re-run the keyframe
+            // (browser optimization: hidden→visible alone doesn't re-fire).
+            pane.style.animation = 'none';
+            void pane.offsetWidth;  // force reflow
+            pane.style.animation = '';
         } else {
             pane.setAttribute('hidden', '');
         }
@@ -1946,6 +1943,85 @@ APP.setActiveSubPill = function (parentTabName, subPillName) {
     // D3.5 — Run init hook for the newly-active sub-pill
     APP._runSubPillInit(parentTabName, subPillName);
 };
+
+// ============================================================================
+// M-Redesign Agent 3 — Motion fluidity helpers + state utilities
+//
+// All animation primitives live in style.css (.motion-*, .skeleton-*,
+// .empty-state, .toast). These JS helpers are the imperative triggers:
+//   - APP._staggerOnce(el)         — apply .motion-stagger-in for ~600ms
+//                                    so the stagger fires once per mount,
+//                                    not on every polled re-render.
+//   - APP.renderSkeleton(el, ...)  — drop shimmer placeholders during fetch.
+//   - APP.toast(msg, variant)      — bottom-right transient notifications.
+//
+// Every animation respects prefers-reduced-motion via media queries in CSS.
+// ============================================================================
+
+/**
+ * Apply the .motion-stagger-in class to a container once. The class is
+ * removed after 600ms so the keyframe animation only plays on first mount
+ * (or first call) — subsequent re-renders by pollers don't re-stagger.
+ *
+ * @param {string|Element} target - selector or element reference
+ */
+APP._staggerOnce = function (target) {
+    const el = typeof target === 'string' ? document.querySelector(target) : target;
+    if (!el || el._staggered) return;
+    el._staggered = true;
+    el.classList.add('motion-stagger-in');
+    setTimeout(() => el.classList.remove('motion-stagger-in'), 600);
+};
+
+/**
+ * Render N shimmer placeholders inside a container during fetch. Cleared
+ * automatically when the caller writes real content into the same node.
+ *
+ * @param {string|Element} container - target node or selector / element id
+ * @param {string} type - 'text' | 'text-sm' | 'card' | 'avatar' (default 'card')
+ * @param {number} count - how many skeletons to render (default 3)
+ */
+APP.renderSkeleton = function (container, type = 'card', count = 3) {
+    let el;
+    if (typeof container === 'string') {
+        el = document.getElementById(container) || document.querySelector(container);
+    } else {
+        el = container;
+    }
+    if (!el) return;
+    const html = Array(count).fill(`<div class="skeleton skeleton--${type}"></div>`).join('');
+    el.innerHTML = html;
+};
+
+/**
+ * Show a transient bottom-right toast notification.
+ *
+ * @param {string} message - text shown to operator
+ * @param {string} variant - 'info' | 'success' | 'warning' | 'danger' (default 'info')
+ * @param {number} duration - ms before slide-out begins (default 4000)
+ */
+APP.toast = function (message, variant = 'info', duration = 4000) {
+    const container = document.getElementById('toast-container');
+    if (!container) {
+        // Fallback for pages without the container — log instead of swallow.
+        console.warn('[toast] no #toast-container found, message:', message);
+        return;
+    }
+    const toast = document.createElement('div');
+    toast.className = `toast toast--${variant}`;
+    // Critical messages (danger / warning) get assertive role so AT
+    // announces immediately; routine status gets polite live-region.
+    toast.setAttribute('role',
+        (variant === 'danger' || variant === 'warning') ? 'alert' : 'status'
+    );
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('toast--leaving');
+        setTimeout(() => toast.remove(), 220);
+    }, duration);
+};
+// === end M-Redesign Agent 3 helpers ====================================
 
 /**
  * D3.5 — Cleanup hook for an outgoing sub-pill. Mirrors the per-tab
@@ -2037,35 +2113,18 @@ APP._runSubPillInit = function (parentTabName, subPillName) {
 };
 
 /**
- * D3.7 — Close every modal that was appended to document.body rather
- * than to its owning sub-pane subtree. Without this, opening a modal
- * in (say) the Manage sub-pill and switching to Configure leaves the
- * modal visible above hidden content (§26.4 item 1).
+ * D3.7 — Close every modal that would otherwise stay visible after the
+ * sub-pill it belongs to is hidden (§26.4 item 1).
  *
- * Defensive: each modal's own close convention is honored where it
- * exists. Modals built with `document.createElement(...).remove()`
- * (session-logs, archived-logs, screenshot-overlay) are removed
- * outright. The version-modal uses the `hidden` attribute pattern.
+ * M-Redesign Agent 2 (v2.0.0): all modals now use the canonical .modal__*
+ * markup + APP.modal helpers, so this simply delegates to APP.modal.closeAll()
+ * which iterates `.modal:not([hidden])` and runs each through APP.modal.close()
+ * (cleans up Esc handlers + ARIA state + focus return).
  */
 APP._closeAttachedModals = function () {
-    const modalIds = ['session-logs-modal', 'archived-logs-modal',
-                      'screenshot-overlay', 'version-modal'];
-    modalIds.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            // version-modal lives in index.html and uses the hidden attribute.
-            if (el.classList.contains('version-modal')) {
-                el.setAttribute('hidden', '');
-                el.setAttribute('aria-hidden', 'true');
-            } else if (el.classList.contains('modal') || el.hasAttribute('hidden')) {
-                el.setAttribute('hidden', '');
-            } else {
-                // session-logs / archived-logs / dynamic overlays — remove
-                // from DOM (they're re-created on next open).
-                el.remove();
-            }
-        }
-    });
+    if (APP.modal && typeof APP.modal.closeAll === 'function') {
+        APP.modal.closeAll();
+    }
 };
 
 /**
@@ -2233,15 +2292,100 @@ function initGlobalHeader() {
 // existing architecture.js change-listener + renderArchitecture() pipeline
 // runs unchanged.
 
-function _archModalEsc(e) {
-    if (e.key === 'Escape') APP.closeArchitectureModal();
-}
+// ============================================================================
+// M-Redesign Agent 2 — Unified modal open/close helpers (v2.0.0).
+//
+// Single canonical modal API used by every modal in the app. The helpers wire
+// data-modal-close (backdrop + close button), Escape-key dismissal, and focus
+// return-to-trigger. Idempotent: calling open() twice or close() on a closed
+// modal is a no-op. Markup contract: see .modal__* block in style.css.
+//
+// Usage:
+//   APP.modal.open('my-modal');                  // shows + wires + focuses
+//   APP.modal.open('my-modal', { returnFocusTo: btn });
+//   APP.modal.close('my-modal');
+//   APP.modal.closeAll();                        // dismiss every visible .modal
+// ============================================================================
+
+APP.modal = {
+    _lastTrigger: null,
+
+    open(id, opts = {}) {
+        const el = document.getElementById(id);
+        if (!el) { console.warn('Modal not found:', id); return; }
+        // Idempotent — re-opening a visible modal is a no-op.
+        if (!el.hasAttribute('hidden')) return;
+
+        el.removeAttribute('hidden');
+        el.setAttribute('aria-hidden', 'false');
+        APP.modal._lastTrigger = opts.returnFocusTo || document.activeElement;
+
+        // Wire data-modal-close on backdrop + close button (idempotent — guarded
+        // by _wired flag so re-opens don't stack listeners).
+        el.querySelectorAll('[data-modal-close]').forEach(closer => {
+            if (closer._wired) return;
+            closer._wired = true;
+            closer.addEventListener('click', (e) => {
+                e.preventDefault();
+                APP.modal.close(id);
+            });
+        });
+
+        // Esc handler — attached per-instance so multiple modals don't fight.
+        const escHandler = (e) => {
+            if (e.key === 'Escape') APP.modal.close(id);
+        };
+        document.addEventListener('keydown', escHandler);
+        el._escHandler = escHandler;
+
+        // Focus first focusable inside content for keyboard users.
+        const content = el.querySelector('.modal__content');
+        if (content) {
+            const focusable = content.querySelector(
+                'button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+                'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            );
+            if (focusable) {
+                focusable.focus();
+            } else {
+                content.setAttribute('tabindex', '-1');
+                content.focus();
+            }
+        }
+    },
+
+    close(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.hasAttribute('hidden')) return;  // already closed
+
+        el.setAttribute('hidden', '');
+        el.setAttribute('aria-hidden', 'true');
+        if (el._escHandler) {
+            document.removeEventListener('keydown', el._escHandler);
+            el._escHandler = null;
+        }
+        if (APP.modal._lastTrigger && typeof APP.modal._lastTrigger.focus === 'function') {
+            try { APP.modal._lastTrigger.focus(); } catch (_) { /* ignore */ }
+        }
+        APP.modal._lastTrigger = null;
+    },
+
+    closeAll() {
+        document.querySelectorAll('.modal:not([hidden])').forEach(m => {
+            if (m.id) APP.modal.close(m.id);
+        });
+    },
+};
+
+// ----------------------------------------------------------------------------
+// Architecture modal — wraps APP.modal.open() with the deployment-type
+// pre-select logic. Kept as APP.openArchitectureModal /
+// APP.closeArchitectureModal so existing onclick handlers + cached references
+// in index.html / architecture.js / NAVIGATE_ALIASES keep working unchanged.
+// ----------------------------------------------------------------------------
 
 APP.openArchitectureModal = function () {
-    const modal = document.getElementById('architecture-modal');
-    if (!modal) return;
-    modal.removeAttribute('hidden');
-
     // Lazy-init the architecture page on first open so the change listener
     // is attached and a default diagram renders. Idempotent (architecture.js
     // guards with an `architectureInitialized` flag).
@@ -2249,7 +2393,10 @@ APP.openArchitectureModal = function () {
         try { initArchitecturePage(); } catch (e) { console.error('initArchitecturePage failed', e); }
     }
 
-    // Pre-select the active deployment's diagram if any.
+    APP.modal.open('architecture-modal');
+
+    // Pre-select the active deployment's diagram if any. Done AFTER open so
+    // the modal is already on-screen when the select change event fires.
     const active = APP.activeDeployment && APP.activeDeployment.current;
     if (active) {
         fetch(`/api/deploy/status?project=${encodeURIComponent(active)}`)
@@ -2258,7 +2405,6 @@ APP.openArchitectureModal = function () {
                 const dtype = (data && data.status && data.status.deployment_type) || null;
                 const sel = document.getElementById('architecture-select');
                 if (dtype && sel) {
-                    // Only set if the dtype is a real option in the select
                     const hasOpt = Array.from(sel.options).some(o => o.value === dtype);
                     if (hasOpt) {
                         sel.value = dtype;
@@ -2268,14 +2414,10 @@ APP.openArchitectureModal = function () {
             })
             .catch(() => { /* swallow — modal stays on whatever was selected */ });
     }
-
-    document.addEventListener('keydown', _archModalEsc);
 };
 
 APP.closeArchitectureModal = function () {
-    const modal = document.getElementById('architecture-modal');
-    if (modal) modal.setAttribute('hidden', '');
-    document.removeEventListener('keydown', _archModalEsc);
+    APP.modal.close('architecture-modal');
 };
 
 // Explicit affordance so operators can deliberately start a fresh deployment
@@ -3054,6 +3196,10 @@ async function loadDashboard() {
         }
     } catch (e) { /* private-mode browsers — ignore */ }
 
+    // M-Redesign Agent 3 — stagger the 3-col widget row once on dashboard mount.
+    // Fires once across the page's lifetime thanks to el._staggered guard.
+    APP._staggerOnce(document.querySelector('.dashboard-widget-row'));
+
     // 3-8. Populate each widget — all use graceful-fallback semantics.
     await _renderDashboardDeploymentsGrid();
     await _renderDashboardBeaconsWidget();
@@ -3085,12 +3231,27 @@ function _refreshPrereqsBanner() {
 async function _renderDashboardDeploymentsGrid() {
     const grid = document.getElementById('dashboard-deployments-grid');
     if (!grid) return;
+    // M-Redesign Agent 3 — shimmer skeleton while we wait for /api/deploy/active
+    // Only on the very first render; refreshes don't re-skeleton (would flash).
+    if (!grid._everRendered) {
+        APP.renderSkeleton(grid, 'card', 3);
+    }
     try {
         const res = await fetch('/api/deploy/active');
         const data = await res.json();
         const deps = (data && data.deployments) || [];
         if (deps.length === 0) {
-            grid.innerHTML = '<p class="t-muted">No active deployments. Click "New Deployment" above to get started.</p>';
+            // M-Redesign Agent 3 — unified empty-state component
+            grid.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state__icon" aria-hidden="true">
+                        <span class="empty-state__icon-inner"></span>
+                    </div>
+                    <h3 class="empty-state__title">No active deployments</h3>
+                    <p class="empty-state__description">Click "+ New Deployment" above to configure your first one.</p>
+                    <button class="btn btn-primary empty-state__cta" type="button" onclick="APP.startNewDeployment()">+ New Deployment</button>
+                </div>`;
+            grid._everRendered = true;
             return;
         }
         grid.innerHTML = deps.slice(0, 6).map(d => {
@@ -3104,6 +3265,10 @@ async function _renderDashboardDeploymentsGrid() {
                 <div class="dashboard-deployment-card__meta">${type} · ${status}</div>
             </a>`;
         }).join('');
+        // M-Redesign Agent 3 — one-shot stagger on initial mount; pollers
+        // calling this fn again hit the early-return inside _staggerOnce.
+        APP._staggerOnce(grid);
+        grid._everRendered = true;
     } catch (e) {
         grid.innerHTML = '<p class="t-muted">Unable to load deployments.</p>';
     }
@@ -3135,6 +3300,11 @@ async function _renderDashboardCostWidget() {
     const totalEl = document.getElementById('dashboard-cost-total');
     const sparkEl = document.getElementById('dashboard-cost-sparkline');
     const deltaEl = document.getElementById('dashboard-cost-delta');
+    // M-Redesign Agent 3 — flash skeleton on the headline number once.
+    if (totalEl && !totalEl._everRendered) {
+        totalEl._everRendered = true;
+        totalEl.innerHTML = '<span class="skeleton skeleton--text" style="display:inline-block; width: 96px;"></span>';
+    }
     try {
         const res = await fetch('/api/costs/aggregate');
         if (!res.ok) throw new Error('aggregate endpoint not ready');
@@ -4124,6 +4294,10 @@ const BEACON = {
             const btn = tr.querySelector('.beacon-interact-btn');
             if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); this.selectBeacon(bid, label); });
         });
+
+        // M-Redesign Agent 3 — one-shot stagger on the first non-empty render
+        // of the beacon list. Subsequent polled refreshes won't re-stagger.
+        if (typeof APP !== 'undefined' && APP._staggerOnce) APP._staggerOnce(tbody);
     },
 
     formatElapsed(ms) {
@@ -6225,11 +6399,11 @@ const BEACON = {
         const shot = this._screenshotCache[idx];
         if (!shot) return;
         const src = shot.data ? `data:image/png;base64,${shot.data}` : (shot.url || '');
-        const overlay = document.createElement('div');
-        overlay.className = 'screenshot-overlay';
-        overlay.onclick = () => overlay.remove();
-        overlay.innerHTML = `<img src="${src}" alt="Screenshot">`;
-        document.body.appendChild(overlay);
+        // M-Redesign Agent 2 (v2.0.0): use the static #screenshot-overlay modal
+        // (canonical .modal + .modal--full). The body is populated with the img.
+        const body = document.getElementById('screenshot-overlay-body');
+        if (body) body.innerHTML = `<img src="${src}" alt="Screenshot">`;
+        APP.modal.open('screenshot-overlay');
     },
 
     // ── Token Store ──────────────────────────────────────────────
@@ -9182,11 +9356,16 @@ async function saveConfig() {
         
         if (data.success) {
             showMessage('Configuration saved successfully!', 'success');
+            // M-Redesign Agent 3 — also emit a toast for cross-page visibility
+            // (operators often save then immediately navigate away).
+            if (APP && APP.toast) APP.toast('Configuration saved', 'success');
         } else {
             showMessage('Error: ' + (data.error || 'Unknown error'), 'error');
+            if (APP && APP.toast) APP.toast('Save failed: ' + (data.error || 'Unknown error'), 'danger', 8000);
         }
     } catch (error) {
         showMessage('Error saving configuration: ' + error.message, 'error');
+        if (APP && APP.toast) APP.toast('Save failed: ' + error.message, 'danger', 8000);
     }
 }
 
@@ -9697,7 +9876,56 @@ function initSettingsPage() {
     loadCostSettings();
     loadCostProjectSelector();
     loadProjectCosts(false); // Load from cache, no API call
+    // M-Redesign Agent 1 — wire TOC smooth scroll + active highlighting
+    APP._setupSettingsToc();
 }
+
+// M-Redesign Agent 1 — Settings TOC active-section tracker.
+// Wires smooth scroll on TOC click + IntersectionObserver-based active
+// highlighting. Idempotent (guarded by _settingsTocReady). Called from
+// initSettingsPage() each time the Settings tab is opened.
+APP._setupSettingsToc = function () {
+    const toc = document.querySelector('.tab-page[data-page="settings"] .settings-toc');
+    if (!toc) return;
+    if (APP._settingsTocReady) return;
+    APP._settingsTocReady = true;
+
+    // Smooth scroll handler — relies on .settings-section { scroll-margin-top }
+    // for sticky-chrome offset.
+    toc.addEventListener('click', (e) => {
+        const link = e.target.closest('.settings-toc__item');
+        if (!link) return;
+        e.preventDefault();
+        const id = link.getAttribute('href').slice(1);
+        const target = document.getElementById(id);
+        if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // Preview of D6 bookmarkable-URL pattern.
+            if (history.replaceState) {
+                history.replaceState(null, '', '#' + id);
+            }
+        }
+    });
+
+    // IntersectionObserver — highlights TOC item whose section is currently
+    // in the upper portion of the viewport. rootMargin biases the trigger
+    // line below the sticky header.
+    const sections = document.querySelectorAll('.tab-page[data-page="settings"] .settings-section');
+    const tocItems = toc.querySelectorAll('.settings-toc__item');
+    if (!sections.length || !tocItems.length) return;
+
+    const observer = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                tocItems.forEach(i => i.classList.toggle(
+                    'is-active',
+                    i.getAttribute('href').slice(1) === entry.target.id
+                ));
+            }
+        });
+    }, { rootMargin: '-100px 0px -50% 0px' });
+    sections.forEach(s => observer.observe(s));
+};
 
 async function checkDeploymentStatus() {
     // First update the deploy page based on selected deployment type
@@ -11184,6 +11412,8 @@ async function startDeployment() {
         if (data.success) {
             // Start polling immediately with project name
             pollDeploymentStatus(projectName);
+            // M-Redesign Agent 3 — operator-facing confirmation toast
+            if (APP && APP.toast) APP.toast(`Deployment "${projectName}" started`, 'success');
         } else {
             statusDiv.innerHTML = `
                 <div style="padding: 15px;">
@@ -11193,6 +11423,8 @@ async function startDeployment() {
             `;
             statusDiv.className = 'status-display error';
             disableDeployButton(false);
+            // M-Redesign Agent 3 — toast (long-lived, critical operator signal)
+            if (APP && APP.toast) APP.toast('Deployment failed: ' + (data.error || 'Unknown error'), 'danger', 8000);
         }
     } catch (error) {
         statusDiv.innerHTML = `
@@ -11203,6 +11435,7 @@ async function startDeployment() {
         `;
         statusDiv.className = 'status-display error';
         disableDeployButton(false);
+        if (APP && APP.toast) APP.toast('Deployment connection error: ' + error.message, 'danger', 8000);
     }
 }
 
@@ -16976,64 +17209,51 @@ function showSessionLogs(sessionKey) {
         alert('No logs found for this session.');
         return;
     }
-    
-    // Create modal
-    const modal = document.createElement('div');
-    modal.id = 'session-logs-modal';
-    modal.style.cssText = `
-        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0,0,0,0.8); z-index: 10000;
-        display: flex; align-items: center; justify-content: center;
-        padding: 20px;
-    `;
-    
+
+    // M-Redesign Agent 2 (v2.0.0): use the static #session-logs-modal markup
+    // from index.html. Title + body + footer are populated dynamically; the
+    // canonical APP.modal.open handles backdrop / Esc / focus return.
+    const titleEl = document.getElementById('session-logs-modal-title');
+    if (titleEl) titleEl.textContent = `Full Deployment Logs — ${formatDate(date)}`;
+
     const levelColors = {
-        'info': '#8BB4D9',
-        'success': '#7ECF8C',
-        'warning': '#E8C56D',
-        'error': '#F08A84'
+        'info':    'var(--info-text)',
+        'success': 'var(--success-text)',
+        'warning': 'var(--warning-text)',
+        'error':   'var(--danger-text)',
     };
-    
-    modal.innerHTML = `
-        <div style="background: var(--bg-terminal); border-radius: 12px; max-width: 900px; width: 100%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column;">
-            <div style="padding: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
-                <h2 style="margin: 0; color: white;">📜 Full Deployment Logs - ${formatDate(date)}</h2>
-                <button onclick="closeSessionLogsModal()" style="background: none; border: none; color: white; font-size: 24px; cursor: pointer;">&times;</button>
-            </div>
-            <div style="flex: 1; overflow-y: auto; padding: 15px; font-family: 'SF Mono', Monaco, monospace; font-size: 0.88em; line-height: 1.6;">
-                ${sessionLogs.map(log => {
-                    const time = new Date(log.timestamp).toLocaleTimeString();
-                    const color = levelColors[log.level] || '#B0B8CC';
-                    // Clean ANSI codes
-                    const cleanMsg = log.message.replace(/\x1b\[[0-9;]*m/g, '');
-                    return `<div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                        <span style="color: #7A849E;">[${time}]</span>
-                        <span style="color: ${color}; background: ${color}20; padding: 1px 6px; border-radius: 3px; font-size: 0.8em; margin: 0 8px;">${log.level.toUpperCase()}</span>
-                        <span style="color: #B0B8CC;">${cleanMsg}</span>
-                    </div>`;
-                }).join('')}
-            </div>
-            <div style="padding: 15px; border-top: 1px solid rgba(255,255,255,0.1); text-align: right;">
-                <button onclick="copySessionLogs('${date}')" class="btn btn-secondary" style="margin-right: 10px;">📋 Copy All</button>
-                <button onclick="closeSessionLogsModal()" class="btn btn-primary">Close</button>
-            </div>
-        </div>
-    `;
-    
-    document.body.appendChild(modal);
-    
-    // Close on backdrop click
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeSessionLogsModal();
-    });
+
+    const body = document.getElementById('session-logs-modal-body');
+    if (body) {
+        body.style.cssText = 'font-family: \'SF Mono\', Monaco, monospace; font-size: 0.88em; line-height: 1.6;';
+        body.innerHTML = sessionLogs.map(log => {
+            const time = new Date(log.timestamp).toLocaleTimeString();
+            const color = levelColors[log.level] || 'var(--text-secondary)';
+            const cleanMsg = log.message.replace(/\x1b\[[0-9;]*m/g, '');
+            return `<div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid var(--border-subtle);">
+                <span style="color: var(--text-muted);">[${time}]</span>
+                <span style="color: ${color}; padding: 1px 6px; border-radius: 3px; font-size: 0.8em; margin: 0 8px; border: 1px solid currentColor;">${log.level.toUpperCase()}</span>
+                <span style="color: var(--text-primary);">${cleanMsg}</span>
+            </div>`;
+        }).join('');
+    }
+
+    const footer = document.getElementById('session-logs-modal-footer');
+    if (footer) {
+        footer.innerHTML = `
+            <button type="button" class="btn btn-secondary" onclick="copySessionLogs('${date}')">Copy All</button>
+            <button type="button" class="btn btn-primary" onclick="closeSessionLogsModal()">Close</button>
+        `;
+    }
+
+    APP.modal.open('session-logs-modal');
 }
 
 /**
- * Close session logs modal
+ * Close session logs modal — delegates to canonical APP.modal.close().
  */
 function closeSessionLogsModal() {
-    const modal = document.getElementById('session-logs-modal');
-    if (modal) modal.remove();
+    APP.modal.close('session-logs-modal');
 }
 
 /**
@@ -17290,15 +17510,14 @@ function viewArchivedLogs() {
         return;
     }
 
-    // Create modal
-    const modal = document.createElement('div');
-    modal.id = 'archived-logs-modal';
-    modal.style.cssText = `
-        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0,0,0,0.7); z-index: 10000;
-        display: flex; align-items: center; justify-content: center;
-        padding: 20px;
-    `;
+    // M-Redesign Agent 2 (v2.0.0): use static #archived-logs-modal markup.
+    // The body innerHTML is re-rendered on every toggleArchivedSession call;
+    // title and footer are set once on open.
+    const modal = document.getElementById('archived-logs-modal');
+    if (!modal) {
+        console.warn('#archived-logs-modal not found in index.html');
+        return;
+    }
 
     function buildArchivedSessions() {
         // Group archived logs into sessions (same logic as renderDeploymentTimeline)
@@ -17572,51 +17791,54 @@ function viewArchivedLogs() {
             `;
         }).join('');
 
-        return `
-            <div style="background: var(--bg-container); border-radius: 12px; max-width: 900px; width: 100%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column;">
-                <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
-                    <h2 style="margin: 0; color: var(--text-primary); font-weight: 700;">Archived Logs <span style="color: var(--text-muted); font-size: 0.6em; font-weight: 400;">${sessionList.length} sessions &middot; ${archivedLogs.length} events</span></h2>
-                    <button onclick="closeArchivedLogsModal()" style="background: none; border: none; color: var(--text-primary); font-size: 24px; cursor: pointer;">&times;</button>
-                </div>
+        // M-Redesign Agent 2 (v2.0.0): return body innerHTML only — the
+        // surrounding modal chrome lives in index.html and is handled by
+        // APP.modal. We also export the session count + event count so the
+        // caller can update the title.
+        return {
+            body: sessionCards,
+            counts: { sessions: sessionList.length, events: archivedLogs.length },
+        };
+    }
 
-                <div id="archived-logs-content" style="flex: 1; overflow-y: auto; padding: 20px;">
-                    ${sessionCards}
-                </div>
+    // Initial render — populate title, body, footer (set once per open).
+    const initial = renderArchivedContent();
+    const titleEl = document.getElementById('archived-logs-modal-title');
+    if (titleEl) {
+        titleEl.innerHTML = `Archived Logs <span style="color: var(--text-muted); font-size: 0.7em; font-weight: 400; margin-left: 8px;">${initial.counts.sessions} sessions &middot; ${initial.counts.events} events</span>`;
+    }
+    const bodyEl = document.getElementById('archived-logs-modal-body');
+    if (bodyEl) bodyEl.innerHTML = initial.body;
 
-                <div style="padding: 15px 20px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
-                    <button onclick="clearArchivedLogs()" style="padding: 8px 16px; background: transparent; border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); cursor: pointer; font-size: 0.9em;">
-                        Clear Archive
-                    </button>
-                    <button onclick="downloadArchivedLogs()" style="padding: 8px 16px; background: var(--brand); border: none; border-radius: 6px; color: var(--text-inverse); cursor: pointer; font-size: 0.9em;">
-                        Download All
-                    </button>
-                </div>
-            </div>
+    const footerEl = document.getElementById('archived-logs-modal-footer');
+    if (footerEl) {
+        // Override modal__footer's default flex-end justification so Clear
+        // Archive (destructive) sits left and Download All sits right.
+        footerEl.style.justifyContent = 'space-between';
+        footerEl.innerHTML = `
+            <button type="button" class="btn btn-danger" onclick="clearArchivedLogs()">Clear Archive</button>
+            <button type="button" class="btn btn-info" onclick="downloadArchivedLogs()">Download All</button>
         `;
     }
 
-    modal.innerHTML = renderArchivedContent();
-    document.body.appendChild(modal);
-
-    // Toggle expand/collapse for archived sessions
+    // Toggle expand/collapse — re-renders only the body to keep header/footer
+    // animation state stable.
     window.toggleArchivedSession = (sessionId) => {
         if (expandedArchivedSessions.has(sessionId)) {
             expandedArchivedSessions.delete(sessionId);
         } else {
             expandedArchivedSessions.add(sessionId);
         }
-        modal.innerHTML = renderArchivedContent();
+        const rendered = renderArchivedContent();
+        const body = document.getElementById('archived-logs-modal-body');
+        if (body) body.innerHTML = rendered.body;
     };
 
-    // Close on backdrop click
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeArchivedLogsModal();
-    });
+    APP.modal.open('archived-logs-modal');
 }
 
 function closeArchivedLogsModal() {
-    const modal = document.getElementById('archived-logs-modal');
-    if (modal) modal.remove();
+    APP.modal.close('archived-logs-modal');
 }
 
 function clearArchivedLogs() {
@@ -19754,9 +19976,13 @@ async function loadProjectCosts(forceRefresh = false) {
             btn.textContent = `Refresh Costs — last updated ${now}`;
             localStorage.setItem('cost_last_refreshed', now);
         }
+        // M-Redesign Agent 3 — operator-facing toast only on explicit
+        // refreshes (forceRefresh=true), not silent auto-loads.
+        if (forceRefresh && APP && APP.toast) APP.toast('Cost data refreshed', 'success', 2000);
     } catch (e) {
         console.error('Error loading project costs:', e);
         if (btn) { btn.disabled = false; btn.textContent = 'Refresh Costs — error'; }
+        if (forceRefresh && APP && APP.toast) APP.toast('Cost refresh failed', 'danger', 6000);
     }
 }
 
@@ -22445,29 +22671,19 @@ const TOPOLOGY = {
 // ============================================================================
 
 /**
- * Open the version modal. Idempotent.
+ * Open the version modal. Idempotent. Delegates to canonical APP.modal.open
+ * which handles backdrop / Esc / focus return (M-Redesign Agent 2 v2.0.0).
  */
 function openVersionModal() {
-    const modal = document.getElementById('version-modal');
-    if (!modal) return;
-    modal.removeAttribute('hidden');
-    modal.setAttribute('aria-hidden', 'false');
-    // Move focus to the close button for keyboard users
-    const closeBtn = modal.querySelector('.version-modal__close');
-    if (closeBtn) closeBtn.focus();
+    const footer = document.getElementById('app-version-footer');
+    APP.modal.open('version-modal', { returnFocusTo: footer });
 }
 
 /**
- * Close the version modal. Idempotent.
+ * Close the version modal. Idempotent. Delegates to canonical APP.modal.close.
  */
 function closeVersionModal() {
-    const modal = document.getElementById('version-modal');
-    if (!modal) return;
-    modal.setAttribute('hidden', '');
-    modal.setAttribute('aria-hidden', 'true');
-    // Return focus to the footer that opened it
-    const footer = document.getElementById('app-version-footer');
-    if (footer) footer.focus();
+    APP.modal.close('version-modal');
 }
 
 // ============================================================================

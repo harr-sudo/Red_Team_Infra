@@ -2384,12 +2384,12 @@ ns-143.awsdns-17.org
                  markdown render still live here so initArchitecturePage() and
                  architecture.js keep working unchanged. The modal is hidden by
                  default via the `hidden` attribute + .modal[hidden] CSS rule. -->
-            <div id="architecture-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="architecture-modal-title">
-                <div class="modal__backdrop" onclick="APP.closeArchitectureModal()"></div>
+            <div id="architecture-modal" class="modal modal--wide" hidden role="dialog" aria-modal="true" aria-labelledby="architecture-modal-title">
+                <div class="modal__backdrop" data-modal-close onclick="APP.closeArchitectureModal()"></div>
                 <div class="modal__content">
                     <header class="modal__header">
-                        <h2 id="architecture-modal-title">Infrastructure Architecture</h2>
-                        <button class="modal__close" type="button" onclick="APP.closeArchitectureModal()" aria-label="Close">&times;</button>
+                        <h2 id="architecture-modal-title" class="modal__title">Infrastructure Architecture</h2>
+                        <button class="modal__close" type="button" data-modal-close onclick="APP.closeArchitectureModal()" aria-label="Close">&times;</button>
                     </header>
                     <div class="modal__body">
                         <div class="section-card" style="margin-bottom: 20px;">
@@ -2434,19 +2434,46 @@ ns-143.awsdns-17.org
 
             <div class="tab-page" data-page="settings">
                     <h2 class="page-title">Settings</h2>
-                    <p style="margin-bottom: 20px;">
+                    <p class="settings-intro">
                         Application settings and preferences.
                     </p>
 
-                    <div class="status-display info">
-                        <p><strong>Application Information</strong></p>
-                        <p>Red Team Infrastructure Manager v1.0.0</p>
-                        <p>Local management interface for deploying and managing red team infrastructure on AWS.</p>
-                    </div>
+                    <!-- M-Redesign Agent 1 — Settings page rebuild (v2.0.0).
+                         Two-column grid: 200px left rail of section anchors +
+                         main content. Each section is anchor-linkable. -->
+                    <div class="settings-layout">
+                        <aside class="settings-toc" role="navigation" aria-label="Settings sections">
+                            <span class="settings-toc__eyebrow">SETTINGS &middot; SECTIONS</span>
+                            <a href="#settings-general" class="settings-toc__item">General</a>
+                            <a href="#settings-prereqs" class="settings-toc__item">AWS &amp; SSH Prerequisites</a>
+                            <a href="#settings-cost" class="settings-toc__item">Cost Tracker</a>
+                            <a href="#settings-prefs" class="settings-toc__item">Deployment Preferences</a>
+                            <a href="#settings-roadmap" class="settings-toc__item">Roadmap</a>
+                        </aside>
+
+                        <main class="settings-content">
+
+                    <section id="settings-general" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">CONFIG &middot; GENERAL</span>
+                            <h3 class="settings-section__title">Application Information</h3>
+                            <p class="settings-section__description">Build identity and dashboard release metadata.</p>
+                        </header>
+                        <div class="status-display info">
+                            <p><strong>Application Information</strong></p>
+                            <p>Red Team Infrastructure Manager v1.0.0</p>
+                            <p>Local management interface for deploying and managing red team infrastructure on AWS.</p>
+                        </div>
+                    </section>
 
                     <!-- D2 — AWS & SSH Prerequisites (moved from standalone "Pre Reqs" tab). -->
-                    <div class="section-card" id="aws-prereqs-section" style="margin-top: 24px;">
-                        <h3 id="aws-prereqs-anchor">AWS &amp; SSH Prerequisites</h3>
+                    <section id="settings-prereqs" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">CONFIG &middot; WORKSTATION</span>
+                            <h3 class="settings-section__title" id="aws-prereqs-anchor">AWS &amp; SSH Prerequisites</h3>
+                            <p class="settings-section__description">Verify the tools and credentials your workstation needs before deploying.</p>
+                        </header>
+                        <div class="section-card" id="aws-prereqs-section">
                         <p style="margin-bottom: 16px; color: var(--text-secondary);">
                             Verify all required tools and credentials are configured. Run these once per workstation;
                             the dashboard will warn you on first load if any check has never passed.
@@ -2494,30 +2521,21 @@ ns-143.awsdns-17.org
                             <button class="btn btn-primary btn-sm" onclick="checkGitHubCLI()">Check GitHub CLI</button>
                             <div id="github-cli-status" class="status-display"></div>
                         </div>
-                    </div>
-
-                    <div class="section-card" style="margin-top: 24px;">
-                        <h3>Deployment Manager</h3>
-                        <div class="form-group form-group--compact">
-                            <label for="auto-refresh-interval">Auto-Refresh Interval</label>
-                            <select id="auto-refresh-interval" onchange="applyAutoRefreshSetting()">
-                                <option value="0">Off — manual refresh only</option>
-                                <option value="10">Every 10 seconds</option>
-                                <option value="30" selected>Every 30 seconds</option>
-                                <option value="60">Every 60 seconds</option>
-                                <option value="120">Every 2 minutes</option>
-                            </select>
-                            <small>Automatically refreshes resources and status on the Deployment Manager page.</small>
                         </div>
-                    </div>
+                    </section>
 
                     <!-- Cost Tracker Display -->
-                    <div class="section-card" id="cost-tracker-section" style="margin-top: 24px;">
-                        <h3 style="margin: 0 0 15px 0;">Cost Tracker</h3>
+                    <section id="settings-cost" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">CONFIG &middot; SPEND</span>
+                            <h3 class="settings-section__title">Cost Tracker</h3>
+                            <p class="settings-section__description">Live AWS Cost Explorer data for your tracked deployments.</p>
+                        </header>
+                        <div class="section-card" id="cost-tracker-section">
 
                         <!-- Refresh button -->
-                        <button class="btn btn-secondary" onclick="refreshCosts()" id="cost-refresh-btn" style="width: 100%; margin-bottom: 20px; padding: 10px; border: 1px solid var(--gold-muted); font-weight: 600;">
-                            Refresh Costs — never refreshed
+                        <button class="btn btn-secondary settings-cost__refresh" onclick="refreshCosts()" id="cost-refresh-btn">
+                            Refresh Costs &mdash; never refreshed
                         </button>
 
                         <!-- Summary cards -->
@@ -2538,13 +2556,13 @@ ns-143.awsdns-17.org
 
                         <!-- Daily cost trend -->
                         <div id="cost-trend-section" style="margin-bottom: 20px; display: none;">
-                            <h4 style="margin: 0 0 10px 0; color: var(--gold-muted); font-size: 1em;">Daily Cost Trend (Last 14 Days)</h4>
+                            <h4 class="settings-cost__subhead">Daily Cost Trend (Last 14 Days)</h4>
                             <div id="cost-trend-chart"></div>
                         </div>
 
                         <!-- Component breakdown -->
                         <div id="cost-breakdown-section" style="margin-bottom: 20px; display: none;">
-                            <h4 style="margin: 0 0 10px 0; color: var(--gold-muted); font-size: 1em;">Cost Breakdown</h4>
+                            <h4 class="settings-cost__subhead">Cost Breakdown</h4>
                             <div id="cost-breakdown-table"></div>
                         </div>
 
@@ -2563,12 +2581,38 @@ ns-143.awsdns-17.org
                             <p>Deploy infrastructure to see cost tracking here.</p>
                             <button class="btn btn-success btn-sm" onclick="APP.navigateTo('deployment')">Go to Deploy</button>
                         </div>
-                    </div>
+                        </div>
+                    </section>
+
+                    <section id="settings-prefs" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">CONFIG &middot; PREFERENCES</span>
+                            <h3 class="settings-section__title">Deployment Preferences</h3>
+                            <p class="settings-section__description">Auto-refresh cadence for the Deployment Manager view.</p>
+                        </header>
+                        <div class="section-card">
+                            <div class="form-group form-group--compact">
+                                <label for="auto-refresh-interval">Auto-Refresh Interval</label>
+                                <select id="auto-refresh-interval" onchange="applyAutoRefreshSetting()">
+                                    <option value="0">Off &mdash; manual refresh only</option>
+                                    <option value="10">Every 10 seconds</option>
+                                    <option value="30" selected>Every 30 seconds</option>
+                                    <option value="60">Every 60 seconds</option>
+                                    <option value="120">Every 2 minutes</option>
+                                </select>
+                                <small>Automatically refreshes resources and status on the Deployment Manager page.</small>
+                            </div>
+                        </div>
+                    </section>
 
                     <!-- Roadmap / TODO -->
-                    <div class="section-card" style="margin-top: 24px;">
-                        <h3>Roadmap</h3>
-                        <p style="color: var(--text-secondary); font-size: 0.9em; margin-bottom: 16px;">Planned features and outstanding work items.</p>
+                    <section id="settings-roadmap" class="settings-section">
+                        <header class="settings-section__header">
+                            <span class="settings-section__eyebrow">CONFIG &middot; ROADMAP</span>
+                            <h3 class="settings-section__title">Roadmap</h3>
+                            <p class="settings-section__description">Planned features and outstanding work items.</p>
+                        </header>
+                        <div class="section-card">
 
                         <!-- Beacon API Features -->
                         <details style="margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
@@ -2652,6 +2696,10 @@ ns-143.awsdns-17.org
                                 </p>
                             </div>
                         </details>
+                        </div>
+                    </section>
+
+                        </main>
                     </div>
             </div>
 
@@ -2667,30 +2715,78 @@ ns-143.awsdns-17.org
     <script src="js/architecture.js"></script>
     <script src="js/app.js"></script>
 
+    <!-- M-Redesign Agent 3 — toast container (bottom-right transient notifications) -->
+    <div class="toast-container" id="toast-container" role="region" aria-label="Notifications" aria-live="polite"></div>
+
     <!-- Version footer (P1 #7.6) — persists across tab switches, opens modal -->
     <footer id="app-version-footer" role="contentinfo" aria-label="Application version" tabindex="0">
         <span id="app-version-footer-text">v? (unknown)</span>
     </footer>
 
-    <!-- Version modal — shown when footer is clicked -->
-    <div id="version-modal" class="version-modal" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="version-modal-title">
-        <div class="version-modal__backdrop" data-version-modal-close></div>
-        <div class="version-modal__content" role="document">
-            <div class="version-modal__header">
-                <h2 id="version-modal-title">Red Team Infrastructure</h2>
-                <button type="button" class="version-modal__close" aria-label="Close version dialog" data-version-modal-close>&times;</button>
+    <!-- Version modal — canonical .modal__* markup (M-Redesign Agent 2 v2.0.0).
+         The .version-modal__close alias class is retained on the close button so
+         existing Playwright tests (page.locator('.version-modal__close')) pass. -->
+    <div id="version-modal" class="modal modal--small" hidden role="dialog" aria-modal="true" aria-labelledby="version-modal-title">
+        <div class="modal__backdrop" data-modal-close data-version-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 id="version-modal-title" class="modal__title">Red Team Infrastructure</h2>
+                <button type="button" class="modal__close version-modal__close" aria-label="Close version dialog" data-modal-close data-version-modal-close>&times;</button>
+            </header>
+            <div class="modal__body">
+                <dl class="version-modal__body">
+                    <dt>Version</dt>
+                    <dd id="version-modal-version">unknown</dd>
+                    <dt>Git SHA</dt>
+                    <dd id="version-modal-sha">unknown</dd>
+                    <dt>Built at</dt>
+                    <dd id="version-modal-built">unknown</dd>
+                </dl>
             </div>
-            <dl class="version-modal__body">
-                <dt>Version</dt>
-                <dd id="version-modal-version">unknown</dd>
-                <dt>Git SHA</dt>
-                <dd id="version-modal-sha">unknown</dd>
-                <dt>Built at</dt>
-                <dd id="version-modal-built">unknown</dd>
-            </dl>
-            <div class="version-modal__footer">
-                <a id="version-modal-changelog" href="/changelog" target="_blank" rel="noopener">View changelog</a>
-            </div>
+            <footer class="modal__footer">
+                <a id="version-modal-changelog" class="version-modal__footer-link" href="/changelog" target="_blank" rel="noopener">View changelog</a>
+            </footer>
+        </div>
+    </div>
+
+    <!-- Session-logs modal — static markup, body populated dynamically by
+         viewSessionLogs(). M-Redesign Agent 2 (v2.0.0). -->
+    <div id="session-logs-modal" class="modal modal--wide" hidden role="dialog" aria-modal="true" aria-labelledby="session-logs-modal-title">
+        <div class="modal__backdrop" data-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 id="session-logs-modal-title" class="modal__title">Deployment Logs</h2>
+                <button type="button" class="modal__close" aria-label="Close" data-modal-close>&times;</button>
+            </header>
+            <div class="modal__body" id="session-logs-modal-body"></div>
+            <footer class="modal__footer" id="session-logs-modal-footer"></footer>
+        </div>
+    </div>
+
+    <!-- Archived-logs modal — static markup, body populated dynamically by
+         viewArchivedLogs(). M-Redesign Agent 2 (v2.0.0). -->
+    <div id="archived-logs-modal" class="modal modal--wide" hidden role="dialog" aria-modal="true" aria-labelledby="archived-logs-modal-title">
+        <div class="modal__backdrop" data-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 id="archived-logs-modal-title" class="modal__title">Archived Logs</h2>
+                <button type="button" class="modal__close" aria-label="Close" data-modal-close>&times;</button>
+            </header>
+            <div class="modal__body" id="archived-logs-modal-body"></div>
+            <footer class="modal__footer" id="archived-logs-modal-footer"></footer>
+        </div>
+    </div>
+
+    <!-- Screenshot viewer — full-bleed modal for beacon screenshots.
+         Body populated dynamically by BEACON.viewScreenshot(). M-Redesign Agent 2. -->
+    <div id="screenshot-overlay" class="modal modal--full" hidden role="dialog" aria-modal="true" aria-label="Screenshot viewer">
+        <div class="modal__backdrop" data-modal-close></div>
+        <div class="modal__content" role="document">
+            <header class="modal__header">
+                <h2 class="modal__title">Screenshot</h2>
+                <button type="button" class="modal__close" aria-label="Close" data-modal-close>&times;</button>
+            </header>
+            <div class="modal__body" id="screenshot-overlay-body"></div>
         </div>
     </div>
 </body>

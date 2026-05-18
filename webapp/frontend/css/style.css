@@ -2264,20 +2264,19 @@ input[type="checkbox"] {
     color: var(--text-muted);
     background: var(--bg-card);
 }
-/* Screenshot modal/overlay */
-.screenshot-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.85);
-    z-index: 1000;
+/* === Screenshot viewer — image styling only ===
+   The overlay chrome is provided by canonical .modal + .modal--full (M-Redesign
+   Agent 2). This block only sizes the screenshot image inside the modal body. */
+#screenshot-overlay .modal__body {
+    padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    cursor: pointer;
+    background: rgba(0, 0, 0, 0.4);
 }
-.screenshot-overlay img {
+#screenshot-overlay img {
     max-width: 90vw;
-    max-height: 90vh;
+    max-height: 85vh;
     border-radius: var(--radius);
     box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
 }
@@ -3579,70 +3578,14 @@ input[type="checkbox"] {
     outline-offset: 2px;
 }
 
-/* Modal — matches the dashboard's standard fixed-overlay pattern */
-.version-modal {
-    position: fixed;
-    inset: 0;
-    z-index: 10000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-}
-.version-modal[hidden] {
-    display: none;
-}
-.version-modal__backdrop {
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    cursor: pointer;
-}
-.version-modal__content {
-    position: relative;
-    background: var(--bg-card);
-    color: var(--text-primary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-    min-width: 320px;
-    max-width: 480px;
-    width: 100%;
-    overflow: hidden;
-}
-.version-modal__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border-subtle);
-    background: var(--bg-section);
-}
-.version-modal__header h2 {
-    margin: 0;
-    font-size: 1rem;
-    color: var(--text-primary);
-    font-weight: 600;
-}
-.version-modal__close {
-    background: transparent;
-    border: none;
-    color: var(--text-secondary);
-    font-size: 1.4rem;
-    line-height: 1;
-    padding: 2px 8px;
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-}
-.version-modal__close:hover,
-.version-modal__close:focus {
-    color: var(--text-primary);
-    background: var(--bg-card-hover);
-    outline: none;
-}
+/* === Version modal — body grid (P1 #7.6) ===
+   Markup migrated to canonical .modal__* by M-Redesign Agent 2 (v2.0.0).
+   These rules only style the dl-grid layout specific to the version modal;
+   all overlay / sizing / header / close-button styling lives in .modal__*.
+   The .version-modal__close class is retained as an alias on the close
+   button so existing Playwright tests (.version-modal__close.click) pass. */
 .version-modal__body {
     margin: 0;
-    padding: 16px 18px;
     display: grid;
     grid-template-columns: max-content 1fr;
     gap: 8px 16px;
@@ -3658,21 +3601,15 @@ input[type="checkbox"] {
     font-family: 'SF Mono', Monaco, monospace;
     word-break: break-all;
 }
-.version-modal__footer {
-    padding: 12px 18px;
-    border-top: 1px solid var(--border-subtle);
-    text-align: right;
-    background: var(--bg-section);
-}
-.version-modal__footer a {
+.version-modal__footer-link {
     color: var(--info-text);
     text-decoration: none;
     font-size: 0.88rem;
     padding: 4px 8px;
     border-radius: var(--radius-sm);
 }
-.version-modal__footer a:hover,
-.version-modal__footer a:focus {
+.version-modal__footer-link:hover,
+.version-modal__footer-link:focus {
     text-decoration: underline;
     background: var(--bg-card-hover);
     outline: none;
@@ -5165,9 +5102,16 @@ body { padding-top: 64px; }
     font-size: 0.88em;
 }
 
-/* === Architecture modal (M-Dashboard / Decision #21) === */
-/* Generic .modal — distinct from the existing .version-modal naming so
-   nothing here collides. Backed by the [hidden] attribute. */
+/* === M-Redesign Agent 2 — Unified modal system (v2.0.0) ===
+   Single canonical modal namespace used by every modal in the app:
+     - architecture-modal (M-Dashboard)
+     - version-modal       (P1 #7.6 — legacy .version-modal__* kept as alias only)
+     - session-logs-modal  (deployment timeline)
+     - archived-logs-modal (archived deployment logs)
+     - screenshot-overlay  (beacon screenshot viewer — uses .modal--full)
+   Sizing variants: .modal--small (480px), default (800px), .modal--wide (1100px),
+   .modal--full (95vw/95vh). Backed by the [hidden] attribute + APP.modal helpers.
+   Motion respects prefers-reduced-motion. Palette tokens only — dual-theme verified. */
 .modal[hidden] { display: none; }
 .modal {
     position: fixed;
@@ -5176,25 +5120,31 @@ body { padding-top: 64px; }
     display: flex;
     align-items: center;
     justify-content: center;
+    animation: modal-fade-in 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .modal__backdrop {
     position: absolute;
     inset: 0;
     background: rgba(0, 0, 0, 0.5);
+    cursor: pointer;
 }
 .modal__content {
     position: relative;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    max-width: 1100px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    max-width: 800px;          /* default; sized variants override */
     max-height: 90vh;
     width: 90vw;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+    animation: modal-content-in 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
+.modal--wide  .modal__content { max-width: 1100px; }
+.modal--full  .modal__content { max-width: 95vw; max-height: 95vh; }
+.modal--small .modal__content { max-width: 480px; }
 .modal__header {
     display: flex;
     align-items: center;
@@ -5202,6 +5152,7 @@ body { padding-top: 64px; }
     padding: 16px 20px;
     border-bottom: 1px solid var(--border-subtle);
 }
+.modal__title,
 .modal__header h2 {
     margin: 0;
     font-size: 16px;
@@ -5210,15 +5161,17 @@ body { padding-top: 64px; }
 }
 .modal__close {
     background: transparent;
-    border: none;
+    border: 0;
     color: var(--text-muted);
-    font-size: 24px;
+    font-size: 22px;
     line-height: 1;
     cursor: pointer;
-    padding: 4px 8px;
-    transition: color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                background 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
-.modal__close:hover { color: var(--text-primary); }
+.modal__close:hover { color: var(--text-primary); background: var(--bg-card-hover); }
 .modal__close:focus-visible {
     outline: 2px solid var(--brand);
     outline-offset: 2px;
@@ -5228,4 +5181,451 @@ body { padding-top: 64px; }
     overflow: auto;
     flex: 1;
 }
+.modal__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-section);
+}
+@keyframes modal-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+@keyframes modal-content-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .modal,
+    .modal__content { animation: none; }
+}
+
+/* ============================================================================
+   === M-Redesign Agent 1 — Settings page rebuild (v2.0.0) ===
+   ============================================================================
+
+   Two-column grid: 200px sticky left rail (TOC) + 1fr main content. Each
+   Settings section gets a stacked V3 header: a 9.5px mono caps eyebrow
+   ("CONFIG · WORKSTATION") above a 16px / 600 weight title, then a quiet
+   description, then the existing section-card content.
+
+   All selectors are scoped to `.tab-page[data-page="settings"]` or the
+   `.settings-*` namespace — they cannot leak into other tabs.
+
+   Plan refs: §17 Decision #22 (page-structure improvements), §28.2 (Settings
+   row), Decisions #15 (V3 dials), #18 (AWS Inventory).
+   ============================================================================ */
+
+/* ── 0. PAGE INTRO + BASE TYPE SCALE ─────────────────────────────────── */
+.tab-page[data-page="settings"] {
+    font-size: 13px;
+}
+.tab-page[data-page="settings"] .page-title {
+    color: var(--text-primary);
+}
+.tab-page[data-page="settings"] .settings-intro {
+    margin: 0 0 24px 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+/* ── 1. TWO-COLUMN LAYOUT (200px rail + content) ─────────────────────── */
+.tab-page[data-page="settings"] .settings-layout {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 32px;
+    align-items: start;
+}
+@media (max-width: 900px) {
+    .tab-page[data-page="settings"] .settings-layout {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+}
+
+/* ── 2. LEFT-RAIL TOC ─────────────────────────────────────────────────── */
+.tab-page[data-page="settings"] .settings-toc {
+    /* Sticky beneath global header (~96px) + sub-pill area buffer. */
+    position: sticky;
+    top: 120px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 14px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+}
+@media (max-width: 900px) {
+    .tab-page[data-page="settings"] .settings-toc {
+        position: static;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+}
+.tab-page[data-page="settings"] .settings-toc__eyebrow {
+    display: block;
+    margin: 2px 8px 10px 8px;
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.tab-page[data-page="settings"] .settings-toc__item {
+    display: block;
+    padding: 8px 10px;
+    border-left: 2px solid transparent;
+    border-radius: 0 4px 4px 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="settings"] .settings-toc__item:hover {
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border-left-color: var(--border-light);
+}
+.tab-page[data-page="settings"] .settings-toc__item.is-active {
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border-left-color: var(--brand-light);
+    font-weight: 600;
+}
+.tab-page[data-page="settings"] .settings-toc__item:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+
+/* ── 3. MAIN CONTENT COLUMN ──────────────────────────────────────────── */
+.tab-page[data-page="settings"] .settings-content {
+    min-width: 0; /* prevent grid blowout from long inline content */
+    display: flex;
+    flex-direction: column;
+    gap: 36px;
+}
+
+/* ── 4. SECTION (stacked V3 header + section-card body) ──────────────── */
+.tab-page[data-page="settings"] .settings-section {
+    /* Anchor offset so scroll-to-id leaves room under sticky chrome. */
+    scroll-margin-top: 110px;
+}
+.tab-page[data-page="settings"] .settings-section__header {
+    margin: 0 0 14px 0;
+}
+.tab-page[data-page="settings"] .settings-section__eyebrow {
+    display: block;
+    margin-bottom: 6px;
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.tab-page[data-page="settings"] .settings-section__title {
+    margin: 0 0 4px 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.005em;
+}
+.tab-page[data-page="settings"] .settings-section__description {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+/* ── 5. SECTION-CARD INTERIOR — V3 density ───────────────────────────── */
+.tab-page[data-page="settings"] .section-card {
+    padding: 22px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="settings"] .section-card--compact {
+    padding: 14px 16px;
+}
+/* Headings inside cards — use --text-primary (the cost/breakdown sub-
+   heads previously used --gold-muted inline, which is olive on cream in
+   light mode → low contrast). */
+.tab-page[data-page="settings"] .section-card h3,
+.tab-page[data-page="settings"] .section-card h4 {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+.tab-page[data-page="settings"] .settings-cost__subhead {
+    margin: 0 0 10px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* ── 6. FORM INPUTS — V3 13px ────────────────────────────────────────── */
+.tab-page[data-page="settings"] .form-group label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+.tab-page[data-page="settings"] .form-group input,
+.tab-page[data-page="settings"] .form-group select,
+.tab-page[data-page="settings"] .form-group textarea {
+    font-size: 13px;
+    padding: 11px 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="settings"] .form-group input:focus,
+.tab-page[data-page="settings"] .form-group select:focus,
+.tab-page[data-page="settings"] .form-group textarea:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+.tab-page[data-page="settings"] .form-group small {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+/* ── 7. BUTTONS — V3 transition + focus rings ───────────────────────── */
+.tab-page[data-page="settings"] .btn {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 16px;
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="settings"] .btn:hover {
+    transform: translateY(-1px);
+}
+.tab-page[data-page="settings"] .btn:active {
+    transform: translateY(0);
+}
+.tab-page[data-page="settings"] .btn:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+.tab-page[data-page="settings"] .btn-sm {
+    font-size: 11.5px;
+    padding: 5px 11px;
+}
+.tab-page[data-page="settings"] .btn-primary {
+    background: var(--brand);
+    color: var(--text-inverse);
+}
+.tab-page[data-page="settings"] .btn-primary:hover {
+    background: var(--brand-light);
+}
+.tab-page[data-page="settings"] .btn-secondary {
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+}
+.tab-page[data-page="settings"] .btn-secondary:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--brand-light);
+    color: var(--text-primary);
+}
+
+/* ── 8. COST-TRACKER REFRESH BUTTON ─────────────────────────────────── */
+.tab-page[data-page="settings"] .settings-cost__refresh {
+    width: 100%;
+    margin-bottom: 20px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    font-weight: 600;
+}
+
+/* ── 9. ROADMAP <details> — V3 density ──────────────────────────────── */
+.tab-page[data-page="settings"] .section-card details {
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tab-page[data-page="settings"] .section-card details:hover {
+    border-color: var(--border-light);
+}
+.tab-page[data-page="settings"] .section-card details summary {
+    color: var(--text-primary);
+    background: var(--bg-section);
+    font-size: 13px;
+    font-weight: 600;
+}
+/* === end M-Redesign Agent 1 ===================================== */
+
+/* ============================================================================
+   M-Redesign Agent 3 — Motion fluidity layer + unified state components
+   (v2.0.0 — Decision #22, "v3 taste demo + more fluidity")
+   ============================================================================
+   Scope: .motion-*, .skeleton-*, .empty-state, .toast, plus the global
+   .tab-page and .subpill-pane page/pane animations. Every animation
+   honors prefers-reduced-motion. No raw hex, all palette tokens.
+   ============================================================================ */
+
+/* --- Page-level crossfade (every top-level .tab-page activation) ----------- */
+.tab-page {
+    animation: page-enter 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes page-enter {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Sub-pill pane transitions (spring-overshoot fade-in) ------------------ */
+.subpill-pane {
+    animation: subpill-pane-enter 240ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes subpill-pane-enter {
+    from { opacity: 0; transform: translateX(-6px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+/* --- Stagger choreography for list-style containers ----------------------- */
+/* Attach .motion-stagger-in to a parent; children fade-up with offsets.
+   APP._staggerOnce() applies it once per mount so a polled re-render
+   doesn't re-stagger on every tick (annoying for operators). */
+.motion-stagger-in > * {
+    animation: stagger-fade-in 320ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.motion-stagger-in > *:nth-child(1) { animation-delay: 0ms; }
+.motion-stagger-in > *:nth-child(2) { animation-delay: 40ms; }
+.motion-stagger-in > *:nth-child(3) { animation-delay: 80ms; }
+.motion-stagger-in > *:nth-child(4) { animation-delay: 120ms; }
+.motion-stagger-in > *:nth-child(5) { animation-delay: 160ms; }
+.motion-stagger-in > *:nth-child(6) { animation-delay: 200ms; }
+.motion-stagger-in > *:nth-child(n+7) { animation-delay: 240ms; }
+@keyframes stagger-fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Loading skeleton component ------------------------------------------- */
+/* Shimmer placeholder shown during initial data fetches. */
+.skeleton {
+    background: linear-gradient(90deg,
+        var(--bg-input) 0%,
+        var(--bg-card-hover) 50%,
+        var(--bg-input) 100%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1400ms ease-in-out infinite;
+    border-radius: var(--radius-sm);
+}
+.skeleton--text     { height: 1em; margin: 4px 0; }
+.skeleton--text-sm  { height: 0.85em; margin: 4px 0; }
+.skeleton--card     { height: 80px; margin: 8px 0; }
+.skeleton--avatar   { width: 32px; height: 32px; border-radius: 50%; }
+@keyframes skeleton-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* --- Unified empty-state component ---------------------------------------- */
+/* Use for: dashboard deployments grid, beacon table, activity feed, tools. */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 48px 24px;
+    text-align: center;
+}
+.empty-state__icon {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 16px;
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.empty-state__icon-inner {
+    width: 16px;
+    height: 16px;
+    background: var(--brand-light);
+    border-radius: 4px;
+    transform: rotate(45deg);
+}
+.empty-state__title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 6px 0;
+}
+.empty-state__description {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0 0 20px 0;
+    max-width: 400px;
+}
+.empty-state__cta {
+    /* inherits .btn .btn-primary tokens — nothing extra to add here */
+}
+
+/* --- Toast notification system -------------------------------------------- */
+.toast-container {
+    position: fixed;
+    bottom: 56px;
+    right: 16px;
+    z-index: 1100;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 8px;
+    max-width: 360px;
+    pointer-events: none;
+}
+.toast {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--brand-light);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    pointer-events: auto;
+    animation: toast-slide-in 240ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    font-size: 13px;
+    color: var(--text-primary);
+}
+.toast--success { border-left-color: var(--success); }
+.toast--warning { border-left-color: var(--warning-text); }
+.toast--danger  { border-left-color: var(--danger-text); }
+.toast--leaving { animation: toast-slide-out 200ms cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+@keyframes toast-slide-in {
+    from { opacity: 0; transform: translateX(100%); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes toast-slide-out {
+    to { opacity: 0; transform: translateX(100%); }
+}
+
+/* --- prefers-reduced-motion — disable ALL motion added above --------------- */
+@media (prefers-reduced-motion: reduce) {
+    .tab-page,
+    .subpill-pane,
+    .motion-stagger-in > *,
+    .toast {
+        animation: none;
+    }
+    .skeleton {
+        animation: none;
+        opacity: 0.6;
+    }
+}
+/* === end M-Redesign Agent 3 ===================================== */
 
