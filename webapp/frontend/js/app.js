@@ -73,8 +73,84 @@ function _invalidateOutputsCache(projectName) {
 // APPLICATION CORE - Tab Management System
 // ============================================================================
 
+/**
+ * D0 — Routing alias layer (Plan §17 P1 #8 / §21.7 D0.1).
+ *
+ * Maps legacy flat tab names to their post-refactor (parentTab, subPill)
+ * tuples. This layer lets all existing `APP.navigateTo('configuration')`
+ * call sites keep working after D3 merges Configuration + Deploy +
+ * Deployment Manager into a single "deployments-tab" with sub-pills.
+ *
+ * Today (before D3), the alias map is a no-op — every alias points back
+ * to a flat tab name that still exists. D3.6 will swap the values to
+ * point to {parent: 'deployments-tab', subPill: 'configure'} etc., and
+ * 14 cross-link call sites will continue working without modification.
+ */
+const NAVIGATE_ALIASES = {
+    // D3 future-mappings — currently passthrough (the merged tab doesn't exist yet)
+    'configuration': { parent: 'configuration', subPill: null },
+    'deployment':    { parent: 'deployment',    subPill: null },
+    'deployments':   { parent: 'deployments',   subPill: null },
+    // D4 future-mappings — currently passthrough
+    'beacon':        { parent: 'beacon',        subPill: null },
+    'terminal':      { parent: 'terminal',      subPill: null },
+    'tools':         { parent: 'tools',         subPill: null },
+    // D2 future-mapping — Pre Reqs moves into Settings
+    'aws-check':     { parent: 'aws-check',     subPill: null },
+    // Unchanged tabs — keep as identity entries for completeness
+    'dashboard':     { parent: 'dashboard',     subPill: null },
+    'architecture':  { parent: 'architecture',  subPill: null },
+    'settings':      { parent: 'settings',      subPill: null }
+};
+
+/**
+ * Resolve a flat page name (or an already-resolved tuple) to the
+ * canonical {parent, subPill} form. Returns null if the input doesn't
+ * match any alias — caller should fall back to dashboard.
+ */
+function resolveNavigationTarget(input) {
+    if (input && typeof input === 'object' && input.parent) {
+        return { parent: input.parent, subPill: input.subPill || null };
+    }
+    if (typeof input === 'string' && NAVIGATE_ALIASES[input]) {
+        return NAVIGATE_ALIASES[input];
+    }
+    return null;
+}
+
+/**
+ * D0.3 — Read the persisted navigation target with backwards-compat for
+ * stale operator browsers. URL hash wins (so deep-links work); falls back
+ * to sessionStorage. Accepts both new JSON format and legacy plain strings.
+ * Returns null if nothing resolvable is stored.
+ */
+function _readPersistedTarget() {
+    const hashParts = (window.location.hash || '').replace('#', '').split('/');
+    const hashPage = hashParts[0];
+    const hashSubPill = hashParts[1] || null;
+    if (hashPage && APP.pages.includes(hashPage)) {
+        return { parent: hashPage, subPill: hashSubPill };
+    }
+    const saved = sessionStorage.getItem('currentPage');
+    if (!saved) return null;
+    // New format: JSON-encoded {parent, subPill}
+    try {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.parent && APP.pages.includes(parsed.parent)) {
+            return { parent: parsed.parent, subPill: parsed.subPill || null };
+        }
+    } catch (e) {
+        // Legacy format: plain string was the page name itself
+        if (APP.pages.includes(saved)) {
+            return { parent: saved, subPill: null };
+        }
+    }
+    return null;
+}
+
 const APP = {
     currentPage: 'dashboard',
+    currentSubPill: null,
     pages: ['dashboard', 'configuration', 'deployment', 'deployments', 'tools', 'aws-check', 'architecture', 'beacon', 'terminal', 'settings'],
     // P1 #7.6 — cached /api/version response so the modal doesn't re-fetch
     versionInfo: null,
@@ -91,12 +167,11 @@ const APP = {
         // Setup tab navigation
         this.setupNavigation();
 
-        // Load initial page — restore from URL hash or sessionStorage
-        const hashPage = window.location.hash.replace('#', '');
-        const savedPage = sessionStorage.getItem('currentPage');
-        const initialPage = (hashPage && this.pages.includes(hashPage)) ? hashPage :
-                            (savedPage && this.pages.includes(savedPage)) ? savedPage : 'dashboard';
-        this.navigateTo(initialPage);
+        // Load initial page — restore from URL hash or sessionStorage.
+        // D0.3 — Accepts both new JSON format and stale plain-string sessionStorage
+        // values from operator browsers that loaded the dashboard pre-D0.
+        const initialTarget = _readPersistedTarget() || { parent: 'dashboard', subPill: null };
+        this.navigateTo(initialTarget);
 
         // Setup event handlers
         this.setupEventHandlers();
@@ -258,18 +333,39 @@ const APP = {
     },
     
     /**
-     * Navigate to a specific page
-     * @param {string} pageName - The page to navigate to
+     * Navigate to a specific page.
+     *
+     * D0.2 — Accepts three call shapes for forward-compat with D3 sub-pills:
+     *   1. navigateTo('dashboard')                                  — legacy flat string
+     *   2. navigateTo('deployments-tab', 'configure')               — (parent, subPill)
+     *   3. navigateTo({parent: 'deployments-tab', subPill: '...'})  — object form
+     *
+     * Today every flat string resolves via NAVIGATE_ALIASES to a passthrough
+     * tuple with `subPill: null`, so all 14 existing cross-tab call sites
+     * keep behaving identically. D3.6 will repoint alias values to the
+     * merged "deployments-tab" parent and sub-pills will start activating.
+     *
+     * @param {string|object} pageOrTarget - Page name OR {parent, subPill} tuple
+     * @param {string} [subPill] - Optional sub-pill when pageOrTarget is a parent name
      */
-    navigateTo(pageName) {
-        console.log(`📄 Navigating to: ${pageName}`);
-        
+    navigateTo(pageOrTarget, subPill) {
+        // Resolve to canonical {parent, subPill} form
+        let target;
+        if (subPill !== undefined && typeof pageOrTarget === 'string') {
+            target = { parent: pageOrTarget, subPill: subPill };
+        } else {
+            target = resolveNavigationTarget(pageOrTarget) || { parent: 'dashboard', subPill: null };
+        }
+
+        const pageName = target.parent;
+        console.log(`📄 Navigating to: ${pageName}` + (target.subPill ? ` / ${target.subPill}` : ''));
+
         // Validate page exists
         if (!this.pages.includes(pageName)) {
             console.error(`❌ Page "${pageName}" does not exist!`);
             return;
         }
-        
+
         // Stop beacon polling when leaving beacon page
         if (this.currentPage === 'beacon') {
             BEACON.stopHealthPoll();
@@ -327,9 +423,13 @@ const APP = {
         }
         
         // Update current page and persist for refresh
+        // D0.2 — sessionStorage now stores the full {parent, subPill} tuple as JSON.
+        // The hash form is `#parent` or `#parent/subPill`. Backwards-compat with
+        // stale plain-string values is handled by _readPersistedTarget() at init.
         this.currentPage = pageName;
-        sessionStorage.setItem('currentPage', pageName);
-        window.location.hash = pageName;
+        this.currentSubPill = target.subPill || null;
+        sessionStorage.setItem('currentPage', JSON.stringify(target));
+        window.location.hash = target.subPill ? `${pageName}/${target.subPill}` : pageName;
 
         // Load page-specific content
         this.loadPageContent(pageName);
