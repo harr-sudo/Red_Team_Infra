@@ -28,7 +28,7 @@ html {
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-family: var(--font-family-base);
     font-size: 1rem;
     background: var(--bg-body);
     min-height: 100vh;
@@ -49,7 +49,7 @@ code {
     color: var(--gold-muted);
     padding: 2px 6px;
     border-radius: var(--radius-sm);
-    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-family: var(--font-family-mono);
     font-size: 0.9em;
 }
 
@@ -68,8 +68,14 @@ code {
 /* ============================================================================
    HEADER
    ============================================================================ */
-/* Header — kept for architecture.html */
-header {
+/* Header — kept for architecture.html.
+   IMPORTANT: this bare-element selector matches EVERY <header> in the DOM,
+   including content wrappers like .settings-section__header. We scope it
+   to direct children of <body> so it only styles the page-chrome banner
+   used by architecture.html (no inner <main>/<section> headers get hit).
+   The previous unscoped rule caused the D8 Settings header bug
+   (2026-05-18): dark-on-dark eyebrow/title text in light mode. */
+body > header {
     background: var(--burgundy);
     color: var(--text-primary);
     padding: 24px 30px;
@@ -77,7 +83,7 @@ header {
     position: relative;
 }
 
-header h1 {
+body > header h1 {
     font-size: 2.2em;
     margin-bottom: 6px;
     font-weight: 700;
@@ -115,7 +121,9 @@ header h1 {
 }
 
 .tab-btn.active {
-    background: var(--brand);
+    /* Use --brand-dark so cream text reads AA on the active fill in both
+       themes. (Plain --brand olive on cream is ~2.5:1 — fails badly.) */
+    background: var(--brand-dark);
     color: var(--accent);
 }
 
@@ -270,38 +278,39 @@ header h1 {
 
 .btn-success {
     background: var(--success);
-    color: #fff;
+    color: var(--text-on-primary);
 }
 
 .btn-success:hover {
-    background: #58A864;
+    background: color-mix(in srgb, var(--success) 80%, var(--color-neutral-50));
 }
 
 .btn-danger {
     background: var(--danger);
-    color: #fff;
+    color: var(--text-on-primary);
 }
 
 .btn-danger:hover {
-    background: #D44840;
+    background: color-mix(in srgb, var(--danger) 80%, var(--color-neutral-50));
 }
 
 .btn-warning {
     background: var(--warning);
-    color: #fff;
+    /* Warning amber is too light for white text (2.77:1). Always dark text. */
+    color: var(--color-neutral-950);
 }
 
 .btn-warning:hover {
-    background: #D4A218;
+    background: color-mix(in srgb, var(--warning) 80%, var(--color-neutral-950));
 }
 
 .btn-info {
     background: var(--info);
-    color: #fff;
+    color: var(--text-on-primary);
 }
 
 .btn-info:hover {
-    background: #6098D0;
+    background: color-mix(in srgb, var(--info) 80%, var(--color-neutral-50));
 }
 
 .btn-secondary {
@@ -536,7 +545,7 @@ header h1 {
     border-radius: var(--radius);
     padding: 15px;
     margin: 15px 0;
-    font-family: 'Cascadia Mono', 'Fira Mono', 'Consolas', 'Menlo', 'SF Mono', 'Liberation Mono', 'DejaVu Sans Mono', monospace;
+    font-family: var(--font-family-mono);
     font-size: 0.9em;
     line-height: 1.5;
     max-height: 650px;
@@ -1175,7 +1184,7 @@ input[type="checkbox"] {
     max-height: 400px;
     overflow-y: auto;
     white-space: pre;
-    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-family: var(--font-family-mono);
 }
 
 .preview-tab {
@@ -1196,7 +1205,7 @@ input[type="checkbox"] {
 
 .preview-tab.active {
     background: var(--bg-terminal);
-    color: #C8D9A8;
+    color: var(--terminal-prompt);
 }
 
 /* ============================================================================
@@ -1799,7 +1808,7 @@ input[type="checkbox"] {
     border: none;
     border-radius: 0;
     padding: 10px 12px;
-    font-family: 'Cascadia Mono', 'Fira Mono', 'Consolas', 'Menlo', 'SF Mono', 'Liberation Mono', monospace;
+    font-family: var(--font-family-mono);
     font-size: 0.9em;
     outline: none;
 }
@@ -2522,16 +2531,16 @@ input[type="checkbox"] {
    LIGHT MODE — Fix text on brand-colored backgrounds
    In light mode, elements with brand-colored backgrounds need cream text.
    ============================================================================ */
-[data-theme="light"] header {
-    color: #EFFBDB;
+[data-theme="light"] body > header {
+    color: var(--text-inverse);
 }
 
-[data-theme="light"] header h1 {
-    color: #EFFBDB;
+[data-theme="light"] body > header h1 {
+    color: var(--text-inverse);
 }
 
 [data-theme="light"] table thead tr {
-    color: #EFFBDB;
+    color: var(--text-inverse);
 }
 
 /* Section card headings: --gold/--gold-muted have poor contrast on light surfaces */
@@ -2544,23 +2553,23 @@ input[type="checkbox"] {
 }
 
 [data-theme="light"] .deployment-overview {
-    color: #EFFBDB;
+    color: var(--text-inverse);
 }
 
 [data-theme="light"] .deployment-overview h4 {
-    color: #EFFBDB;
+    color: var(--text-inverse);
 }
 
 [data-theme="light"] .deploy-type-banner {
-    color: #EFFBDB;
+    color: var(--text-inverse);
 }
 
 [data-theme="light"] .btn-primary {
-    color: #EFFBDB;
+    color: var(--text-inverse);
 }
 
 [data-theme="light"] .tab-btn.active {
-    color: #EFFBDB;
+    color: var(--text-inverse);
 }
 
 /* Page title: --gold is olive on light surfaces, use primary text instead */
@@ -2581,7 +2590,7 @@ input[type="checkbox"] {
 
 /* Code preview text needs to stay light on dark terminal bg in light mode */
 [data-theme="light"] .code-preview {
-    color: #B0B8CC;
+    color: var(--text-terminal);
 }
 
 /* ============================================================================
@@ -2597,7 +2606,9 @@ input[type="checkbox"] {
 }
 
 .arch-diagram-frame {
-    background: #fff;
+    /* Diagram PNGs have white backgrounds, so this frame stays white
+       in both themes — diagrams are content, not chrome. */
+    background: var(--color-neutral-50);
     padding: 16px;
     border-radius: var(--radius);
 }
@@ -2659,7 +2670,7 @@ input[type="checkbox"] {
     padding: 20px;
     border-radius: var(--radius);
     overflow-x: auto;
-    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-family: var(--font-family-mono);
     font-size: 0.9em;
     line-height: 1.5;
 }
@@ -2668,7 +2679,7 @@ input[type="checkbox"] {
     background: var(--bg-body);
     padding: 2px 6px;
     border-radius: var(--radius-sm);
-    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-family: var(--font-family-mono);
     font-size: 0.9em;
     color: var(--accent-muted);
 }
@@ -2741,7 +2752,7 @@ input[type="checkbox"] {
 
 /* Light mode — fix markdown table header text */
 [data-theme="light"] .markdown-content table th {
-    color: #EFFBDB;
+    color: var(--text-inverse);
 }
 
 /* ============================================================================
@@ -2865,7 +2876,7 @@ input[type="checkbox"] {
 }
 
 .beacon-table .beacon-id {
-    font-family: 'SF Mono', 'Consolas', monospace;
+    font-family: var(--font-family-mono);
     font-size: 0.85em;
     color: var(--gold-muted);
 }
@@ -3230,7 +3241,7 @@ input[type="checkbox"] {
 
 /* --- Credential password mask toggle --- */
 .cred-password {
-    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-family: var(--font-family-mono);
     cursor: pointer;
     color: var(--text-muted);
 }
@@ -3531,7 +3542,7 @@ input[type="checkbox"] {
     left: 12px;
     padding: 12px 18px;
     background: rgba(0, 0, 0, 0.75);
-    border-left: 3px solid #F0CA4A;
+    border-left: 3px solid var(--terminal-warning);
     border-radius: 4px;
     font-size: 0.95em;
     color: var(--text-terminal);
@@ -3543,8 +3554,8 @@ input[type="checkbox"] {
    Version Footer + Modal  (P1 #7.6)
    - Footer sits fixed bottom-right, persists across all tabs.
    - Uses --text-muted on --bg-section so it's readable in BOTH themes:
-       dark : #7A849E on #1F243A  (>4.5:1)
-       light: #4A5168 on #CDDAAE  (>4.5:1)
+       dark : #858FAB on #1F243A  (>=5:1)
+       light: #4A5168 on #CDDAAE  (>=5:1)
    - --gold / --accent / --accent-muted are deliberately NOT used here —
      they collapse to low-contrast olive on light surfaces.
    ============================================================================ */
@@ -3558,7 +3569,7 @@ input[type="checkbox"] {
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     color: var(--text-muted);
-    font-family: 'SF Mono', Monaco, monospace;
+    font-family: var(--font-family-mono);
     font-size: 0.72rem;
     line-height: 1.4;
     opacity: 0.75;
@@ -3598,7 +3609,7 @@ input[type="checkbox"] {
 .version-modal__body dd {
     margin: 0;
     color: var(--text-primary);
-    font-family: 'SF Mono', Monaco, monospace;
+    font-family: var(--font-family-mono);
     word-break: break-all;
 }
 .version-modal__footer-link {
@@ -3642,7 +3653,7 @@ body { padding-top: 64px; }
     border-bottom: 1px solid var(--border);
     box-shadow: inset 0 1px 0 0 var(--border-subtle);
     z-index: 100;
-    font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: var(--font-family-base);
     font-size: 13px;
     letter-spacing: 0.01em;
     padding: 0 28px;
@@ -3714,7 +3725,7 @@ body { padding-top: 64px; }
     padding: 6px 4px;
 }
 .global-header__chip-label {
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 9.5px;
     font-weight: 500;
     color: var(--text-muted);
@@ -3736,7 +3747,7 @@ body { padding-top: 64px; }
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: 5px;
-    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-family: var(--font-family-base);
     font-size: 13px;
     font-weight: 600;
     color: var(--text-primary);
@@ -3824,7 +3835,7 @@ body { padding-top: 64px; }
     justify-content: space-between;
     gap: 10px;
     padding: 9px 12px;
-    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-family: var(--font-family-base);
     font-size: 13px;
     font-weight: 500;
     color: var(--text-primary);
@@ -3845,14 +3856,14 @@ body { padding-top: 64px; }
     color: var(--text-primary);
 }
 .global-header__combobox-option-name {
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 12.5px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .global-header__combobox-option-status {
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 9.5px;
     font-weight: 600;
     letter-spacing: 0.1em;
@@ -3891,7 +3902,7 @@ body { padding-top: 64px; }
     background: var(--bg-card-hover);
 }
 .global-header__cost-value {
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-variant-numeric: tabular-nums;
     font-size: 14.5px;
     font-weight: 700;
@@ -3900,7 +3911,7 @@ body { padding-top: 64px; }
     line-height: 1.15;
 }
 .global-header__cost-caption {
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 9.5px;
     font-weight: 500;
     color: var(--text-muted);
@@ -3936,7 +3947,7 @@ body { padding-top: 64px; }
     100% { transform: scale(1.5); opacity: 0; }
 }
 .global-header__operator-text {
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 12.5px;
     font-weight: 600;
     color: var(--text-primary);
@@ -3961,7 +3972,7 @@ body { padding-top: 64px; }
     border: 1px solid var(--border);
     border-radius: 5px;
     cursor: pointer;
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 11px;
     font-weight: 600;
     color: var(--text-secondary);
@@ -4133,7 +4144,7 @@ body { padding-top: 64px; }
 }
 .tab-page[data-page="deployments-tab"] .subpill-pane h5 {
     font-size: 0.85em;
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     text-transform: uppercase;
     letter-spacing: 0.14em;
     font-weight: 500;
@@ -4316,7 +4327,7 @@ body { padding-top: 64px; }
 }
 .tab-page[data-page="deployments-tab"] table th {
     /* 9.5px mono caps captions — V3 header treatment.                    */
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 9.5px;
     font-weight: 500;
     letter-spacing: 0.14em;
@@ -4426,7 +4437,7 @@ body { padding-top: 64px; }
     background: var(--bg-card);
     border: 1px solid var(--border);
     color: var(--text-secondary);
-    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-family: var(--font-family-base);
     font-size: 12px;
     font-weight: 600;
     padding: 6px 11px;
@@ -4524,7 +4535,7 @@ body { padding-top: 64px; }
 }
 .tab-page[data-page="operations-tab"] .subpill-pane h5 {
     font-size: 0.85em;
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     text-transform: uppercase;
     letter-spacing: 0.14em;
     font-weight: 500;
@@ -4652,7 +4663,7 @@ body { padding-top: 64px; }
     font-size: 13px;
 }
 .tab-page[data-page="operations-tab"] table th {
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 9.5px;
     font-weight: 500;
     letter-spacing: 0.14em;
@@ -4912,7 +4923,7 @@ body { padding-top: 64px; }
     outline-offset: 2px;
 }
 .dashboard-hero__resume-label {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 9.5px;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -4961,7 +4972,7 @@ body { padding-top: 64px; }
 }
 .dashboard-widget--compact { padding: 16px; }
 .dashboard-widget__title {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 9.5px;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -5011,7 +5022,7 @@ body { padding-top: 64px; }
 .dashboard-deployment-card__meta {
     font-size: 11px;
     color: var(--text-muted);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-family-mono);
 }
 
 .dashboard-stat-big {
@@ -5048,7 +5059,7 @@ body { padding-top: 64px; }
     margin: 8px 0;
 }
 .dashboard-cost-delta {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 10.5px;
     color: var(--text-muted);
 }
@@ -5088,7 +5099,7 @@ body { padding-top: 64px; }
 }
 .dashboard-architecture-meta span {
     color: var(--text-secondary);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-family-mono);
 }
 
 .dashboard-elastic-rules-row {
@@ -5269,7 +5280,7 @@ body { padding-top: 64px; }
 .tab-page[data-page="settings"] .settings-toc__eyebrow {
     display: block;
     margin: 2px 8px 10px 8px;
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 9.5px;
     font-weight: 500;
     letter-spacing: 0.14em;
@@ -5319,12 +5330,24 @@ body { padding-top: 64px; }
     scroll-margin-top: 110px;
 }
 .tab-page[data-page="settings"] .settings-section__header {
+    /* CRITICAL: cancel the global `header { background: var(--burgundy); ... }`
+       rule at the top of this file. `<header>` is a semantic tag, and that
+       rule matches every <header> in the DOM. Without this reset, the
+       Settings section eyebrow/title/description text sat on a dark
+       burgundy (or dark teal in light mode) surface — making the muted-
+       gray eyebrow and dark-navy title illegible in light mode.
+       The header here is just a content wrapper, not a chrome region. */
     margin: 0 0 14px 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    position: static;
 }
 .tab-page[data-page="settings"] .settings-section__eyebrow {
     display: block;
     margin-bottom: 6px;
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 9.5px;
     font-weight: 500;
     letter-spacing: 0.14em;
@@ -5653,7 +5676,7 @@ body { padding-top: 64px; }
     letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--text-muted);
-    font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+    font-family: var(--font-family-mono);
     margin-top: 4px;
 }
 .cleanup-resource-group {
@@ -5685,7 +5708,7 @@ body { padding-top: 64px; }
 }
 .cleanup-resource-row:hover { border-color: var(--brand-light); }
 .cleanup-resource-row__name {
-    font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+    font-family: var(--font-family-mono);
     font-size: 12px;
     font-weight: 600;
     color: var(--text-primary);
@@ -5695,7 +5718,7 @@ body { padding-top: 64px; }
 .cleanup-resource-row__meta {
     font-size: 11px;
     color: var(--text-muted);
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-family-mono);
 }
 .cleanup-resource-row__actions {
     display: flex;
@@ -5747,7 +5770,7 @@ body { padding-top: 64px; }
     font-weight: 600;
     color: var(--text-primary);
     margin-bottom: 4px;
-    font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+    font-family: var(--font-family-mono);
     word-break: break-all;
 }
 .settings-domain-row__meta,
@@ -5758,7 +5781,7 @@ body { padding-top: 64px; }
     gap: 12px;
     font-size: 11px;
     color: var(--text-muted);
-    font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+    font-family: var(--font-family-mono);
 }
 /* === end D8 Agent A ===================================== */
 
@@ -5780,7 +5803,7 @@ body { padding-top: 64px; }
     border-radius: 999px;
     color: var(--text-primary);
     cursor: pointer;
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 12px;
     transition: border-color 180ms ease,
                 background-color 180ms ease,
@@ -5829,7 +5852,7 @@ body { padding-top: 64px; }
 }
 .operator-menu__section { padding: 4px; }
 .operator-menu__label {
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 9.5px;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -5876,7 +5899,7 @@ body { padding-top: 64px; }
 .operator-menu__operator-id {
     color: var(--text-muted);
     font-size: 10px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-family: var(--font-family-mono);
 }
 .operator-menu__action {
     display: flex;
@@ -5989,14 +6012,14 @@ body { padding-top: 64px; }
 .activity-feed__verb { color: var(--text-muted); }
 .activity-feed__target {
     color: var(--text-primary);
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-family: var(--font-family-mono);
     font-size: 11px;
 }
 .activity-feed__time {
     margin-left: auto;
     color: var(--text-muted);
     font-size: 10px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-family: var(--font-family-mono);
 }
 .activity-feed__empty {
     color: var(--text-muted);

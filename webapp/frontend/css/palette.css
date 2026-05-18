@@ -1,162 +1,337 @@
 /* ============================================================================
-   PALETTE — Swap colors here to retheme the entire app
+   PALETTE — Two-tier design-token system
    ============================================================================
 
-   Current: Dark Navy + Olive Green + Cream (dark/light mode)
+   This file is structured as TWO LAYERS:
 
-   Anchor colors:
-     #10121B — dark navy (base)
-     #8FA464 — olive green (brand)
-     #EFFBDB — light cream (accent)
+     1. RAW TOKENS  — the small set of knobs that drive everything else.
+                       Change these to retheme, refont, or rescale the
+                       entire app.
 
-   To experiment: change the values below, save, and refresh.
-   Everything else in style.css references these variables.
+     2. SEMANTIC TOKENS — what the app actually consumes (background, text,
+                          border, brand). Derived from raw tokens. Body
+                          rules in style.css MUST reference these, never
+                          raw hex values.
+
+   ---------------------------------------------------------------------------
+   How to RETHEME (recolor) the entire app:
+
+       Edit the nine values below in :root:
+         --color-primary, --color-primary-bright, --color-primary-dim
+         --color-secondary, --color-secondary-bright, --color-secondary-dim
+         --color-tertiary, --color-tertiary-bright, --color-tertiary-dim
+
+       That's it. Every button, link, eyebrow, and accent in the app
+       derives from one of those nine values.
+
+   How to REFONT:
+       Edit --font-family-base, --font-family-mono, --font-family-display.
+
+   How to RESCALE type:
+       Edit --font-size-xs ... --font-size-3xl. The base value is
+       --font-size-base (13px). Other sizes are independent, not stepped,
+       so this is a manual ladder — do not auto-scale.
+
+   How to RESCALE corners:
+       Edit --radius-xs ... --radius-xl, --radius-full.
+
+   ---------------------------------------------------------------------------
+   BACK-COMPAT NOTE:
+
+   Legacy names (--burgundy, --gold, --bg-card, --text-primary, etc.) are
+   preserved as aliases over the new raw tokens. style.css and inline
+   styles can continue to reference them; they resolve to the same values.
+   Do not delete an alias without first sweeping every consumer in the
+   codebase.
    ============================================================================ */
 
+
+/* ════════════════════════════════════════════════════════════════════════
+   RAW TOKENS — Edit these to retheme/refont/rescale the entire app.
+   Everything else in this file (and every consumer in style.css) is
+   derived from these.
+   ════════════════════════════════════════════════════════════════════════ */
 :root {
-    /* ── BRAND COLORS ─────────────────────────────────────────────────────── */
-    --brand: #8FA464;              /* Olive green — primary brand */
-    --brand-light: #A3B87A;        /* Lighter olive — hover, highlights */
-    --brand-dark: #6B7D4A;         /* Darker olive — pressed, active */
-    --accent: #EFFBDB;             /* Cream — headings, prominent text */
-    --accent-muted: #C8D9A8;       /* Muted cream-green — secondary highlights */
-    --accent-dim: #9BB07E;         /* Dim olive-cream — subtle accents */
+    /* ── COLORS — Brand axes ─────────────────────────────────────────── */
+    /* Primary axis (dominant brand color — buttons, links, key UI).
+       Current: olive green. Primary-dim is intentionally pushed darker
+       so cream text on it passes WCAG AA in the dark theme (active tab,
+       primary button fills). */
+    --color-primary:         #8FA464;
+    --color-primary-bright:  #A3B87A;
+    --color-primary-dim:     #4D5C32;
 
-    /* ── SURFACES ─────────────────────────────────────────────────────────── */
-    /* Clear nesting: body → container → card → section → elevated          */
-    --bg-body: #10121B;            /* Page background (deepest navy) */
-    --bg-container: #161926;       /* Main container */
-    --bg-card: #1C2031;            /* Cards & panels */
-    --bg-card-hover: #232840;      /* Card hover state */
-    --bg-elevated: #292F4A;        /* Raised elements (dropdowns, popovers) */
-    --bg-input: #131620;           /* Form inputs (recessed) */
-    --bg-section: #1F243A;         /* Sections within cards */
+    /* Secondary axis (companion accent — eyebrows, callouts).
+       Current: cream/light olive (dark mode); resolves darker in light
+       mode for contrast on cream surfaces. */
+    --color-secondary:        #EFFBDB;
+    --color-secondary-bright: #F5FDE6;
+    --color-secondary-dim:    #C8D9A8;
 
-    /* ── BORDERS ──────────────────────────────────────────────────────────── */
-    --border: #2E3550;
-    --border-light: #3D4668;
-    --border-subtle: #252A42;         /* Subtle dividers (table rows, section separators) */
-    --border-focus: var(--brand-light);
+    /* Tertiary axis (utility / info — recently-active dot, info pills).
+       Current: steel blue-gray. */
+    --color-tertiary:        #5B6B85;
+    --color-tertiary-bright: #7A8AA8;
+    --color-tertiary-dim:    #3F4A60;
 
-    /* ── TEXT ─────────────────────────────────────────────────────────────── */
-    --text-primary: #EEF0F6;       /* Headings, body text */
-    --text-secondary: #B0B8CC;     /* Labels, descriptions */
-    --text-muted: #7A849E;         /* Hints, placeholders */
-    --text-inverse: #10121B;       /* Text on light backgrounds */
+    /* ── COLORS — Semantic states ───────────────────────────────────── */
+    /* Chosen to pass WCAG AA (>=4.5:1 vs white text). Warning amber is
+       deliberately kept light — it must use dark text on it, not white. */
+    --color-success: #3D8047;
+    --color-warning: #C4940F;   /* must pair with dark text */
+    --color-danger:  #B82E28;   /* tightened from #C43B34 for AA */
+    --color-info:    #2A6FB0;
 
-    /* ── SEMANTIC COLORS ──────────────────────────────────────────────────── */
-    /* Success (green) */
-    --success: #4A9A56;
-    --success-bg: #142218;
-    --success-border: #2D6B37;
-    --success-text: #7ECF8C;
+    /* ── COLORS — Neutral scale ─────────────────────────────────────── */
+    /* Surfaces and text derive from this in dark mode.
+       Light mode overrides these via per-token assignments below. */
+    --color-neutral-50:  #FFFFFF;
+    --color-neutral-100: #EEF0F6;   /* near-white, body text on dark */
+    --color-neutral-200: #B0B8CC;   /* secondary text on dark */
+    --color-neutral-300: #858FAB;   /* muted text on dark (>=5:1 on bg-card / bg-section / bg-container in dark mode) */
+    --color-neutral-400: #5C5C70;
+    --color-neutral-500: #3D4668;
+    --color-neutral-600: #2E3550;
+    --color-neutral-700: #292F4A;   /* elevated surface (popovers) */
+    --color-neutral-750: #232840;   /* card hover */
+    --color-neutral-800: #1F243A;   /* section surface */
+    --color-neutral-850: #1C2031;   /* card surface */
+    --color-neutral-900: #161926;   /* container surface */
+    --color-neutral-925: #131620;   /* input surface (recessed) */
+    --color-neutral-950: #10121B;   /* body surface (deepest) */
+    --color-neutral-1000: #0B0D14;  /* terminal surface */
 
-    /* Danger (red) */
-    --danger: #C43B34;
-    --danger-bg: #241416;
-    --danger-border: #6B2A28;
-    --danger-text: #F08A84;
+    /* ── TYPOGRAPHY — Families ──────────────────────────────────────── */
+    --font-family-base:    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+    --font-family-mono:    ui-monospace, "SF Mono", "Cascadia Code", Menlo, "Fira Code", Consolas, monospace;
+    --font-family-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, system-ui, sans-serif;
 
-    /* Warning (amber) */
-    --warning: #C4940F;
-    --warning-bg: #221E10;
-    --warning-border: #6B5420;
-    --warning-text: #F0CA4A;
+    /* ── TYPOGRAPHY — Sizes ─────────────────────────────────────────── */
+    --font-size-xs:    10px;   /* meta, time, tiny mono */
+    --font-size-sm:    11px;   /* secondary hints */
+    --font-size-base:  13px;   /* body (V3 default) */
+    --font-size-md:    15px;   /* emphasized body */
+    --font-size-lg:    18px;   /* h4, sub-section */
+    --font-size-xl:    22px;   /* h3, section title */
+    --font-size-2xl:   28px;   /* h2, page title */
+    --font-size-3xl:   36px;   /* hero */
 
-    /* Info (blue) */
-    --info: #5088C0;
-    --info-bg: #131D2C;
-    --info-border: #2D4F72;
-    --info-text: #82BBE8;
+    /* ── TYPOGRAPHY — Weights ───────────────────────────────────────── */
+    --font-weight-regular:  400;
+    --font-weight-medium:   500;
+    --font-weight-semibold: 600;
+    --font-weight-bold:     700;
 
-    /* ── TERMINAL / CODE ─────────────────────────────────────────────────── */
-    --bg-terminal: #0B0D14;
-    --text-terminal: #B0B8CC;
-    --terminal-prompt: #C8D9A8;        /* Beacon prompt (always light on dark bg) */
-    --terminal-success: #7ECF8C;       /* Success in terminal */
-    --terminal-danger: #F08A84;        /* Error in terminal */
-    --terminal-warning: #F0CA4A;       /* Warning in terminal */
-    --terminal-info: #82BBE8;          /* Info in terminal */
-    --terminal-muted: #7A849E;         /* Muted text in terminal */
+    /* ── TYPOGRAPHY — Line heights & spacing ────────────────────────── */
+    --line-height-tight:   1.2;
+    --line-height-base:    1.5;
+    --line-height-relaxed: 1.7;
 
-    /* ── BACKWARD COMPAT ALIASES ─────────────────────────────────────────── */
-    --burgundy: var(--brand);
-    --burgundy-light: var(--brand-light);
-    --burgundy-dark: var(--brand-dark);
-    --gold: var(--accent);
-    --gold-muted: var(--accent-muted);
-    --gold-dim: var(--accent-dim);
+    --letter-spacing-tight: -0.005em;
+    --letter-spacing-base:  0;
+    --letter-spacing-caps:  0.14em;   /* eyebrow caps tracking */
+
+    /* ── RADIUS ─────────────────────────────────────────────────────── */
+    --radius-xs:   3px;
+    --radius-sm:   8px;
+    --radius:     12px;     /* default */
+    --radius-lg:  16px;
+    --radius-xl:  20px;
+    --radius-full: 999px;
+
+    /* ── MOTION ─────────────────────────────────────────────────────── */
+    --motion-duration-fast:    120ms;
+    --motion-duration-base:    280ms;   /* V3 default */
+    --motion-duration-slow:    400ms;
+    --motion-easing-standard:  cubic-bezier(0.4, 0, 0.2, 1);
+    --motion-easing-emphasis:  cubic-bezier(0.32, 0, 0.67, 0);
+    --motion-easing-enter:     cubic-bezier(0, 0, 0.2, 1);
+    --motion-easing-spring:    cubic-bezier(0.34, 1.56, 0.64, 1);
+
+    /* ── SCRIM (backdrop dim + blur — modals, journey takeovers) ─── */
+    --scrim-dark:  rgba(8, 9, 14, 0.55);
+    --scrim-light: rgba(140, 160, 100, 0.32);
+    --scrim-blur:  blur(8px);
+
+    /* Legacy --transition shim — derived from motion tokens. Body rules
+       were authored against this; keep it stable. */
+    --transition: var(--motion-duration-base) var(--motion-easing-standard);
+
+    /* Legacy --font-mono shim — many body rules reference this name. */
+    --font-mono: var(--font-family-mono);
+    --font-sans: var(--font-family-base);
+
+    /* Legacy aliases referenced by inline styles in app.js. */
+    --error:          var(--color-danger);
+    --link:           var(--color-info);
+    --terminal-error: #F08A84;
 }
 
-/* ============================================================================
-   LIGHT MODE — Flip surfaces and text, keep brand + semantic colors
-   ============================================================================ */
+
+/* ════════════════════════════════════════════════════════════════════════
+   SEMANTIC TOKENS — DARK THEME (default)
+
+   What the app consumes. Body rules in style.css MUST reference these
+   names, not raw hex values. Every token here is either:
+     - derived from a raw token (preferred), or
+     - a layer-specific override that the raw layer does not express.
+   ════════════════════════════════════════════════════════════════════════ */
+:root {
+    /* ── SURFACES ───────────────────────────────────────────────────── */
+    /* Stack: body → container → card → section → input.
+       Each layer is darker/lighter than the one beneath it by ~1 step. */
+    --bg-body:       var(--color-neutral-950);    /* page background */
+    --bg-container:  var(--color-neutral-900);    /* main app container */
+    --bg-card:       var(--color-neutral-850);    /* cards & panels */
+    --bg-card-hover: var(--color-neutral-750);    /* card hover */
+    --bg-section:    var(--color-neutral-800);    /* sections inside cards */
+    --bg-elevated:   var(--color-neutral-700);    /* popovers, dropdowns */
+    --bg-input:      var(--color-neutral-925);    /* form inputs (recessed) */
+    --bg-terminal:   var(--color-neutral-1000);   /* terminal/code (always dark) */
+
+    /* ── TEXT ───────────────────────────────────────────────────────── */
+    --text-primary:    var(--color-neutral-100);  /* body, headings */
+    --text-secondary:  var(--color-neutral-200);  /* labels, descriptions */
+    --text-muted:      var(--color-neutral-300);  /* hints, placeholders */
+    --text-inverse:    var(--color-neutral-950);  /* dark text on light bg */
+    --text-on-primary: var(--color-neutral-50);   /* text on --brand fills */
+
+    /* Terminal text — always-bright (terminal bg stays dark in both themes) */
+    --text-terminal:        #B0B8CC;
+    --terminal-prompt:      #C8D9A8;
+    --terminal-success:     #7ECF8C;
+    --terminal-danger:      #F08A84;
+    --terminal-warning:     #F0CA4A;
+    --terminal-info:        #82BBE8;
+    --terminal-muted:       #7A849E;
+
+    /* ── BORDERS ────────────────────────────────────────────────────── */
+    --border:        #2E3550;
+    --border-light:  #3D4668;
+    --border-subtle: #252A42;
+    --border-strong: #4D5878;
+    --border-focus:  var(--color-primary-bright);
+
+    /* ── BRAND aliases (derived from raw) ───────────────────────────── */
+    --brand:         var(--color-primary);
+    --brand-light:   var(--color-primary-bright);
+    --brand-dark:    var(--color-primary-dim);
+    --burgundy:      var(--color-primary);          /* legacy alias */
+    --burgundy-light: var(--color-primary-bright);  /* legacy alias */
+    --burgundy-dark: var(--color-primary-dim);      /* legacy alias */
+
+    --accent:        var(--color-secondary);
+    --accent-muted:  var(--color-secondary-dim);
+    --accent-dim:    var(--color-secondary-dim);
+    --gold:          var(--color-secondary);        /* legacy alias */
+    --gold-muted:    var(--color-secondary-dim);    /* legacy alias */
+    --gold-dim:      var(--color-secondary-dim);    /* legacy alias */
+
+    /* ── SEMANTIC STATES (dark mode tints + text) ───────────────────── */
+    --success:        var(--color-success);
+    --success-bg:     #142218;
+    --success-border: #2D6B37;
+    --success-text:   #7ECF8C;
+
+    --danger:         var(--color-danger);
+    --danger-bg:      #241416;
+    --danger-border:  #6B2A28;
+    --danger-text:    #F08A84;
+
+    --warning:        var(--color-warning);
+    --warning-bg:     #221E10;
+    --warning-border: #6B5420;
+    --warning-text:   #F0CA4A;
+
+    --info:           var(--color-info);
+    --info-bg:        #131D2C;
+    --info-border:    #2D4F72;
+    --info-text:      #82BBE8;
+
+    /* ── SCRIM ──────────────────────────────────────────────────────── */
+    --scrim: var(--scrim-dark);
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   SEMANTIC TOKENS — LIGHT THEME
+
+   Flips surfaces and text; keeps brand/semantic axes but shifts them
+   darker so they remain AA-compliant on cream surfaces.
+   ════════════════════════════════════════════════════════════════════════ */
 [data-theme="light"] {
-    /* ── SURFACES (cream-based) ──────────────────────────────────────────── */
-    --bg-body: #EFFBDB;
-    --bg-container: #E4F0CC;
-    --bg-card: #D8E5BD;
+    /* ── SURFACES (cream-based) ─────────────────────────────────────── */
+    --bg-body:       #EFFBDB;
+    --bg-container:  #E4F0CC;
+    --bg-card:       #D8E5BD;
     --bg-card-hover: #D0DDB0;
-    --bg-elevated: #C2D09F;
-    --bg-input: #E8F4C8;
-    --bg-section: #CDDAAE;
+    --bg-section:    #CDDAAE;
+    --bg-elevated:   #C2D09F;
+    --bg-input:      #E8F4C8;
+    /* Terminal stays dark in both themes (next block keeps it). */
 
-    /* ── BORDERS ──────────────────────────────────────────────────────────── */
-    --border: #A8BA88;
-    --border-light: #B8CA98;
-    --border-subtle: #C0D2A0;         /* Subtle dividers (table rows, section separators) */
+    /* ── TEXT (dark navy on cream) ──────────────────────────────────── */
+    --text-primary:    #10121B;
+    --text-secondary:  #2A2F40;
+    --text-muted:      #4A5168;
+    --text-inverse:    #EFFBDB;
+    --text-on-primary: var(--color-neutral-50);
 
-    /* ── TEXT (dark navy) ─────────────────────────────────────────────────── */
-    --text-primary: #10121B;
-    --text-secondary: #2A2F40;
-    --text-muted: #4A5168;
-    --text-inverse: #EFFBDB;
+    /* ── BORDERS ────────────────────────────────────────────────────── */
+    --border:        #A8BA88;
+    --border-light:  #B8CA98;
+    --border-subtle: #C0D2A0;
+    --border-strong: #8DA070;
 
-    /* ── BRAND (dark teal for accent backgrounds) ──────────────────────── */
-    --brand: #0E1F27;
-    --brand-light: #162D38;
-    --brand-dark: #091620;
-    --accent: #8FA464;
-    --accent-muted: #6B7D4A;
-    --accent-dim: #5A6C3C;
+    /* ── BRAND in light — shifted darker for AA on cream surfaces ─── */
+    --brand:         #0E1F27;
+    --brand-light:   #162D38;
+    --brand-dark:    #091620;
+    --burgundy:      #0E1F27;          /* legacy alias */
+    --burgundy-light: #162D38;         /* legacy alias */
+    --burgundy-dark: #091620;          /* legacy alias */
 
-    /* ── SEMANTIC (boosted for light backgrounds) ────────────────────────── */
-    --success: #2D7A3A;
-    --success-bg: #D8F0DC;
+    /* Light-mode accent: shifted darker so it passes >=4.5:1 on
+       bg-card (cream) AND bg-section. Was #6B7D4A / #5A6C3C / #4E6030 —
+       link text on cards failed at 4.35:1. */
+    --accent:        #495C2D;
+    --accent-muted:  #495C2D;
+    --accent-dim:    #3F5025;
+    --gold:          #495C2D;          /* legacy alias */
+    --gold-muted:    #495C2D;          /* legacy alias */
+    --gold-dim:      #3F5025;          /* legacy alias */
+
+    /* ── SEMANTIC STATES (boosted for cream backgrounds) ────────────── */
+    --success:        #2D7A3A;
+    --success-bg:     #D8F0DC;
     --success-border: #8CC89A;
-    --success-text: #1A5A26;
+    --success-text:   #1A5A26;
 
-    --danger: #B82E28;
-    --danger-bg: #F8DCDA;
-    --danger-border: #E0908C;
-    --danger-text: #8A1A16;
+    --danger:         #B82E28;
+    --danger-bg:      #F8DCDA;
+    --danger-border:  #E0908C;
+    --danger-text:    #8A1A16;
 
-    --warning: #A07A08;
-    --warning-bg: #F5ECD0;
+    --warning:        #A07A08;
+    --warning-bg:     #F5ECD0;
     --warning-border: #D4B44A;
-    --warning-text: #6A5004;
+    --warning-text:   #6A5004;
 
-    --info: #3068A0;
-    --info-bg: #D8EAF8;
-    --info-border: #88B8E0;
-    --info-text: #1A4A78;
+    --info:           #3068A0;
+    --info-bg:        #D8EAF8;
+    --info-border:    #88B8E0;
+    --info-text:      #1A4A78;
 
-    /* ── TERMINAL / CODE (stays dark in both modes) ────────────────────── */
-    --bg-terminal: #0E1F27;
-    --text-terminal: #B0B8CC;
-    /* Terminal semantic colors stay bright in light mode too (dark bg) */
-    --terminal-prompt: #C8D9A8;
+    /* ── TERMINAL stays dark in both modes ──────────────────────────── */
+    --bg-terminal:    #0E1F27;
+    --text-terminal:  #B0B8CC;
+    --terminal-prompt:  #C8D9A8;
     --terminal-success: #7ECF8C;
-    --terminal-danger: #F08A84;
+    --terminal-danger:  #F08A84;
     --terminal-warning: #F0CA4A;
-    --terminal-info: #82BBE8;
-    --terminal-muted: #7A849E;
+    --terminal-info:    #82BBE8;
+    --terminal-muted:   #7A849E;
 
-    /* ── BACKWARD COMPAT ALIASES ─────────────────────────────────────────── */
-    --burgundy: var(--brand);
-    --burgundy-light: var(--brand-light);
-    --burgundy-dark: var(--brand-dark);
-    --gold: var(--accent);
-    --gold-muted: var(--accent-muted);
-    --gold-dim: var(--accent-dim);
+    /* ── SCRIM ──────────────────────────────────────────────────────── */
+    --scrim: var(--scrim-light);
 }
