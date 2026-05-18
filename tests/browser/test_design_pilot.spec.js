@@ -51,12 +51,13 @@ test.describe('design pilot — temporary, removed at D1 end', () => {
     test('theme toggle flips root data-theme attribute', async ({ page }) => {
         await page.goto('/preview/header');
         const initial = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
-        expect(initial).toBe('dark');
+        // Preview pages default to light per user preference; toggle flips to dark then back.
+        expect(initial).toBe('light');
         await page.locator('#theme-toggle').click();
         const after = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
-        expect(after).toBe('light');
+        expect(after).toBe('dark');
         await page.locator('#theme-toggle').click();
         const afterToggleBack = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
-        expect(afterToggleBack).toBe('dark');
+        expect(afterToggleBack).toBe('light');
     });
 });
