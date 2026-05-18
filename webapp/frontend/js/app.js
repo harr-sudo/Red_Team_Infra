@@ -95,8 +95,9 @@ const NAVIGATE_ALIASES = {
     'beacon':        { parent: 'beacon',        subPill: null },
     'terminal':      { parent: 'terminal',      subPill: null },
     'tools':         { parent: 'tools',         subPill: null },
-    // D2 future-mapping — Pre Reqs moves into Settings
-    'aws-check':     { parent: 'aws-check',     subPill: null },
+    // D2 — Pre Reqs moved into Settings as a section card; legacy 'aws-check'
+    // navigateTo() calls now redirect to Settings with an anchor scroll.
+    'aws-check':     { parent: 'settings',      subPill: null, anchor: 'aws-prereqs-anchor' },
     // Unchanged tabs — keep as identity entries for completeness
     'dashboard':     { parent: 'dashboard',     subPill: null },
     'architecture':  { parent: 'architecture',  subPill: null },
@@ -151,7 +152,9 @@ function _readPersistedTarget() {
 const APP = {
     currentPage: 'dashboard',
     currentSubPill: null,
-    pages: ['dashboard', 'configuration', 'deployment', 'deployments', 'tools', 'aws-check', 'architecture', 'beacon', 'terminal', 'settings'],
+    // D2 — 'aws-check' removed from the live pages list; the alias entry in
+    // NAVIGATE_ALIASES redirects legacy callers to {parent: 'settings', anchor: …}.
+    pages: ['dashboard', 'configuration', 'deployment', 'deployments', 'tools', 'architecture', 'beacon', 'terminal', 'settings'],
     // P1 #7.6 — cached /api/version response so the modal doesn't re-fetch
     versionInfo: null,
     
@@ -445,6 +448,16 @@ const APP = {
 
         // Load page-specific content
         this.loadPageContent(pageName);
+
+        // D2 — If the alias target carries an anchor (e.g., 'aws-check' →
+        // settings + 'aws-prereqs-anchor'), scroll the in-page section into
+        // view after content has rendered. Tiny setTimeout so layout settles.
+        if (target.anchor) {
+            setTimeout(() => {
+                const anchorEl = document.getElementById(target.anchor);
+                if (anchorEl) anchorEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 50);
+        }
     },
     
     /**
@@ -479,10 +492,6 @@ const APP = {
                     break;
                 case 'tools':
                     loadToolsPage();
-                    break;
-                case 'aws-check':
-                    // AWS page is interactive, no auto-load
-                    console.log('AWS Check page ready');
                     break;
                 case 'architecture':
                     if (typeof initArchitecturePage === 'function') {
@@ -2576,9 +2585,22 @@ function validateMalleableProfile(profileText) {
  */
 async function loadDashboard() {
     console.log('Loading Dashboard...');
+
+    // D2.3 — Show first-run prereqs banner if no prereq check has ever passed.
+    // Presence of 'prereqs-verified-at' in localStorage = the operator has run
+    // at least one check (any of System Deps, AWS Credentials, AWS Permissions,
+    // SSH Key, GitHub CLI). Banner is informational only — doesn't gate deploy.
+    try {
+        const prereqsVerified = localStorage.getItem('prereqs-verified-at');
+        const banner = document.getElementById('prereqs-first-run-banner');
+        if (banner) {
+            banner.style.display = prereqsVerified ? 'none' : 'block';
+        }
+    } catch (e) { /* ignore localStorage errors (privacy mode, etc.) */ }
+
     const statusDiv = document.getElementById('dashboard-status');
     if (!statusDiv) return;
-    
+
     statusDiv.innerHTML = '<div class="spinner"></div>Loading dashboard...';
     
     try {
@@ -13202,6 +13224,8 @@ async function checkSystemDeps() {
 
         if (allRequiredInstalled) {
             html = `<div class="callout callout--success" style="margin: 0 0 12px 0;"><p style="margin: 0;">All required dependencies installed.</p></div>` + html;
+            // D2.3 — Record that a prereq check has passed (dismisses dashboard banner).
+            try { localStorage.setItem('prereqs-verified-at', new Date().toISOString()); } catch (e) { /* ignore */ }
         } else {
             const missing = required.filter(d => !d.installed).map(d => d.name).join(', ');
             html = `<div class="callout callout--danger" style="margin: 0 0 12px 0;"><p style="margin: 0;"><strong>Missing required:</strong> ${missing}</p></div>` + html;
@@ -13315,6 +13339,8 @@ async function checkAWSCredentials() {
 
         if (data.success && data.authenticated) {
             statusDiv.className = 'status-display success';
+            // D2.3 — Record that a prereq check has passed (dismisses dashboard banner).
+            try { localStorage.setItem('prereqs-verified-at', new Date().toISOString()); } catch (e) { /* ignore */ }
             statusDiv.innerHTML = `
                 <p><strong>${data.message || 'AWS credentials are valid'}</strong></p>
                 <div style="margin-top: 15px; padding: 15px; background: var(--bg-card); border-radius: 5px;">
@@ -13430,6 +13456,8 @@ async function checkSSHKey() {
 
         if (data.has_key) {
             statusDiv.className = 'status-display success';
+            // D2.3 — Record that a prereq check has passed (dismisses dashboard banner).
+            try { localStorage.setItem('prereqs-verified-at', new Date().toISOString()); } catch (e) { /* ignore */ }
             statusDiv.innerHTML = `
                 <p><strong>SSH Key Found: ${data.key_type}</strong></p>
                 <div style="margin-top: 8px; padding: 12px; background: var(--bg-card); border-radius: 5px;">
@@ -13466,6 +13494,10 @@ async function checkGitHubCLI() {
         const data = await response.json();
         
         if (data.success && data.authenticated) {
+            // D2.3 — Record that a prereq check has passed (dismisses dashboard banner).
+            // GitHub CLI is authenticated counts as a successful check, even if repo
+            // access is still pending (warning path below).
+            try { localStorage.setItem('prereqs-verified-at', new Date().toISOString()); } catch (e) { /* ignore */ }
             if (data.has_repo_access) {
                 // Fully authenticated with repo access
                 statusDiv.className = 'status-display success';
@@ -13535,7 +13567,11 @@ async function checkAWSPermissions() {
         if (data.success) {
             const status = data.status || 'unknown';
             const statusClass = status === 'sufficient' ? 'success' : (status === 'insufficient' ? 'error' : 'warning');
-            
+
+            // D2.3 — Record that a prereq check has run (dismisses dashboard banner).
+            // Any successful API response (regardless of permissions verdict) counts.
+            try { localStorage.setItem('prereqs-verified-at', new Date().toISOString()); } catch (e) { /* ignore */ }
+
             statusDiv.className = `status-display ${statusClass}`;
             let html = `
                     <p><strong>${data.status_icon || '📊'} ${data.status_text || 'Checking permissions...'}</strong></p>

@@ -41,7 +41,9 @@ test('dashboard SPA loads and has expected nav buttons', async ({ page }) => {
     // Wait for the nav to be visible (any tab button is enough)
     await page.locator('button.tab-btn[data-target="dashboard"]').waitFor({ timeout: 5000 });
 
-    // Per index.html lines 13-22, all 10 tabs should be present today.
+    // D2 — "Pre Reqs" tab was lifted into Settings as a section card, so the
+    // nav row now has 9 tabs. Cross-tab links to APP.navigateTo('aws-check')
+    // still work via the NAVIGATE_ALIASES redirect (app.js).
     const tabCount = await page.locator('button.tab-btn[data-target]').count();
-    expect(tabCount).toBe(10);
+    expect(tabCount).toBe(9);
 });

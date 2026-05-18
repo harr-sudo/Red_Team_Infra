@@ -80,7 +80,6 @@
         <!-- Navigation Tabs -->
         <nav class="tabs" id="tab-navigation">
             <button class="tab-btn active" data-target="dashboard">Dashboard</button>
-            <button class="tab-btn" data-target="aws-check">Pre Reqs</button>
             <button class="tab-btn" data-target="configuration">Configuration</button>
             <button class="tab-btn" data-target="deployment">Deploy</button>
             <button class="tab-btn" data-target="deployments">Deployment Manager</button>
@@ -97,6 +96,18 @@
             <!-- Dashboard Page -->
             <div class="tab-page active" data-page="dashboard">
                 <h2 class="page-title">Infrastructure Overview</h2>
+
+                <!-- D2.3 — First-run prerequisites banner. Shown when localStorage
+                     'prereqs-verified-at' is absent. Cleared after any prereq check
+                     succeeds. Link routes through APP.navigateTo('aws-check'),
+                     which the NAVIGATE_ALIASES map redirects to Settings + anchor. -->
+                <div id="prereqs-first-run-banner" class="callout callout--warning" style="display: none; margin-bottom: 16px;">
+                    <strong>Prerequisites not verified.</strong>
+                    Run the AWS &amp; SSH prerequisite checks in
+                    <a href="#" onclick="APP.navigateTo('aws-check'); return false;" style="color: inherit; text-decoration: underline;">Settings &rarr; AWS &amp; SSH Prerequisites</a>
+                    before your first deployment.
+                </div>
+
                 <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
                     <strong style="color: var(--gold);">Region:</strong> All deployments, resource queries, and purge operations are restricted to <strong>eu-central-1</strong> (Frankfurt).
                     <span style="margin-left: 8px; opacity: 0.8;">Note: If CloudFront domain fronting is enabled, ACM certificates are provisioned in us-east-1 (AWS requirement for CloudFront).</span>
@@ -1286,55 +1297,7 @@ ns-143.awsdns-17.org
                     <div id="deployment-output" class="output-display"></div>
             </div>
 
-            <!-- AWS Check Page -->
-            <div class="tab-page" data-page="aws-check">
-                    <h2 class="page-title">Prerequisites Check</h2>
-                    <p style="margin-bottom: 20px;">
-                        Verify all required tools and credentials are properly configured before deploying infrastructure.
-                    </p>
-                    <!-- System Dependencies -->
-                    <div class="section-card section-card--highlight section-card--compact" style="margin-bottom: 20px;">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-                            <h3 style="margin: 0;">System Dependencies</h3>
-                            <button class="btn btn-primary btn-sm" onclick="checkSystemDeps()">Check All</button>
-                        </div>
-                        <div id="system-deps-status">
-                            <small class="t-muted">Click "Check All" to verify installed tools.</small>
-                        </div>
-                    </div>
-
-                    <!-- AWS Credentials Check Section -->
-                    <div class="section-card section-card--highlight section-card--compact">
-                        <h3>AWS Credentials</h3>
-                        <p>Check if your AWS CLI credentials are configured and valid.</p>
-                        <button class="btn btn-primary btn-sm" onclick="checkAWSCredentials()">Check AWS Credentials</button>
-                        <div id="aws-credentials-status" class="status-display"></div>
-                    </div>
-
-                    <!-- AWS Permissions Check Section -->
-                    <div class="section-card section-card--highlight section-card--compact">
-                        <h3>AWS Permissions Check</h3>
-                        <p>Verify your AWS credentials have the required permissions to deploy.</p>
-                        <button class="btn btn-primary btn-sm" onclick="checkAWSPermissions()">Check AWS Permissions</button>
-                        <div id="aws-permissions-status" class="status-display"></div>
-                    </div>
-
-                    <!-- SSH Key Check Section -->
-                    <div class="section-card section-card--highlight section-card--compact">
-                        <h3>SSH Key Pair</h3>
-                        <p>Required for EC2 instance access (bastion, jumpbox, team server). Your public key is uploaded to AWS during deployment. The private key is used for SSH tunnels and GOAD provisioning.</p>
-                        <button class="btn btn-primary btn-sm" onclick="checkSSHKey()">Check SSH Key</button>
-                        <div id="ssh-key-status" class="status-display"></div>
-                    </div>
-
-                    <!-- GitHub CLI Check Section -->
-                    <div class="section-card section-card--highlight section-card--compact">
-                        <h3>GitHub CLI Authentication</h3>
-                        <p>Required to access the tools repo at <a href="https://github.com/harr-sudo/red-team-tools" target="_blank">github.com/harr-sudo/red-team-tools</a>.</p>
-                        <button class="btn btn-primary btn-sm" onclick="checkGitHubCLI()">Check GitHub CLI</button>
-                        <div id="github-cli-status" class="status-display"></div>
-                    </div>
-            </div>
+            <!-- D2 — Pre Reqs content moved into Settings tab below as a section card. -->
 
             <!-- Tools Upload Page -->
             <div class="tab-page" data-page="tools">
@@ -2126,6 +2089,58 @@ ns-143.awsdns-17.org
                         <p><strong>Application Information</strong></p>
                         <p>Red Team Infrastructure Manager v1.0.0</p>
                         <p>Local management interface for deploying and managing red team infrastructure on AWS.</p>
+                    </div>
+
+                    <!-- D2 — AWS & SSH Prerequisites (moved from standalone "Pre Reqs" tab). -->
+                    <div class="section-card" id="aws-prereqs-section" style="margin-top: 24px;">
+                        <h3 id="aws-prereqs-anchor">AWS &amp; SSH Prerequisites</h3>
+                        <p style="margin-bottom: 16px; color: var(--text-secondary);">
+                            Verify all required tools and credentials are configured. Run these once per workstation;
+                            the dashboard will warn you on first load if any check has never passed.
+                        </p>
+
+                        <!-- System Dependencies -->
+                        <div class="section-card section-card--highlight section-card--compact" style="margin-bottom: 20px;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                                <h3 style="margin: 0;">System Dependencies</h3>
+                                <button class="btn btn-primary btn-sm" onclick="checkSystemDeps()">Check All</button>
+                            </div>
+                            <div id="system-deps-status">
+                                <small class="t-muted">Click "Check All" to verify installed tools.</small>
+                            </div>
+                        </div>
+
+                        <!-- AWS Credentials Check Section -->
+                        <div class="section-card section-card--highlight section-card--compact">
+                            <h3>AWS Credentials</h3>
+                            <p>Check if your AWS CLI credentials are configured and valid.</p>
+                            <button class="btn btn-primary btn-sm" onclick="checkAWSCredentials()">Check AWS Credentials</button>
+                            <div id="aws-credentials-status" class="status-display"></div>
+                        </div>
+
+                        <!-- AWS Permissions Check Section -->
+                        <div class="section-card section-card--highlight section-card--compact">
+                            <h3>AWS Permissions Check</h3>
+                            <p>Verify your AWS credentials have the required permissions to deploy.</p>
+                            <button class="btn btn-primary btn-sm" onclick="checkAWSPermissions()">Check AWS Permissions</button>
+                            <div id="aws-permissions-status" class="status-display"></div>
+                        </div>
+
+                        <!-- SSH Key Check Section -->
+                        <div class="section-card section-card--highlight section-card--compact">
+                            <h3>SSH Key Pair</h3>
+                            <p>Required for EC2 instance access (bastion, jumpbox, team server). Your public key is uploaded to AWS during deployment. The private key is used for SSH tunnels and GOAD provisioning.</p>
+                            <button class="btn btn-primary btn-sm" onclick="checkSSHKey()">Check SSH Key</button>
+                            <div id="ssh-key-status" class="status-display"></div>
+                        </div>
+
+                        <!-- GitHub CLI Check Section -->
+                        <div class="section-card section-card--highlight section-card--compact">
+                            <h3>GitHub CLI Authentication</h3>
+                            <p>Required to access the tools repo at <a href="https://github.com/harr-sudo/red-team-tools" target="_blank">github.com/harr-sudo/red-team-tools</a>.</p>
+                            <button class="btn btn-primary btn-sm" onclick="checkGitHubCLI()">Check GitHub CLI</button>
+                            <div id="github-cli-status" class="status-display"></div>
+                        </div>
                     </div>
 
                     <div class="section-card" style="margin-top: 24px;">
