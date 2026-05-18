@@ -477,6 +477,84 @@
                 transition: none;
             }
         }
+
+        /* ── FLOATING VARIANT SWITCHER ────────────────────────────────
+           Fixed bottom-right pill that lets the viewer jump between
+           taste-skill variants without returning to the compare page.
+           Palette tokens only; safe in both themes.
+           ──────────────────────────────────────────────────────────── */
+        .variant-switcher {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            font-size: 12px;
+        }
+        .variant-switcher__label {
+            color: var(--text-muted);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 0 8px 0 4px;
+            border-right: 1px solid var(--border);
+            margin-right: 4px;
+        }
+        .variant-switcher__btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 600;
+            transition: background 120ms, color 120ms;
+        }
+        .variant-switcher__btn:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .variant-switcher__btn.is-active {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+        .variant-switcher__dials {
+            color: var(--text-muted);
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 10.5px;
+            font-weight: 400;
+        }
+        .variant-switcher__btn.is-active .variant-switcher__dials {
+            color: var(--text-secondary);
+        }
+        .variant-switcher__sep {
+            width: 1px;
+            height: 16px;
+            background: var(--border);
+            margin: 0 4px;
+        }
+        .variant-switcher__btn--compare {
+            color: var(--text-muted);
+            font-weight: 400;
+            font-size: 11px;
+        }
+        .variant-switcher__btn--compare:hover {
+            color: var(--text-primary);
+        }
+        @media (max-width: 720px) {
+            .variant-switcher__dials,
+            .variant-switcher__label { display: none; }
+        }
     </style>
 </head>
 <body>
@@ -665,5 +743,16 @@
             });
         })();
     </script>
+
+    <!-- Floating variant switcher: jump between V1/V2/V3 in full-width view -->
+    <aside class="variant-switcher" role="group" aria-label="Taste-skill variant">
+        <span class="variant-switcher__label">Variant</span>
+        <a href="/preview/header?variant=taste"    class="variant-switcher__btn is-active" data-variant="v1" aria-pressed="true">V1 <span class="variant-switcher__dials">6/3/6</span></a>
+        <a href="/preview/header?variant=taste-v2" class="variant-switcher__btn" data-variant="v2" aria-pressed="false">V2 <span class="variant-switcher__dials">8/2/7</span></a>
+        <a href="/preview/header?variant=taste-v3" class="variant-switcher__btn" data-variant="v3" aria-pressed="false">V3 <span class="variant-switcher__dials">5/4/5</span></a>
+        <a href="/preview/header?variant=taste-v4" class="variant-switcher__btn" data-variant="v4" aria-pressed="false">V4 <span class="variant-switcher__dials">10/10/7</span></a>
+        <span class="variant-switcher__sep" aria-hidden="true"></span>
+        <a href="/preview/header" class="variant-switcher__btn variant-switcher__btn--compare">&#8592; Compare</a>
+    </aside>
 </body>
 </html>

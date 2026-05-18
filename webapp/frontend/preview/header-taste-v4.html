@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Header — Taste-skill V4 (10/10/7)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           HEADER — TASTE-SKILL V4 ("MAXED OUT" STATEMENT PIECE)
+           Dials: VARIANCE=10 | MOTION=10 | DENSITY=7
+           Palette tokens only. Dual-theme. Vanilla CSS/JS only.
+
+           Design intent:
+           - VARIANCE=10: editorial / manifesto. Asymmetric 4-zone
+             grid (numbered chip → brand block → dense chip rail →
+             vertical "LIVE OPS" rail). Editorial type contrasts
+             (22px brand name vs 8.5px caps). Diagonal accent stripe.
+             Hand-drawn scribble underline. The header IS the page.
+           - MOTION=10: cinematic. Continuous (≤3s) loops on brand
+             shimmer, multi-ring operator pulse, dashed gradient
+             border, vertical micro-marquee. One-shot springs on
+             combobox open (cubic-bezier overshoot), magnetic hover
+             on chips (event-driven CSS vars — no 60fps JS loop),
+             scribble underline draw on brand hover, theme toggle
+             sun-rays reveal.
+           - DENSITY=7: cockpit-ish but breathable. Multiple chips
+             with value-over-caption stacks, numbered leader chip,
+             vertical rail accent. Slightly more padding than V2's
+             7 — same density level, different rhythm.
+
+           HARD CONSTRAINTS:
+           - palette.css var() only (rgba shadow tints allowed)
+           - never use --accent/--gold/--accent-muted as text color
+           - dual-theme (dark default + [data-theme="light"])
+           - contrast ≥ 4.5:1 for all text in both themes
+           - prefers-reduced-motion strips all non-essential motion
+           - all loops ≤ 3000ms, all one-shots ≤ 400ms
+           - no JS animation loops — only event-driven var updates
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* ── COMMAND BAR — 4-zone asymmetric grid ─────────────────────
+           [number] [brand block, wide] [chip rail] [vertical rail]
+           70/30 weight bias toward brand+chips, with a 32px vertical
+           rail on the far right that holds the "LIVE OPS" marquee.
+           Taller (72px) to host the editorial brand.
+           ──────────────────────────────────────────────────────────── */
+        .global-header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 72px;
+            display: grid;
+            grid-template-columns: 56px minmax(280px, 1fr) auto 32px;
+            align-items: stretch;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border);
+            box-shadow: inset 0 1px 0 0 var(--brand-dark),
+                        0 6px 18px -10px rgba(0, 0, 0, 0.45);
+            z-index: 100;
+            font-size: 13px;
+            letter-spacing: 0.01em;
+            overflow: hidden;
+        }
+
+        /* Diagonal accent stripe — VARIANCE signature element.
+           A thin off-axis line that crosses the header behind chips.
+           Tinted so it's perceptible but never compete with text. */
+        .global-header::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 220%;
+            height: 1px;
+            background: linear-gradient(90deg,
+                transparent 0%,
+                var(--brand) 30%,
+                var(--brand-light) 50%,
+                var(--brand) 70%,
+                transparent 100%);
+            transform: translate(-50%, 0) rotate(-1.6deg);
+            transform-origin: center;
+            opacity: 0.18;
+            pointer-events: none;
+        }
+        /* Particle field — animated radial gradients. Sits behind
+           everything. ≤3s loop, very low opacity. */
+        .global-header::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(circle at 18% 30%, var(--brand-light) 0%, transparent 8%),
+                radial-gradient(circle at 72% 70%, var(--accent-dim) 0%, transparent 6%),
+                radial-gradient(circle at 45% 80%, var(--brand) 0%, transparent 7%);
+            opacity: 0.08;
+            animation: gh-particle-drift 2800ms ease-in-out infinite alternate;
+            pointer-events: none;
+        }
+        @keyframes gh-particle-drift {
+            0%   { background-position: 0% 0%, 0% 0%, 0% 0%; opacity: 0.06; }
+            100% { background-position: 4% -3%, -3% 2%, 2% 3%; opacity: 0.10; }
+        }
+
+        /* ── ZONE 1 — NUMBERED LEADER CHIP "01" ───────────────────────
+           Editorial manifesto signature: massive numeral that
+           anchors the left edge. Sits in its own cell with a
+           hairline right divider.
+           ──────────────────────────────────────────────────────────── */
+        .gh-numeral {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-right: 1px solid var(--border-subtle);
+            background: var(--bg-card);
+            overflow: hidden;
+        }
+        .gh-numeral-digit {
+            position: relative;
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.03em;
+            line-height: 1;
+            animation: gh-numeral-bob 2600ms ease-in-out infinite;
+            will-change: transform;
+        }
+        @keyframes gh-numeral-bob {
+            0%, 100% { transform: translateY(0); }
+            50%      { transform: translateY(-2px); }
+        }
+        /* Tiny caps kicker under the numeral */
+        .gh-numeral-kicker {
+            position: absolute;
+            bottom: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 7.5px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        /* ── ZONE 2 — BRAND BLOCK (massive, editorial) ────────────────
+           Hero-style typography. 22px name + 8.5px caps caption.
+           A custom-drawn scribble underline that draws on hover.
+           Animated brand mark with continuous slow rotation + shimmer.
+           ──────────────────────────────────────────────────────────── */
+        .gh-brand {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 0 24px 0 22px;
+            min-width: 0;
+        }
+
+        .gh-brand-mark {
+            position: relative;
+            width: 32px;
+            height: 32px;
+            flex-shrink: 0;
+            border: 1.5px solid var(--brand);
+            border-radius: 6px;
+            overflow: hidden;
+            transition: border-color 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        /* Inner rotating square — slow continuous rotation */
+        .gh-brand-mark::before {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 14px;
+            height: 14px;
+            background: var(--brand);
+            border-radius: 2px;
+            transform: translate(-50%, -50%) rotate(0deg);
+            animation: gh-mark-rotate 2800ms linear infinite;
+            will-change: transform;
+        }
+        /* Shimmer overlay — radial gradient panning across the mark */
+        .gh-brand-mark::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 30% 30%,
+                rgba(255, 255, 255, 0.22) 0%,
+                transparent 40%);
+            mix-blend-mode: overlay;
+            animation: gh-mark-shimmer 2600ms ease-in-out infinite;
+            pointer-events: none;
+        }
+        @keyframes gh-mark-rotate {
+            from { transform: translate(-50%, -50%) rotate(0deg); }
+            to   { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+        @keyframes gh-mark-shimmer {
+            0%   { transform: translate(-30%, -30%); opacity: 0.45; }
+            50%  { transform: translate(30%, 30%); opacity: 0.9; }
+            100% { transform: translate(-30%, -30%); opacity: 0.45; }
+        }
+        .gh-brand:hover .gh-brand-mark {
+            border-color: var(--brand-light);
+            transform: scale(1.08) rotate(-3deg);
+        }
+
+        .gh-brand-text {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.05;
+            position: relative;
+            min-width: 0;
+        }
+        .gh-brand-name {
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--text-primary);
+            letter-spacing: -0.022em;
+            position: relative;
+            display: inline-block;
+            white-space: nowrap;
+        }
+        /* Scribble underline — drawn on hover via scaleX from 0 → 1.
+           Three stacked offsets give it a hand-drawn wobble feel. */
+        .gh-brand-name::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: -3px;
+            height: 4px;
+            background:
+                linear-gradient(90deg, transparent 0%, var(--brand-light) 50%, transparent 100%),
+                linear-gradient(90deg, transparent 10%, var(--brand) 50%, transparent 90%);
+            background-size: 100% 1.5px, 100% 1.2px;
+            background-position: 0 0, 0 100%;
+            background-repeat: no-repeat;
+            transform: scaleX(0);
+            transform-origin: left center;
+            opacity: 0;
+            transition: transform 360ms cubic-bezier(0.34, 1.4, 0.64, 1),
+                        opacity 200ms ease;
+        }
+        .gh-brand:hover .gh-brand-name::after,
+        .gh-brand:focus-within .gh-brand-name::after {
+            transform: scaleX(1);
+            opacity: 1;
+        }
+
+        .gh-brand-kicker {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 8.5px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.28em;
+            text-transform: uppercase;
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        /* A short hairline that precedes the kicker — editorial flourish */
+        .gh-brand-kicker::before {
+            content: "";
+            display: inline-block;
+            width: 18px;
+            height: 1px;
+            background: var(--brand);
+        }
+
+        /* ── ZONE 3 — DENSE CHIP RAIL ─────────────────────────────────
+           Multiple chips with value-over-caption stacks. Slightly
+           more padding than V2 but same overall density. Magnetic
+           hover on each chip (transform driven by --mx/--my vars).
+           ──────────────────────────────────────────────────────────── */
+        .gh-rail {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            padding: 0 20px 0 12px;
+            position: relative;
+        }
+        /* Hairline rule before the rail acts as a section divider */
+        .gh-rail::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 18px;
+            bottom: 18px;
+            width: 1px;
+            background: var(--border-subtle);
+        }
+
+        .gh-chip {
+            --mx: 0px;
+            --my: 0px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 7px 4px;
+            position: relative;
+            transform: translate(var(--mx), var(--my));
+            transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .gh-stack {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.1;
+            min-width: 0;
+        }
+        .gh-stack-value {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            white-space: nowrap;
+            letter-spacing: -0.005em;
+        }
+        .gh-stack-caption {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 8.5px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            margin-top: 5px;
+        }
+
+        /* ── DEPLOYMENT SELECTOR — CUSTOM LISTBOX COMBOBOX ─────────────
+           Same pattern as V1/V2/V3. V4 treatment: spring open
+           (cubic-bezier overshoot), dashed gradient border when
+           expanded (animated).
+           ──────────────────────────────────────────────────────────── */
+        .gh-deploy {
+            position: relative;
+        }
+        .gh-deploy-label {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 8.5px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+        }
+
+        .gh-combobox-wrap {
+            position: relative;
+        }
+
+        .gh-combobox {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 280px;
+            padding: 8px 34px 8px 12px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: pointer;
+            text-align: left;
+            transition: border-color 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        background-color 200ms ease,
+                        box-shadow 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .gh-combobox:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+            transform: translateY(-1px);
+        }
+        .gh-combobox:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 32%, transparent);
+        }
+        .gh-combobox[aria-expanded="true"] {
+            border-color: var(--brand);
+            background: var(--bg-card-hover);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 28%, transparent);
+        }
+        /* Animated dashed gradient border when expanded */
+        .gh-combobox[aria-expanded="true"]::before {
+            content: "";
+            position: absolute;
+            inset: -3px;
+            border-radius: 8px;
+            padding: 2px;
+            background: linear-gradient(90deg,
+                var(--brand) 0%,
+                var(--brand-light) 25%,
+                var(--accent-dim) 50%,
+                var(--brand-light) 75%,
+                var(--brand) 100%);
+            background-size: 200% 100%;
+            -webkit-mask:
+                linear-gradient(#000 0 0) content-box,
+                linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+                    mask-composite: exclude;
+            opacity: 0.55;
+            animation: gh-border-sweep 2400ms linear infinite;
+            pointer-events: none;
+        }
+        @keyframes gh-border-sweep {
+            from { background-position: 0% 0%; }
+            to   { background-position: 200% 0%; }
+        }
+
+        /* CSS-drawn chevron */
+        .gh-combobox-chevron {
+            position: absolute;
+            right: 13px;
+            top: 50%;
+            width: 7px;
+            height: 7px;
+            border-right: 1.5px solid var(--text-secondary);
+            border-bottom: 1.5px solid var(--text-secondary);
+            transform: translateY(-70%) rotate(45deg);
+            pointer-events: none;
+            transition: border-color 200ms ease,
+                        transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .gh-combobox:hover .gh-combobox-chevron {
+            border-color: var(--text-primary);
+        }
+        .gh-combobox[aria-expanded="true"] .gh-combobox-chevron {
+            transform: translateY(-30%) rotate(-135deg);
+            border-color: var(--brand-light);
+        }
+
+        /* Listbox panel — spring open with overshoot */
+        .gh-listbox {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            min-width: 280px;
+            margin: 0;
+            padding: 5px;
+            list-style: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            box-shadow: 0 14px 32px -10px rgba(0, 0, 0, 0.45),
+                        0 4px 10px -3px rgba(0, 0, 0, 0.3);
+            z-index: 200;
+            opacity: 0;
+            transform: translateY(-8px) scale(0.96);
+            transform-origin: top center;
+            pointer-events: none;
+            transition: opacity 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .gh-listbox[data-open="true"] {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            pointer-events: auto;
+        }
+
+        .gh-option {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-primary);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 160ms ease,
+                        color 160ms ease,
+                        transform 160ms ease;
+            user-select: none;
+        }
+        .gh-option:hover,
+        .gh-option[data-active="true"] {
+            background: var(--bg-card-hover);
+            transform: translateX(2px);
+        }
+        .gh-option[aria-selected="true"] {
+            background: var(--bg-section);
+        }
+        .gh-option[aria-selected="true"]::before {
+            content: "";
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--brand-light);
+            flex-shrink: 0;
+            box-shadow: 0 0 6px color-mix(in srgb, var(--brand-light) 60%, transparent);
+        }
+        .gh-option:not([aria-selected="true"])::before {
+            content: "";
+            width: 6px;
+            height: 6px;
+            flex-shrink: 0;
+        }
+
+        /* ── COST CHIP ─────────────────────────────────────────────────
+           Tabular nums, slightly larger. The numeral has a subtle
+           gradient sheen that pans across (≤3s loop).
+           ──────────────────────────────────────────────────────────── */
+        .gh-cost-value {
+            font-variant-numeric: tabular-nums;
+            font-size: 16px;
+            font-weight: 800;
+            color: var(--text-primary);
+            letter-spacing: -0.025em;
+            position: relative;
+        }
+        .gh-cost-currency {
+            color: var(--text-muted);
+            font-weight: 500;
+            margin-right: 1px;
+            font-size: 11px;
+            letter-spacing: 0;
+        }
+
+        /* ── OPERATOR CHIP ─────────────────────────────────────────────
+           Multi-ring pulse: 3 concentric rings, staggered phase.
+           Name in mono, prefix muted.
+           ──────────────────────────────────────────────────────────── */
+        .gh-operator-dot {
+            position: relative;
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: var(--success);
+            flex-shrink: 0;
+            box-shadow: 0 0 8px color-mix(in srgb, var(--success) 50%, transparent);
+        }
+        .gh-operator-dot::before,
+        .gh-operator-dot::after {
+            content: "";
+            position: absolute;
+            inset: -3px;
+            border-radius: 50%;
+            border: 1px solid var(--success);
+            opacity: 0;
+            animation: gh-multipulse 2800ms ease-out infinite;
+            will-change: transform, opacity;
+        }
+        .gh-operator-dot::after {
+            animation-delay: 1400ms;
+        }
+        @keyframes gh-multipulse {
+            0%   { transform: scale(0.6); opacity: 0.75; }
+            70%  { transform: scale(1.9); opacity: 0; }
+            100% { transform: scale(1.9); opacity: 0; }
+        }
+        .gh-operator-name {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 12.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+        }
+        .gh-operator-name::before {
+            content: "operator/";
+            color: var(--text-muted);
+            font-weight: 400;
+            margin-right: 4px;
+            letter-spacing: 0.04em;
+        }
+
+        /* ── THEME TOGGLE ──────────────────────────────────────────────
+           Square button with CSS-drawn moon. Sun-rays radiate from
+           behind on hover (4 hairline strokes via box-shadow).
+           Rotates 22deg on hover with overshoot.
+           ──────────────────────────────────────────────────────────── */
+        .gh-theme-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 34px;
+            height: 34px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            padding: 0;
+            position: relative;
+            transition: border-color 200ms ease,
+                        background-color 200ms ease,
+                        box-shadow 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .gh-theme-toggle:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+            transform: scale(1.04);
+        }
+        .gh-theme-toggle:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 32%, transparent);
+        }
+
+        .gh-theme-glyph {
+            position: relative;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+            transition: background-color 200ms ease,
+                        transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .gh-theme-glyph::before {
+            content: "";
+            position: absolute;
+            top: -1px;
+            right: -3px;
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            background: var(--bg-container);
+            transition: background-color 200ms ease,
+                        transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        [data-theme="light"] .gh-theme-glyph { background: var(--text-primary); }
+        [data-theme="light"] .gh-theme-glyph::before { background: var(--bg-container); }
+
+        /* Sun-rays revealed on hover — 4 tiny strokes around the moon */
+        .gh-theme-glyph::after {
+            content: "";
+            position: absolute;
+            inset: -6px;
+            border-radius: 50%;
+            background:
+                linear-gradient(90deg, var(--text-muted) 0 1px, transparent 1px 100%) center left / 4px 1px no-repeat,
+                linear-gradient(90deg, transparent 0 calc(100% - 4px), var(--text-muted) calc(100% - 4px) 100%) center right / 100% 1px no-repeat,
+                linear-gradient(0deg, var(--text-muted) 0 1px, transparent 1px 100%) top center / 1px 4px no-repeat,
+                linear-gradient(0deg, transparent 0 calc(100% - 4px), var(--text-muted) calc(100% - 4px) 100%) bottom center / 1px 100% no-repeat;
+            opacity: 0;
+            transform: rotate(0deg);
+            transition: opacity 220ms ease, transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+            pointer-events: none;
+        }
+        .gh-theme-toggle:hover .gh-theme-glyph {
+            transform: rotate(22deg);
+        }
+        .gh-theme-toggle:hover .gh-theme-glyph::after {
+            opacity: 0.6;
+            transform: rotate(22deg);
+        }
+
+        /* ── ZONE 4 — VERTICAL RAIL ("LIVE OPS" marquee) ──────────────
+           A 32px-wide right-edge strip with vertically rotated caps
+           text that slowly scrolls — editorial flourish. Loops ≤3s.
+           ──────────────────────────────────────────────────────────── */
+        .gh-vrail {
+            position: relative;
+            border-left: 1px solid var(--border-subtle);
+            background: var(--bg-card);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .gh-vrail-track {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            height: 200%;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            gap: 24px;
+            animation: gh-marquee 2800ms linear infinite;
+            will-change: transform;
+        }
+        .gh-vrail-text {
+            writing-mode: vertical-rl;
+            transform: rotate(180deg);
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 8.5px;
+            font-weight: 700;
+            color: var(--text-muted);
+            letter-spacing: 0.32em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        @keyframes gh-marquee {
+            from { transform: translate(-50%, 0); }
+            to   { transform: translate(-50%, -50%); }
+        }
+
+        /* ── DEMO BODY ─────────────────────────────────────────────── */
+        .demo-main {
+            padding: 120px 40px 48px;
+            max-width: 780px;
+            margin: 0 auto;
+        }
+        .demo-main h2 {
+            font-size: 24px;
+            font-weight: 800;
+            color: var(--text-primary);
+            margin: 0 0 14px;
+            letter-spacing: -0.018em;
+        }
+        .demo-main p {
+            color: var(--text-secondary);
+            line-height: 1.65;
+            margin: 0 0 14px;
+            font-size: 14px;
+        }
+        .demo-main code {
+            font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+            font-size: 12px;
+            padding: 2px 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 3px;
+            color: var(--text-primary);
+        }
+        .demo-dials {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 12px;
+            margin: 6px 0 18px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 999px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.08em;
+        }
+        .demo-dials strong {
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+        .demo-toggle-btn {
+            margin-top: 20px;
+            padding: 10px 18px;
+            font-size: 12.5px;
+            font-weight: 700;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            letter-spacing: 0.02em;
+            transition: background-color 200ms ease,
+                        border-color 200ms ease,
+                        box-shadow 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                        transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .demo-toggle-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+            transform: translateY(-1px);
+        }
+        .demo-toggle-btn:focus-visible {
+            outline: none;
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 32%, transparent);
+        }
+
+        /* ── PREFERS-REDUCED-MOTION — calmer rendition ────────────────
+           Kill all continuous loops, kill spring overshoots, kill
+           magnetic translate, kill marquee, kill particle drift,
+           kill scribble draw. Replace with plain ≤180ms transitions
+           where hover state is needed.
+           ──────────────────────────────────────────────────────────── */
+        @media (prefers-reduced-motion: reduce) {
+            .global-header::after { animation: none; }
+            .gh-numeral-digit { animation: none; }
+            .gh-brand-mark::before { animation: none; }
+            .gh-brand-mark::after { animation: none; }
+            .gh-brand-name::after {
+                transform: scaleX(1);
+                opacity: 0.4;
+                transition: none;
+            }
+            .gh-operator-dot::before,
+            .gh-operator-dot::after { animation: none; opacity: 0; }
+            .gh-combobox[aria-expanded="true"]::before { animation: none; }
+            .gh-vrail-track { animation: none; }
+            .gh-chip { transform: none !important; transition: none; }
+            .gh-combobox,
+            .gh-combobox-chevron,
+            .gh-listbox,
+            .gh-option,
+            .gh-theme-toggle,
+            .gh-theme-glyph,
+            .gh-theme-glyph::before,
+            .gh-theme-glyph::after,
+            .gh-brand-mark,
+            .demo-toggle-btn {
+                transition: border-color 150ms ease,
+                            background-color 150ms ease,
+                            color 150ms ease;
+                transform: none !important;
+            }
+        }
+
+        /* ── FLOATING VARIANT SWITCHER ─────────────────────────────── */
+        .variant-switcher {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            font-size: 12px;
+        }
+        .variant-switcher__label {
+            color: var(--text-muted);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 0 8px 0 4px;
+            border-right: 1px solid var(--border);
+            margin-right: 4px;
+        }
+        .variant-switcher__btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 600;
+            transition: background 120ms, color 120ms;
+        }
+        .variant-switcher__btn:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .variant-switcher__btn.is-active {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+        .variant-switcher__dials {
+            color: var(--text-muted);
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 10.5px;
+            font-weight: 400;
+        }
+        .variant-switcher__btn.is-active .variant-switcher__dials {
+            color: var(--text-secondary);
+        }
+        .variant-switcher__sep {
+            width: 1px;
+            height: 16px;
+            background: var(--border);
+            margin: 0 4px;
+        }
+        .variant-switcher__btn--compare {
+            color: var(--text-muted);
+            font-weight: 400;
+            font-size: 11px;
+        }
+        .variant-switcher__btn--compare:hover {
+            color: var(--text-primary);
+        }
+        @media (max-width: 720px) {
+            .variant-switcher__dials,
+            .variant-switcher__label { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <header class="global-header" role="banner">
+        <!-- ZONE 1: numbered leader chip -->
+        <div class="gh-numeral" aria-hidden="true">
+            <span class="gh-numeral-digit">01</span>
+            <span class="gh-numeral-kicker">cell</span>
+        </div>
+
+        <!-- ZONE 2: brand block -->
+        <div class="gh-brand" tabindex="0">
+            <span class="gh-brand-mark" aria-hidden="true"></span>
+            <div class="gh-brand-text">
+                <span class="gh-brand-name">Red Team Infrastructure</span>
+                <span class="gh-brand-kicker">manifesto / control plane</span>
+            </div>
+        </div>
+
+        <!-- ZONE 3: chip rail -->
+        <div class="gh-rail">
+            <!-- Deployment selector -->
+            <div class="gh-chip gh-deploy" data-magnetic>
+                <span class="gh-deploy-label" id="gh-deploy-label">deployment</span>
+                <div class="gh-combobox-wrap">
+                    <button
+                        type="button"
+                        class="gh-combobox"
+                        id="gh-combobox"
+                        role="combobox"
+                        aria-haspopup="listbox"
+                        aria-expanded="false"
+                        aria-controls="gh-listbox"
+                        aria-labelledby="gh-deploy-label"
+                    >
+                        <span class="gh-combobox-value" id="gh-combobox-value">c2_adhoc_dev_harriss_macbook_pro_01</span>
+                        <span class="gh-combobox-chevron" aria-hidden="true"></span>
+                    </button>
+                    <ul
+                        class="gh-listbox"
+                        id="gh-listbox"
+                        role="listbox"
+                        aria-labelledby="gh-deploy-label"
+                        tabindex="-1"
+                        data-open="false"
+                    >
+                        <li role="option" class="gh-option" data-value="c2_adhoc_dev_harriss_macbook_pro_01" aria-selected="true">c2_adhoc_dev_harriss_macbook_pro_01</li>
+                        <li role="option" class="gh-option" data-value="goad_mini_dev_harriss_macbook_pro" aria-selected="false">goad_mini_dev_harriss_macbook_pro</li>
+                        <li role="option" class="gh-option" data-value="(none)" aria-selected="false">(none)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Cost chip -->
+            <div class="gh-chip" data-magnetic>
+                <div class="gh-stack">
+                    <span class="gh-stack-value gh-cost-value">
+                        <span class="gh-cost-currency">$</span>407<span class="gh-cost-currency">/mo</span>
+                    </span>
+                    <span class="gh-stack-caption">monthly burn</span>
+                </div>
+            </div>
+
+            <!-- Operator chip -->
+            <div class="gh-chip" data-magnetic>
+                <span class="gh-operator-dot" aria-hidden="true"></span>
+                <div class="gh-stack">
+                    <span class="gh-operator-name">harriss</span>
+                    <span class="gh-stack-caption">session active</span>
+                </div>
+            </div>
+
+            <!-- Theme toggle -->
+            <button
+                class="gh-theme-toggle"
+                type="button"
+                aria-label="Toggle theme"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')"
+            >
+                <span class="gh-theme-glyph" aria-hidden="true"></span>
+            </button>
+        </div>
+
+        <!-- ZONE 4: vertical rail marquee -->
+        <div class="gh-vrail" aria-hidden="true">
+            <div class="gh-vrail-track">
+                <span class="gh-vrail-text">live ops // live ops // live ops //</span>
+                <span class="gh-vrail-text">live ops // live ops // live ops //</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="demo-main">
+        <h2>Header preview &mdash; TASTE-SKILL V4</h2>
+        <span class="demo-dials"><strong>VARIANCE</strong> 10 &middot; <strong>MOTION</strong> 10 &middot; <strong>DENSITY</strong> 7</span>
+        <p>Variant V4 &mdash; dials 10/10/7 &mdash; everything maxed except density. This is the statement-piece variant. Most expressive, most kinetic. The header is split into four zones with deliberately asymmetric weighting: a numbered leader chip (<code>01</code>), an editorial brand block with a 22px name and hand-drawn scribble underline, a dense chip rail, and a vertical "live ops" marquee on the right edge.</p>
+        <p>Motion is layered: the brand mark rotates and shimmers continuously, the numeral bobs, the operator dot fires a multi-ring pulse, the chip rail responds to mouse position via magnetic translate (event-driven CSS variables, no 60fps JS loop), and the combobox opens with a spring overshoot. Prefers-reduced-motion users see a calmer rendition with all loops and springs disabled.</p>
+        <p>The deployment selector keeps the same custom listbox combobox pattern as V1/V2/V3 &mdash; <code>Tab</code> to focus, <code>Enter</code> / <code>Space</code> / <code>Down</code> to open, <code>Up</code> / <code>Down</code> / <code>Home</code> / <code>End</code> to navigate, <code>Enter</code> to select, <code>Esc</code> to close, click-outside to dismiss.</p>
+        <button class="demo-toggle-btn" type="button"
+                onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">
+            Toggle theme
+        </button>
+    </main>
+
+    <script>
+    (function () {
+        'use strict';
+
+        /* ────────────────────────────────────────────────────────────
+           CUSTOM LISTBOX COMBOBOX
+           Same pattern as V1/V2/V3 — full ARIA + full keyboard nav.
+           ──────────────────────────────────────────────────────────── */
+        const combobox = document.getElementById('gh-combobox');
+        const listbox  = document.getElementById('gh-listbox');
+        const valueEl  = document.getElementById('gh-combobox-value');
+        const options  = Array.from(listbox.querySelectorAll('[role="option"]'));
+
+        let activeIndex = options.findIndex(o => o.getAttribute('aria-selected') === 'true');
+        if (activeIndex < 0) activeIndex = 0;
+
+        function setActive(idx) {
+            options.forEach((o, i) => {
+                o.removeAttribute('data-active');
+                if (i === idx) {
+                    o.setAttribute('data-active', 'true');
+                    o.scrollIntoView({ block: 'nearest' });
+                }
+            });
+            activeIndex = idx;
+        }
+
+        function openListbox() {
+            listbox.setAttribute('data-open', 'true');
+            combobox.setAttribute('aria-expanded', 'true');
+            setActive(activeIndex);
+            requestAnimationFrame(() => listbox.focus());
+        }
+
+        function closeListbox(returnFocus) {
+            listbox.setAttribute('data-open', 'false');
+            combobox.setAttribute('aria-expanded', 'false');
+            options.forEach(o => o.removeAttribute('data-active'));
+            if (returnFocus) combobox.focus();
+        }
+
+        function selectOption(idx) {
+            options.forEach((o, i) => {
+                o.setAttribute('aria-selected', i === idx ? 'true' : 'false');
+            });
+            valueEl.textContent = options[idx].dataset.value;
+            activeIndex = idx;
+            closeListbox(true);
+        }
+
+        combobox.addEventListener('click', (e) => {
+            e.preventDefault();
+            const isOpen = combobox.getAttribute('aria-expanded') === 'true';
+            isOpen ? closeListbox(false) : openListbox();
+        });
+
+        combobox.addEventListener('keydown', (e) => {
+            switch (e.key) {
+                case 'Enter':
+                case ' ':
+                case 'ArrowDown':
+                    e.preventDefault();
+                    openListbox();
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    openListbox();
+                    setActive(options.length - 1);
+                    break;
+            }
+        });
+
+        listbox.addEventListener('keydown', (e) => {
+            switch (e.key) {
+                case 'ArrowDown':
+                    e.preventDefault();
+                    setActive((activeIndex + 1) % options.length);
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    setActive((activeIndex - 1 + options.length) % options.length);
+                    break;
+                case 'Home':
+                    e.preventDefault();
+                    setActive(0);
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    setActive(options.length - 1);
+                    break;
+                case 'Enter':
+                case ' ':
+                    e.preventDefault();
+                    selectOption(activeIndex);
+                    break;
+                case 'Escape':
+                    e.preventDefault();
+                    closeListbox(true);
+                    break;
+                case 'Tab':
+                    closeListbox(false);
+                    break;
+            }
+        });
+
+        options.forEach((opt, i) => {
+            opt.addEventListener('mouseenter', () => setActive(i));
+            opt.addEventListener('click', (e) => {
+                e.preventDefault();
+                selectOption(i);
+            });
+        });
+
+        document.addEventListener('mousedown', (e) => {
+            if (combobox.getAttribute('aria-expanded') !== 'true') return;
+            if (combobox.contains(e.target) || listbox.contains(e.target)) return;
+            closeListbox(false);
+        });
+
+        /* ────────────────────────────────────────────────────────────
+           MAGNETIC HOVER (event-driven — NOT a 60fps loop)
+           Each [data-magnetic] chip subtly translates toward the
+           mouse on hover, capped at ±3px. We only update the CSS
+           vars on `mousemove` while hovered, and reset on `mouseleave`.
+           CSS handles the spring via cubic-bezier transition.
+           ──────────────────────────────────────────────────────────── */
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        if (!reduceMotion) {
+            const MAX_OFFSET = 3; // pixels
+            document.querySelectorAll('[data-magnetic]').forEach(chip => {
+                let raf = 0;
+                let pendingX = 0;
+                let pendingY = 0;
+
+                function commit() {
+                    chip.style.setProperty('--mx', pendingX.toFixed(2) + 'px');
+                    chip.style.setProperty('--my', pendingY.toFixed(2) + 'px');
+                    raf = 0;
+                }
+
+                chip.addEventListener('mousemove', (e) => {
+                    const rect = chip.getBoundingClientRect();
+                    const cx = rect.left + rect.width / 2;
+                    const cy = rect.top + rect.height / 2;
+                    // normalize -1..1 then scale
+                    const nx = (e.clientX - cx) / (rect.width / 2);
+                    const ny = (e.clientY - cy) / (rect.height / 2);
+                    pendingX = Math.max(-1, Math.min(1, nx)) * MAX_OFFSET;
+                    pendingY = Math.max(-1, Math.min(1, ny)) * MAX_OFFSET;
+                    if (!raf) raf = requestAnimationFrame(commit);
+                });
+
+                chip.addEventListener('mouseleave', () => {
+                    pendingX = 0;
+                    pendingY = 0;
+                    if (!raf) raf = requestAnimationFrame(commit);
+                });
+            });
+        }
+    })();
+    </script>
+
+    <!-- Floating variant switcher: jump between V1/V2/V3/V4 in full-width view -->
+    <aside class="variant-switcher" role="group" aria-label="Taste-skill variant">
+        <span class="variant-switcher__label">Variant</span>
+        <a href="/preview/header?variant=taste"    class="variant-switcher__btn" data-variant="v1" aria-pressed="false">V1 <span class="variant-switcher__dials">6/3/6</span></a>
+        <a href="/preview/header?variant=taste-v2" class="variant-switcher__btn" data-variant="v2" aria-pressed="false">V2 <span class="variant-switcher__dials">8/2/7</span></a>
+        <a href="/preview/header?variant=taste-v3" class="variant-switcher__btn" data-variant="v3" aria-pressed="false">V3 <span class="variant-switcher__dials">5/4/5</span></a>
+        <a href="/preview/header?variant=taste-v4" class="variant-switcher__btn is-active" data-variant="v4" aria-pressed="true">V4 <span class="variant-switcher__dials">10/10/7</span></a>
+        <span class="variant-switcher__sep" aria-hidden="true"></span>
+        <a href="/preview/header" class="variant-switcher__btn variant-switcher__btn--compare">&#8592; Compare</a>
+    </aside>
+</body>
+</html>

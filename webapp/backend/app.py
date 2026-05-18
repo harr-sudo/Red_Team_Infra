@@ -170,7 +170,7 @@ _PREVIEW_DIR = project_root / 'webapp' / 'frontend' / 'preview'
 @app.route('/preview/header')
 def preview_header_compare():
     """Side-by-side compare of header-baseline.html and header-taste*.html.
-    Honors ?variant=baseline|taste|taste-v2|taste-v3|both (default both)."""
+    Honors ?variant=baseline|taste|taste-v2|taste-v3|taste-v4|both (default both)."""
     variant = request.args.get('variant', 'both')
     if variant == 'baseline':
         return send_from_directory(str(_PREVIEW_DIR), 'header-baseline.html')
@@ -180,6 +180,8 @@ def preview_header_compare():
         return send_from_directory(str(_PREVIEW_DIR), 'header-taste-v2.html')
     if variant == 'taste-v3':
         return send_from_directory(str(_PREVIEW_DIR), 'header-taste-v3.html')
+    if variant == 'taste-v4':
+        return send_from_directory(str(_PREVIEW_DIR), 'header-taste-v4.html')
     # Default: both side-by-side (compare view served from compare HTML below)
     return send_from_directory(str(_PREVIEW_DIR), 'header-compare.html')
 
@@ -202,6 +204,11 @@ def preview_header_taste_v2():
 @app.route('/preview/header/taste-v3')
 def preview_header_taste_v3():
     return send_from_directory(str(_PREVIEW_DIR), 'header-taste-v3.html')
+
+
+@app.route('/preview/header/taste-v4')
+def preview_header_taste_v4():
+    return send_from_directory(str(_PREVIEW_DIR), 'header-taste-v4.html')
 
 
 # P1 #7.6 — serve the project CHANGELOG.md as plain-text (Markdown).
