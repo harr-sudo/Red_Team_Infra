@@ -1172,3 +1172,70 @@ See §4.1 for the full Kerberoastable Service Account descriptor and §4.2 for t
 - **TGS / TGT** — Ticket Granting Service / Ticket Granting Ticket; Kerberos tickets.
 - **vulhub** — Docker-Compose-per-CVE vulnerable application catalog.
 - **ZeroLogon** — Netlogon elevation of privilege (CVE-2020-1472).
+
+---
+
+## 14. Refinements (post-review, 2026-05-18)
+
+After reviewing the master plan above, the user requested three refinements. Each is detailed in its own sibling document; this section is a pointer index and integration map so the master plan reads coherently with them. **Treat the refinement docs as authoritative for their scope; this section summarizes how they amend the sections above.**
+
+### 14.1 Compatibility auto-detection + catalog filtering — [BOLTON_REFINEMENT_compatibility.md](BOLTON_REFINEMENT_compatibility.md)
+
+> User: *"The lab should auto detect when an incompatible vulnerability is trying to be added on — filter at that point as to what can / can not be added."*
+
+**What it amends:** §5 (dependency / conflict resolution) — extends from install-time check to **proactive catalog-time filtering**. §8 (UI) — catalog cards now display per-host compatibility state. §9 (backend API) — three new endpoints.
+
+**Headline additions:**
+- Eight compatibility states (`INSTALLABLE` / `INCOMPATIBLE_OS` / `INCOMPATIBLE_ROLE` / `MISSING_PREREQ` / `CONFLICTS_WITH_INSTALLED` / `ALREADY_INSTALLED` / `MISSING_SOFTWARE` / `PATCHED`), each with human-readable reason + suggested action.
+- Host facts model: OS family + version, role, domain functional level, installed services + versions, applied KBs, network position, currently-installed bolt-ons, active GPOs.
+- New endpoints: `GET /api/bolton/labs/<lab>/hosts/<host>/facts`, `GET /api/bolton/labs/<lab>/hosts/<host>/catalog` (annotated per-vuln with state), `POST /api/bolton/labs/<lab>/hosts/<host>/facts/refresh`.
+- 5-minute TTL caching on per-host YAML files at `webapp/state/bolton/host_facts/<lab>/<host>.yaml`. Install-time backstop re-runs `evaluate_compatibility` against fresh facts and 409s if state changed.
+- Open question: WebSocket invalidation for concurrent operators in v2.
+
+### 14.2 Patch / clean-remove workflow — [BOLTON_REFINEMENT_patch.md](BOLTON_REFINEMENT_patch.md)
+
+> User: *"for cleanup — why can't we add a clean remove / patch vulnerability?"*
+
+**What it amends:** §4 (schema) — replaces single `cleanup` field with three explicit blocks (`uninstall` / `patch` / `patch_revert`). §8 (UI) — Cleanup tab gains a new section "Installed bolt-on vulnerabilities" with per-row Patch / Uninstall / View actions. §10 (integration) — patch operations flow through the same job-progress + agentic-fallback machinery as installs.
+
+**Headline additions:**
+- 22 schema fields across three blocks. **Patch** applies the real-world fix (KB install, GPO change, template flag fix, password rotation) that closes the CVE semantically; **Uninstall** removes the install artifacts and returns the host to pre-install state; **Patch revert** un-patches for training-cycle scenarios (only when `patch.rollback_supported = true`).
+- Five worked examples with vendor-accurate remediation: PrintNightmare (CVE-2021-34527 KB + `RestrictDriverInstallationToAdministrators` reg key), ZeroLogon (monthly rollup + enforcement reg key), ADCS ESC1 (clear `ENROLLEE_SUPPLIES_SUBJECT` bitmask + add Manager Approval), Kerberoastable SPN (30+ char password rotation + AES-only encryption), LLMNR/NBT-NS (GPO disable).
+- New terminal failure state `AS_PATCHED_BUT_VULN`: post-patch exploit probe still succeeds → red surface, agent invoked automatically.
+- Bulk patch operations: multi-select installed bolt-ons on a host, patch as a batch with resolver-computed order.
+- Open question: domain-scope lock for cross-host patches (ZeroLogon, GPO writes) where two operators on different hosts race.
+
+### 14.3 MITRE ATT&CK TTP + Elastic Detection Rule tie-in — [BOLTON_REFINEMENT_ttp_elastic.md](BOLTON_REFINEMENT_ttp_elastic.md)
+
+> User: *"the vulnerability should be tied to a ttp / elastic — flag when not available."*
+
+**What it amends:** §4 (schema) — every descriptor gains `mitre` + `detection` blocks. §8 (UI) — catalog cards show coverage badges; install confirmation surfaces coverage status; post-install verification probe confirms the detection rule fires. §9 (backend API) — six new endpoints. §10 (integration) — builds on existing `Research/elastic-detection-rules/rules/*.toml` corpus indexed by `rule_id` UUID.
+
+**Headline additions:**
+- Schema gains `mitre: {tactic, technique, subtechnique}` + `detection: {elastic_rules[], coverage_status, fallback_rule_template, exploit.trigger_probe}`.
+- Four coverage states with explicit visual treatment: `covered` (green), `partial` (amber), `no-rule` (**red prominent**), `rule-stale` (orange, > 90 days unvalidated). Worst-rule-wins with explicit override allowed.
+- Six new endpoints incl. `/coverage`, `/probe`, `/probes/<id>`, `/detection/gaps`, `/generate-rule`, `/coverage/navigator-layer`.
+- "Generate detection rule" flow with 8 Jinja starter templates shipping in v1 (Kerberoasting, ADCS, GPP cpassword, PrintNightmare, DLL hijack, Java deserialization, PetitPotam, NTLM relay). Backend renders template with descriptor's MITRE chain + UUIDv4; frontend offers copy / download / open-draft-PR-upstream via `gh` CLI.
+- Post-install synthetic exploit probe queries Elastic alerts API for rule firing within a configurable window (5 min default). Result feeds into the host's "installed" view as "Detection verified ✓" or "Detection didn't fire — investigate."
+- MITRE Navigator layer export (lab-wide coverage heatmap).
+- Three worked examples covering 1:1 mapping (Kerberoasting → T1558.003), multi-technique (PrintNightmare → T1068 + T1574.001), and `mitre: none` with fallback template (custom Java deserialization).
+- Open question: where the Elastic alerts API lives in our deployment — most engagements won't have a reachable Kibana instance; degraded `probe-only` mode runs the probe but skips alert correlation. Should an optional Elastic-stack bolt-on lab component ship for purple-team scenarios?
+
+### 14.4 Integration sequence
+
+The three refinements compose cleanly. Recommended implementation order:
+1. **Schema additions first** (14.2 + 14.3) — these touch the descriptor format; lock the YAML shape before writing any code.
+2. **Compatibility filtering** (14.1) — host facts + catalog annotation; gives the operator a useful catalog before any install machinery is wired.
+3. **Install + patch + uninstall engine** (master §6 + 14.2) — wire the Ansible roles + verify probes + audit.
+4. **Detection probe loop** (14.3) — depends on installs working; closes the loop with post-install rule-firing verification.
+5. **Generate-rule + Navigator export** (14.3) — value-add once basic detection wiring exists.
+
+### 14.5 Cross-refinement open questions consolidated
+
+| # | Question | Refinement | Suggested resolution |
+|---|---|---|---|
+| OQ-A | WebSocket invalidation for concurrent operators? | Compatibility | Defer to v2; v1 uses 5-min TTL + install-time backstop |
+| OQ-B | Domain-scope lock for cross-host patches (GPO/AD writes)? | Patch | Recommend AD-stored lock object (survives Flask restart, visible to other tools); needs prototyping |
+| OQ-C | Elastic Kibana availability in engagement deployments? | TTP/Elastic | Ship optional Elastic bolt-on lab component; degraded `probe-only` mode otherwise |
+| OQ-D | (master §12) Production guardrail — hard block or soft warning on prod-tagged labs? | Original | Hard runtime block by resolver — type-the-lab-name confirmation only for explicit override |
+| OQ-E | (master §12) Detection coverage parity at descriptor authoring time? | Original ↔ TTP/Elastic | TTP refinement resolves: descriptors REQUIRED to declare MITRE; detection rules linkable post-hoc; `no-rule` is a visible but non-blocking state |
