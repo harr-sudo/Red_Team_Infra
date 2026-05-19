@@ -37,15 +37,20 @@ async function openJourney(page) {
     await page.waitForTimeout(400);
 }
 
-test('+ New Deployment opens the takeover and dims the dashboard', async ({ page }) => {
+test('+ New Deployment opens the wizard inline in Configure (2026-05-19 flow-stitching)', async ({ page }) => {
     await openJourney(page);
-    const card = page.locator('#journey-takeover');
-    const scrim = page.locator('#journey-scrim');
+    // Post-2026-05-19: wizard is no longer a scrim takeover. It mounts
+    // INLINE into #configure-new-pane as a sub-mode of Configure. The
+    // left rail + top utility bar stay visible — no dashboard dim.
+    const card = page.locator('#configure-new-pane #journey-takeover');
     await expect(card).toBeVisible();
-    await expect(card).toHaveAttribute('data-open', 'true');
-    await expect(scrim).toHaveAttribute('data-open', 'true');
+    // The legacy body[data-journey-open] flag is NOT set.
     const journeyOpen = await page.evaluate(() => document.body.getAttribute('data-journey-open'));
-    expect(journeyOpen).toBe('true');
+    expect(journeyOpen).toBeNull();
+    // Deployments rail item is active (operator navigated to Configure).
+    await expect(
+        page.locator('.app-rail__item[data-rail-target="deployments-tab"].is-active')
+    ).toBeVisible({ timeout: 4000 });
 });
 
 test('journey wizard navigates Family → Type → Identity → Network → Review', async ({ page }) => {

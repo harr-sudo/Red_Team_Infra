@@ -398,8 +398,8 @@
       },
       "malleable-profile-section": {
         "present": true,
-        "visible": true,
-        "displayed": true
+        "visible": false,
+        "displayed": false
       },
       "goad-network-config-section": {
         "present": true,
@@ -458,8 +458,8 @@
       },
       "malleable-profile-section": {
         "present": true,
-        "visible": true,
-        "displayed": true
+        "visible": false,
+        "displayed": false
       },
       "goad-network-config-section": {
         "present": true,
@@ -518,8 +518,8 @@
       },
       "malleable-profile-section": {
         "present": true,
-        "visible": true,
-        "displayed": true
+        "visible": false,
+        "displayed": false
       },
       "goad-network-config-section": {
         "present": true,
@@ -578,8 +578,8 @@
       },
       "malleable-profile-section": {
         "present": true,
-        "visible": true,
-        "displayed": true
+        "visible": false,
+        "displayed": false
       },
       "goad-network-config-section": {
         "present": true,
@@ -638,8 +638,8 @@
       },
       "malleable-profile-section": {
         "present": true,
-        "visible": true,
-        "displayed": true
+        "visible": false,
+        "displayed": false
       },
       "goad-network-config-section": {
         "present": true,

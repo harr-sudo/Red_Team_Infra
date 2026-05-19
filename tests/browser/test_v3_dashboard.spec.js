@@ -288,16 +288,21 @@ test('dashboard: + New Deployment hero invokes APP.startNewDeployment (no regres
     expect(activeTab).toBe('deployments-tab');
 });
 
-test('dashboard: global header + New still opens the Phase 2b journey (regression)', async ({ page }) => {
+test('dashboard: global header + New navigates to Configure with inline wizard (2026-05-19 flow-stitching)', async ({ page }) => {
     await gotoDashboard(page);
     await page.evaluate(() => { window.confirm = () => true; });
     const headerBtn = page.locator('#global-new-deployment-btn');
     await expect(headerBtn).toBeVisible();
     await headerBtn.click();
     await page.waitForTimeout(450);
+    // Post-2026-05-19: no scrim takeover. The wizard mounts inline in Configure.
+    const wizardInline = page.locator('#configure-new-pane #journey-takeover');
+    await expect(wizardInline).toBeVisible();
+    // The legacy body[data-journey-open] flag is NOT set.
     const journeyOpen = await page.evaluate(() => document.body.getAttribute('data-journey-open'));
-    expect(journeyOpen, 'body[data-journey-open] should be set after clicking global + New').toBe('true');
-    await expect(page.locator('#journey-takeover')).toHaveAttribute('data-open', 'true');
+    expect(journeyOpen).toBeNull();
+    // URL has the ?new=1 query.
+    expect(page.url()).toMatch(/new=1/);
 });
 
 // ─────────────────────────────────────────────────────────────────────

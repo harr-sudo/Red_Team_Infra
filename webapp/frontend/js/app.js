@@ -195,17 +195,23 @@ function _initFromUrl() {
     // empty we fall back to the query suffix inside the hash (D6.1).
     const searchParams = new URLSearchParams(window.location.search);
     let dep = searchParams.get('dep');
-    if (!dep) {
+    let isNewMode = searchParams.get('new') === '1';
+    if (!dep || !isNewMode) {
         const rawHash = (window.location.hash || '').replace('#', '');
         const hashQuery = rawHash.split('?')[1] || '';
         if (hashQuery) {
             const hashParams = new URLSearchParams(hashQuery);
-            dep = hashParams.get('dep');
+            if (!dep) dep = hashParams.get('dep');
+            if (!isNewMode && hashParams.get('new') === '1') isNewMode = true;
         }
     }
     if (dep && APP.activeDeployment) {
         APP.activeDeployment.set(dep);
     }
+    // 2026-05-19 flow-stitching — Stash the new-mode flag so it survives
+    // the URL rewrite that happens during navigateTo() init. The configure
+    // sub-pill init reads APP._pendingNewMode and consumes it.
+    APP._pendingNewMode = isNewMode;
 }
 
 /**
@@ -226,9 +232,22 @@ function _initFromUrl() {
 function _updateUrlState(parent, subPill) {
     const hashBase = subPill ? `${parent}/${subPill}` : parent;
     const dep = APP.activeDeployment && APP.activeDeployment.current;
-    const fullUrl = dep
-        ? `${window.location.pathname}?dep=${encodeURIComponent(dep)}#${hashBase}`
-        : `${window.location.pathname}#${hashBase}`;
+    // 2026-05-19 flow-stitching — preserve `?new=1` across URL rewrites so
+    // the Configure wizard mode survives `navigateTo`-driven URL updates.
+    // We only carry it forward when (a) the operator is on Configure AND
+    // (b) the flag is currently in the URL (either query or hash-query).
+    let preservedNew = false;
+    try {
+        const inSearch = new URLSearchParams(window.location.search).get('new') === '1';
+        const hashQuery = (window.location.hash || '').split('?')[1] || '';
+        const inHash = hashQuery && new URLSearchParams(hashQuery).get('new') === '1';
+        preservedNew = (inSearch || inHash) && parent === 'deployments-tab' && subPill === 'configure';
+    } catch (_) { /* noop */ }
+    const params = [];
+    if (dep) params.push(`dep=${encodeURIComponent(dep)}`);
+    if (preservedNew) params.push('new=1');
+    const queryPrefix = params.length ? `?${params.join('&')}` : '';
+    const fullUrl = `${window.location.pathname}${queryPrefix}#${hashBase}`;
     try {
         history.replaceState(null, '', fullUrl);
     } catch (e) {
@@ -956,6 +975,10 @@ const APP = {
         const customStatus = document.getElementById('profile-custom-status');
         const customPaste = document.getElementById('custom-profile-paste');
         const profilePreview = document.getElementById('malleable-profile-preview');
+        // 2026-05-19 flow-stitching — the preview is now wrapped in a
+        // <details> collapsible. Toggle the wrapper alongside the inner div
+        // so "Custom" hides the entire preview section (collapsed or open).
+        const profilePreviewWrap = document.getElementById('malleable-profile-preview-wrapper');
         const profileHint = document.getElementById('profile-type-hint');
         const validationStatus = document.getElementById('profile-validation-status');
 
@@ -971,6 +994,7 @@ const APP = {
             if (customStatus) customStatus.style.display = 'block';
             if (customPaste) customPaste.style.display = 'block';
             if (profilePreview) profilePreview.style.display = 'none';
+            if (profilePreviewWrap) profilePreviewWrap.style.display = 'none';
             if (profileHint) profileHint.textContent = 'Paste your profile below. URIs will be auto-extracted for team server and nginx configuration.';
 
             // Hook up auto-parsing of pasted profile content
@@ -988,6 +1012,7 @@ const APP = {
             // Catalog profile from BC-SECURITY
             if (catalogStatus) catalogStatus.style.display = 'block';
             if (profilePreview) profilePreview.style.display = 'block';
+            if (profilePreviewWrap) profilePreviewWrap.style.display = '';
             if (profileHint) profileHint.textContent = 'Profile from BC-SECURITY catalog. Will be auto-deployed to team server and nginx auto-configured.';
 
             // Fetch and display the catalog profile
@@ -1026,6 +1051,7 @@ const APP = {
             </p>`;
         }
         if (profilePreview) profilePreview.style.display = 'block';
+        if (profilePreviewWrap) profilePreviewWrap.style.display = '';
         if (profileHint) {
             profileHint.textContent = profileType === 'default'
                 ? 'jQuery profile from threatexpress/malleable-c2. Auto-loaded on team server, nginx auto-configured.'
@@ -2357,7 +2383,32 @@ APP._runSubPillCleanup = function (parentTabName, subPillName) {
 APP._runSubPillInit = function (parentTabName, subPillName) {
     if (parentTabName === 'deployments-tab') {
         if (subPillName === 'configure') {
-            if (typeof loadConfig === 'function') loadConfig();
+            // 2026-05-19 flow-stitching — Configure has TWO modes.
+            // If `?new=1` is in the URL (either query or hash-query) OR the
+            // boot pre-captured the flag in APP._pendingNewMode, mount the
+            // inline wizard. Otherwise show the edit form. This is the
+            // bookmarkable entrypoint for the new-deployment flow.
+            const inNewMode = (function () {
+                try {
+                    if (APP._pendingNewMode) {
+                        APP._pendingNewMode = false;  // consume once
+                        return true;
+                    }
+                    const search = new URLSearchParams(window.location.search);
+                    if (search.get('new') === '1') return true;
+                    const hash = (window.location.hash || '').split('?')[1] || '';
+                    if (hash && new URLSearchParams(hash).get('new') === '1') return true;
+                } catch (_) {}
+                return false;
+            })();
+            if (inNewMode && APP.journey && typeof APP.journey._mountInline === 'function') {
+                APP.journey._mountInline();
+            } else if (APP.journey && typeof APP.journey._showEditMode === 'function') {
+                APP.journey._showEditMode();
+                if (typeof loadConfig === 'function') loadConfig();
+            } else {
+                if (typeof loadConfig === 'function') loadConfig();
+            }
         } else if (subPillName === 'deploy') {
             // Same 6 init functions that loadPageContent ran for the
             // legacy 'deployment' flat tab.
@@ -2743,23 +2794,25 @@ APP.closeArchitectureModal = function () {
 // ============================================================================
 // Phase 2B — NEW DEPLOYMENT JOURNEY (Hybrid wizard + spec-edit review)
 // ============================================================================
-// APP.journey is the controller for the "+ New Deployment" takeover. It
-// mounts a lazy-rendered wizard surface inside #journey-takeover (cleared
-// on close), dims/blurs the underlying dashboard via [data-journey-open],
-// and POSTs the assembled config to /api/config on Deploy. Operator
-// attribution is handled by the server-side g.operator middleware — no
-// extra wiring required here.
+// APP.journey is the controller for the "+ New Deployment" wizard. It
+// mounts a lazy-rendered wizard surface INLINE into the Configure pane
+// (#configure-new-pane, 2026-05-19 flow-stitching). The wizard is now a
+// sub-mode of Configure rather than a scrim takeover — left rail + top
+// utility bar stay visible, and the URL becomes
+// `#deployments-tab/configure?new=1` so the mode is bookmarkable.
+// POSTs the assembled config to /api/config on Deploy. Operator attribution
+// is handled by the server-side g.operator middleware.
 //
 // State shape (single source of truth, mirrored from the preview demo):
 //   { phase, step, family, type, typeTitle, typeFamily,
 //     projectName, environment, region, regionHint, cidr, ssh }
 //
 // Lifecycle:
-//   open()        → mount DOM, set body[data-journey-open], start at step 1
-//   close({ confirmIfDirty }) → tear down DOM, restore focus, optional confirm
+//   open()        → navigateTo configure?new=1, mount inline wizard, start at step 1
+//   close({ confirmIfDirty }) → tear down inline mount, restore focus, optional confirm
 //   goToStep(n)   → navigate within wizard
 //   goToReview()  → switch to review phase (J3 spec-edit)
-//   saveAndApply()→ POST /api/config, then navigate to Deploy sub-pill
+//   saveAndApply()→ POST /api/config, then transition Configure into edit mode
 
 APP.journey = (function () {
     const FAMILY_LABEL = { c2: 'Red team C2', goad: 'Training lab', combined: 'Combined' };
@@ -2812,15 +2865,41 @@ APP.journey = (function () {
     let _escHandler = null;
     let _scrimClickHandler = null;
     let _buffer = {};
+    let _isMounted = false;
 
     function $(id) { return document.getElementById(id); }
 
     function setDirty() { state.dirty = true; }
 
+    // ─── Inline mount helpers (2026-05-19 flow-stitching) ────────────
+    // The wizard now mounts inline into #configure-new-pane (a sibling of
+    // #configure-edit-pane) inside Configure. The two panes flip via
+    // hidden — there is no scrim, no body[data-journey-open], no overlay
+    // chrome. Left rail + top utility bar stay visible.
+    function _getInlineHost() {
+        // The mount point lives inside Configure's pane.
+        return document.getElementById('configure-new-pane');
+    }
+    function _showNewMode() {
+        const newPane = document.getElementById('configure-new-pane');
+        const editPane = document.getElementById('configure-edit-pane');
+        if (newPane) newPane.hidden = false;
+        if (editPane) editPane.hidden = true;
+    }
+    function _showEditMode() {
+        const newPane = document.getElementById('configure-new-pane');
+        const editPane = document.getElementById('configure-edit-pane');
+        if (newPane) {
+            newPane.hidden = true;
+            newPane.innerHTML = '';  // unmount wizard
+        }
+        if (editPane) editPane.hidden = false;
+    }
+
     // ─── Render shells ───────────────────────────────────────────────
     function renderShell() {
-        const card = $('journey-takeover');
-        if (!card) return;
+        const host = _getInlineHost();
+        if (!host) return;
         const dotsHtml = STEP_LABELS.map((label, i) => {
             const step = i + 1;
             return `<button class="journey-progress__dot" type="button" data-journey-step="${step}">
@@ -2828,6 +2907,11 @@ APP.journey = (function () {
                     </button>`;
         }).join('');
 
+        host.innerHTML = `
+            <div id="journey-takeover" class="journey-inline" role="region" aria-label="New deployment wizard">
+            <div id="journey-takeover-body"></div>
+            </div>
+        `;
         $('journey-takeover-body').innerHTML = `
             <div id="journey-wizard">
                 <div class="journey-progress">
@@ -2874,7 +2958,9 @@ APP.journey = (function () {
             </section>
         `;
 
-        // Wire wizard controls
+        // Wire wizard controls (re-resolve card after innerHTML replacement)
+        const card = $('journey-takeover');
+        if (!card) return;
         card.querySelectorAll('[data-journey-step]').forEach(d => {
             d.addEventListener('click', () => goToStep(parseInt(d.dataset.journeyStep, 10)));
         });
@@ -3357,53 +3443,74 @@ APP.journey = (function () {
         //      live saved spec without an extra reload.
         state.dirty = false;
         const newProject = state.projectName;
+        // close() flips Configure back to edit mode + strips `?new=1` from
+        // the URL. Then we set the active deployment + repopulate the form.
         close({ confirmIfDirty: false });
-        // Briefly defer to let the takeover animate out
-        setTimeout(() => {
-            try {
-                if (newProject && APP.activeDeployment && typeof APP.activeDeployment.set === 'function') {
-                    APP.activeDeployment.set(newProject);
-                }
-            } catch (_) { /* noop */ }
-            try {
-                APP.navigateTo('deployments-tab', 'configure');
-            } catch (_) { /* noop */ }
-            // Repopulate the Configure form from the just-saved tfvars
-            if (typeof loadConfig === 'function') {
-                try { loadConfig(); } catch (_) {}
+
+        // Tack `?project=<name>` onto the URL so the edit-mode is a
+        // bookmarkable handoff target (per 2026-05-19 flow-stitching spec).
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('project', newProject);
+            history.replaceState(null, '', url.toString());
+        } catch (_) { /* noop */ }
+
+        try {
+            if (newProject && APP.activeDeployment && typeof APP.activeDeployment.set === 'function') {
+                APP.activeDeployment.set(newProject);
             }
-            // Pre-warm the Deploy summary spec-list so a Configure → Deploy
-            // pivot is instant.
-            if (typeof loadConfigSummary === 'function') {
-                try { loadConfigSummary(); } catch (_) {}
-            }
-        }, 220);
+        } catch (_) { /* noop */ }
+        // Repopulate the Configure form from the just-saved tfvars
+        if (typeof loadConfig === 'function') {
+            try { loadConfig(); } catch (_) {}
+        }
+        // Pre-warm the Deploy summary spec-list so a Configure → Deploy
+        // pivot is instant.
+        if (typeof loadConfigSummary === 'function') {
+            try { loadConfigSummary(); } catch (_) {}
+        }
     }
 
     // ─── Open / Close ────────────────────────────────────────────────
+    // 2026-05-19 flow-stitching: open() now navigates to Configure with
+    // `?new=1` and mounts the wizard inline. There is no scrim. The Configure
+    // surface flips from "edit pane" to "new pane" via _showNewMode().
     function open(opts = {}) {
-        const scrim = $('journey-scrim');
-        const card = $('journey-takeover');
-        if (!scrim || !card) return;
         _lastTrigger = opts.trigger || document.activeElement;
         // Fresh state every open (this is "+ New Deployment", not "edit").
         state = defaultState();
-        // Mount DOM
-        scrim.hidden = false;
-        scrim.setAttribute('aria-hidden', 'false');
-        card.hidden = false;
-        // Render after un-hide so width/height are real
+
+        // Navigate to Configure (sub-pill of deployments-tab). The rail
+        // remains visible — no scrim takeover.
+        try {
+            if (APP && typeof APP.navigateTo === 'function') {
+                APP.navigateTo('deployments-tab', 'configure');
+            }
+        } catch (_) { /* noop */ }
+
+        // Flag URL with `?new=1` so the mode is bookmarkable and reload-safe.
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('new', '1');
+            history.replaceState(null, '', url.toString());
+        } catch (_) { /* noop */ }
+
+        _mountInline();
+    }
+
+    // Mounts the wizard markup inside #configure-new-pane and wires events.
+    // Idempotent — safe to call when arriving via ?new=1 deep-link or via
+    // the explicit "+ New Deployment" buttons.
+    function _mountInline() {
+        const host = _getInlineHost();
+        if (!host) return;
+        _showNewMode();
         renderShell();
         renderStep();
-        // Animate open on next frame so transition fires
-        requestAnimationFrame(() => {
-            scrim.setAttribute('data-open', 'true');
-            card.setAttribute('data-open', 'true');
-            document.body.setAttribute('data-journey-open', 'true');
-        });
-        // Wire scrim click + Escape
-        _scrimClickHandler = () => close({ confirmIfDirty: true });
-        scrim.addEventListener('click', _scrimClickHandler);
+        _isMounted = true;
+
+        // Escape closes the wizard (returns Configure to edit mode). No
+        // scrim, no body class — left rail + top utility bar stay visible.
         _escHandler = (e) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -3411,9 +3518,13 @@ APP.journey = (function () {
             }
         };
         document.addEventListener('keydown', _escHandler);
-        // Focus first focusable in the card
-        const first = card.querySelector('button, input, select, [tabindex]:not([tabindex="-1"])');
-        if (first) first.focus();
+
+        // Focus the first focusable element in the wizard for keyboard nav.
+        const card = $('journey-takeover');
+        if (card) {
+            const first = card.querySelector('button, input, select, [tabindex]:not([tabindex="-1"])');
+            if (first) first.focus();
+        }
     }
 
     function close({ confirmIfDirty = true } = {}) {
@@ -3421,34 +3532,26 @@ APP.journey = (function () {
             const proceed = window.confirm('Discard your in-progress new deployment?');
             if (!proceed) return;
         }
-        const scrim = $('journey-scrim');
-        const card = $('journey-takeover');
-        if (scrim) {
-            scrim.removeAttribute('data-open');
-            scrim.setAttribute('aria-hidden', 'true');
-            if (_scrimClickHandler) {
-                scrim.removeEventListener('click', _scrimClickHandler);
-                _scrimClickHandler = null;
-            }
-        }
-        if (card) card.removeAttribute('data-open');
-        document.body.removeAttribute('data-journey-open');
         if (_escHandler) {
             document.removeEventListener('keydown', _escHandler);
             _escHandler = null;
         }
-        // Wait for transition before unmounting DOM
-        setTimeout(() => {
-            if (scrim) scrim.hidden = true;
-            if (card) {
-                card.hidden = true;
-                const body = $('journey-takeover-body');
-                if (body) body.innerHTML = '';
+        // Flip Configure back to edit mode + clear the wizard DOM.
+        _showEditMode();
+        _isMounted = false;
+
+        // Strip ?new=1 from the URL — Configure is back to edit mode.
+        try {
+            const url = new URL(window.location.href);
+            if (url.searchParams.has('new')) {
+                url.searchParams.delete('new');
+                history.replaceState(null, '', url.toString());
             }
-            if (_lastTrigger && typeof _lastTrigger.focus === 'function') {
-                try { _lastTrigger.focus(); } catch (_) {}
-            }
-        }, 300);
+        } catch (_) { /* noop */ }
+
+        if (_lastTrigger && typeof _lastTrigger.focus === 'function') {
+            try { _lastTrigger.focus(); } catch (_) {}
+        }
     }
 
     return {
@@ -3457,7 +3560,10 @@ APP.journey = (function () {
         goToStep,
         goToReview,
         saveAndApply,
+        _mountInline,
+        _showEditMode,
         get state() { return state; },
+        get isMounted() { return _isMounted; },
     };
 })();
 
@@ -10581,7 +10687,59 @@ function updateDeploymentType() {
             domainConfigSection.style.display = 'block';
         }
     }
+
+    // 2026-05-19 flow-stitching — Final pass: enforce the declarative
+    // data-config-section gating rules. This overlays the per-section
+    // logic above with the user's clarified mapping (Attack Box always
+    // visible, Malleable / Redirector / Domain Fronting only for c2-*
+    // and combined-*, GOAD Network only for goad-* and combined-*).
+    _applyConfigGating(deploymentType);
 }
+
+/**
+ * 2026-05-19 flow-stitching — Section-level visibility gating for Configure.
+ *
+ * Each section in #subpill-pane-configure carries a data-config-section
+ * attribute tagging the gate. Valid values:
+ *   - "always"   → always visible
+ *   - "c2-only"  → visible only for c2-* and combined-* deployments
+ *   - "goad-only"→ visible only for goad-* and combined-* deployments
+ *
+ * This runs at the END of updateDeploymentType(), so the existing per-section
+ * show/hide logic above can stand (backward compatibility for callers that
+ * still toggle the individual sections directly). The gating below is the
+ * authoritative final-state truth: if this function says hide, the section
+ * is hidden regardless of any upstream toggle.
+ *
+ * Mapping per the spec (user clarified 2026-05-19):
+ *   - Environment, Project Name, Key Pair, Mgmt CIDR, Attack Box → always
+ *   - Malleable C2 Profile, Redirector Domain Config, Domain Fronting → c2/combined
+ *   - GOAD Network Configuration → goad/combined
+ */
+function _applyConfigGating(deploymentType) {
+    if (!deploymentType) deploymentType = '';
+    const isC2 = deploymentType.startsWith('c2-');
+    const isGoad = deploymentType.startsWith('goad-');
+    const isCombined = deploymentType.startsWith('combined-');
+    const showC2Sections = isC2 || isCombined;
+    const showGoadSections = isGoad || isCombined;
+
+    const sections = document.querySelectorAll('#subpill-pane-configure [data-config-section]');
+    sections.forEach(el => {
+        const gate = el.getAttribute('data-config-section');
+        let show = true;
+        if (gate === 'c2-only') show = showC2Sections;
+        else if (gate === 'goad-only') show = showGoadSections;
+        else if (gate === 'always') show = true;
+        // For section-card divs we toggle display; for form-group wrappers
+        // also use display to match the rest of the page.
+        el.style.display = show ? '' : 'none';
+    });
+}
+
+// Expose on APP for tests + programmatic callers.
+APP.config = APP.config || {};
+APP.config.applyGating = _applyConfigGating;
 
 // Keep old function name for backward compatibility
 function updateEngagementType() {
@@ -26524,6 +26682,19 @@ APP.manage._wireActions = function () {
             }
         } else if (action === 'destroy') {
             APP.manage._confirmDestroy();
+        } else if (action === 'bolton') {
+            // 2026-05-19 flow-stitching — open the Bolt-ons sub-pill scoped
+            // to the currently-active deployment.
+            const lab = APP.manage._currentProject() || null;
+            if (APP.bolton && typeof APP.bolton.open === 'function') {
+                APP.bolton.open(lab);
+            } else {
+                // Fallback if bolton.open is not yet wired — just navigate.
+                if (APP.shell && typeof APP.shell.setActiveRoute === 'function') {
+                    APP.shell.setActiveRoute('deployments-tab', 'bolt-ons');
+                }
+                APP.navigateTo('deployments-tab', 'bolt-ons');
+            }
         }
     });
 };
@@ -27374,12 +27545,58 @@ APP.bolton = APP.bolton || {
             this._wireSectionToggles();
         }
         // Resolve active lab — fall back to currentDeploymentProject.
-        const lab = this._activeLab();
+        // If state.lab was preset by APP.bolton.open(), keep it.
+        const lab = this.state.lab || this._activeLab();
         if (lab && lab !== this.state.lab) {
             this.state.lab = lab;
             this.loadHosts(lab);
         } else if (this.state.lab) {
             this.loadHosts(this.state.lab);
+            // If host was preset (e.g. via APP.bolton.open(lab, host)), select it
+            // once hosts finish loading.
+            if (this.state.host) {
+                const targetHost = this.state.host;
+                setTimeout(() => {
+                    const sel = document.getElementById('bolton-host-select');
+                    if (sel && Array.from(sel.options).some(o => o.value === targetHost)) {
+                        sel.value = targetHost;
+                        this.selectHost(this.state.lab, targetHost);
+                    }
+                }, 200);
+            }
+        }
+    },
+
+    /**
+     * 2026-05-19 flow-stitching — Public entry point for opening the Bolt-ons
+     * sub-pill with a pre-set lab (and optional host). Called from:
+     *   - Manage's "Bolt-on vulnerability" button (lab = current project)
+     *   - Command palette (lab + host from a structured palette target)
+     *
+     * Side-effects:
+     *   1. Stores lab + host in state so init() picks them up.
+     *   2. Navigates to Deployments → Bolt-ons sub-pill (rail handles routing).
+     *   3. init() runs via _runSubPillInit, then loadHosts + selectHost fire.
+     */
+    open(lab, host) {
+        if (lab) this.state.lab = lab;
+        if (host) this.state.host = host;
+        else this.state.host = null;
+        // Sync the global active-deployment selector so the rest of the
+        // dashboard reflects the lab the operator just bolted onto.
+        try {
+            if (lab && APP.activeDeployment && typeof APP.activeDeployment.set === 'function') {
+                APP.activeDeployment.set(lab);
+            }
+        } catch (_) { /* noop */ }
+        // Navigate via APP.navigateTo so the URL + breadcrumb stay coherent.
+        try {
+            APP.navigateTo('deployments-tab', 'bolt-ons');
+        } catch (_) {
+            // Fallback path that mirrors what navigateTo would have done.
+            if (APP.shell && typeof APP.shell.setActiveRoute === 'function') {
+                APP.shell.setActiveRoute('deployments-tab', 'bolt-ons');
+            }
         }
     },
 

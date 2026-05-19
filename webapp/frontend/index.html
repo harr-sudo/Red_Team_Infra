@@ -611,9 +611,24 @@
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="configure" id="subpill-pane-configure">
                         <!-- D3.2: Configuration tab content re-parents here -->
+                    <!-- 2026-05-19 flow-stitching — Configure has TWO modes:
+                          (1) NEW MODE  → renders the 4-step wizard inline inside
+                              #configure-new-pane. Entered via "+ New Deployment"
+                              button or `?new=1` query param. Replaces the old
+                              scrim-takeover so left rail + top utility bar stay
+                              visible. The wizard is now a sub-mode of Configure,
+                              not a separate surface.
+                          (2) EDIT MODE → renders the existing config form inside
+                              #configure-edit-pane. Default mode.
+                         APP.journey._mountInline()/_unmountInline() flips between
+                         the two without leaving the Configure surface. -->
+                    <div id="configure-new-pane" hidden></div>
+
+                    <div id="configure-edit-pane">
                     <!-- D3.8 — Explicit "New Deployment" banner. Pairs with the
                          "+ New" button in the global header. Both wired to
-                         APP.journey.open() in app.js (Phase 2b hybrid takeover).
+                         APP.journey.open() — which now navigates to Configure
+                         with ?new=1 and mounts the wizard inline (no scrim).
                          2026-05-19 audit: also surface the active-deployment
                          context so an operator arriving via the journey or via
                          the top-bar selector immediately sees which spec they
@@ -675,7 +690,7 @@
                     </div>
 
                     <!-- Environment -->
-                    <div class="form-group">
+                    <div class="form-group" data-config-section="always">
                         <label for="environment">Environment:</label>
                         <select id="environment" onchange="updateProjectName()">
                             <option value="dev">dev</option>
@@ -686,7 +701,7 @@
                     </div>
 
                     <!-- Project Name -->
-                    <div class="form-group">
+                    <div class="form-group" data-config-section="always">
                         <label for="project-name">Project Name:</label>
                         <input type="text" id="project-name" placeholder="Loading..." onchange="validateProjectName(true)">
                         <span id="project-name-status" style="display: none; font-size: 0.88em; margin-top: 5px;"></span>
@@ -698,7 +713,7 @@
                     <!-- Region fixed to eu-central-1 — hidden from UI -->
                     <input type="hidden" id="aws-region" value="eu-central-1">
 
-                    <div class="form-group" id="key-pair-name-group">
+                    <div class="form-group" id="key-pair-name-group" data-config-section="always">
                         <label for="key-pair-name">Key Pair Name:</label>
                         <input type="text" id="key-pair-name" placeholder="red-team-keypair">
                         <small id="key-pair-name-hint">
@@ -706,7 +721,7 @@
                         </small>
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" data-config-section="always">
                         <label for="management-cidr">Management CIDR Blocks: <span class="t-danger">*</span></label>
                         <div style="display: flex; gap: 10px; align-items: flex-start;">
                             <input type="text" id="management-cidr" placeholder="e.g. 203.0.113.50/32, 198.51.100.0/24" style="flex: 1;">
@@ -728,7 +743,7 @@
                     </div>
 
                     <!-- Domain Configuration Section (C2 deployments only) -->
-                    <div id="domain-config-section" class="section-card section-card--highlight">
+                    <div id="domain-config-section" class="section-card section-card--highlight" data-config-section="c2-only">
                         <h3>Redirector Domain Configuration</h3>
                         <p>
                             These are the <strong>decoy / fronting domains</strong> served by your redirectors &mdash; the
@@ -939,7 +954,7 @@ ns-143.awsdns-17.org
                     </div>
 
                     <!-- Domain Fronting Configuration Section -->
-                    <div id="domain-fronting-section" class="section-card section-card--highlight" style="display: none;">
+                    <div id="domain-fronting-section" class="section-card section-card--highlight" style="display: none;" data-config-section="c2-only">
                         <details id="domain-fronting-details">
                         <summary style="cursor: pointer; font-weight: bold; font-size: 1.15em; padding: 4px 0;">CloudFront Domain Fronting (Advanced)</summary>
                         <p style="margin-top: 10px;">
@@ -1077,7 +1092,7 @@ ns-143.awsdns-17.org
                     </div>
 
                     <!-- Attack Box Configuration Section -->
-                    <div id="attack-box-config-section" class="section-card section-card--brand" style="display: none;">
+                    <div id="attack-box-config-section" class="section-card section-card--brand" style="display: none;" data-config-section="always">
                         <h3>Attack Box (Windows Workstation)</h3>
                         <p>
                             Windows Server 2022 workstation with CS Client GUI, PowerSploit, red team tools, and WSL2. Placed in a private subnet, accessed via RDP tunnel.
@@ -1162,7 +1177,7 @@ ns-143.awsdns-17.org
                     </div>
 
                     <!-- Malleable C2 Profile Section -->
-                    <div id="malleable-profile-section" class="section-card section-card--highlight" style="display: none;">
+                    <div id="malleable-profile-section" class="section-card section-card--highlight" style="display: none;" data-config-section="c2-only">
                         <h3>Malleable C2 Profile (Advanced)</h3>
                         <p>
                             Select a traffic profile for your C2 beacons. The team server Malleable profile and nginx redirector URI patterns are
@@ -1295,7 +1310,17 @@ ns-143.awsdns-17.org
                         </div>
 
                         <!-- Profile Preview (shown for preset profiles) -->
-                        <div id="malleable-profile-preview">
+                        <!-- 2026-05-19 flow-stitching — Collapsed by default
+                             so the multi-tab YAML dump doesn't dominate Configure.
+                             Operator opens to inspect, closes when done.
+                             Reuses the Phase 3A.2 .details-card--v3 chevron pattern. -->
+                        <details id="malleable-profile-preview-wrapper" class="details-card details-card--v3 malleable-preview-details">
+                            <summary>
+                                <svg class="details-card__chevron icon" aria-hidden="true"><use href="#icon-chevron-down"/></svg>
+                                <span class="details-card__eyebrow">PROFILE</span>
+                                <span class="details-card__title">Preview generated profile (CS / Nginx / Example)</span>
+                            </summary>
+                        <div id="malleable-profile-preview" class="resource-list-v3__body">
                             <!-- Preview tabs -->
                             <div style="display: flex; gap: 0;">
                                 <button type="button" class="profile-preview-tab preview-tab active" data-tab="cs-profile">
@@ -1324,11 +1349,12 @@ ns-143.awsdns-17.org
                                 Preview of the profile and nginx config that will be deployed automatically.
                             </small>
                         </div>
+                        </details>
 
                     </div>
 
                     <!-- GOAD Network Configuration (shown for GOAD/Combined deployments) -->
-                    <div id="goad-network-config-section" class="section-card section-card--highlight" style="display: none;">
+                    <div id="goad-network-config-section" class="section-card section-card--highlight" style="display: none;" data-config-section="goad-only">
                         <h3>GOAD Network Configuration</h3>
                         <p class="t-secondary" style="font-size: 0.88em;">
                             Network settings for the GOAD lab VPC. Defaults work for most deployments. Only change these if you have overlapping networks or specific requirements.
@@ -1375,6 +1401,7 @@ ns-143.awsdns-17.org
                     </div>
 
                     <div id="config-message" class="message"></div>
+                    </div><!-- /#configure-edit-pane -->
                     </div>
                     <div class="subpill-pane" data-subpill-pane="deploy" id="subpill-pane-deploy" hidden>
                         <!-- D3.3: Deploy sub-pill — V3-native (v3-production-rollout 2026-05-19).
@@ -1891,6 +1918,14 @@ ns-143.awsdns-17.org
                             <button class="manage-action" id="manage-action-health" type="button" data-manage-action="health">
                                 <svg class="icon" aria-hidden="true"><use href="#icon-health"/></svg>
                                 <span>Health Check</span>
+                            </button>
+                            <!-- 2026-05-19 flow-stitching — Bolt-on entry point
+                                 from Manage. Wires to APP.bolton.open(lab, host?)
+                                 which sets state.lab to the currently-active
+                                 deployment and navigates to the Bolt-ons sub-pill. -->
+                            <button class="btn btn-secondary manage-action manage-action--bolton" id="manage-action-bolton" type="button" data-manage-action="bolton" data-action="bolton">
+                                <svg class="icon" aria-hidden="true"><use href="#icon-bolt"/></svg>
+                                <span>Bolt-on vulnerability</span>
                             </button>
                             <button class="manage-action manage-action--danger" id="manage-action-destroy" type="button" data-manage-action="destroy">
                                 <svg class="icon" aria-hidden="true"><use href="#icon-trash"/></svg>
@@ -3740,20 +3775,15 @@ ns-143.awsdns-17.org
         </div>
     </div>
 
-    <!-- Phase 2B — New Deployment journey takeover.
-         Mounted lazily by APP.journey.open(); shells remain in the DOM but
-         the actual wizard / review interior is rendered into #journey-card
-         on first open. Scrim + card use shared .scrim-takeover / .takeover-card
-         primitives so dim/blur/animations stay consistent with Phase 3 reuse. -->
-    <div id="journey-scrim" class="scrim-takeover" hidden aria-hidden="true"></div>
-    <div id="journey-takeover"
-         class="takeover-card"
-         role="dialog"
-         aria-modal="true"
-         aria-labelledby="journey-takeover-title"
-         hidden>
-        <div id="journey-takeover-body"></div>
-    </div>
+    <!-- 2026-05-19 flow-stitching — the journey is now inline inside the
+         Configure sub-pill (#configure-new-pane). The old scrim takeover
+         (#journey-scrim + #journey-takeover) was removed. The wizard
+         markup mounts dynamically into Configure via APP.journey._mountInline().
+         The deploy-journey-hybrid.html preview file is preserved as a
+         historical reference (no runtime consumer). -->
+    <!-- Stub: kept hidden for any legacy contrast tests that scan body-level
+         takeovers. APP.journey no longer uses these IDs. -->
+    <div id="journey-scrim" class="scrim-takeover" hidden aria-hidden="true" data-removed="2026-05-19-flow-stitching"></div>
 
     <!-- ════════════════════════════════════════════════════════════════════
          v3 OVERLAY STACK MOUNT (Agent C, 2026-05-18)

@@ -6535,6 +6535,27 @@ body { padding-top: 64px; }
     transform: translate(-50%, -50%);
 }
 
+/* 2026-05-19 flow-stitching — Inline journey container inside Configure.
+   The wizard is no longer a scrim takeover; it mounts into
+   #configure-new-pane as a normal block. Same card surface as
+   .takeover-card, but no fixed positioning, no scrim, no z-index lift. */
+.journey-inline {
+    position: relative;
+    max-width: 720px;
+    margin: 0 auto 30px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+    padding: 28px;
+}
+.journey-inline #journey-wizard,
+.journey-inline #journey-review {
+    /* Wizard / review interiors are unchanged; clear the body-level
+       takeover-card sizing the wizard CSS assumed. */
+    width: 100%;
+}
+
 /* Dashboard-dim: when journey is open, blur + fade everything underneath. */
 body[data-journey-open="true"] .container > .tab-content,
 body[data-journey-open="true"] .container > main {
@@ -8007,6 +8028,25 @@ body[data-journey-open="true"] .container > main {
 .manage-action--danger:focus-visible {
     border-color: var(--danger);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
+/* 2026-05-19 flow-stitching — Bolt-on variant. Brand-light accent ring +
+   icon so the operator perceives it as an offensive-action button (distinct
+   from the neutral refresh/logs/health actions but not as severe as Destroy). */
+.manage-action--bolton {
+    border-color: color-mix(in srgb, var(--brand-light) 45%, var(--border));
+}
+.manage-action--bolton .icon {
+    color: var(--brand-light);
+}
+.manage-action--bolton:hover:not([disabled]) {
+    background: color-mix(in srgb, var(--brand-light) 10%, transparent);
+    border-color: var(--brand-light);
+    color: var(--text-primary);
+}
+.manage-action--bolton:focus-visible {
+    border-color: var(--brand-light);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
 }
 
 /* Inline output panel — terminal-ish surface for health-check results.
