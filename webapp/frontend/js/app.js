@@ -2065,6 +2065,23 @@ APP.activeDeployment = (function () {
         isExisting() {
             return !!_current && _current !== DRAFT_SENTINEL && _current !== ALL_SENTINEL;
         },
+        /**
+         * Friendly label for the current value. Sentinels (`__draft__`,
+         * `__all__`) must NEVER leak into UI text. Every renderer that
+         * surfaces the active deployment name should route through this
+         * helper instead of reading `.current` directly.
+         *
+         * - `__draft__` → "Draft (unnamed)"
+         * - `__all__`   → "All deployments"
+         * - real name   → the name itself
+         * - null/empty  → ""
+         */
+        displayName(value) {
+            const v = arguments.length > 0 ? value : _current;
+            if (v === DRAFT_SENTINEL) return 'Draft (unnamed)';
+            if (v === ALL_SENTINEL)   return 'All deployments';
+            return v || '';
+        },
         set(name) {
             if (_current === name) return;
             _current = name;
@@ -2158,29 +2175,46 @@ APP.subPills = APP.subPills || {
         const visible = APP.computeVisibleSubPills(APP.activeDeployment);
         const visibleSet = new Set(visible);
 
-        // Toggle .is-out-of-mode + aria-hidden on each .subpill-nav__pill
-        // button. We avoid the `hidden` attribute itself because legacy
-        // tests + the existing keyboard nav still need to find these pills
-        // by selector — making them visually de-emphasised but still
-        // technically reachable preserves bookmarkability and keeps the
-        // rail consistent across modes.
+        // 2026-05-19 (operator override) — Hide out-of-mode pills entirely
+        // via the native `hidden` attribute. Previously these were dimmed
+        // but reachable for "test compatibility"; the operator has decided
+        // that's clutter. We still toggle `.is-out-of-mode` so any
+        // dependent CSS keeps working, but `hidden` makes the button not
+        // render at all (display:none semantics) and removes it from the
+        // tab order without needing aria-hidden.
         const pills = tabPage.querySelectorAll('.subpill-nav__pill[data-subpill]');
         pills.forEach((pill) => {
             const name = pill.dataset.subpill;
             const isVisible = visibleSet.has(name);
             pill.classList.toggle('is-out-of-mode', !isVisible);
             if (isVisible) {
+                pill.removeAttribute('hidden');
                 pill.removeAttribute('aria-hidden');
             } else {
+                pill.setAttribute('hidden', '');
                 pill.setAttribute('aria-hidden', 'true');
             }
         });
 
-        // Rail children stay reachable even when out of mode — clicking a
-        // hidden-in-nav pill (e.g., Configure while in existing-deployment
-        // mode) lands the operator on the pane and the per-pane content
-        // gates on its own. This preserves bookmarkability + lets the rail
-        // remain a static "what's here" list.
+        // Mirror the visibility logic on the LEFT RAIL children. The rail
+        // under Deployments shows the SAME set of sub-pills per mode — so
+        // Configure + Deploy disappear once you're editing an existing
+        // deployment, and Manage + Bolt-ons disappear in draft mode.
+        // Cleanup is universal so it stays visible.
+        const railChildren = document.querySelectorAll(
+            '.app-rail__child[data-rail-target="deployments-tab"][data-rail-subpill]'
+        );
+        railChildren.forEach((child) => {
+            const name = child.dataset.railSubpill;
+            const isVisible = visibleSet.has(name);
+            if (isVisible) {
+                child.removeAttribute('hidden');
+                child.removeAttribute('aria-hidden');
+            } else {
+                child.setAttribute('hidden', '');
+                child.setAttribute('aria-hidden', 'true');
+            }
+        });
 
         // Snap to mode default when explicitly requested (dropdown change).
         const onDeployments = APP.currentPage === 'deployments-tab';
@@ -2383,15 +2417,13 @@ APP.activeDeployment.subscribe(() => {
 
 // 2026-05-19 (deployments nav restructure) — flow-aware sub-pill visibility.
 // Whenever the active deployment changes, recompute which pills the operator
-// can see (draft, existing, all, empty). Snap-to-default is deliberately
-// OFF: when an operator is on Configure and switches to All mode, the
-// Configure pane is now showing the All-mode empty state rather than being
-// yanked away — staying on the same sub-pill preserves intent. The active
-// pill is auto-snapped ONLY when the operator clicks "+ New Deployment"
-// (forced to Configure) or arrives via a flow-specific trigger.
+// can see (draft, existing, all, empty). 2026-05-19 (operator override) —
+// out-of-mode pills are now truly hidden (`hidden` attribute), so if the
+// active pill is no longer in the visible set we MUST snap to the mode
+// default — otherwise the operator is stranded on a hidden pane.
 APP.activeDeployment.subscribe(() => {
     if (APP.subPills && typeof APP.subPills.applyFromState === 'function') {
-        try { APP.subPills.applyFromState(); }
+        try { APP.subPills.applyFromState({ snap: true }); }
         catch (e) { console.error('[subPills] applyFromState error', e); }
     }
 });
@@ -2753,8 +2785,17 @@ APP._runSubPillInit = function (parentTabName, subPillName) {
         } else if (subPillName === 'manage') {
             if (typeof loadDeploymentsPage === 'function') loadDeploymentsPage();
             if (typeof startAutoRefresh === 'function') startAutoRefresh();
-            // Phase 3a — render V3-native manage view (hero + spec-list + actions).
-            if (APP.manage && typeof APP.manage.render === 'function') {
+            // 2026-05-19 (operator override) — In All mode, render the fleet
+            // table instead of the per-project view. The pane-visibility
+            // toggle has already hidden #manage-scoped-content and shown
+            // #manage-all-mode; we just need to populate the fleet body.
+            const inAllMode = APP.activeDeployment &&
+                              APP.activeDeployment.isAll &&
+                              APP.activeDeployment.isAll();
+            if (inAllMode && APP.manageFleet && typeof APP.manageFleet.render === 'function') {
+                APP.manageFleet.render();
+            } else if (APP.manage && typeof APP.manage.render === 'function') {
+                // Phase 3a — render V3-native manage view (hero + spec-list + actions).
                 APP.manage.render();
             }
         } else if (subPillName === 'cleanup') {
@@ -3183,7 +3224,11 @@ function _refreshConfigureContextBanner(activeProject) {
     if (!hint) return;
     const empty = hint.getAttribute('data-empty') ||
         'Or edit the deployment currently selected in the header.';
-    if (activeProject && typeof activeProject === 'string') {
+    // Filter sentinel values — never render `__draft__` / `__all__` as a
+    // project name in the banner. Both fall through to the empty state.
+    const isReal = activeProject && typeof activeProject === 'string' &&
+                   activeProject !== '__draft__' && activeProject !== '__all__';
+    if (isReal) {
         hint.innerHTML = `Editing <strong>${activeProject.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</strong>. Click "+ New Deployment" to create a fresh one instead.`;
     } else {
         hint.textContent = empty;
@@ -12193,6 +12238,16 @@ APP.configureV2 = (function () {
         if (projInput && !projInput.dataset.cfgUserEdited) {
             projInput.value = safeType + '_' + env + '_' + _machineSuffix();
         }
+        // 2026-05-19 — keep the hero title in sync with the resolved
+        // project name. Empty / falsy → "New deployment" (the operator
+        // hasn't picked a type yet); otherwise the real name. Sentinels
+        // never leak here because the V2 surface is only mounted when the
+        // active deployment is the draft sentinel.
+        const heroText = $('#cfg-hero-title-text');
+        if (heroText) {
+            const name = (projInput && projInput.value) ? projInput.value.trim() : '';
+            heroText.textContent = name || 'New deployment';
+        }
     }
 
     // ─── DOMAIN AVAILABILITY ──────────────────────────────────────────
@@ -12445,14 +12500,13 @@ APP.configureV2 = (function () {
         const hero = $('#cfg-hero-title');
         const heroText = $('#cfg-hero-title-text');
         const heroPill = $('#cfg-hero-pill');
-        if (hero) hero.classList.add('is-placeholder');
-        if (heroText) heroText.textContent = '(unnamed) — pick a deployment type to begin';
+        if (hero) hero.classList.remove('is-placeholder');
+        if (heroText) heroText.textContent = 'New deployment';
         if (heroPill) {
             heroPill.textContent = 'Draft';
             heroPill.classList.remove('cfg-hero__pill--live');
             heroPill.classList.add('cfg-hero__pill--draft');
         }
-        const modeEl = $('#cfg-mode'); if (modeEl) modeEl.textContent = 'Draft · progressive unraveling';
 
         applyTypeAwareVisibility();
         updateProjectName();
@@ -12889,6 +12943,16 @@ HTTP/1.1 200 OK
                 const modeEl = $('#cfg-mode');
                 if (modeEl) modeEl.textContent = 'Saved · edit via Manage';
                 if (APP && APP.toast) APP.toast('Configuration saved — switching to Manage.', 'success');
+                // Defence in depth — legacy code paths (startDeployment fallback,
+                // legacy edit form) still read these hidden inputs. Sync them so
+                // any path that bypasses APP.activeDeployment still sees the
+                // right project / deployment_type after a V2 save.
+                try {
+                    const legacyProj = document.getElementById('project-name');
+                    if (legacyProj) legacyProj.value = config.project_name || '';
+                    const legacyType = document.getElementById('deployment-type');
+                    if (legacyType && config.deployment_type) legacyType.value = config.deployment_type;
+                } catch (_) { /* DOM may be missing during tests */ }
                 // Transition activeDeployment so sub-pill nav flips.
                 if (APP.activeDeployment && APP.activeDeployment.set) {
                     APP.activeDeployment.set(config.project_name);
@@ -13336,6 +13400,23 @@ async function validateAndUnlockDeploy() {
     const hint = document.getElementById('validate-deploy-hint');
     if (!btn) return;
 
+    // V3 per-project gate — Validate must read configs/<project>.tfvars,
+    // not the legacy global tfvars. Drafts have nothing saved yet; the
+    // "All" sentinel is a fleet view. Both should prompt the operator to
+    // pick a saved deployment first.
+    const active = APP.activeDeployment && APP.activeDeployment.current;
+    const isDraft = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+    const isAll = APP.activeDeployment && APP.activeDeployment.isAll && APP.activeDeployment.isAll();
+    if (!active || isDraft || isAll) {
+        if (hint) {
+            hint.classList.remove('deploy-action-hint--success');
+            hint.classList.add('deploy-action-hint--error');
+            hint.textContent = 'Pick a saved deployment from the top bar first (or Save your draft in Configure).';
+        }
+        _setDeployActionsEnabled(false);
+        return;
+    }
+
     const originalText = btn.textContent;
     btn.textContent = 'Validating…';
     btn.disabled = true;
@@ -13345,8 +13426,8 @@ async function validateAndUnlockDeploy() {
     }
 
     try {
-        // Load saved config from backend and validate it
-        const cfgResponse = await fetch(`${API_BASE}/config`);
+        // Load saved config from backend (per-project) and validate it.
+        const cfgResponse = await fetch(`${API_BASE}/config/?project=${encodeURIComponent(active)}`);
         const cfgData = await cfgResponse.json();
 
         if (!cfgData.success || !cfgData.config || !cfgData.file_exists) {
@@ -15962,22 +16043,35 @@ async function cancelDeployment() {
 }
 
 async function startDeployment() {
+    // V3 per-project gate — Apply must target the dashboard's currently
+    // active deployment. Drafts have no on-disk tfvars (Save first), and
+    // the "All deployments" sentinel is a fleet view with no single target.
+    const active = APP.activeDeployment && APP.activeDeployment.current;
+    const isDraft = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+    const isAll = APP.activeDeployment && APP.activeDeployment.isAll && APP.activeDeployment.isAll();
+    if (!active || isDraft || isAll) {
+        if (APP && APP.toast) APP.toast('Pick a saved deployment from the top bar first (or Save your draft in Configure).', 'danger', 6000);
+        return;
+    }
+
     // Get the selected deployment type to check requirements
     const deploymentTypeSelect = document.getElementById('deployment-type');
     let deploymentType = deploymentTypeSelect?.value || '';
 
     // Get project name from config form input
     const projectNameInput = document.getElementById('project-name');
-    let projectName = projectNameInput?.value || '';
+    let projectName = projectNameInput?.value || active || '';
 
-    // If form fields are empty (user navigated directly to deploy page), load from saved config
+    // If form fields are empty (user navigated directly to deploy page), load
+    // from the per-project tfvars (NOT the global one — fall back to /api/config
+    // with ?project= so we read configs/<active>.tfvars).
     if (!projectName || !deploymentType) {
         try {
-            const resp = await fetch(`${API_BASE}/config`);
+            const resp = await fetch(`${API_BASE}/config/?project=${encodeURIComponent(active)}`);
             const cfgData = await resp.json();
             if (cfgData.success && cfgData.config) {
                 if (!projectName) {
-                    projectName = cfgData.config.project_name || '';
+                    projectName = cfgData.config.project_name || active;
                     if (projectNameInput && projectName) projectNameInput.value = projectName;
                 }
                 if (!deploymentType) {
@@ -15989,6 +16083,10 @@ async function startDeployment() {
             console.error('Failed to load saved config for deploy:', e);
         }
     }
+    // Final safety net — if we still don't have a name, fall back to the
+    // active deployment so the POST has a target even when the legacy form
+    // field is empty.
+    if (!projectName) projectName = active;
 
     const config = DEPLOYMENT_CONFIGS[deploymentType];
 
@@ -16087,7 +16185,7 @@ async function startDeployment() {
     sessionStorage.setItem('activeDeploymentProjects', JSON.stringify([...window.activeDeploymentProjects]));
     
     try {
-        const response = await fetch(`${API_BASE}/deploy/deploy`, { 
+        const response = await fetch(`${API_BASE}/deploy/deploy?project=${encodeURIComponent(projectName)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ project_name: projectName })
@@ -16195,9 +16293,19 @@ function resetPlanAndRetry() {
 }
 
 async function runPlan() {
+    // V3 per-project gate — Plan must target a real saved deployment so
+    // the backend reads configs/<project>.tfvars (not the stale global one).
+    const active = APP.activeDeployment && APP.activeDeployment.current;
+    const isDraft = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+    const isAll = APP.activeDeployment && APP.activeDeployment.isAll && APP.activeDeployment.isAll();
+    if (!active || isDraft || isAll) {
+        if (APP && APP.toast) APP.toast('Pick a saved deployment from the top bar first (or Save your draft in Configure).', 'danger', 6000);
+        return;
+    }
+
     const statusDiv = document.getElementById('deployment-status');
     const outputDiv = document.getElementById('deployment-output');
-    
+
     // Set flag to prevent polling from overwriting our UI
     isPlanRunning = true;
     
@@ -16260,7 +16368,7 @@ async function runPlan() {
     }, 2500); // Advance stage every 2.5 seconds
     
     try {
-        const response = await fetch(`${API_BASE}/deploy/plan`);
+        const response = await fetch(`${API_BASE}/deploy/plan?project=${encodeURIComponent(active)}`);
         clearInterval(stageInterval);
         const data = await response.json();
         
@@ -28021,7 +28129,12 @@ APP.presence = (function () {
     }
 
     function _project() {
-        return (APP.activeDeployment && APP.activeDeployment.current) || null;
+        if (!APP.activeDeployment) return null;
+        // Sentinels (`__draft__`, `__all__`) are not real projects — skip
+        // the heartbeat entirely so the backend doesn't get garbage.
+        if (APP.activeDeployment.isDraft && APP.activeDeployment.isDraft()) return null;
+        if (APP.activeDeployment.isAll && APP.activeDeployment.isAll()) return null;
+        return APP.activeDeployment.current || null;
     }
 
     function _opLookup(id) {
@@ -29545,13 +29658,21 @@ APP.manage._wireActions = function () {
     });
 };
 
-/** Resolve the current project name. */
+/** Resolve the current project name. Sentinels (`__draft__`, `__all__`)
+ *  are filtered out — Manage only operates on REAL deployments. The
+ *  caller treats an empty string as "no real project picked" and renders
+ *  the empty-state CTA instead of leaking sentinel text. */
 APP.manage._currentProject = function () {
-    if (APP.activeDeployment && APP.activeDeployment.current) {
-        return APP.activeDeployment.current;
+    if (APP.activeDeployment) {
+        if (APP.activeDeployment.isAll && APP.activeDeployment.isAll()) return '';
+        if (APP.activeDeployment.isDraft && APP.activeDeployment.isDraft()) return '';
+        if (APP.activeDeployment.current) return APP.activeDeployment.current;
     }
     if (typeof getCurrentProjectName === 'function') {
-        return getCurrentProjectName();
+        const name = getCurrentProjectName();
+        // getCurrentProjectName may also return a sentinel — filter.
+        if (name === '__draft__' || name === '__all__') return '';
+        return name;
     }
     return '';
 };
@@ -29975,8 +30096,18 @@ APP.manageDrawer = APP.manageDrawer || {
         const body = document.getElementById('manage-drawer-body');
         const titleProject = scrim?.querySelector('[data-drawer-project]');
         if (!scrim || !card || !body) return;
-        this._project = projectName || (APP.activeDeployment.current || '');
-        if (titleProject) titleProject.textContent = this._project || '—';
+        // 2026-05-19 — filter sentinel values defensively so `__draft__`
+        // or `__all__` never leaks into the drawer title even if a caller
+        // bypassed the guard at the dispatcher.
+        let resolved = projectName || (APP.activeDeployment.current || '');
+        if (resolved === APP.activeDeployment.DRAFT_SENTINEL ||
+            resolved === APP.activeDeployment.ALL_SENTINEL) {
+            resolved = '';
+        }
+        this._project = resolved;
+        if (titleProject) {
+            titleProject.textContent = APP.activeDeployment.displayName(this._project) || '—';
+        }
         body.innerHTML = '<p class="t-muted">Loading…</p>';
         scrim.hidden = false;
         card.hidden = false;

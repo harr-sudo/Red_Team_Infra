@@ -22,7 +22,33 @@ sys.path.insert(0, str(project_root))
 from webapp.backend.services.terraform_service import TerraformService, get_terraform_service
 from webapp.backend.services import audit_service
 from webapp.backend.utils.goad_template_processor import get_lab_info, extract_vm_info
+from webapp.backend.utils.tfvars_path import (
+    RESERVED_PROJECT_NAMES as _RESERVED_PROJECT_NAMES,
+    resolve_tfvars_path as _resolve_tfvars_path,
+    sanitize_project_name as _sanitize_project_name,
+)
 from webapp.backend.middleware.identity import get_operator
+
+
+def _resolve_project_tfvars(project_param, default_tfvars):
+    """Resolve a ?project= or body project_name to (tfvars_path, workspace_name).
+
+    Returns ``(default_tfvars, "default")`` when no per-project file applies
+    so callers preserve the legacy single-config behavior. When a real
+    per-project tfvars exists, returns the resolved path AND the sanitized
+    workspace name so the terraform_service can be retargeted in one shot.
+
+    Path-traversal hardening lives in ``utils.tfvars_path`` — never
+    re-implement it here.
+    """
+    config_dir = default_tfvars.parent
+    if not project_param or project_param in _RESERVED_PROJECT_NAMES:
+        return default_tfvars, "default"
+    candidate = _resolve_tfvars_path(project_param, config_dir, default_tfvars)
+    if candidate == default_tfvars or not candidate.exists():
+        return default_tfvars, "default"
+    workspace = _sanitize_project_name(project_param) or "default"
+    return candidate, workspace
 
 
 def _audit_actor():
@@ -1831,20 +1857,28 @@ def deploy():
     
     # Get request data
     data = request.get_json() or {}
-    
+
     # Load configuration to get project name
     from webapp.backend.utils.config_parser import ConfigParser
     from webapp.backend.utils.validators import ConfigValidator
-    
+
     config_dir = project_root / "configs"
-    tfvars_file = config_dir / "terraform.tfvars"
-    
+    global_tfvars = config_dir / "terraform.tfvars"
+
+    # Per-project tfvars resolution (?project= wins over body.project_name).
+    # Configure V2 saves to configs/<project>.tfvars — Deploy must read from
+    # the same per-project file, not the stale global tfvars. Sentinel
+    # values (__draft__ / __all__) fall back to global so unsaved drafts
+    # still surface a clear "configure first" error below.
+    project_param = request.args.get("project") or (data.get("project_name") if isinstance(data, dict) else None)
+    tfvars_file, _resolved_workspace = _resolve_project_tfvars(project_param, global_tfvars)
+
     if not tfvars_file.exists():
         return jsonify({
             "success": False,
             "error": "Configuration file (terraform.tfvars) not found. Please configure infrastructure first."
         }), 400
-    
+
     config = ConfigParser.parse_tfvars(tfvars_file)
     project_name = config.get('project_name', '').strip()
     deployment_type = config.get('deployment_type', '').strip()
@@ -2266,7 +2300,16 @@ def plan():
         
         # Check if tfvars file exists (use canonical path — the global
         # terraform_service.tfvars_file may have been mutated by workspace_select)
-        tfvars_file = project_root / "configs" / "terraform.tfvars"
+        global_tfvars = project_root / "configs" / "terraform.tfvars"
+
+        # Per-project tfvars resolution. The Deploy sub-pill's Plan button
+        # passes ?project=<name>; we point terraform_service at that
+        # project's tfvars (and workspace) instead of the stale global one.
+        # Sentinels (__draft__/__all__) fall through to global so a missing
+        # file produces the right "configure first" error below.
+        project_param = request.args.get("project")
+        tfvars_file, resolved_workspace = _resolve_project_tfvars(project_param, global_tfvars)
+
         if not tfvars_file.exists():
             return jsonify({
                 "success": False,
@@ -2277,8 +2320,11 @@ def plan():
                 "stderr": f"Configuration file not found at:\n{tfvars_file}\n\nPlease go to the Configuration tab and save your settings first."
             })
 
-        # Reset global service to default workspace so plan uses the right config
-        terraform_service.workspace_name = "default"
+        # Retarget the global service at the resolved project's workspace
+        # and tfvars file. Without this, plan would either pick up the
+        # legacy global tfvars (wrong config) or fail with "tfvars file
+        # not found" against the previous workspace's path.
+        terraform_service.workspace_name = resolved_workspace
         terraform_service.tfvars_file = tfvars_file
 
         # Check if terraform is initialized
@@ -2298,8 +2344,14 @@ def plan():
                     "stderr": f"Terraform Init Failed:\n\n{init_error}"
                 })
 
-        # Ensure we're on the default workspace for plan preview
-        terraform_service.workspace_select("default")
+        # Ensure we're on the resolved workspace for plan preview. When
+        # ?project= is set this is the per-project workspace; otherwise
+        # it falls through to "default" so legacy behavior is preserved.
+        terraform_service.workspace_select(resolved_workspace)
+        # workspace_select mutates tfvars_file based on the workspace name —
+        # re-pin it to the resolved tfvars so the in-place per-project file
+        # (written by Configure V2) wins over any workspace-derived path.
+        terraform_service.tfvars_file = tfvars_file
 
         # Run the plan
         add_history_entry("Running Terraform plan...", "info", entry_type='plan')

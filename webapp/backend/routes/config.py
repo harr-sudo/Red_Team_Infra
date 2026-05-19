@@ -15,6 +15,10 @@ sys.path.insert(0, str(project_root))
 
 from webapp.backend.utils.config_parser import ConfigParser
 from webapp.backend.utils.validators import ConfigValidator
+from webapp.backend.utils.tfvars_path import (
+    RESERVED_PROJECT_NAMES as _RESERVED_PROJECT_NAMES,
+    resolve_tfvars_path as _shared_resolve_tfvars_path,
+)
 from webapp.backend.services import audit_service
 
 
@@ -30,11 +34,6 @@ tfvars_file = config_dir / "terraform.tfvars"
 tfvars_example = config_dir / "terraform.tfvars.example"
 
 
-# Drafts and the "all" fleet-view sentinel never round-trip through the
-# config endpoints — they're transient UI states with no on-disk tfvars.
-_RESERVED_PROJECT_NAMES = {"__draft__", "__all__"}
-
-
 def _rel_to_project(p):
     """Display path relative to project root when possible — falls back to
     the absolute path (e.g. when tests redirect ``config_dir`` to a tmpdir)."""
@@ -45,30 +44,11 @@ def _rel_to_project(p):
 
 
 def _resolve_tfvars_path(project_param):
+    """Thin wrapper around the shared sanitizer that injects this route's
+    current ``config_dir`` / ``tfvars_file`` so test monkeypatches still apply.
+    See ``webapp.backend.utils.tfvars_path.resolve_tfvars_path``.
     """
-    Resolve the on-disk tfvars file for a given ?project= value.
-
-    - No param / empty / sentinel → the global ``configs/terraform.tfvars``
-      (legacy single-config behavior preserved).
-    - Real name → ``configs/<sanitized>.tfvars``.
-
-    The name is sanitized to only allow alphanumerics, ``-``, and ``_`` so
-    no path-traversal characters survive. Returned path is then resolved
-    and re-rooted under ``configs/`` as a defense-in-depth guard against
-    symlink shenanigans.
-    """
-    if not project_param or project_param in _RESERVED_PROJECT_NAMES:
-        return tfvars_file
-    safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in project_param)
-    if not safe:
-        return tfvars_file
-    candidate = (config_dir / f"{safe}.tfvars").resolve()
-    # Defense in depth: refuse anything that escapes the configs dir.
-    try:
-        candidate.relative_to(config_dir.resolve())
-    except ValueError:
-        return tfvars_file
-    return candidate
+    return _shared_resolve_tfvars_path(project_param, config_dir, tfvars_file)
 
 # SSH public key file (shared with deploy.py)
 SSH_KEY_FILE = Path(__file__).parent / ".." / "data" / "ssh_public_key.txt"

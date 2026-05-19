@@ -6883,7 +6883,8 @@ body[data-journey-open="true"] .container > main {
 /* Suppress the global details::before chevron (line ~816) on this specific
    element — markup already provides its own .deploy-prereqs__chev span with
    the [open] rotation logic. Without this override both arrows render. */
-.deploy-prereqs > summary::before { content: none; }
+.deploy-prereqs > summary::before,
+.deploy-prereqs[open] > summary::before { content: none; }
 .deploy-prereqs__chev {
     display: inline-block;
     width: 12px;
@@ -11721,10 +11722,14 @@ body[data-overlay-depth] .app-topbar {
    discard affordance, cleanup all-badge, and Manage edit drawer.
    ════════════════════════════════════════════════════════════════════════ */
 
-/* Out-of-mode sub-pill nav buttons: still in the DOM and selectable so
-   bookmarks + tests keep working, but visually dimmed so the operator
-   sees that the pill isn't part of the current flow. The button stays
-   clickable — landing on it shows the in-pane empty state. */
+/* 2026-05-19 (operator override) — Out-of-mode sub-pill nav buttons are
+   now fully hidden via the native `hidden` attribute (display:none
+   semantics). The `.is-out-of-mode` class is still applied by the JS for
+   backward compatibility with any consumer that selects on it, but the
+   visual treatment is now hiding rather than dimming. These opacity
+   rules remain as a defence-in-depth fallback (e.g., a consumer that
+   programmatically removes the `hidden` attribute will still get a dim
+   pill instead of a misleadingly bright one). */
 .subpill-nav__pill.is-out-of-mode {
     opacity: 0.42;
 }

@@ -165,6 +165,100 @@ test.describe('V3 Configure Progressive — reset', () => {
     });
 });
 
+test.describe('V3 Configure Progressive — per-project pipeline (Configure → Deploy)', () => {
+    // After V2 save, the Deploy sub-pill must route Plan / Apply through
+    // ?project=<name> so backend reads configs/<name>.tfvars (not the
+    // stale global one). These tests verify the wiring end-to-end via
+    // request interception + the defence-in-depth legacy-field sync.
+
+    test('V2 save syncs legacy #project-name + #deployment-type inputs', async ({ page }) => {
+        await gotoDraft(page);
+        await page.waitForTimeout(400);
+        // Confirm every section so Save is enabled, then save by directly
+        // invoking the V2 save() — bypasses the prereq panel which would
+        // need backend state we don't want to set up here.
+        await page.evaluate(async () => {
+            const order = ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'attackbox', 'cost'];
+            for (const id of order) {
+                const btn = document.querySelector(`.cfg-section[data-cfg-section="${id}"] [data-cfg-confirm="${id}"]:not([data-cfg-skip])`);
+                if (btn) btn.click();
+            }
+        });
+        await page.waitForTimeout(400);
+        // Stub the save POST so we don't actually write a tfvars on the
+        // dashboard host. The success response is what triggers the
+        // legacy-field sync in app.js.
+        await page.route('**/api/config/?project=*', async (route) => {
+            const req = route.request();
+            if (req.method() === 'POST') {
+                await route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify({ success: true, tfvars_path: 'configs/synced_lab.tfvars' })
+                });
+            } else {
+                await route.continue();
+            }
+        });
+        // Pin a stable project_name so we can assert on it.
+        await page.fill('#cfg-project-name', 'synced_lab');
+        await page.click('#cfg-save-btn');
+        await page.waitForTimeout(400);
+        // Defence-in-depth: legacy hidden inputs must now reflect V2 state.
+        const legacyProjectVal = await page.locator('#project-name').inputValue();
+        expect(legacyProjectVal).toBe('synced_lab');
+        const legacyTypeVal = await page.locator('#deployment-type').inputValue();
+        expect(legacyTypeVal.length).toBeGreaterThan(0); // populated from V2's deployment_type
+    });
+
+    test('Deploy sub-pill Plan button calls /api/deploy/plan?project=<active>', async ({ page }) => {
+        await page.goto('/');
+        await acceptDirtyConfirm(page);
+        await page.waitForTimeout(500);
+        // Pin an active deployment so the V3 gate accepts the action.
+        await page.evaluate(() => {
+            window.APP.activeDeployment.set('lab_intercepted');
+        });
+        // Intercept /api/deploy/plan so we can assert the URL shape — and
+        // never actually call terraform.
+        let interceptedURL = null;
+        await page.route('**/api/deploy/plan*', async (route) => {
+            interceptedURL = route.request().url();
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ success: true, stdout: 'No changes.', stderr: '', plan: {} })
+            });
+        });
+        // Call runPlan() directly — wiring through the UI button requires
+        // navigating to the deploy sub-pill and unlocking it via validate
+        // (which itself needs a saved config). Direct invocation is the
+        // tightest assertion against the per-project URL shape.
+        await page.evaluate(() => window.runPlan());
+        await page.waitForTimeout(400);
+        expect(interceptedURL).toBeTruthy();
+        expect(interceptedURL).toContain('project=lab_intercepted');
+    });
+
+    test('Plan button bails out when activeDeployment is draft sentinel', async ({ page }) => {
+        await page.goto('/');
+        await acceptDirtyConfirm(page);
+        await page.waitForTimeout(500);
+        await page.evaluate(() => {
+            window.APP.activeDeployment.set(window.APP.activeDeployment.DRAFT_SENTINEL);
+        });
+        let intercepted = false;
+        await page.route('**/api/deploy/plan*', async (route) => {
+            intercepted = true;
+            await route.continue();
+        });
+        await page.evaluate(() => window.runPlan());
+        await page.waitForTimeout(300);
+        // Guard fired — no network call.
+        expect(intercepted).toBe(false);
+    });
+});
+
 test.describe('V3 Configure Progressive — dual-theme contrast', () => {
     for (const theme of ['dark', 'light']) {
         test(`renders cleanly in ${theme} theme`, async ({ page }) => {
