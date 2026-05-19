@@ -32,39 +32,38 @@ async function acceptDirtyConfirm(page) {
 
 // ─── Task 1 — Un-overlay the journey ───────────────────────────────────────
 
-test.describe('Task 1 — "+ New Deployment" mounts inline in Configure', () => {
-    test('clicking "+ New Deployment" navigates to Configure with ?new=1 (no scrim, no overlay)', async ({ page }) => {
+// 2026-05-19 — Configure V2 (progressive unraveling) replaced the auto-mount
+// wizard as the default destination for "+ New Deployment". The journey wizard
+// stays accessible via ?wizard=1 opt-in for the test below; clicking "+ New"
+// now routes to V2 directly. See APP.configureV2 in app.js.
+test.describe('Task 1 — "+ New Deployment" mounts V2 progressive surface', () => {
+    test('clicking "+ New Deployment" pins draft + shows V2 (no scrim, no wizard)', async ({ page }) => {
         await page.goto('/');
         await acceptDirtyConfirm(page);
         await page.locator('#global-new-deployment-btn').waitFor({ timeout: 5000 });
         await page.click('#global-new-deployment-btn');
-        // Allow navigation + inline mount to complete.
-        await page.waitForTimeout(400);
+        await page.waitForTimeout(500);
 
-        // URL has ?new=1 (either in search half or hash-query suffix).
+        // URL signals draft state (either via ?draft=1 or sub-pill nav).
         const url = page.url();
-        expect(url).toMatch(/new=1/);
+        expect(url).toMatch(/draft=1|configure/);
 
-        // Wizard surface is mounted INSIDE Configure, not as a body-level overlay.
-        const wizardInConfigure = page.locator('#subpill-pane-configure #configure-new-pane #journey-takeover');
-        await expect(wizardInConfigure).toBeVisible({ timeout: 4000 });
-
-        // The Configure edit pane is hidden.
-        const editPaneHidden = await page.locator('#configure-edit-pane').evaluate(el => el.hasAttribute('hidden'));
-        expect(editPaneHidden).toBe(true);
-
-        // Legacy body[data-journey-open] flag is NOT set — no scrim takeover.
+        // V2 surface is visible inside Configure
+        await expect(page.locator('#configure-v2-pane')).toBeVisible({ timeout: 4000 });
+        // The wizard mount is NOT auto-attached.
+        const wizardInner = await page.locator('#configure-new-pane').innerHTML();
+        expect(wizardInner.trim()).toBe('');
+        // No scrim takeover.
         const journeyBodyAttr = await page.evaluate(() => document.body.getAttribute('data-journey-open'));
         expect(journeyBodyAttr).toBeNull();
-
-        // The Deployments rail item must be active (rail stays visible — no scrim).
+        // Deployments rail item active.
         await expect(
             page.locator('.app-rail__item[data-rail-target="deployments-tab"].is-active')
         ).toBeVisible({ timeout: 4000 });
     });
 
-    test('wizard step navigation works inside Configure (no overlay chrome)', async ({ page }) => {
-        await page.goto('/#deployments-tab/configure?new=1');
+    test('wizard step navigation works when ?wizard=1 opt-in is passed', async ({ page }) => {
+        await page.goto('/#deployments-tab/configure?new=1&wizard=1');
         await acceptDirtyConfirm(page);
         // Wait for inline wizard to mount.
         await page.locator('#configure-new-pane #journey-takeover').waitFor({ timeout: 5000 });
@@ -90,7 +89,7 @@ test.describe('Task 1 — "+ New Deployment" mounts inline in Configure', () => 
     });
 
     test('cancel returns Configure to edit mode + strips ?new=1', async ({ page }) => {
-        await page.goto('/#deployments-tab/configure?new=1');
+        await page.goto('/#deployments-tab/configure?new=1&wizard=1');
         await acceptDirtyConfirm(page);
         await page.locator('#configure-new-pane #journey-takeover').waitFor({ timeout: 5000 });
 

@@ -2718,7 +2718,20 @@ APP._runSubPillInit = function (parentTabName, subPillName) {
                 } catch (_) {}
                 return false;
             })();
-            if (inNewMode && APP.journey && typeof APP.journey._mountInline === 'function') {
+            // V2 progressive Configure (2026-05-19) handles draft mode now.
+            // Legacy journey wizard remains accessible via ?wizard=1.
+            const wantsWizard = (() => {
+                try {
+                    if (new URLSearchParams(window.location.search).get('wizard') === '1') return true;
+                    const hq = (window.location.hash || '').split('?')[1] || '';
+                    if (hq && new URLSearchParams(hq).get('wizard') === '1') return true;
+                } catch (_) {}
+                return false;
+            })();
+            const isDraftMode = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+            if (isDraftMode && APP.configureV2 && typeof APP.configureV2.applyDraftMode === 'function' && !wantsWizard) {
+                APP.configureV2.applyDraftMode();
+            } else if (inNewMode && APP.journey && typeof APP.journey._mountInline === 'function') {
                 APP.journey._mountInline();
             } else if (APP.journey && typeof APP.journey._showEditMode === 'function') {
                 APP.journey._showEditMode();
@@ -3103,9 +3116,18 @@ function initGlobalHeader() {
         APP.activeDeployment.set(APP.activeDeployment.DRAFT_SENTINEL);
         // 2) Activate Configure sub-pill within deployments-tab.
         APP.subPills.setActive('configure');
-        // 3) Mount the wizard inline (Phase 2B journey behavior preserved).
-        if (APP.journey && typeof APP.journey.open === 'function') {
-            APP.journey.open({ trigger });
+        // 3) Configure V2 (progressive unraveling) takes over the draft flow
+        //    via APP.configureV2.applyDraftMode() — wired through the
+        //    APP.activeDeployment subscription. We keep the journey wizard
+        //    code intact for legacy auto-tests; pass ?wizard=1 in the URL or
+        //    click a future opt-in to mount it.
+        if (window.location.search.indexOf('wizard=1') >= 0 ||
+            (window.location.hash || '').indexOf('wizard=1') >= 0) {
+            if (APP.journey && typeof APP.journey.open === 'function') {
+                APP.journey.open({ trigger });
+            }
+        } else if (APP.configureV2 && typeof APP.configureV2.applyDraftMode === 'function') {
+            APP.configureV2.applyDraftMode();
         }
     };
     const newBtn = document.getElementById('global-new-deployment-btn');
@@ -11825,6 +11847,1204 @@ APP.config.applyGating = _applyConfigGating;
 function updateEngagementType() {
     updateDeploymentType();
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// CONFIGURE V2 — Progressive Unraveling
+//
+// Ported from webapp/frontend/preview/configure-flow-c-progressive.html.
+// Self-contained state machine + real-backend wiring (Route53 zones,
+// /api/profiles/, /api/config/?project=). Activated when
+// APP.activeDeployment.isDraft() is true; the legacy form below it stays
+// available for editing existing deployments via the Manage edit drawer.
+// All DOM IDs use a "cfg-" prefix to avoid collision with the legacy form.
+// ═══════════════════════════════════════════════════════════════════════
+APP.configureV2 = (function () {
+    'use strict';
+
+    const $  = (s, r) => (r || document).querySelector(s);
+    const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+    const TYPES_BY_FAMILY = {
+        c2: [
+            { id: 'c2-adhoc',  label: 'c2-adhoc',  desc: '1 team server · 1 redirector' },
+            { id: 'c2-purple', label: 'c2-purple', desc: '2 team servers · redundancy' },
+            { id: 'c2-full',   label: 'c2-full',   desc: '3 team servers · phase-based' }
+        ],
+        goad: [
+            { id: 'goad-mini',  label: 'goad-mini',  desc: '2 hosts · training' },
+            { id: 'goad-light', label: 'goad-light', desc: '4 hosts · standard' },
+            { id: 'goad-sccm',  label: 'goad-sccm',  desc: 'SCCM lab · 4 hosts' },
+            { id: 'goad-full',  label: 'goad-full',  desc: '5 hosts · full lab' },
+            { id: 'goad-nha',   label: 'goad-nha',   desc: 'Hacker Academy · 5 hosts' }
+        ],
+        combined: [
+            { id: 'combined-adhoc-mini',  label: 'combined-adhoc-mini',  desc: 'c2-adhoc + goad-mini' },
+            { id: 'combined-adhoc-light', label: 'combined-adhoc-light', desc: 'c2-adhoc + goad-light' },
+            { id: 'combined-full-full',   label: 'combined-full-full',   desc: 'c2-full + goad-full' }
+        ]
+    };
+
+    const FAMILY_SECTIONS = {
+        c2:       ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'attackbox', 'cost'],
+        goad:     ['identity', 'network', 'ssh', 'attackbox', 'cost'],
+        combined: ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'attackbox', 'cost']
+    };
+
+    const PRICING = {
+        't3.micro': 8, 't3.small': 15, 't3.medium': 30, 't3.large': 60,
+        't3.xlarge': 120, 't2.large': 60, 'm5.large': 70,
+        'redirector': 15, 'jumpbox': 15
+    };
+
+    const DEFAULTS = {
+        family: 'c2', type: 'c2-adhoc',
+        project: '',
+        env: 'dev', region: 'eu-central-1',
+        mgmtCidr: '', vpcCidr: '10.0.0.0/16', goadVpcCidr: '192.168.56.0/24',
+        ssh: 'autogen', keypair: 'red-team-keypair',
+        primaryDomain: '', backupDomains: [],
+        subC2: 'api', subWww: 'www', subCdn: 'cdn',
+        decoyTheme: 'plexura',
+        enableFronting: false,
+        enableFilePortal: false, portalUsername: 'operator',
+        portalPassword: '', portalTimeout: 30,
+        enableSsl: true, sslProvider: 'letsencrypt',
+        adminEmail: '', sslAutoRetry: true,
+        malleableProfile: 'default', customProfileText: '',
+        csLicenseMode: 'secret', csPwMode: 'auto', csPassword: '',
+        c2ServerCount: 2, c2InstanceType: 't3.medium',
+        redirectorInstanceType: 't3.small',
+        enableAttackBox: true, abInstanceType: 't2.large',
+        abDisk: 100, abPwMode: 'auto', abPassword: ''
+    };
+
+    const state = {
+        family: 'c2',
+        type: 'c2-adhoc',
+        ssh: 'autogen',
+        confirmed: new Set(),
+        mode: 'draft',
+        machineSuffix: '',
+        ownedDomains: new Set(),       // populated from /api/aws/route53/zones
+        takenDomains: {},              // domain -> project_name
+        domainsLoaded: false,
+        initialized: false
+    };
+
+    function _machineSuffix() {
+        if (state.machineSuffix) return state.machineSuffix;
+        // Match the legacy "harriss_macbook_pro" convention as best we can —
+        // fall back to a stable browser-derived slug.
+        const host = (navigator.userAgent || 'browser').toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_').slice(0, 24);
+        state.machineSuffix = host || 'browser';
+        return state.machineSuffix;
+    }
+
+    function getActiveSections() {
+        return FAMILY_SECTIONS[state.family] || FAMILY_SECTIONS.c2;
+    }
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({
+            '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        })[c]);
+    }
+
+    function setRailState(sectionId, newState) {
+        const item = $('.cfg-rail__item[data-cfg-section-id="' + sectionId + '"]');
+        if (!item) return;
+        item.classList.remove('is-pending', 'is-active', 'is-confirmed');
+        if (newState === 'pending') {
+            item.classList.add('is-pending');
+            item.setAttribute('disabled', '');
+        } else {
+            item.classList.add('is-' + newState);
+            item.removeAttribute('disabled');
+        }
+        const bullet = $('.cfg-rail__bullet', item);
+        if (bullet) {
+            const idx = getActiveSections().indexOf(sectionId);
+            if (newState === 'confirmed') {
+                bullet.innerHTML = '<svg><use href="#cfg-ic-check"/></svg>';
+            } else {
+                bullet.textContent = (idx >= 0 ? idx + 1 : '?');
+            }
+        }
+    }
+    function setSectionState(sectionId, newState) {
+        const sec = $('.cfg-section[data-cfg-section="' + sectionId + '"]');
+        if (!sec) return;
+        sec.classList.remove('is-pending', 'is-active', 'is-confirmed');
+        sec.classList.add('is-' + newState);
+        const pill = $('[data-cfg-state-pill]', sec);
+        if (pill) pill.textContent = newState.charAt(0).toUpperCase() + newState.slice(1);
+    }
+
+    function applyTypeAwareVisibility() {
+        const active = getActiveSections();
+        $$('.cfg-section').forEach(sec => {
+            const id = sec.dataset.cfgSection;
+            if (active.includes(id)) sec.classList.remove('is-hidden');
+            else sec.classList.add('is-hidden');
+        });
+        $$('.cfg-rail__item').forEach(item => {
+            const id = item.dataset.cfgSectionId;
+            if (active.includes(id)) item.classList.remove('is-hidden');
+            else item.classList.add('is-hidden');
+            const idx = active.indexOf(id);
+            const bullet = $('.cfg-rail__bullet', item);
+            if (bullet && !item.classList.contains('is-confirmed') && idx >= 0) {
+                bullet.textContent = idx + 1;
+            }
+        });
+        active.forEach((id, idx) => {
+            const sec = $('.cfg-section[data-cfg-section="' + id + '"]');
+            if (!sec) return;
+            const numEl = $('[data-cfg-num]', sec);
+            if (numEl && !sec.classList.contains('is-confirmed')) numEl.textContent = idx + 1;
+        });
+        const showGoadNet = (state.family === 'combined' || state.family === 'goad');
+        const goadFields = document.querySelector('[data-cfg-goad-net-fields]');
+        const goadHint = document.querySelector('[data-cfg-goad-net-hint]');
+        if (goadFields) goadFields.style.display = showGoadNet ? '' : 'none';
+        if (goadHint) goadHint.style.display = showGoadNet ? '' : 'none';
+        const showC2Vpc = (state.family !== 'goad');
+        const c2VpcField = document.querySelector('[data-cfg-c2-vpc-field]');
+        if (c2VpcField) c2VpcField.style.display = showC2Vpc ? '' : 'none';
+        const isPurple = (state.type === 'c2-purple');
+        const cntEl = $('#cfg-c2-server-count');
+        const c2CountField = cntEl ? cntEl.closest('.cfg-field') : null;
+        if (c2CountField) c2CountField.style.opacity = isPurple ? '1' : '0.55';
+    }
+
+    function updateProgress() {
+        const active = getActiveSections();
+        const total = active.length;
+        const done = active.filter(id => state.confirmed.has(id)).length;
+        const txt = $('#cfg-rail-progress-text');
+        if (txt) txt.textContent = done + ' of ' + total;
+        const fill = $('#cfg-rail-progress-fill');
+        if (fill) fill.style.width = (total ? (done / total * 100) : 0) + '%';
+        const sbS = $('#cfg-sb-sections');
+        if (sbS) sbS.textContent = done + ' / ' + total;
+        const ready = (done === total);
+        const readyEl = $('#cfg-sb-ready');
+        if (readyEl) {
+            readyEl.textContent = ready ? 'YES' : 'NO';
+            readyEl.style.color = ready ? 'var(--success-text)' : 'var(--text-secondary)';
+        }
+        const saveBtn = $('#cfg-save-btn');
+        if (saveBtn) saveBtn.toggleAttribute('disabled', !ready);
+        const validateBtn = $('#cfg-validate-btn');
+        if (validateBtn) {
+            if (ready) validateBtn.removeAttribute('hidden');
+            else validateBtn.setAttribute('hidden', '');
+        }
+    }
+
+    function findNextSection(after) {
+        const order = getActiveSections();
+        const idx = order.indexOf(after);
+        for (let i = idx + 1; i < order.length; i++) {
+            if (!state.confirmed.has(order[i])) return order[i];
+        }
+        return null;
+    }
+
+    function buildSummary(sectionId) {
+        const v = id => { const el = $('#' + id); return el ? el.value : ''; };
+        switch (sectionId) {
+            case 'identity':
+                return [
+                    { k: 'type',    v: state.type },
+                    { k: 'project', v: v('cfg-project-name') },
+                    { k: 'env',     v: v('cfg-env-select') },
+                    { k: 'region',  v: v('cfg-region-select') }
+                ];
+            case 'network': {
+                const items = [{ k: 'mgmt', v: v('cfg-mgmt-cidr') || '(unset)' }];
+                if (state.family !== 'goad') items.push({ k: 'VPC', v: v('cfg-vpc-cidr') });
+                if (state.family === 'combined' || state.family === 'goad') {
+                    items.push({ k: 'GOAD VPC', v: v('cfg-goad-vpc-cidr') });
+                }
+                return items;
+            }
+            case 'ssh':
+                return [
+                    { k: 'source', v: state.ssh },
+                    { k: 'pair',   v: v('cfg-keypair-name') }
+                ];
+            case 'domain': {
+                const backups = collectBackupValues().length;
+                return [
+                    { k: 'primary', v: v('cfg-primary-domain') || '(unset)' },
+                    { k: 'backups', v: backups + (backups === 1 ? ' domain' : ' domains') },
+                    { k: 'fronting', v: $('#cfg-enable-fronting')?.checked ? 'on' : 'off' },
+                    { k: 'decoy', v: v('cfg-decoy-theme') }
+                ];
+            }
+            case 'ssl':
+                return [
+                    { k: 'ssl', v: $('#cfg-enable-ssl')?.checked ? 'on' : 'off' },
+                    { k: 'provider', v: v('cfg-ssl-provider') },
+                    { k: 'email', v: v('cfg-admin-email') || '(unset)' }
+                ];
+            case 'c2':
+                return [
+                    { k: 'profile', v: v('cfg-malleable-profile') },
+                    { k: 'license', v: document.querySelector('input[name="cfg-cs-license-mode"]:checked')?.value || 'secret' },
+                    { k: 'CS pw',   v: document.querySelector('input[name="cfg-cs-pw-mode"]:checked')?.value || 'auto' },
+                    { k: 'servers', v: v('cfg-c2-instance-type') + ' × ' + v('cfg-c2-server-count') }
+                ];
+            case 'attackbox':
+                if (!$('#cfg-enable-attack-box')?.checked) return [{ k: 'attack box', v: 'disabled' }];
+                return [
+                    { k: 'instance', v: v('cfg-ab-instance-type') },
+                    { k: 'disk', v: v('cfg-ab-disk') + ' GB' },
+                    { k: 'RDP pw', v: document.querySelector('input[name="cfg-ab-pw-mode"]:checked')?.value || 'auto' }
+                ];
+            case 'cost':
+                return [{ k: 'total', v: $('#cfg-cost-total')?.textContent || '$0/mo' }];
+            default: return [];
+        }
+    }
+    function renderSummary(sectionId) {
+        const sec = $('.cfg-section[data-cfg-section="' + sectionId + '"]');
+        if (!sec) return;
+        const sumEl = $('[data-cfg-summary]', sec);
+        if (!sumEl) return;
+        const items = buildSummary(sectionId);
+        sumEl.innerHTML = items.map(it =>
+            '<span class="cfg-section__summary-kv"><span class="cfg-section__summary-key">' +
+            escapeHtml(it.k) + ':</span><span>' + escapeHtml(String(it.v)) + '</span></span>'
+        ).join('');
+    }
+
+    function computeCost() {
+        const rows = [];
+        const family = state.family;
+        const type = state.type;
+        const v = id => { const el = $('#' + id); return el ? el.value : ''; };
+        if (family === 'c2' || family === 'combined') {
+            let teamCount = 1;
+            if (type === 'c2-purple' || type === 'combined-adhoc-light') teamCount = 2;
+            if (type === 'c2-full' || type === 'combined-full-full') teamCount = 3;
+            const ts = v('cfg-c2-instance-type');
+            const rd = v('cfg-redirector-instance-type');
+            rows.push({ name: 'C2 team server', type: ts + ' × ' + teamCount, monthly: (PRICING[ts] || 30) * teamCount });
+            rows.push({ name: 'Redirector', type: rd + ' × ' + teamCount, monthly: (PRICING[rd] || 15) * teamCount });
+        }
+        if (family === 'goad' || family === 'combined') {
+            let goadHosts = 2;
+            if (type.indexOf('mini') >= 0) goadHosts = 2;
+            if (type.indexOf('light') >= 0) goadHosts = 4;
+            if (type.indexOf('sccm') >= 0) goadHosts = 4;
+            if (type === 'goad-full' || type === 'combined-full-full' || type === 'goad-nha') goadHosts = 5;
+            rows.push({ name: 'GOAD jumpbox', type: 't3.small × 1', monthly: PRICING['jumpbox'] });
+            rows.push({ name: 'GOAD AD hosts', type: 't3.medium × ' + goadHosts, monthly: PRICING['t3.medium'] * goadHosts });
+        }
+        if ($('#cfg-enable-attack-box')?.checked) {
+            const abType = v('cfg-ab-instance-type');
+            rows.push({ name: 'Attack box', type: abType + ' × 1', monthly: PRICING[abType] || 60 });
+        }
+        rows.push({ name: 'Bastion (Windows)', type: 't3.medium × 1', monthly: PRICING['t3.medium'] });
+        if ($('#cfg-enable-fronting')?.checked) rows.push({ name: 'CloudFront + ACM', type: 'on-demand', monthly: 5 });
+        const total = rows.reduce((s, r) => s + r.monthly, 0);
+        return { rows, total };
+    }
+    function renderCost() {
+        const { rows, total } = computeCost();
+        const body = $('#cfg-cost-body');
+        if (body) body.innerHTML = rows.map(r =>
+            '<tr><td>' + escapeHtml(r.name) + '</td><td>' + escapeHtml(r.type) + '</td><td>$' + r.monthly + '</td></tr>'
+        ).join('');
+        const tot = $('#cfg-cost-total');
+        if (tot) tot.textContent = '~$' + total + '/mo';
+    }
+
+    function renderTypeGrid() {
+        const list = TYPES_BY_FAMILY[state.family] || [];
+        const grid = $('#cfg-type-grid');
+        if (!grid) return;
+        grid.innerHTML = list.map(t =>
+            '<button class="cfg-type-btn ' + (t.id === state.type ? 'is-active' : '') +
+            '" type="button" data-cfg-type="' + t.id + '">' +
+            '<div style="font-weight:700">' + escapeHtml(t.label) + '</div>' +
+            '<div style="font-size:10px;color:var(--text-secondary);margin-top:2px;letter-spacing:0.02em">' + escapeHtml(t.desc) + '</div>' +
+            '</button>'
+        ).join('');
+        $$('#cfg-type-grid .cfg-type-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                state.type = btn.dataset.cfgType;
+                $$('#cfg-type-grid .cfg-type-btn').forEach(b => b.classList.remove('is-active'));
+                btn.classList.add('is-active');
+                updateProjectName();
+                const sb = $('#cfg-sb-type'); if (sb) sb.textContent = state.type;
+                applyTypeAwareVisibility();
+                renderCost();
+            });
+        });
+    }
+
+    function updateProjectName() {
+        const env = $('#cfg-env-select')?.value || 'dev';
+        const safeType = state.type.replace(/-/g, '_');
+        const projInput = $('#cfg-project-name');
+        if (projInput && !projInput.dataset.cfgUserEdited) {
+            projInput.value = safeType + '_' + env + '_' + _machineSuffix();
+        }
+    }
+
+    // ─── DOMAIN AVAILABILITY ──────────────────────────────────────────
+    const DOMAIN_PATTERN = /^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$/i;
+    function setDomainStatus(el, status, extra) {
+        if (!el) return;
+        el.classList.remove('cfg-status--checking', 'cfg-status--available',
+                            'cfg-status--taken', 'cfg-status--invalid',
+                            'cfg-status--unowned');
+        const map = {
+            idle: ['', 'Idle'],
+            checking: ['cfg-status--checking', 'Checking…'],
+            available: ['cfg-status--available', '✓ Available'],
+            taken: ['cfg-status--taken', 'IN USE'],
+            not_in_route53: ['cfg-status--unowned', 'Not in Route 53'],
+            invalid: ['cfg-status--invalid', 'Invalid domain format']
+        };
+        const [klass, label] = map[status] || ['', 'Idle'];
+        if (klass) el.classList.add(klass);
+        el.innerHTML = escapeHtml(label) + (extra ? '<span class="cfg-status__taken-by">' + escapeHtml(extra) + '</span>' : '');
+    }
+    function checkDomain(value) {
+        const v = (value || '').trim().toLowerCase();
+        if (!v) return { status: 'idle' };
+        if (!DOMAIN_PATTERN.test(v)) return { status: 'invalid' };
+        if (!state.domainsLoaded) return { status: 'idle' };
+        if (!state.ownedDomains.has(v)) return { status: 'not_in_route53', note: 'register in Route 53 first' };
+        if (state.takenDomains[v]) return { status: 'taken', takenBy: state.takenDomains[v] };
+        return { status: 'available' };
+    }
+    const checkTimers = {};
+    function scheduleCheck(key, statusEl, value) {
+        window.clearTimeout(checkTimers[key]);
+        setDomainStatus(statusEl, 'checking');
+        checkTimers[key] = window.setTimeout(() => {
+            const { status, takenBy, note } = checkDomain(value);
+            setDomainStatus(statusEl, status, takenBy ? 'used by ' + takenBy : (note || ''));
+        }, 400);
+    }
+    function runCheckNow(key, statusEl, value) {
+        window.clearTimeout(checkTimers[key]);
+        const { status, takenBy, note } = checkDomain(value);
+        setDomainStatus(statusEl, status, takenBy ? 'used by ' + takenBy : (note || ''));
+    }
+
+    async function loadRoute53Zones() {
+        try {
+            const resp = await fetch(`${API_BASE}/aws/route53/zones`);
+            const data = await resp.json();
+            if (!data.success) {
+                console.warn('[cfgV2] route53 zones failed:', data.error);
+                state.domainsLoaded = true; // still mark loaded so picker doesn't spin
+                return;
+            }
+            state.ownedDomains = new Set((data.zones || []).map(z => z.name));
+            state.takenDomains = {};
+            (data.zones || []).forEach(z => {
+                if (z.in_use_by_project_or_null) state.takenDomains[z.name] = z.in_use_by_project_or_null;
+            });
+            state.domainsLoaded = true;
+            populatePrimaryDomainPicker();
+        } catch (e) {
+            console.warn('[cfgV2] route53 zones fetch error:', e);
+            state.domainsLoaded = true;
+        }
+    }
+
+    function populatePrimaryDomainPicker() {
+        const sel = $('#cfg-primary-domain-select');
+        if (!sel) return;
+        // Remove any previous dynamic entries (keep empty + __custom__)
+        Array.from(sel.querySelectorAll('option[data-cfg-dynamic="1"]')).forEach(o => o.remove());
+        const customOpt = sel.querySelector('option[value="__custom__"]');
+        Array.from(state.ownedDomains).sort().forEach(domain => {
+            const tb = state.takenDomains[domain];
+            const opt = document.createElement('option');
+            opt.value = domain;
+            opt.textContent = tb ? domain + '  ·  IN USE by ' + tb : domain + '  ·  Available';
+            opt.dataset.cfgDynamic = '1';
+            if (tb) opt.dataset.taken = tb;
+            sel.insertBefore(opt, customOpt);
+        });
+    }
+
+    // ─── BACKUP DOMAINS ────────────────────────────────────────────────
+    let backupCounter = 0;
+    function renderBackupList(values) {
+        const list = $('#cfg-backup-list');
+        if (!list) return;
+        list.innerHTML = '';
+        (values || []).forEach(v => addBackupRow(v));
+    }
+    function addBackupRow(value) {
+        backupCounter++;
+        const key = 'cfg-backup-' + backupCounter;
+        const row = document.createElement('div');
+        row.className = 'cfg-backup-row';
+        row.dataset.backupKey = key;
+        const ownedOptions = Array.from(state.ownedDomains).sort().map(d => {
+            const tb = state.takenDomains[d];
+            const lbl = tb ? d + '  ·  IN USE by ' + tb : d + '  ·  Available';
+            const sel = (d === value) ? ' selected' : '';
+            return '<option value="' + escapeHtml(d) + '"' + sel + '>' + escapeHtml(lbl) + '</option>';
+        }).join('');
+        const isCustom = value && !state.ownedDomains.has(value);
+        row.innerHTML =
+            '<select class="cfg-input cfg-backup-select">' +
+                '<option value="">— Pick a Route 53 hosted zone —</option>' +
+                ownedOptions +
+                '<option value="__custom__"' + (isCustom ? ' selected' : '') + '>Custom (type a domain)…</option>' +
+            '</select>' +
+            '<input class="cfg-input cfg-backup-input" type="text" value="' + escapeHtml(isCustom ? value : '') + '" placeholder="my-future-domain.com" style="' + (isCustom ? '' : 'display:none') + '">' +
+            '<span class="cfg-status">Idle</span>' +
+            '<button class="cfg-backup-row__remove" type="button" aria-label="Remove backup domain"><svg><use href="#cfg-ic-x"/></svg></button>';
+        $('#cfg-backup-list').appendChild(row);
+        const sel = row.querySelector('.cfg-backup-select');
+        const customInput = row.querySelector('.cfg-backup-input');
+        const statusEl = row.querySelector('.cfg-status');
+        const removeBtn = row.querySelector('.cfg-backup-row__remove');
+        function currentValue() {
+            if (sel.value === '__custom__') return customInput.value;
+            return sel.value;
+        }
+        sel.addEventListener('change', () => {
+            if (sel.value === '__custom__') {
+                customInput.style.display = '';
+                customInput.value = '';
+                customInput.focus();
+                setDomainStatus(statusEl, 'idle');
+            } else {
+                customInput.style.display = 'none';
+                customInput.value = '';
+                if (sel.value) runCheckNow(key, statusEl, sel.value);
+                else setDomainStatus(statusEl, 'idle');
+            }
+        });
+        customInput.addEventListener('input', () => scheduleCheck(key, statusEl, customInput.value));
+        removeBtn.addEventListener('click', () => row.remove());
+        row._currentValue = currentValue;
+        if (sel.value && sel.value !== '__custom__') runCheckNow(key, statusEl, sel.value);
+        else if (customInput.value) scheduleCheck(key, statusEl, customInput.value);
+    }
+    function collectBackupValues() {
+        return $$('#cfg-backup-list .cfg-backup-row')
+            .map(r => (r._currentValue ? r._currentValue() : '').trim())
+            .filter(Boolean);
+    }
+
+    // ─── CONFIRM / ACTIVATE / RESET ─────────────────────────────────────
+    function confirmSection(sectionId) {
+        state.confirmed.add(sectionId);
+        renderSummary(sectionId);
+        setSectionState(sectionId, 'confirmed');
+        setRailState(sectionId, 'confirmed');
+        const next = findNextSection(sectionId);
+        if (next) window.setTimeout(() => activateSection(next), 120);
+        updateProgress();
+    }
+    function activateSection(sectionId) {
+        $$('.cfg-section.is-active').forEach(s => {
+            if (s.dataset.cfgSection !== sectionId) {
+                s.classList.remove('is-active');
+                s.classList.add('is-pending');
+                setRailState(s.dataset.cfgSection, 'pending');
+                const p = $('[data-cfg-state-pill]', s);
+                if (p) p.textContent = 'Pending';
+            }
+        });
+        setSectionState(sectionId, 'active');
+        setRailState(sectionId, 'active');
+        const sec = $('.cfg-section[data-cfg-section="' + sectionId + '"]');
+        if (sec) window.setTimeout(() => sec.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+    }
+    function reEditSection(sectionId) {
+        state.confirmed.delete(sectionId);
+        const sec = $('.cfg-section[data-cfg-section="' + sectionId + '"]');
+        if (sec) {
+            const sumEl = $('[data-cfg-summary]', sec);
+            if (sumEl) sumEl.innerHTML = '';
+            const numEl = $('[data-cfg-num]', sec);
+            const idx = getActiveSections().indexOf(sectionId);
+            if (numEl && idx >= 0) numEl.textContent = idx + 1;
+        }
+        activateSection(sectionId);
+        updateProgress();
+    }
+
+    function fullReset() {
+        state.family = DEFAULTS.family;
+        state.type = DEFAULTS.type;
+        state.ssh = DEFAULTS.ssh;
+        state.confirmed.clear();
+        state.mode = 'draft';
+
+        $$('#cfg-family-row .cfg-family-btn').forEach(b => {
+            b.classList.toggle('is-active', b.dataset.cfgFamily === DEFAULTS.family);
+        });
+        renderTypeGrid();
+
+        const setVal = (id, v) => { const el = $('#' + id); if (el) el.value = v; };
+        const setChecked = (id, v) => { const el = $('#' + id); if (el) el.checked = v; };
+        const projEl = $('#cfg-project-name'); if (projEl) delete projEl.dataset.cfgUserEdited;
+        setVal('cfg-project-name', DEFAULTS.project);
+        setVal('cfg-env-select', DEFAULTS.env);
+        setVal('cfg-region-select', DEFAULTS.region);
+        setVal('cfg-mgmt-cidr', DEFAULTS.mgmtCidr);
+        setVal('cfg-vpc-cidr', DEFAULTS.vpcCidr);
+        setVal('cfg-goad-vpc-cidr', DEFAULTS.goadVpcCidr);
+        setVal('cfg-goad-ip-range', DEFAULTS.goadVpcCidr.split('.').slice(0,3).join('.'));
+        setVal('cfg-keypair-name', DEFAULTS.keypair);
+        $$('#cfg-ssh-grid .cfg-ssh-card').forEach(c => c.classList.toggle('is-active', c.dataset.cfgSsh === DEFAULTS.ssh));
+        setVal('cfg-primary-domain', DEFAULTS.primaryDomain);
+        setDomainStatus($('#cfg-primary-domain-status'), 'idle');
+        renderBackupList(DEFAULTS.backupDomains);
+        setVal('cfg-sub-c2', DEFAULTS.subC2);
+        setVal('cfg-sub-www', DEFAULTS.subWww);
+        setVal('cfg-sub-cdn', DEFAULTS.subCdn);
+        setVal('cfg-decoy-theme', DEFAULTS.decoyTheme);
+        setChecked('cfg-enable-fronting', DEFAULTS.enableFronting);
+        setChecked('cfg-enable-file-portal', DEFAULTS.enableFilePortal);
+        setVal('cfg-portal-username', DEFAULTS.portalUsername);
+        setVal('cfg-portal-password', DEFAULTS.portalPassword);
+        setVal('cfg-portal-timeout', DEFAULTS.portalTimeout);
+        updateFilePortalVisibility();
+        setChecked('cfg-enable-ssl', DEFAULTS.enableSsl);
+        setVal('cfg-ssl-provider', DEFAULTS.sslProvider);
+        setVal('cfg-admin-email', DEFAULTS.adminEmail);
+        setChecked('cfg-ssl-auto-retry', DEFAULTS.sslAutoRetry);
+        updateSslSelfSignedVisibility();
+        updateSslFrontingBanner();
+        setVal('cfg-malleable-profile', DEFAULTS.malleableProfile);
+        setVal('cfg-custom-profile-text', DEFAULTS.customProfileText);
+        updateMalleableVisibility();
+        document.querySelectorAll('input[name="cfg-cs-license-mode"]').forEach(r => r.checked = (r.value === DEFAULTS.csLicenseMode));
+        document.querySelectorAll('input[name="cfg-cs-pw-mode"]').forEach(r => r.checked = (r.value === DEFAULTS.csPwMode));
+        updateCsPwVisibility();
+        setVal('cfg-cs-password', DEFAULTS.csPassword);
+        setVal('cfg-c2-server-count', DEFAULTS.c2ServerCount);
+        setVal('cfg-c2-instance-type', DEFAULTS.c2InstanceType);
+        setVal('cfg-redirector-instance-type', DEFAULTS.redirectorInstanceType);
+        setChecked('cfg-enable-attack-box', DEFAULTS.enableAttackBox);
+        setVal('cfg-ab-instance-type', DEFAULTS.abInstanceType);
+        setVal('cfg-ab-disk', DEFAULTS.abDisk);
+        document.querySelectorAll('input[name="cfg-ab-pw-mode"]').forEach(r => r.checked = (r.value === DEFAULTS.abPwMode));
+        setVal('cfg-ab-password', DEFAULTS.abPassword);
+        updateAbPwVisibility();
+
+        $$('.cfg-section [data-cfg-summary]').forEach(el => el.innerHTML = '');
+
+        const hero = $('#cfg-hero-title');
+        const heroText = $('#cfg-hero-title-text');
+        const heroPill = $('#cfg-hero-pill');
+        if (hero) hero.classList.add('is-placeholder');
+        if (heroText) heroText.textContent = '(unnamed) — pick a deployment type to begin';
+        if (heroPill) {
+            heroPill.textContent = 'Draft';
+            heroPill.classList.remove('cfg-hero__pill--live');
+            heroPill.classList.add('cfg-hero__pill--draft');
+        }
+        const modeEl = $('#cfg-mode'); if (modeEl) modeEl.textContent = 'Draft · progressive unraveling';
+
+        applyTypeAwareVisibility();
+        updateProjectName();
+        renderCost();
+        const sbType = $('#cfg-sb-type'); if (sbType) sbType.textContent = state.type;
+
+        const order = getActiveSections();
+        order.forEach((id, idx) => {
+            const sec = $('.cfg-section[data-cfg-section="' + id + '"]');
+            if (!sec) return;
+            const numEl = $('[data-cfg-num]', sec);
+            if (numEl) numEl.textContent = idx + 1;
+            if (idx === 0) { setSectionState(id, 'active'); setRailState(id, 'active'); }
+            else { setSectionState(id, 'pending'); setRailState(id, 'pending'); }
+        });
+        renderSummary('identity');
+        updateProgress();
+        if (APP && APP.toast) APP.toast('Configuration reset — every section returned to pending.', 'info');
+    }
+
+    // ─── CONDITIONAL VISIBILITY ─────────────────────────────────────────
+    function updateFilePortalVisibility() {
+        const on = $('#cfg-enable-file-portal')?.checked;
+        const f = $('#cfg-file-portal-fields'); if (f) f.style.display = on ? '' : 'none';
+        const t = $('#cfg-file-portal-timeout-field'); if (t) t.style.display = on ? '' : 'none';
+    }
+    function updateSslSelfSignedVisibility() {
+        const isSelf = $('#cfg-ssl-provider')?.value === 'self-signed';
+        const w = $('#cfg-ssl-self-signed-warn'); if (w) w.style.display = isSelf ? '' : 'none';
+    }
+    function updateSslFrontingBanner() {
+        const b = $('#cfg-ssl-fronting-banner');
+        if (b) b.style.display = $('#cfg-enable-fronting')?.checked ? '' : 'none';
+    }
+    function updateMalleableVisibility() {
+        const isCustom = $('#cfg-malleable-profile')?.value === 'custom';
+        const p = $('#cfg-custom-profile-paste'); if (p) p.style.display = isCustom ? '' : 'none';
+        renderProfilePreview();
+    }
+    function updateCsPwVisibility() {
+        const mode = document.querySelector('input[name="cfg-cs-pw-mode"]:checked')?.value;
+        const el = $('#cfg-cs-password'); if (el) el.style.display = mode === 'custom' ? '' : 'none';
+    }
+    function updateAbPwVisibility() {
+        const mode = document.querySelector('input[name="cfg-ab-pw-mode"]:checked')?.value;
+        const el = $('#cfg-ab-password'); if (el) el.style.display = mode === 'custom' ? '' : 'none';
+    }
+
+    // ─── PROFILE CATALOG & PREVIEW ──────────────────────────────────────
+    const CATALOG_CACHE = {};
+    async function loadProfileCatalog() {
+        try {
+            const resp = await fetch(`${API_BASE}/profiles/`);
+            const data = await resp.json();
+            if (!data.success || !data.categories) return;
+            for (const [category, profiles] of Object.entries(data.categories)) {
+                const group = document.getElementById('cfg-profiles-' + category.toLowerCase());
+                if (!group) continue;
+                profiles.forEach(name => {
+                    const opt = document.createElement('option');
+                    opt.value = 'catalog:' + category + '/' + name;
+                    opt.textContent = name.replace('.profile', '').replace(/_/g, ' ');
+                    group.appendChild(opt);
+                });
+            }
+        } catch (e) { console.warn('[cfgV2] profile catalog load failed', e); }
+    }
+    async function fetchCatalogProfile(catalogValue) {
+        if (CATALOG_CACHE[catalogValue]) return CATALOG_CACHE[catalogValue];
+        const path = catalogValue.replace('catalog:', '');
+        const [category, name] = path.split('/');
+        try {
+            const resp = await fetch(`${API_BASE}/profiles/` + category + '/' + name);
+            const data = await resp.json();
+            if (data.success) {
+                CATALOG_CACHE[catalogValue] = data.content;
+                return data.content;
+            }
+        } catch (e) { console.warn('[cfgV2] catalog profile fetch failed', e); }
+        return null;
+    }
+    const PROFILE_PRESETS = {
+        'default':   { label: 'jQuery CDN', host: 'code.jquery.com', cs: '# Default jQuery CDN profile — auto-deployed by install_cobalt_strike.sh', nginx: 'location /jquery-3.3.1.min.js { proxy_pass https://teamserver_upstream; }', uri: '/jquery-3.3.1.min.js', ct: 'application/javascript' },
+        'amazon':    { label: 'Amazon CDN', host: '*.cloudfront.net', cs: '# Amazon CDN profile', nginx: 'location /latest/meta-data/instance-id { proxy_pass https://teamserver_upstream; }', uri: '/latest/meta-data/instance-id', ct: 'text/plain' },
+        'google':    { label: 'Google APIs', host: 'safebrowsing.googleapis.com', cs: '# Google APIs profile', nginx: 'location /safebrowsing/v4/threatListUpdates:fetch { proxy_pass https://teamserver_upstream; }', uri: '/safebrowsing/v4/threatListUpdates:fetch', ct: 'application/json' },
+        'microsoft': { label: 'Microsoft Azure / Graph', host: 'login.microsoftonline.com', cs: '# Microsoft Azure profile', nginx: 'location /common/oauth2/v2.0/token { proxy_pass https://teamserver_upstream; }', uri: '/common/oauth2/v2.0/token', ct: 'application/json' },
+        'wikipedia': { label: 'Wikipedia', host: 'en.wikipedia.org', cs: '# Wikipedia profile', nginx: 'location /w/index.php { proxy_pass https://teamserver_upstream; }', uri: '/w/index.php', ct: 'text/html' },
+        'custom':    { label: 'Custom', host: '<from-paste>', cs: '# Custom profile — pasted by operator. c2lint runs on deploy.', nginx: '# nginx URIs auto-extracted from pasted profile on deploy.', uri: '/<from-pasted>', ct: '<from-pasted>' }
+    };
+    async function renderProfilePreview() {
+        const key = $('#cfg-malleable-profile')?.value || 'default';
+        const primary = ($('#cfg-primary-domain')?.value || '').trim();
+        const fqdn = primary ? (($('#cfg-sub-c2')?.value || 'api') + '.' + primary) : '<primary-domain>';
+        const csPane = document.querySelector('.cfg-preview-pane[data-cfg-preview-pane="cs"]');
+        const nginxPane = document.querySelector('.cfg-preview-pane[data-cfg-preview-pane="nginx"]');
+        const examplePane = document.querySelector('.cfg-preview-pane[data-cfg-preview-pane="example"]');
+
+        if (PROFILE_PRESETS[key]) {
+            const p = PROFILE_PRESETS[key];
+            if (csPane) csPane.textContent = p.cs;
+            if (nginxPane) nginxPane.textContent = p.nginx;
+            if (examplePane) examplePane.textContent =
+`GET ${p.uri} HTTP/1.1
+Host: ${fqdn}
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) …
+Accept: */*
+
+HTTP/1.1 200 OK
+Content-Type: ${p.ct}
+Server: nginx
+…beacon payload wrapped in ${p.label} response shell…`;
+            return;
+        }
+        if (key.indexOf('catalog:') === 0) {
+            if (csPane) csPane.textContent = 'Loading catalog profile…';
+            if (nginxPane) nginxPane.textContent = 'Loading…';
+            if (examplePane) examplePane.textContent = 'Loading…';
+            const content = await fetchCatalogProfile(key);
+            if (!content) {
+                const msg = 'Could not load profile content.';
+                if (csPane) csPane.textContent = msg;
+                if (nginxPane) nginxPane.textContent = msg;
+                if (examplePane) examplePane.textContent = msg;
+                return;
+            }
+            if (csPane) csPane.textContent = content;
+            // crude URI extraction
+            const uris = [];
+            const re = /set\s+uri(?:_x86|_x64)?\s+"([^"]+)"/g; let m;
+            while ((m = re.exec(content)) !== null) m[1].split(/\s+/).forEach(u => { if (u && uris.indexOf(u) === -1) uris.push(u); });
+            if (nginxPane) nginxPane.textContent = uris.length
+                ? uris.map(u => 'location ' + u + ' { proxy_pass https://teamserver_upstream; }').join('\n')
+                : '# No URIs detected in this profile.';
+            if (examplePane) examplePane.textContent =
+`GET ${uris[0] || '/'} HTTP/1.1
+Host: ${fqdn}
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) …
+
+HTTP/1.1 200 OK
+…beacon payload wrapped in catalog profile response shell…`;
+        }
+    }
+
+    // ─── EVENT WIRING ───────────────────────────────────────────────────
+    function wireEvents() {
+        // Family
+        $$('#cfg-family-row .cfg-family-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const f = btn.dataset.cfgFamily;
+                if (f === state.family) return;
+                $$('#cfg-family-row .cfg-family-btn').forEach(b => b.classList.remove('is-active'));
+                btn.classList.add('is-active');
+                state.family = f;
+                state.type = TYPES_BY_FAMILY[f][0].id;
+                renderTypeGrid();
+                updateProjectName();
+                const sb = $('#cfg-sb-type'); if (sb) sb.textContent = state.type;
+                applyTypeAwareVisibility();
+                // Reset downstream
+                const order = getActiveSections();
+                for (let i = 1; i < order.length; i++) {
+                    if (state.confirmed.has(order[i])) {
+                        state.confirmed.delete(order[i]);
+                        setSectionState(order[i], 'pending');
+                        setRailState(order[i], 'pending');
+                        const sec = $('.cfg-section[data-cfg-section="' + order[i] + '"]');
+                        if (sec) { const sm = $('[data-cfg-summary]', sec); if (sm) sm.innerHTML = ''; }
+                    }
+                }
+                renderCost();
+                updateProgress();
+            });
+        });
+
+        const envSel = $('#cfg-env-select');
+        if (envSel) envSel.addEventListener('change', updateProjectName);
+        const projInput = $('#cfg-project-name');
+        if (projInput) projInput.addEventListener('input', () => { projInput.dataset.cfgUserEdited = '1'; });
+
+        const goadVpc = $('#cfg-goad-vpc-cidr');
+        if (goadVpc) goadVpc.addEventListener('input', () => {
+            const m = goadVpc.value.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3})/);
+            if (m) { const r = $('#cfg-goad-ip-range'); if (r) r.value = m[1]; }
+        });
+
+        const useIp = $('#cfg-use-my-ip');
+        if (useIp) useIp.addEventListener('click', async () => {
+            useIp.disabled = true;
+            try {
+                const r = await fetch(`${API_BASE}/config/public-ip`);
+                const d = await r.json();
+                if (d.success && d.ip) {
+                    const inp = $('#cfg-mgmt-cidr');
+                    if (inp) inp.value = d.ip + '/32';
+                }
+            } catch (e) {
+                console.warn('[cfgV2] public-ip fetch failed', e);
+            } finally { useIp.disabled = false; }
+        });
+
+        $$('#cfg-ssh-grid .cfg-ssh-card').forEach(c => {
+            c.addEventListener('click', () => {
+                $$('#cfg-ssh-grid .cfg-ssh-card').forEach(x => x.classList.remove('is-active'));
+                c.classList.add('is-active');
+                state.ssh = c.dataset.cfgSsh;
+            });
+        });
+
+        const primarySel = $('#cfg-primary-domain-select');
+        const primaryInp = $('#cfg-primary-domain');
+        if (primarySel) primarySel.addEventListener('change', () => {
+            const val = primarySel.value;
+            if (val === '__custom__') {
+                if (primaryInp) { primaryInp.style.display = ''; primaryInp.value = ''; primaryInp.focus(); }
+                setDomainStatus($('#cfg-primary-domain-status'), 'idle');
+            } else if (val === '') {
+                if (primaryInp) { primaryInp.style.display = 'none'; primaryInp.value = ''; }
+                setDomainStatus($('#cfg-primary-domain-status'), 'idle');
+            } else {
+                if (primaryInp) { primaryInp.style.display = 'none'; primaryInp.value = val; }
+                runCheckNow('primary', $('#cfg-primary-domain-status'), val);
+                renderProfilePreview();
+            }
+        });
+        if (primaryInp) primaryInp.addEventListener('input', e => {
+            scheduleCheck('primary', $('#cfg-primary-domain-status'), e.target.value);
+            renderProfilePreview();
+        });
+
+        const addBackup = $('#cfg-add-backup');
+        if (addBackup) addBackup.addEventListener('click', () => addBackupRow(''));
+
+        const enFront = $('#cfg-enable-fronting');
+        if (enFront) enFront.addEventListener('change', () => { updateSslFrontingBanner(); renderCost(); });
+        const enPortal = $('#cfg-enable-file-portal');
+        if (enPortal) enPortal.addEventListener('change', updateFilePortalVisibility);
+        const sslProv = $('#cfg-ssl-provider');
+        if (sslProv) sslProv.addEventListener('change', updateSslSelfSignedVisibility);
+        const mall = $('#cfg-malleable-profile');
+        if (mall) mall.addEventListener('change', updateMalleableVisibility);
+        document.querySelectorAll('input[name="cfg-cs-pw-mode"]').forEach(r => r.addEventListener('change', updateCsPwVisibility));
+        document.querySelectorAll('input[name="cfg-ab-pw-mode"]').forEach(r => r.addEventListener('change', updateAbPwVisibility));
+        const enAb = $('#cfg-enable-attack-box');
+        if (enAb) enAb.addEventListener('change', renderCost);
+        ['cfg-ab-instance-type', 'cfg-c2-instance-type', 'cfg-redirector-instance-type'].forEach(id => {
+            const el = $('#' + id); if (el) el.addEventListener('change', renderCost);
+        });
+
+        // Preview tabs
+        $$('.cfg-preview-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const target = tab.dataset.cfgPreviewTab;
+                $$('.cfg-preview-tab').forEach(t => t.classList.toggle('is-active', t === tab));
+                $$('.cfg-preview-pane').forEach(p => p.classList.toggle('is-active', p.dataset.cfgPreviewPane === target));
+            });
+        });
+        const subC2 = $('#cfg-sub-c2');
+        if (subC2) subC2.addEventListener('input', renderProfilePreview);
+
+        // Confirm buttons
+        $$('[data-cfg-confirm]').forEach(btn => {
+            btn.addEventListener('click', e => {
+                e.stopPropagation();
+                confirmSection(btn.dataset.cfgConfirm);
+            });
+        });
+        // Re-edit on confirmed head click
+        $$('.cfg-section [data-cfg-head]').forEach(head => {
+            head.addEventListener('click', e => {
+                const sec = head.closest('.cfg-section');
+                if (!sec) return;
+                if (e.target.closest('button') && !e.target.closest('[data-cfg-edit]')) return;
+                if (sec.classList.contains('is-confirmed')) reEditSection(sec.dataset.cfgSection);
+            });
+        });
+        $$('[data-cfg-edit]').forEach(b => {
+            b.addEventListener('click', e => {
+                e.stopPropagation();
+                const sec = b.closest('.cfg-section');
+                if (sec && sec.classList.contains('is-confirmed')) reEditSection(sec.dataset.cfgSection);
+            });
+        });
+        // Rail jump
+        $$('.cfg-rail__item').forEach(item => {
+            item.addEventListener('click', () => {
+                if (item.hasAttribute('disabled')) return;
+                const id = item.dataset.cfgSectionId;
+                if (state.confirmed.has(id)) reEditSection(id);
+                else {
+                    const sec = $('.cfg-section[data-cfg-section="' + id + '"]');
+                    if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            });
+        });
+
+        // Save
+        const saveBtn = $('#cfg-save-btn');
+        if (saveBtn) saveBtn.addEventListener('click', () => save());
+        const validateBtn = $('#cfg-validate-btn');
+        if (validateBtn) validateBtn.addEventListener('click', () => validate());
+
+        // Reset modal
+        const resetBtn = $('#cfg-reset-btn');
+        const resetModal = $('#cfg-reset-modal');
+        if (resetBtn && resetModal) {
+            resetBtn.addEventListener('click', () => resetModal.setAttribute('data-show', 'true'));
+        }
+        const cancel = $('#cfg-reset-cancel');
+        if (cancel && resetModal) cancel.addEventListener('click', () => resetModal.setAttribute('data-show', 'false'));
+        const confirm = $('#cfg-reset-confirm');
+        if (confirm && resetModal) confirm.addEventListener('click', () => {
+            resetModal.setAttribute('data-show', 'false');
+            fullReset();
+        });
+        if (resetModal) resetModal.addEventListener('click', e => {
+            if (e.target === resetModal) resetModal.setAttribute('data-show', 'false');
+        });
+    }
+
+    // ─── ASSEMBLE & SAVE / VALIDATE ─────────────────────────────────────
+    function _parseCidrInput(input) {
+        return (input || '').split(',').map(s => s.trim()).filter(Boolean);
+    }
+    function _engagementMap(deploymentType) {
+        // Mirror the legacy DEPLOYMENT_CONFIGS engagementType mapping.
+        if (!deploymentType) return { c2Mode: '', goadLab: '' };
+        if (deploymentType.startsWith('c2-')) return { c2Mode: deploymentType.replace('c2-', ''), goadLab: '' };
+        if (deploymentType.startsWith('goad-')) return { c2Mode: '', goadLab: deploymentType.replace('goad-', '') };
+        if (deploymentType.startsWith('combined-')) {
+            const parts = deploymentType.replace('combined-', '').split('-');
+            return { c2Mode: parts[0] || '', goadLab: parts[1] || '' };
+        }
+        return { c2Mode: '', goadLab: '' };
+    }
+
+    function assembleConfig() {
+        const v = id => { const el = $('#' + id); return el ? el.value : ''; };
+        const checked = id => { const el = $('#' + id); return el ? el.checked : false; };
+        const cidrBlocks = _parseCidrInput(v('cfg-mgmt-cidr'));
+        const deploymentType = state.type;
+        const { c2Mode, goadLab } = _engagementMap(deploymentType);
+        const enableFronting = checked('cfg-enable-fronting');
+        const enableSsl = checked('cfg-enable-ssl');
+        const sslProvider = v('cfg-ssl-provider') || 'letsencrypt';
+        const effectiveSslProvider = enableFronting ? 'self-signed' : sslProvider;
+        const adminEmail = v('cfg-admin-email').trim();
+        const primary = v('cfg-primary-domain').trim();
+        const backups = collectBackupValues().filter(d => d && d !== primary);
+
+        const malleable = v('cfg-malleable-profile') || 'default';
+        const malleableSaved = malleable.startsWith('catalog:') ? 'custom' : malleable;
+        let customProfileContent = '';
+        let customC2Uris = '';
+        if (malleable === 'custom') {
+            const content = v('cfg-custom-profile-text').trim();
+            if (content) customProfileContent = btoa(unescape(encodeURIComponent(content)));
+        } else if (malleable.startsWith('catalog:') && CATALOG_CACHE[malleable]) {
+            customProfileContent = btoa(unescape(encodeURIComponent(CATALOG_CACHE[malleable])));
+        }
+
+        return {
+            deployment_type: deploymentType,
+            engagement_type: c2Mode || '',
+            goad_lab_type: goadLab || '',
+            goad_vpc_cidr: v('cfg-goad-vpc-cidr') || '192.168.56.0/24',
+            project_name: v('cfg-project-name'),
+            environment: v('cfg-env-select') || 'dev',
+            aws_region: v('cfg-region-select') || 'eu-central-1',
+            key_pair_name: v('cfg-keypair-name') || 'red-team-keypair',
+            management_cidr_blocks: cidrBlocks,
+            primary_domain_name: primary,
+            backup_domains: backups,
+            c2_subdomain: v('cfg-sub-c2') || 'api',
+            www_subdomain: v('cfg-sub-www') || 'www',
+            cdn_subdomain: v('cfg-sub-cdn') || 'cdn',
+            malleable_profile: malleableSaved,
+            custom_profile_content: customProfileContent,
+            custom_c2_uris: customC2Uris,
+            decoy_theme: v('cfg-decoy-theme') || 'plexura',
+            enable_ssl_certificate: enableSsl,
+            ssl_provider: effectiveSslProvider,
+            ssl_auto_retry: enableFronting ? false : checked('cfg-ssl-auto-retry'),
+            admin_email: enableFronting ? '' : adminEmail,
+            enable_domain_fronting: enableFronting,
+            enable_file_portal: checked('cfg-enable-file-portal'),
+            portal_username: v('cfg-portal-username') || 'operator',
+            portal_password: v('cfg-portal-password') || '',
+            portal_session_timeout: parseInt(v('cfg-portal-timeout'), 10) || 30,
+            c2_server_count: parseInt(v('cfg-c2-server-count'), 10) || 2,
+            c2_server_instance_type: v('cfg-c2-instance-type') || 't3.medium',
+            enable_attack_box: checked('cfg-enable-attack-box'),
+            attack_box_instance_type: v('cfg-ab-instance-type') || 't2.large',
+            attack_box_root_volume_size: parseInt(v('cfg-ab-disk'), 10) || 100,
+            attack_box_admin_password: (document.querySelector('input[name="cfg-ab-pw-mode"]:checked')?.value === 'custom')
+                ? (v('cfg-ab-password') || '') : '',
+            cs_teamserver_password: (document.querySelector('input[name="cfg-cs-pw-mode"]:checked')?.value === 'custom')
+                ? (v('cfg-cs-password') || '') : '',
+            cobalt_strike_license_secret_name: (document.querySelector('input[name="cfg-cs-license-mode"]:checked')?.value === 'secret')
+                ? 'cs-license-key' : '',
+            enable_cs_rest_api: false
+        };
+    }
+
+    async function save() {
+        try {
+            const config = assembleConfig();
+            if (!config.project_name) {
+                if (APP && APP.toast) APP.toast('Project name is required.', 'danger');
+                return;
+            }
+            if (!config.management_cidr_blocks.length) {
+                if (APP && APP.toast) APP.toast('Management CIDR is required (use "Use my IP").', 'danger');
+                return;
+            }
+            const project = encodeURIComponent(config.project_name);
+            const resp = await fetch(`${API_BASE}/config/?project=${project}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config })
+            });
+            const data = await resp.json();
+            if (data.success) {
+                state.mode = 'saved';
+                const hero = $('#cfg-hero-title');
+                const heroText = $('#cfg-hero-title-text');
+                const heroPill = $('#cfg-hero-pill');
+                if (hero) hero.classList.remove('is-placeholder');
+                if (heroText) heroText.textContent = config.project_name;
+                if (heroPill) {
+                    heroPill.textContent = 'LIVE';
+                    heroPill.classList.remove('cfg-hero__pill--draft');
+                    heroPill.classList.add('cfg-hero__pill--live');
+                }
+                const modeEl = $('#cfg-mode');
+                if (modeEl) modeEl.textContent = 'Saved · edit via Manage';
+                if (APP && APP.toast) APP.toast('Configuration saved — switching to Manage.', 'success');
+                // Transition activeDeployment so sub-pill nav flips.
+                if (APP.activeDeployment && APP.activeDeployment.set) {
+                    APP.activeDeployment.set(config.project_name);
+                }
+            } else {
+                if (APP && APP.toast) APP.toast('Save failed: ' + (data.error || 'unknown error'), 'danger', 8000);
+            }
+        } catch (e) {
+            console.error('[cfgV2] save error:', e);
+            if (APP && APP.toast) APP.toast('Save failed: ' + e.message, 'danger', 8000);
+        }
+    }
+
+    async function validate() {
+        try {
+            const config = assembleConfig();
+            const resp = await fetch(`${API_BASE}/config/validate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config })
+            });
+            const data = await resp.json();
+            if (data.valid || data.success) {
+                if (APP && APP.toast) APP.toast('All fields valid — ready to save.', 'success');
+            } else {
+                const errs = (data.errors || [data.error || 'Validation failed']).join('; ');
+                if (APP && APP.toast) APP.toast('Validation: ' + errs, 'warning', 8000);
+            }
+        } catch (e) {
+            if (APP && APP.toast) APP.toast('Validate failed: ' + e.message, 'danger');
+        }
+    }
+
+    // ─── BOOT ───────────────────────────────────────────────────────────
+    async function ensureInitialized() {
+        if (state.initialized) return;
+        const pane = document.getElementById('configure-v2-pane');
+        if (!pane) return;
+        state.initialized = true;
+
+        // Pre-fill smart defaults that need a network call
+        try {
+            const r = await fetch(`${API_BASE}/config/public-ip`);
+            const d = await r.json();
+            if (d.success && d.ip) {
+                const inp = $('#cfg-mgmt-cidr');
+                if (inp && !inp.value) inp.value = d.ip + '/32';
+            }
+        } catch (e) { /* non-fatal */ }
+
+        renderTypeGrid();
+        renderBackupList(DEFAULTS.backupDomains);
+        applyTypeAwareVisibility();
+        updateProjectName();
+        updateFilePortalVisibility();
+        updateSslSelfSignedVisibility();
+        updateSslFrontingBanner();
+        updateMalleableVisibility();
+        updateCsPwVisibility();
+        updateAbPwVisibility();
+        renderCost();
+        renderSummary('identity');
+
+        const order = getActiveSections();
+        order.forEach((id, idx) => {
+            const sec = $('.cfg-section[data-cfg-section="' + id + '"]');
+            if (!sec) return;
+            if (idx === 0) { setSectionState(id, 'active'); setRailState(id, 'active'); }
+            else { setSectionState(id, 'pending'); setRailState(id, 'pending'); }
+        });
+        updateProgress();
+        wireEvents();
+        // Async: Route53 zones + profile catalog
+        loadRoute53Zones();
+        loadProfileCatalog().then(() => renderProfilePreview());
+    }
+
+    /**
+     * Show / hide the V2 surface based on draft state.
+     * - draft → show V2, hide legacy `.configuration-editor` + advanced details
+     *   + legacy save bar.
+     * - existing → V2 dims via .is-out-of-mode, legacy form stays available (the
+     *   Manage edit drawer also uses the legacy form's IDs).
+     */
+    function applyDraftMode() {
+        const pane = document.getElementById('configure-v2-pane');
+        if (!pane) return;
+        const isDraft = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+        const isAll = APP.activeDeployment && APP.activeDeployment.isAll && APP.activeDeployment.isAll();
+        const legacyEditor = document.querySelector('#configure-edit-pane .configuration-editor');
+        const legacyAdvanced = document.getElementById('configure-advanced-details');
+        const legacyActions = document.querySelector('#configure-edit-pane .configure-form-actions');
+        const legacyBanner = document.getElementById('configure-new-deployment-banner');
+        const legacySummary = document.getElementById('configure-summary-section');
+
+        if (isDraft) {
+            // Ensure #configure-edit-pane is visible (journey wizard may have
+            // hidden it). Also dismiss any lingering wizard mount.
+            const editPane = document.getElementById('configure-edit-pane');
+            const newPane = document.getElementById('configure-new-pane');
+            if (editPane) editPane.hidden = false;
+            if (newPane) { newPane.hidden = true; newPane.innerHTML = ''; }
+            pane.hidden = false;
+            pane.classList.remove('is-out-of-mode');
+            ensureInitialized();
+            // Hide the legacy chrome inside Configure (banner, summary spec-list,
+            // editor dropdown, advanced details, sticky save bar).
+            if (legacyBanner) legacyBanner.style.display = 'none';
+            if (legacySummary) legacySummary.style.display = 'none';
+            if (legacyEditor) legacyEditor.style.display = 'none';
+            if (legacyAdvanced) legacyAdvanced.style.display = 'none';
+            if (legacyActions) legacyActions.style.display = 'none';
+        } else if (isAll) {
+            pane.hidden = true;
+            pane.classList.remove('is-out-of-mode');
+            if (legacyBanner) legacyBanner.style.display = '';
+            if (legacySummary) legacySummary.style.display = '';
+            if (legacyEditor) legacyEditor.style.display = '';
+            if (legacyAdvanced) legacyAdvanced.style.display = '';
+            if (legacyActions) legacyActions.style.display = '';
+        } else {
+            // Existing deployment selected — Configure is out-of-mode anyway,
+            // sub-pill nav typically routes to Manage.
+            pane.hidden = true;
+            if (legacyBanner) legacyBanner.style.display = '';
+            if (legacySummary) legacySummary.style.display = '';
+            if (legacyEditor) legacyEditor.style.display = '';
+            if (legacyAdvanced) legacyAdvanced.style.display = '';
+            if (legacyActions) legacyActions.style.display = '';
+        }
+    }
+
+    // Subscribe to active-deployment changes so the pane shows/hides in sync.
+    if (APP.activeDeployment && APP.activeDeployment.subscribe) {
+        APP.activeDeployment.subscribe(() => applyDraftMode());
+    }
+    // Also re-apply when the sub-pill nav switches (paint may have been hidden).
+    document.addEventListener('DOMContentLoaded', () => {
+        applyDraftMode();
+    });
+    // Belt and braces: also try on window load in case the DOM was already ready.
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        setTimeout(applyDraftMode, 0);
+    }
+
+    return {
+        ensureInitialized,
+        applyDraftMode,
+        fullReset,
+        save,
+        validate,
+        assembleConfig,
+        _state: state,
+        _defaults: DEFAULTS
+    };
+})();
 
 async function saveConfig() {
     console.log('Saving configuration...');

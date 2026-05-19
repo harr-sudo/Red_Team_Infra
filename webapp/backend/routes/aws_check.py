@@ -14,8 +14,127 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from webapp.backend.services.aws_permissions_service import AWSPermissionsService
+from webapp.backend.utils.config_parser import ConfigParser
 
 bp = Blueprint('aws_check', __name__)
+
+# Module-level cache for Route 53 zones response (refreshed per page lifetime
+# on the frontend; backend caches for a short TTL to avoid hammering the API).
+_ROUTE53_ZONES_CACHE = {"data": None, "ts": 0.0}
+_ROUTE53_ZONES_TTL_S = 30.0
+
+
+def _scan_tfvars_for_domains():
+    """Walk configs/*.tfvars and build a map of domain -> project_name.
+
+    Looks at the primary_domain_name and backup_domains fields. The project
+    name is the tfvars filename stem (e.g. ``configs/c2_adhoc_dev_*.tfvars``
+    -> ``c2_adhoc_dev_*``). The legacy global ``terraform.tfvars`` is keyed
+    by its own ``project_name`` field if present.
+    """
+    domain_to_project = {}
+    config_dir = project_root / "configs"
+    if not config_dir.exists():
+        return domain_to_project
+    for tfv in config_dir.glob("*.tfvars"):
+        # Skip example/template files
+        name = tfv.name.lower()
+        if name.endswith(".example") or "example" in name:
+            continue
+        try:
+            cfg = ConfigParser.parse_tfvars(tfv)
+        except Exception:
+            continue
+        if not cfg:
+            continue
+        if tfv.name == "terraform.tfvars":
+            project = (cfg.get("project_name") or "terraform.tfvars").strip() or "terraform.tfvars"
+        else:
+            project = tfv.stem
+        primary = (cfg.get("primary_domain_name") or "").strip().rstrip(".")
+        if primary:
+            domain_to_project.setdefault(primary.lower(), project)
+        backups = cfg.get("backup_domains") or []
+        if isinstance(backups, list):
+            for b in backups:
+                b = (b or "").strip().rstrip(".").lower()
+                if b:
+                    domain_to_project.setdefault(b, project)
+    return domain_to_project
+
+
+@bp.route('/route53/zones', methods=['GET'])
+def list_route53_zones():
+    """List Route 53 hosted zones in this account, annotated with project use.
+
+    Response shape::
+
+        {
+          "success": true,
+          "zones": [
+            {
+              "name": "example.com",
+              "id": "Z3AQBSTGFYJSTF",
+              "private": false,
+              "record_count": 4,
+              "in_use_by_project_or_null": "c2_adhoc_dev_..." | null
+            }, ...
+          ]
+        }
+
+    Pass ``?refresh=1`` to bust the short-lived backend cache.
+    """
+    try:
+        import time
+        import boto3
+
+        refresh = (request.args.get('refresh') or '').lower() in ('1', 'true', 'yes')
+        now = time.time()
+        cached = _ROUTE53_ZONES_CACHE.get("data")
+        if cached and not refresh and (now - _ROUTE53_ZONES_CACHE.get("ts", 0.0)) < _ROUTE53_ZONES_TTL_S:
+            return jsonify(cached)
+
+        # Walk configs/*.tfvars once per request to find what's in use.
+        domain_in_use = _scan_tfvars_for_domains()
+
+        zones = []
+        try:
+            r53 = boto3.client('route53')
+            paginator = r53.get_paginator('list_hosted_zones')
+            for page in paginator.paginate():
+                for z in page.get('HostedZones', []):
+                    raw = z.get('Name', '')
+                    name = raw.rstrip('.').lower()
+                    is_private = bool(z.get('Config', {}).get('PrivateZone', False))
+                    zones.append({
+                        "name": name,
+                        "id": z.get('Id', '').split('/')[-1],
+                        "private": is_private,
+                        "record_count": z.get('ResourceRecordSetCount', 0),
+                        "in_use_by_project_or_null": domain_in_use.get(name),
+                    })
+        except Exception as inner:
+            # Surface the AWS error but return success=false so the frontend
+            # can fall back to a plain text-input gracefully.
+            return jsonify({
+                "success": False,
+                "zones": [],
+                "error": f"Route 53 list_hosted_zones failed: {inner}",
+            })
+
+        payload = {
+            "success": True,
+            "zones": zones,
+        }
+        _ROUTE53_ZONES_CACHE["data"] = payload
+        _ROUTE53_ZONES_CACHE["ts"] = now
+        return jsonify(payload)
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "zones": [],
+            "error": str(e),
+        }), 500
 
 @bp.route('/credentials', methods=['GET'])
 def check_credentials():

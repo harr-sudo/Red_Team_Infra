@@ -638,6 +638,535 @@
                     <div id="configure-new-pane" hidden></div>
 
                     <div id="configure-edit-pane">
+
+                    <!-- ═══════════════════════════════════════════════════════════════
+                         CONFIGURE V2 — Progressive Unraveling (2026-05-19)
+                         Ported from preview/configure-flow-c-progressive.html.
+                         Active when APP.activeDeployment.isDraft() is true.
+                         When inactive, this pane hides and the legacy form below
+                         takes over for editing existing deployments via Manage.
+                         ═══════════════════════════════════════════════════════════════ -->
+                    <div id="configure-v2-pane" hidden>
+                        <!-- SVG sprite used by section heads + rail bullets. -->
+                        <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+                            <defs>
+                                <symbol id="cfg-ic-check" viewBox="0 0 12 12"><path d="M2 6.5 L5 9.5 L10 3" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+                                <symbol id="cfg-ic-edit" viewBox="0 0 14 14"><path d="M9.5 1.5 L12.5 4.5 L4 13 H1 V10 Z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linejoin="round"/><path d="M8 3 L11 6" stroke="currentColor" stroke-width="1.2"/></symbol>
+                                <symbol id="cfg-ic-arrow" viewBox="0 0 12 12"><path d="M2 6 H10 M7 3 L10 6 L7 9" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+                                <symbol id="cfg-ic-x" viewBox="0 0 10 10"><path d="M2 2 L8 8 M8 2 L2 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+                                <symbol id="cfg-ic-plus" viewBox="0 0 10 10"><path d="M5 1 V9 M1 5 H9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+                                <symbol id="cfg-ic-warn" viewBox="0 0 12 12"><path d="M6 1 L11 10 H1 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M6 5 V7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="6" cy="8.6" r="0.5" fill="currentColor"/></symbol>
+                            </defs>
+                        </svg>
+
+                        <div class="cfg-shell">
+                            <!-- TOC RAIL -->
+                            <aside class="cfg-rail" aria-label="Section progress">
+                                <div class="cfg-rail__head">Configure</div>
+                                <div class="cfg-rail__progress">
+                                    <div class="cfg-rail__progress-text">
+                                        <strong id="cfg-rail-progress-text">0 of 8</strong> sections complete
+                                    </div>
+                                    <div class="cfg-rail__progress-bar">
+                                        <div class="cfg-rail__progress-fill" id="cfg-rail-progress-fill"></div>
+                                    </div>
+                                </div>
+                                <button class="cfg-rail__item is-active" type="button" data-cfg-jump="identity" data-cfg-section-id="identity"><span class="cfg-rail__bullet">1</span><span>Identity</span></button>
+                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="network" data-cfg-section-id="network" disabled><span class="cfg-rail__bullet">2</span><span>Network</span></button>
+                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="ssh" data-cfg-section-id="ssh" disabled><span class="cfg-rail__bullet">3</span><span>SSH access</span></button>
+                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="domain" data-cfg-section-id="domain" disabled><span class="cfg-rail__bullet">4</span><span>Redirector &amp; domain</span></button>
+                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="ssl" data-cfg-section-id="ssl" disabled><span class="cfg-rail__bullet">5</span><span>SSL &amp; encryption</span></button>
+                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="c2" data-cfg-section-id="c2" disabled><span class="cfg-rail__bullet">6</span><span>C2 profile &amp; servers</span></button>
+                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="attackbox" data-cfg-section-id="attackbox" disabled><span class="cfg-rail__bullet">7</span><span>Attack box</span></button>
+                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="cost" data-cfg-section-id="cost" disabled><span class="cfg-rail__bullet">8</span><span>Cost</span></button>
+                            </aside>
+
+                            <!-- MAIN -->
+                            <section class="cfg-main">
+                                <div class="cfg-eyebrow">
+                                    <span class="cfg-eyebrow__label">Configure new deployment</span>
+                                    <span class="cfg-eyebrow__mode" id="cfg-mode">Draft · progressive unraveling</span>
+                                </div>
+                                <header class="cfg-hero">
+                                    <span class="cfg-hero__caption">Project</span>
+                                    <h1 class="cfg-hero__title is-placeholder" id="cfg-hero-title">
+                                        <span id="cfg-hero-title-text">(unnamed) — pick a deployment type to begin</span>
+                                        <span class="cfg-hero__pill cfg-hero__pill--draft" id="cfg-hero-pill">Draft</span>
+                                    </h1>
+                                    <p class="cfg-hero__desc">Sections materialize as you fill upstream values. Every required field has a smart default — confirm a section to lock it in, or click <strong>Skip · accept defaults</strong>. <strong>Validate</strong> appears once everything's confirmed.</p>
+                                </header>
+
+                                <!-- SECTION 1 · IDENTITY -->
+                                <section class="cfg-section is-active" data-cfg-section="identity">
+                                    <div class="cfg-section__head" data-cfg-head>
+                                        <span class="cfg-section__num"><span data-cfg-num>1</span></span>
+                                        <span class="cfg-section__title-row">
+                                            <span class="cfg-section__title">Identity</span>
+                                            <span class="cfg-section__sub">Deployment type · project name · environment · region</span>
+                                        </span>
+                                        <span class="cfg-section__state-pill" data-cfg-state-pill>Active</span>
+                                        <button class="cfg-section__edit-btn" type="button" data-cfg-edit aria-label="Re-edit identity"><svg><use href="#cfg-ic-edit"/></svg></button>
+                                        <div class="cfg-section__summary" data-cfg-summary></div>
+                                    </div>
+                                    <div class="cfg-section__body"><div><div class="cfg-section__body-inner">
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>Family <span class="cfg-field__required">*</span></span></span>
+                                            <div class="cfg-family-row" id="cfg-family-row">
+                                                <button class="cfg-family-btn is-active" type="button" data-cfg-family="c2">C2-only</button>
+                                                <button class="cfg-family-btn" type="button" data-cfg-family="goad">GOAD-only</button>
+                                                <button class="cfg-family-btn" type="button" data-cfg-family="combined">Combined</button>
+                                            </div>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>Deployment type <span class="cfg-field__required">*</span></span></span>
+                                            <div class="cfg-type-grid" id="cfg-type-grid"></div>
+                                            <span class="cfg-field__hint">Pick a type — the next sections adapt to what it needs.</span>
+                                        </div>
+                                        <div class="cfg-row">
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>Project name <span class="cfg-field__required">*</span></span><span class="cfg-field__defaulted">Auto</span></span>
+                                                <input class="cfg-input" type="text" id="cfg-project-name" value="">
+                                                <span class="cfg-field__hint">{type}_{env}_{machine}. Override for a custom suffix.</span>
+                                            </div>
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>Environment</span><span class="cfg-field__defaulted">DEV</span></span>
+                                                <select class="cfg-input" id="cfg-env-select">
+                                                    <option value="dev" selected>dev</option>
+                                                    <option value="staging">staging</option>
+                                                    <option value="prod">prod</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>AWS region</span><span class="cfg-field__defaulted">eu-central-1</span></span>
+                                            <select class="cfg-input" id="cfg-region-select">
+                                                <option value="eu-central-1" selected>eu-central-1 · Frankfurt</option>
+                                                <option value="us-east-1">us-east-1 · N. Virginia</option>
+                                                <option value="us-west-2">us-west-2 · Oregon</option>
+                                            </select>
+                                        </div>
+                                        <div class="cfg-confirm-row">
+                                            <button class="cfg-btn-confirm" type="button" data-cfg-confirm="identity">Confirm <svg><use href="#cfg-ic-arrow"/></svg></button>
+                                            <button class="cfg-btn-secondary" type="button" data-cfg-confirm="identity" data-cfg-skip>Skip · accept defaults</button>
+                                        </div>
+                                    </div></div></div>
+                                </section>
+
+                                <!-- SECTION 2 · NETWORK -->
+                                <section class="cfg-section is-pending" data-cfg-section="network">
+                                    <div class="cfg-section__head" data-cfg-head>
+                                        <span class="cfg-section__num"><span data-cfg-num>2</span></span>
+                                        <span class="cfg-section__title-row">
+                                            <span class="cfg-section__title">Network</span>
+                                            <span class="cfg-section__sub">Management CIDR · VPC ranges</span>
+                                        </span>
+                                        <span class="cfg-section__state-pill" data-cfg-state-pill>Pending</span>
+                                        <button class="cfg-section__edit-btn" type="button" data-cfg-edit aria-label="Re-edit network"><svg><use href="#cfg-ic-edit"/></svg></button>
+                                        <div class="cfg-section__pending-hint">Waiting on <strong>Identity</strong>. Will collect: management CIDR (default: your public IP), VPC CIDR<span data-cfg-goad-net-hint style="display:none">, GOAD VPC CIDR, VM IP prefix</span>.</div>
+                                        <div class="cfg-section__summary" data-cfg-summary></div>
+                                    </div>
+                                    <div class="cfg-section__body"><div><div class="cfg-section__body-inner">
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>Management CIDR blocks <span class="cfg-field__required">*</span></span><span class="cfg-field__defaulted">Use my IP</span></span>
+                                            <div class="cfg-input-with-pill">
+                                                <input class="cfg-input" type="text" id="cfg-mgmt-cidr" placeholder="e.g. 203.0.113.50/32, 198.51.100.0/24">
+                                                <button class="cfg-btn-secondary" type="button" id="cfg-use-my-ip">Use my IP</button>
+                                            </div>
+                                            <span class="cfg-field__hint">Comma-separated. Locks SSH / RDP / CS access to these addresses. <code>0.0.0.0/0</code> is blocked.</span>
+                                        </div>
+                                        <div class="cfg-field" data-cfg-c2-vpc-field>
+                                            <span class="cfg-field__label"><span>C2 VPC CIDR</span><span class="cfg-field__defaulted">10.0.0.0/16</span></span>
+                                            <input class="cfg-input" type="text" id="cfg-vpc-cidr" value="10.0.0.0/16">
+                                            <span class="cfg-field__hint">Mgmt (10.0.0/24), DMZ (10.0.1-2/24), private (10.0.10-11/24) subnets derived.</span>
+                                        </div>
+                                        <div class="cfg-row" data-cfg-goad-net-fields style="display:none">
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>GOAD VPC CIDR</span><span class="cfg-field__defaulted">192.168.56.0/24</span></span>
+                                                <input class="cfg-input" type="text" id="cfg-goad-vpc-cidr" value="192.168.56.0/24">
+                                            </div>
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>VM IP range prefix</span><span class="cfg-field__defaulted">derived</span></span>
+                                                <input class="cfg-input" type="text" id="cfg-goad-ip-range" value="192.168.56" readonly style="opacity:0.7">
+                                            </div>
+                                        </div>
+                                        <div class="cfg-confirm-row">
+                                            <button class="cfg-btn-confirm" type="button" data-cfg-confirm="network">Confirm <svg><use href="#cfg-ic-arrow"/></svg></button>
+                                            <button class="cfg-btn-secondary" type="button" data-cfg-confirm="network" data-cfg-skip>Skip · accept defaults</button>
+                                        </div>
+                                    </div></div></div>
+                                </section>
+
+                                <!-- SECTION 3 · SSH ACCESS -->
+                                <section class="cfg-section is-pending" data-cfg-section="ssh">
+                                    <div class="cfg-section__head" data-cfg-head>
+                                        <span class="cfg-section__num"><span data-cfg-num>3</span></span>
+                                        <span class="cfg-section__title-row">
+                                            <span class="cfg-section__title">SSH access</span>
+                                            <span class="cfg-section__sub">Key source · pair name</span>
+                                        </span>
+                                        <span class="cfg-section__state-pill" data-cfg-state-pill>Pending</span>
+                                        <button class="cfg-section__edit-btn" type="button" data-cfg-edit aria-label="Re-edit SSH access"><svg><use href="#cfg-ic-edit"/></svg></button>
+                                        <div class="cfg-section__pending-hint">Waiting on <strong>Network</strong>. Auto-generate / upload / existing S3 key.</div>
+                                        <div class="cfg-section__summary" data-cfg-summary></div>
+                                    </div>
+                                    <div class="cfg-section__body"><div><div class="cfg-section__body-inner">
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>SSH key source <span class="cfg-field__required">*</span></span></span>
+                                            <div class="cfg-ssh-grid" id="cfg-ssh-grid">
+                                                <button class="cfg-ssh-card is-active" type="button" data-cfg-ssh="autogen"><span class="cfg-ssh-card__head"><span class="cfg-ssh-card__radio"></span>Auto-generate</span><span class="cfg-ssh-card__desc">Fresh ed25519 · saved to S3 + ~/.ssh/</span></button>
+                                                <button class="cfg-ssh-card" type="button" data-cfg-ssh="upload"><span class="cfg-ssh-card__head"><span class="cfg-ssh-card__radio"></span>Upload existing</span><span class="cfg-ssh-card__desc">Paste a public key from disk</span></button>
+                                                <button class="cfg-ssh-card" type="button" data-cfg-ssh="s3-existing"><span class="cfg-ssh-card__head"><span class="cfg-ssh-card__radio"></span>Pick from S3</span><span class="cfg-ssh-card__desc">Reference an existing pair by name</span></button>
+                                            </div>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>Key pair name <span class="cfg-field__required">*</span></span><span class="cfg-field__defaulted">red-team-keypair</span></span>
+                                            <input class="cfg-input" type="text" id="cfg-keypair-name" value="red-team-keypair">
+                                        </div>
+                                        <div class="cfg-confirm-row">
+                                            <button class="cfg-btn-confirm" type="button" data-cfg-confirm="ssh">Confirm <svg><use href="#cfg-ic-arrow"/></svg></button>
+                                            <button class="cfg-btn-secondary" type="button" data-cfg-confirm="ssh" data-cfg-skip>Skip · accept defaults</button>
+                                        </div>
+                                    </div></div></div>
+                                </section>
+
+                                <!-- SECTION 4 · REDIRECTOR & DOMAIN -->
+                                <section class="cfg-section is-pending" data-cfg-section="domain">
+                                    <div class="cfg-section__head" data-cfg-head>
+                                        <span class="cfg-section__num"><span data-cfg-num>4</span></span>
+                                        <span class="cfg-section__title-row">
+                                            <span class="cfg-section__title">Redirector &amp; domain</span>
+                                            <span class="cfg-section__sub">Primary &amp; backup domains · subdomains · fronting · decoy</span>
+                                        </span>
+                                        <span class="cfg-section__state-pill" data-cfg-state-pill>Pending</span>
+                                        <button class="cfg-section__edit-btn" type="button" data-cfg-edit aria-label="Re-edit domain"><svg><use href="#cfg-ic-edit"/></svg></button>
+                                        <div class="cfg-section__pending-hint">Waiting on <strong>SSH access</strong>. Primary &amp; backup domains, subdomains, CloudFront fronting, decoy theme.</div>
+                                        <div class="cfg-section__summary" data-cfg-summary></div>
+                                    </div>
+                                    <div class="cfg-section__body"><div><div class="cfg-section__body-inner">
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>Primary domain <span class="cfg-field__required">*</span></span><span class="cfg-field__defaulted">Route 53</span></span>
+                                            <div class="cfg-domain-row">
+                                                <select class="cfg-input" id="cfg-primary-domain-select">
+                                                    <option value="">— Pick a Route 53 hosted zone —</option>
+                                                    <option value="__custom__">Custom (type a domain to be registered later)…</option>
+                                                </select>
+                                                <span class="cfg-status" id="cfg-primary-domain-status">Idle</span>
+                                            </div>
+                                            <input class="cfg-input" type="text" id="cfg-primary-domain" value="" placeholder="my-future-domain.com" style="margin-top:8px; display:none">
+                                            <span class="cfg-field__hint">Live Route 53 hosted zones for this account. Pick one or enter a custom domain.</span>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>Backup domains</span><span class="cfg-field__defaulted">Rotation</span></span>
+                                            <div class="cfg-backup-list" id="cfg-backup-list"></div>
+                                            <button class="cfg-btn-secondary" type="button" id="cfg-add-backup" style="margin-top:6px; align-self:flex-start">+ Add another domain</button>
+                                            <span class="cfg-field__hint">For rotation if primary is burned. Same availability check applies.</span>
+                                        </div>
+                                        <div class="cfg-row cfg-row--3">
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>Callback subdomain</span><span class="cfg-field__defaulted">api</span></span>
+                                                <input class="cfg-input" type="text" id="cfg-sub-c2" value="api">
+                                            </div>
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>Web subdomain</span><span class="cfg-field__defaulted">www</span></span>
+                                                <input class="cfg-input" type="text" id="cfg-sub-www" value="www">
+                                            </div>
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>CDN subdomain</span><span class="cfg-field__defaulted">cdn</span></span>
+                                                <input class="cfg-input" type="text" id="cfg-sub-cdn" value="cdn">
+                                            </div>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <label class="cfg-toggle">
+                                                <input type="checkbox" id="cfg-enable-fronting">
+                                                <span class="cfg-toggle__title">Enable CloudFront domain fronting</span>
+                                                <span class="cfg-toggle__sub">Hides redirector IPs · adds ~15-30 min deploy</span>
+                                            </label>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>Decoy site theme</span><span class="cfg-field__defaulted">Plexura</span></span>
+                                            <select class="cfg-input" id="cfg-decoy-theme">
+                                                <option value="plexura" selected>Plexura Managed Solutions (blocks crawlers)</option>
+                                                <option value="meridian-financial">Meridian Financial Group (allows crawlers)</option>
+                                            </select>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <label class="cfg-toggle">
+                                                <input type="checkbox" id="cfg-enable-file-portal">
+                                                <span class="cfg-toggle__title">Enable file portal</span>
+                                                <span class="cfg-toggle__sub">Auth'd file drop at /login</span>
+                                            </label>
+                                        </div>
+                                        <div class="cfg-row" id="cfg-file-portal-fields" style="display:none">
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>Portal username</span></span>
+                                                <input class="cfg-input" type="text" id="cfg-portal-username" value="operator">
+                                            </div>
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>Portal password</span><span class="cfg-field__required">*</span></span>
+                                                <input class="cfg-input" type="password" id="cfg-portal-password" placeholder="Min 8 chars">
+                                            </div>
+                                        </div>
+                                        <div class="cfg-field" id="cfg-file-portal-timeout-field" style="display:none">
+                                            <span class="cfg-field__label"><span>Session timeout (min)</span><span class="cfg-field__defaulted">30</span></span>
+                                            <input class="cfg-input" type="number" id="cfg-portal-timeout" value="30" min="1" max="1440">
+                                        </div>
+                                        <div class="cfg-confirm-row">
+                                            <button class="cfg-btn-confirm" type="button" data-cfg-confirm="domain">Confirm <svg><use href="#cfg-ic-arrow"/></svg></button>
+                                            <button class="cfg-btn-secondary" type="button" data-cfg-confirm="domain" data-cfg-skip>Skip · accept defaults</button>
+                                        </div>
+                                    </div></div></div>
+                                </section>
+
+                                <!-- SECTION 5 · SSL & ENCRYPTION -->
+                                <section class="cfg-section is-pending" data-cfg-section="ssl">
+                                    <div class="cfg-section__head" data-cfg-head>
+                                        <span class="cfg-section__num"><span data-cfg-num>5</span></span>
+                                        <span class="cfg-section__title-row">
+                                            <span class="cfg-section__title">SSL &amp; encryption</span>
+                                            <span class="cfg-section__sub">HTTPS provider · admin email · auto-retry</span>
+                                        </span>
+                                        <span class="cfg-section__state-pill" data-cfg-state-pill>Pending</span>
+                                        <button class="cfg-section__edit-btn" type="button" data-cfg-edit aria-label="Re-edit SSL"><svg><use href="#cfg-ic-edit"/></svg></button>
+                                        <div class="cfg-section__pending-hint">Waiting on <strong>Redirector &amp; domain</strong>. Let's Encrypt or self-signed.</div>
+                                        <div class="cfg-section__summary" data-cfg-summary></div>
+                                    </div>
+                                    <div class="cfg-section__body"><div><div class="cfg-section__body-inner">
+                                        <div class="cfg-banner" id="cfg-ssl-fronting-banner" style="display:none">
+                                            <strong>SSL handled by CloudFront + ACM.</strong> Domain fronting is enabled — ACM auto-provisions the public cert; redirector uses a self-signed cert for the origin leg.
+                                        </div>
+                                        <div class="cfg-field">
+                                            <label class="cfg-toggle">
+                                                <input type="checkbox" id="cfg-enable-ssl" checked>
+                                                <span class="cfg-toggle__title">Enable SSL / TLS on redirectors</span>
+                                                <span class="cfg-toggle__sub">Recommended for OPSEC</span>
+                                            </label>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>SSL provider</span><span class="cfg-field__defaulted">Let's Encrypt</span></span>
+                                            <select class="cfg-input" id="cfg-ssl-provider">
+                                                <option value="letsencrypt" selected>Let's Encrypt — Free, trusted</option>
+                                                <option value="self-signed">Self-signed — Immediate, but detectable</option>
+                                            </select>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>Admin email <span class="cfg-field__required">*</span></span><span class="cfg-field__defaulted">Burner</span></span>
+                                            <input class="cfg-input" type="email" id="cfg-admin-email" placeholder="burner@example.com" value="">
+                                            <span class="cfg-field__hint">Required by Let's Encrypt. Use a burner.</span>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <label class="cfg-toggle">
+                                                <input type="checkbox" id="cfg-ssl-auto-retry" checked>
+                                                <span class="cfg-toggle__title">Auto-request certificate when DNS propagates</span>
+                                                <span class="cfg-toggle__sub">Polls every 5 min</span>
+                                            </label>
+                                        </div>
+                                        <div class="cfg-opsec" id="cfg-ssl-self-signed-warn" style="display:none">
+                                            <div class="cfg-opsec__head">OPSEC — self-signed leaves a tell</div>
+                                            <div class="cfg-opsec__body">Shodan and Censys flag self-signed certs. Let's Encrypt blends in.</div>
+                                        </div>
+                                        <div class="cfg-confirm-row">
+                                            <button class="cfg-btn-confirm" type="button" data-cfg-confirm="ssl">Confirm <svg><use href="#cfg-ic-arrow"/></svg></button>
+                                            <button class="cfg-btn-secondary" type="button" data-cfg-confirm="ssl" data-cfg-skip>Skip · accept defaults</button>
+                                        </div>
+                                    </div></div></div>
+                                </section>
+
+                                <!-- SECTION 6 · C2 PROFILE & SERVERS -->
+                                <section class="cfg-section is-pending" data-cfg-section="c2">
+                                    <div class="cfg-section__head" data-cfg-head>
+                                        <span class="cfg-section__num"><span data-cfg-num>6</span></span>
+                                        <span class="cfg-section__title-row">
+                                            <span class="cfg-section__title">C2 profile &amp; servers</span>
+                                            <span class="cfg-section__sub">Malleable profile · CS license · teamserver password · sizing</span>
+                                        </span>
+                                        <span class="cfg-section__state-pill" data-cfg-state-pill>Pending</span>
+                                        <button class="cfg-section__edit-btn" type="button" data-cfg-edit aria-label="Re-edit C2"><svg><use href="#cfg-ic-edit"/></svg></button>
+                                        <div class="cfg-section__pending-hint">Waiting on <strong>SSL</strong>. Malleable profile, CS license, password, instance sizing.</div>
+                                        <div class="cfg-section__summary" data-cfg-summary></div>
+                                    </div>
+                                    <div class="cfg-section__body"><div><div class="cfg-section__body-inner">
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>Malleable C2 profile</span><span class="cfg-field__defaulted">jQuery default</span></span>
+                                            <select class="cfg-input" id="cfg-malleable-profile">
+                                                <optgroup label="Built-in">
+                                                    <option value="default" selected>jQuery CDN (Default)</option>
+                                                    <option value="amazon">Amazon CDN</option>
+                                                    <option value="google">Google APIs</option>
+                                                    <option value="microsoft">Microsoft Azure / Graph</option>
+                                                    <option value="wikipedia">Wikipedia</option>
+                                                </optgroup>
+                                                <optgroup label="Normal (BC-SECURITY)" id="cfg-profiles-normal"></optgroup>
+                                                <optgroup label="APT (BC-SECURITY)" id="cfg-profiles-apt"></optgroup>
+                                                <optgroup label="Crimeware (BC-SECURITY)" id="cfg-profiles-crimeware"></optgroup>
+                                                <option value="custom">Custom — paste your own</option>
+                                            </select>
+                                        </div>
+                                        <div class="cfg-field" id="cfg-custom-profile-paste" style="display:none">
+                                            <span class="cfg-field__label"><span>Paste profile contents</span></span>
+                                            <textarea class="cfg-input" id="cfg-custom-profile-text" placeholder="# Paste your .profile here"></textarea>
+                                        </div>
+                                        <details class="cfg-preview-collapse" id="cfg-profile-preview-collapse">
+                                            <summary>Preview generated profile (CS · Nginx · Example traffic)</summary>
+                                            <div class="cfg-preview-tabs">
+                                                <button class="cfg-preview-tab is-active" type="button" data-cfg-preview-tab="cs">CS profile</button>
+                                                <button class="cfg-preview-tab" type="button" data-cfg-preview-tab="nginx">Nginx URIs</button>
+                                                <button class="cfg-preview-tab" type="button" data-cfg-preview-tab="example">Example traffic</button>
+                                            </div>
+                                            <pre class="cfg-preview-pane is-active" data-cfg-preview-pane="cs"></pre>
+                                            <pre class="cfg-preview-pane" data-cfg-preview-pane="nginx"></pre>
+                                            <pre class="cfg-preview-pane" data-cfg-preview-pane="example"></pre>
+                                        </details>
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>Cobalt Strike license</span><span class="cfg-field__defaulted">Secrets Manager</span></span>
+                                            <div class="cfg-mode-row">
+                                                <label class="cfg-mode-label"><input type="radio" name="cfg-cs-license-mode" value="secret" checked><span>Use AWS Secrets Manager</span><span class="cfg-mode-label__desc">Secret: cs-license-key</span></label>
+                                                <label class="cfg-mode-label"><input type="radio" name="cfg-cs-license-mode" value="upload"><span>Upload license file</span><span class="cfg-mode-label__desc">.cobaltstrike.auth</span></label>
+                                            </div>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>CS teamserver password</span></span>
+                                            <div class="cfg-mode-row">
+                                                <label class="cfg-mode-label"><input type="radio" name="cfg-cs-pw-mode" value="auto" checked><span>Auto-generate</span><span class="cfg-mode-label__desc">Stored in Secrets Manager</span></label>
+                                                <label class="cfg-mode-label"><input type="radio" name="cfg-cs-pw-mode" value="custom"><span>Set custom password</span><span class="cfg-mode-label__desc">Min 8 chars</span></label>
+                                            </div>
+                                            <input class="cfg-input" type="password" id="cfg-cs-password" placeholder="Min 8 chars" style="display:none">
+                                        </div>
+                                        <div class="cfg-row">
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>C2 server count</span><span class="cfg-field__defaulted">2</span></span>
+                                                <input class="cfg-input" type="number" id="cfg-c2-server-count" value="2" min="1" max="6">
+                                            </div>
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>C2 instance type</span><span class="cfg-field__defaulted">t3.medium</span></span>
+                                                <select class="cfg-input" id="cfg-c2-instance-type">
+                                                    <option value="t3.small">t3.small · ~$15/mo</option>
+                                                    <option value="t3.medium" selected>t3.medium · ~$30/mo</option>
+                                                    <option value="t3.large">t3.large · ~$60/mo</option>
+                                                    <option value="t3.xlarge">t3.xlarge · ~$120/mo</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>Redirector instance type</span><span class="cfg-field__defaulted">t3.small</span></span>
+                                            <select class="cfg-input" id="cfg-redirector-instance-type">
+                                                <option value="t3.micro">t3.micro · ~$8/mo</option>
+                                                <option value="t3.small" selected>t3.small · ~$15/mo</option>
+                                                <option value="t3.medium">t3.medium · ~$30/mo</option>
+                                            </select>
+                                        </div>
+                                        <div class="cfg-confirm-row">
+                                            <button class="cfg-btn-confirm" type="button" data-cfg-confirm="c2">Confirm <svg><use href="#cfg-ic-arrow"/></svg></button>
+                                            <button class="cfg-btn-secondary" type="button" data-cfg-confirm="c2" data-cfg-skip>Skip · accept defaults</button>
+                                        </div>
+                                    </div></div></div>
+                                </section>
+
+                                <!-- SECTION 7 · ATTACK BOX -->
+                                <section class="cfg-section is-pending" data-cfg-section="attackbox">
+                                    <div class="cfg-section__head" data-cfg-head>
+                                        <span class="cfg-section__num"><span data-cfg-num>7</span></span>
+                                        <span class="cfg-section__title-row">
+                                            <span class="cfg-section__title">Attack box</span>
+                                            <span class="cfg-section__sub">Windows VM · CS client · WSL2 · operator workstation</span>
+                                        </span>
+                                        <span class="cfg-section__state-pill" data-cfg-state-pill>Pending</span>
+                                        <button class="cfg-section__edit-btn" type="button" data-cfg-edit aria-label="Re-edit attack box"><svg><use href="#cfg-ic-edit"/></svg></button>
+                                        <div class="cfg-section__pending-hint">Waiting on <strong>C2 profile &amp; servers</strong>. Instance type, disk size, RDP password.</div>
+                                        <div class="cfg-section__summary" data-cfg-summary></div>
+                                    </div>
+                                    <div class="cfg-section__body"><div><div class="cfg-section__body-inner">
+                                        <div class="cfg-field">
+                                            <label class="cfg-toggle">
+                                                <input type="checkbox" id="cfg-enable-attack-box" checked>
+                                                <span class="cfg-toggle__title">Enable attack box</span>
+                                                <span class="cfg-toggle__sub">Windows Server 2022 · CS client + tools</span>
+                                            </label>
+                                        </div>
+                                        <div class="cfg-row">
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>Instance type</span><span class="cfg-field__defaulted">t2.large</span></span>
+                                                <select class="cfg-input" id="cfg-ab-instance-type">
+                                                    <option value="t2.large" selected>t2.large · 2 vCPU · 8 GiB</option>
+                                                    <option value="t3.large">t3.large · 2 vCPU · 8 GiB</option>
+                                                    <option value="t3.xlarge">t3.xlarge · 4 vCPU · 16 GiB</option>
+                                                    <option value="m5.large">m5.large · 2 vCPU · 8 GiB</option>
+                                                </select>
+                                            </div>
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>Disk size (GB)</span><span class="cfg-field__defaulted">100</span></span>
+                                                <input class="cfg-input" type="number" id="cfg-ab-disk" value="100" min="50" max="500" step="10">
+                                            </div>
+                                        </div>
+                                        <div class="cfg-field">
+                                            <span class="cfg-field__label"><span>RDP / administrator password</span></span>
+                                            <div class="cfg-mode-row">
+                                                <label class="cfg-mode-label"><input type="radio" name="cfg-ab-pw-mode" value="auto" checked><span>Auto-generate bootstrap password</span><span class="cfg-mode-label__desc">Recommended</span></label>
+                                                <label class="cfg-mode-label"><input type="radio" name="cfg-ab-pw-mode" value="custom"><span>Set custom password</span><span class="cfg-mode-label__desc">Min 8 chars</span></label>
+                                            </div>
+                                            <input class="cfg-input" type="password" id="cfg-ab-password" placeholder="Min 8 chars" style="display:none">
+                                        </div>
+                                        <div class="cfg-confirm-row">
+                                            <button class="cfg-btn-confirm" type="button" data-cfg-confirm="attackbox">Confirm <svg><use href="#cfg-ic-arrow"/></svg></button>
+                                            <button class="cfg-btn-secondary" type="button" data-cfg-confirm="attackbox" data-cfg-skip>Skip · accept defaults</button>
+                                        </div>
+                                    </div></div></div>
+                                </section>
+
+                                <!-- SECTION 8 · COST -->
+                                <section class="cfg-section is-pending" data-cfg-section="cost">
+                                    <div class="cfg-section__head" data-cfg-head>
+                                        <span class="cfg-section__num"><span data-cfg-num>8</span></span>
+                                        <span class="cfg-section__title-row">
+                                            <span class="cfg-section__title">Cost</span>
+                                            <span class="cfg-section__sub">Estimated monthly · auto-derived</span>
+                                        </span>
+                                        <span class="cfg-section__state-pill" data-cfg-state-pill>Pending</span>
+                                        <button class="cfg-section__edit-btn" type="button" data-cfg-edit aria-label="Re-view cost"><svg><use href="#cfg-ic-edit"/></svg></button>
+                                        <div class="cfg-section__pending-hint">Waiting on <strong>Attack box</strong>. Auto-fills from running calculation.</div>
+                                        <div class="cfg-section__summary" data-cfg-summary></div>
+                                    </div>
+                                    <div class="cfg-section__body"><div><div class="cfg-section__body-inner">
+                                        <table class="cfg-cost-table" id="cfg-cost-table">
+                                            <thead><tr><th>Component</th><th>Type · count</th><th style="text-align:right">$/mo</th></tr></thead>
+                                            <tbody id="cfg-cost-body"></tbody>
+                                            <tfoot><tr><td colspan="2">Estimated total (730h/mo on-demand)</td><td style="text-align:right" class="cfg-cost-total" id="cfg-cost-total">$0/mo</td></tr></tfoot>
+                                        </table>
+                                        <div class="cfg-confirm-row">
+                                            <button class="cfg-btn-confirm" type="button" data-cfg-confirm="cost">Confirm cost <svg><use href="#cfg-ic-arrow"/></svg></button>
+                                        </div>
+                                    </div></div></div>
+                                </section>
+                            </section>
+                        </div>
+
+                        <!-- Sticky savebar -->
+                        <footer class="cfg-savebar" role="contentinfo">
+                            <div class="cfg-savebar__summary">
+                                <span>TYPE <strong id="cfg-sb-type">c2-adhoc</strong></span>
+                                <span>SECTIONS <strong id="cfg-sb-sections">0 / 8</strong></span>
+                                <span>READY <strong id="cfg-sb-ready" style="color: var(--text-secondary);">NO</strong></span>
+                            </div>
+                            <div class="cfg-savebar__group">
+                                <button class="cfg-savebar__btn cfg-savebar__btn--danger" type="button" id="cfg-reset-btn">Reset</button>
+                                <button class="cfg-savebar__btn cfg-savebar__btn--primary" type="button" id="cfg-save-btn" disabled>Save configuration</button>
+                                <button class="cfg-savebar__btn" type="button" id="cfg-validate-btn" hidden>Validate</button>
+                            </div>
+                        </footer>
+
+                        <!-- Reset modal -->
+                        <div class="cfg-modal" id="cfg-reset-modal" role="dialog" aria-modal="true" aria-labelledby="cfg-reset-modal-title">
+                            <div class="cfg-modal__card">
+                                <div class="cfg-modal__head"><h2 class="cfg-modal__title" id="cfg-reset-modal-title">Discard all changes and start over?</h2></div>
+                                <div class="cfg-modal__body">Every section will return to <strong>Pending</strong>. Identity becomes Active again. All field values clear to defaults.</div>
+                                <div class="cfg-modal__foot">
+                                    <button class="cfg-btn-secondary" type="button" id="cfg-reset-cancel">Cancel</button>
+                                    <button class="cfg-btn-danger" type="button" id="cfg-reset-confirm">Yes, reset everything</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- /Configure V2 -->
+
                     <!-- D3.8 — Explicit "New Deployment" banner. Pairs with the
                          "+ New" button in the global header. Both wired to
                          APP.journey.open() — which now navigates to Configure
