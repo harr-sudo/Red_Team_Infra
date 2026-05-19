@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Configure flow — Shape A · Branched wizard</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           CONFIGURE FLOW — SHAPE A · BRANCHED WIZARD
+           Hypothesis: the wizard branches at deployment-type selection;
+           step count + step content adapt to what that type actually
+           needs. SSH key is step 3 — early, never an afterthought.
+           Last step is always J3 spec-list review.
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            font-size: var(--font-size-base);
+            line-height: 1.55;
+            min-height: 100vh;
+        }
+
+        /* ── HYPOTHESIS STRIP ─────────────────────────────────────── */
+        .preview-hypothesis {
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap;
+            position: sticky; top: 0; z-index: 100;
+        }
+        .preview-hypothesis strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: var(--letter-spacing-caps);
+        }
+        .preview-theme-toggle {
+            margin-left: auto;
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 5px 12px;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            font-family: var(--font-family-mono);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .preview-theme-toggle:hover { border-color: var(--brand-light); }
+
+        /* ── PAGE FRAME ───────────────────────────────────────────── */
+        .wiz-shell {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 48px 32px 64px;
+        }
+
+        .wiz-eyebrow {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 22px;
+        }
+        .wiz-eyebrow__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .wiz-eyebrow__counter {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: 0.08em;
+        }
+        .wiz-eyebrow__counter span { color: var(--text-secondary); font-weight: 500; }
+
+        /* ── PROGRESS RAIL — top of step ──────────────────────────── */
+        .wiz-progress {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 28px;
+            flex-wrap: wrap;
+        }
+        .wiz-progress__dot {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0;
+            background: transparent;
+            border: 0;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .wiz-progress__dot-circle {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            border: 1.5px solid var(--border-light);
+            background: transparent;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .wiz-progress__dot.is-done .wiz-progress__dot-circle {
+            background: var(--brand-light);
+            border-color: var(--brand-light);
+        }
+        .wiz-progress__dot.is-active .wiz-progress__dot-circle {
+            background: transparent;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+        }
+        .wiz-progress__dot.is-active { color: var(--text-primary); }
+        .wiz-progress__dot.is-done   { color: var(--text-primary); }
+        .wiz-progress__connector {
+            width: 22px;
+            height: 1px;
+            background: var(--border);
+            margin: 0 2px;
+        }
+        .wiz-progress__connector.is-done { background: var(--brand-light); }
+
+        /* ── STEP CARDS ───────────────────────────────────────────── */
+        .wiz-step {
+            display: none;
+            animation: wiz-step-in 280ms var(--motion-easing-standard) both;
+        }
+        .wiz-step.is-active { display: block; }
+        @keyframes wiz-step-in {
+            from { opacity: 0; transform: translateY(4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .wiz-step__head { margin-bottom: 22px; }
+        .wiz-step__caption {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .wiz-step__title {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+            letter-spacing: -0.012em;
+            line-height: 1.25;
+        }
+        .wiz-step__hint {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+            line-height: 1.6;
+        }
+
+        /* ── CHOICE TILES (deployment family / type) ──────────────── */
+        .wiz-tiles {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 4px;
+        }
+        @media (max-width: 560px) { .wiz-tiles { grid-template-columns: 1fr; } }
+        .wiz-tile {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 16px 18px;
+            text-align: left;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-family: inherit;
+            color: var(--text-primary);
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard),
+                        background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        transform var(--motion-duration-base) var(--motion-easing-spring);
+        }
+        .wiz-tile:hover {
+            border-color: var(--brand-light);
+            background: var(--bg-card-hover);
+            transform: translateY(-1px);
+        }
+        .wiz-tile.is-active {
+            border-color: var(--brand-light);
+            background: var(--bg-card-hover);
+            box-shadow: inset 0 0 0 1px var(--brand-light);
+        }
+        .wiz-tile__name {
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .wiz-tile__meta {
+            font-family: var(--font-family-mono);
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .wiz-tile__desc {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        /* ── INPUT FIELDS ─────────────────────────────────────────── */
+        .wiz-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+        .wiz-field__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .wiz-input {
+            width: 100%;
+            box-sizing: border-box;
+            appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 10px 12px;
+            border-radius: var(--radius-xs);
+            font-family: var(--font-family-mono);
+            font-size: 13px;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .wiz-input:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 22%, transparent);
+        }
+        .wiz-field__hint {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+
+        .wiz-field-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        @media (max-width: 560px) { .wiz-field-row { grid-template-columns: 1fr; } }
+
+        /* SSH key option list (large radio cards) */
+        .wiz-radiocard {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .wiz-radiocard__option {
+            appearance: none;
+            display: flex;
+            gap: 12px;
+            padding: 14px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            text-align: left;
+            cursor: pointer;
+            font-family: inherit;
+            color: var(--text-primary);
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard),
+                        background-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .wiz-radiocard__option:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+        }
+        .wiz-radiocard__option.is-active {
+            border-color: var(--brand-light);
+            background: var(--bg-card-hover);
+            box-shadow: inset 0 0 0 1px var(--brand-light);
+        }
+        .wiz-radiocard__radio {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 1.5px solid var(--border-light);
+            background: var(--bg-input);
+            flex-shrink: 0;
+            margin-top: 2px;
+            position: relative;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .wiz-radiocard__option.is-active .wiz-radiocard__radio {
+            border-color: var(--brand-light);
+        }
+        .wiz-radiocard__option.is-active .wiz-radiocard__radio::after {
+            content: "";
+            position: absolute;
+            inset: 3px;
+            border-radius: 50%;
+            background: var(--brand-light);
+        }
+        .wiz-radiocard__body { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+        .wiz-radiocard__name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .wiz-radiocard__desc {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+        .wiz-radiocard__expand {
+            display: none;
+            padding-top: 8px;
+        }
+        .wiz-radiocard__option.is-active .wiz-radiocard__expand { display: block; }
+
+        /* ── SPEC-LIST review (J3 pattern) ────────────────────────── */
+        .review-list {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            list-style: none;
+        }
+        .review-row {
+            position: relative;
+            display: grid;
+            grid-template-columns: 200px 1fr auto;
+            align-items: baseline;
+            gap: 16px;
+            padding: 13px 16px 13px 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .review-row:last-child { border-bottom: none; }
+        .review-row::before {
+            content: "";
+            position: absolute;
+            left: 0; top: 10px; bottom: 10px;
+            width: 2px;
+            border-radius: 2px;
+            background: var(--brand-light);
+            opacity: 0;
+            transform: scaleY(0.4);
+            transition: opacity var(--motion-duration-base) var(--motion-easing-standard),
+                        transform var(--motion-duration-base) var(--motion-easing-spring);
+            pointer-events: none;
+        }
+        .review-row:hover { background: var(--bg-card-hover); }
+        .review-row:hover::before { opacity: 1; transform: scaleY(1); }
+        .review-row__key {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .review-row__value {
+            font-size: 13.5px;
+            color: var(--text-primary);
+            font-weight: 500;
+            word-break: break-word;
+            min-width: 0;
+        }
+        .review-row__value--mono {
+            font-family: var(--font-family-mono);
+            font-size: 13px;
+        }
+        .review-row__hint {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+        .review-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 9px;
+            border-radius: 999px;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        .review-pill__dot {
+            width: 6px; height: 6px; border-radius: 50%; background: var(--brand-light);
+        }
+
+        /* ── FOOTER NAV ───────────────────────────────────────────── */
+        .wiz-foot {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-top: 32px;
+            padding-top: 18px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .wiz-btn {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 8px 16px;
+            border-radius: var(--radius-xs);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .wiz-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+        .wiz-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .wiz-btn--primary {
+            background: var(--brand-light);
+            border-color: var(--brand-light);
+            color: var(--text-inverse);
+        }
+        .wiz-btn--primary:hover {
+            background: var(--brand);
+            border-color: var(--brand);
+        }
+        .wiz-btn--primary:disabled { background: var(--brand-light); }
+
+        /* Toast for save action */
+        .wiz-toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(10px);
+            background: var(--bg-elevated);
+            border: 1px solid var(--brand-light);
+            border-radius: var(--radius-sm);
+            padding: 12px 18px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-weight: 500;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 200;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            transition: opacity var(--motion-duration-base) var(--motion-easing-standard),
+                        transform var(--motion-duration-base) var(--motion-easing-spring);
+        }
+        .wiz-toast[data-show="true"] {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        .wiz-toast__dot {
+            display: inline-block;
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: var(--success);
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .wiz-step, .wiz-tile, .wiz-toast { animation: none; transition: none; }
+        }
+    </style>
+</head>
+<body>
+    <header class="preview-hypothesis">
+        <strong>Shape A</strong>
+        Branched wizard — step count adapts to deployment type. SSH key surfaces at step 3, never buried. Final step is the J3 spec-list review.
+        <button class="preview-theme-toggle" type="button" id="theme-toggle">Toggle theme</button>
+    </header>
+
+    <main class="wiz-shell">
+        <div class="wiz-eyebrow">
+            <span class="wiz-eyebrow__label">Configure deployment</span>
+            <span class="wiz-eyebrow__counter">Step <span id="step-num">1</span> / <span id="step-total">7</span></span>
+        </div>
+
+        <nav class="wiz-progress" id="progress-rail" aria-label="Wizard progress"></nav>
+
+        <!-- ============================================================
+             STEP 1 — Family
+             ============================================================ -->
+        <section class="wiz-step is-active" data-step="1" aria-labelledby="step-1-title">
+            <header class="wiz-step__head">
+                <span class="wiz-step__caption">Step 1 of N · Family</span>
+                <h2 class="wiz-step__title" id="step-1-title">What kind of deployment?</h2>
+                <p class="wiz-step__hint">Picks the family. Each family routes through different inputs — combined is the longest, GOAD-only the shortest.</p>
+            </header>
+
+            <div class="wiz-tiles" role="radiogroup" aria-label="Deployment family">
+                <button class="wiz-tile" type="button" data-family="c2" role="radio" aria-checked="false">
+                    <span class="wiz-tile__meta">C2 · Cobalt Strike</span>
+                    <span class="wiz-tile__name">Red team infrastructure</span>
+                    <span class="wiz-tile__desc">Team servers, redirectors, attack box. Requires a domain &amp; SSL.</span>
+                </button>
+                <button class="wiz-tile" type="button" data-family="goad" role="radio" aria-checked="false">
+                    <span class="wiz-tile__meta">GOAD · Lab</span>
+                    <span class="wiz-tile__name">Vulnerable Active Directory</span>
+                    <span class="wiz-tile__desc">Training lab — DCs, member servers, attack box. No domain needed.</span>
+                </button>
+                <button class="wiz-tile" type="button" data-family="combined" role="radio" aria-checked="false" style="grid-column: 1 / -1;">
+                    <span class="wiz-tile__meta">Combined</span>
+                    <span class="wiz-tile__name">C2 + GOAD with VPC peering</span>
+                    <span class="wiz-tile__desc">Full purple-team setup. All C2 inputs plus the lab CIDR.</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             STEP 2 — Type
+             ============================================================ -->
+        <section class="wiz-step" data-step="2" aria-labelledby="step-2-title">
+            <header class="wiz-step__head">
+                <span class="wiz-step__caption">Step 2 · Type</span>
+                <h2 class="wiz-step__title" id="step-2-title">Pick the exact deployment type</h2>
+                <p class="wiz-step__hint" id="step-2-hint">Filtered by family.</p>
+            </header>
+
+            <div class="wiz-tiles" id="type-tiles" role="radiogroup" aria-label="Deployment type"></div>
+        </section>
+
+        <!-- ============================================================
+             STEP 3 — SSH KEYS (always present, never buried)
+             ============================================================ -->
+        <section class="wiz-step" data-step="3" aria-labelledby="step-3-title">
+            <header class="wiz-step__head">
+                <span class="wiz-step__caption">Step 3 · SSH access</span>
+                <h2 class="wiz-step__title" id="step-3-title">How will operators reach instances over SSH?</h2>
+                <p class="wiz-step__hint">Surface this now — not at the end. Auto-generate is fine for most cases; upload if you already have a key on your laptop.</p>
+            </header>
+
+            <div class="wiz-radiocard" id="ssh-options" role="radiogroup" aria-label="SSH key choice">
+                <button class="wiz-radiocard__option is-active" type="button" data-ssh="autogen">
+                    <span class="wiz-radiocard__radio"></span>
+                    <span class="wiz-radiocard__body">
+                        <span class="wiz-radiocard__name">Auto-generate ed25519 keypair</span>
+                        <span class="wiz-radiocard__desc">A fresh keypair will be created in <code style="font-family: var(--font-family-mono); font-size: 11.5px;">~/.ssh/</code> and uploaded to AWS. Recommended for new operators.</span>
+                        <span class="wiz-radiocard__expand">
+                            <div class="wiz-field" style="margin-top: 6px; margin-bottom: 0;">
+                                <span class="wiz-field__label">Key pair name (AWS)</span>
+                                <input class="wiz-input" type="text" value="red-team-keypair" id="ssh-keypair-name">
+                            </div>
+                        </span>
+                    </span>
+                </button>
+                <button class="wiz-radiocard__option" type="button" data-ssh="upload">
+                    <span class="wiz-radiocard__radio"></span>
+                    <span class="wiz-radiocard__body">
+                        <span class="wiz-radiocard__name">Use existing public key from disk</span>
+                        <span class="wiz-radiocard__desc">Paste a public key (or path) you already have. Useful if you want to keep your operator workstation key.</span>
+                    </span>
+                </button>
+                <button class="wiz-radiocard__option" type="button" data-ssh="aws">
+                    <span class="wiz-radiocard__radio"></span>
+                    <span class="wiz-radiocard__body">
+                        <span class="wiz-radiocard__name">Pick existing AWS key pair</span>
+                        <span class="wiz-radiocard__desc">Reference a key pair already registered in the chosen region.</span>
+                    </span>
+                </button>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             STEP 4 — Identity (project name + env + region)
+             ============================================================ -->
+        <section class="wiz-step" data-step="4" aria-labelledby="step-4-title">
+            <header class="wiz-step__head">
+                <span class="wiz-step__caption">Step 4 · Identity</span>
+                <h2 class="wiz-step__title" id="step-4-title">Name and place this deployment</h2>
+                <p class="wiz-step__hint">Project name is auto-derived; you can override the suffix. Environment gates security defaults.</p>
+            </header>
+
+            <div class="wiz-field">
+                <span class="wiz-field__label">Project name</span>
+                <input class="wiz-input" type="text" id="project-name" value="goad_mini_dev_harriss_macbook_pro">
+                <span class="wiz-field__hint">Derived from {type}_{env}_{machine}. Used as the AWS resource prefix.</span>
+            </div>
+
+            <div class="wiz-field-row">
+                <div class="wiz-field">
+                    <span class="wiz-field__label">Environment</span>
+                    <select class="wiz-input" id="environment">
+                        <option value="dev" selected>dev</option>
+                        <option value="staging">staging</option>
+                        <option value="prod">prod</option>
+                    </select>
+                </div>
+                <div class="wiz-field">
+                    <span class="wiz-field__label">AWS region</span>
+                    <select class="wiz-input" id="aws-region">
+                        <option value="eu-central-1" selected>eu-central-1 · Frankfurt</option>
+                        <option value="us-east-1">us-east-1 · N. Virginia</option>
+                        <option value="us-west-2">us-west-2 · Oregon</option>
+                    </select>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             STEP 5 — Network
+             ============================================================ -->
+        <section class="wiz-step" data-step="5" aria-labelledby="step-5-title">
+            <header class="wiz-step__head">
+                <span class="wiz-step__caption">Step 5 · Network</span>
+                <h2 class="wiz-step__title" id="step-5-title">Who is allowed in?</h2>
+                <p class="wiz-step__hint">Your operator IP(s) — comma-separated CIDR blocks. 0.0.0.0/0 is blocked for OPSEC.</p>
+            </header>
+
+            <div class="wiz-field">
+                <span class="wiz-field__label">Management CIDR blocks</span>
+                <input class="wiz-input" type="text" id="management-cidr" value="82.35.149.127/32">
+                <span class="wiz-field__hint">e.g. <code>1.2.3.4/32, 198.51.100.0/24</code> — controls SSH, RDP, WinRM, CS client access.</span>
+            </div>
+
+            <div class="wiz-field" id="goad-vpc-cidr-field">
+                <span class="wiz-field__label">GOAD VPC CIDR</span>
+                <input class="wiz-input" type="text" id="goad-vpc-cidr" value="192.168.56.0/24">
+                <span class="wiz-field__hint">Internal CIDR for the AD lab VPC. Derived IP prefix: 192.168.56.</span>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             STEP 6 — C2 SPECIFICS (domain + SSL + admin email + listener)
+             Only when type is C2 or combined
+             ============================================================ -->
+        <section class="wiz-step" data-step="6" aria-labelledby="step-6-title">
+            <header class="wiz-step__head">
+                <span class="wiz-step__caption">Step 6 · C2 frontend</span>
+                <h2 class="wiz-step__title" id="step-6-title">Domain, SSL, and admin email</h2>
+                <p class="wiz-step__hint">The domain fronts your team server. Let's Encrypt needs a burner admin email.</p>
+            </header>
+
+            <div class="wiz-field">
+                <span class="wiz-field__label">Primary domain name</span>
+                <input class="wiz-input" type="text" id="primary-domain" value="evil-corp-acme.click">
+                <span class="wiz-field__hint">Registered in Route 53, used for beacon callbacks.</span>
+            </div>
+
+            <div class="wiz-field-row">
+                <div class="wiz-field">
+                    <span class="wiz-field__label">SSL provider</span>
+                    <select class="wiz-input" id="ssl-provider">
+                        <option value="letsencrypt" selected>Let's Encrypt (auto)</option>
+                        <option value="acm">ACM</option>
+                        <option value="off">Off (HTTP only)</option>
+                    </select>
+                </div>
+                <div class="wiz-field">
+                    <span class="wiz-field__label">Admin email</span>
+                    <input class="wiz-input" type="email" id="admin-email" value="ops-burner@protonmail.com">
+                </div>
+            </div>
+
+            <div class="wiz-field">
+                <span class="wiz-field__label">Backup domains</span>
+                <input class="wiz-input" type="text" id="backup-domains" value="evil-corp-acme.shop, evil-corp-acme.bar">
+                <span class="wiz-field__hint">Optional — pre-loaded for rotation. Comma separated.</span>
+            </div>
+
+            <div class="wiz-field-row">
+                <div class="wiz-field">
+                    <span class="wiz-field__label">Domain fronting</span>
+                    <select class="wiz-input" id="domain-fronting">
+                        <option value="off" selected>Off</option>
+                        <option value="on">On (CloudFront CDN)</option>
+                    </select>
+                </div>
+                <div class="wiz-field">
+                    <span class="wiz-field__label">Malleable C2 profile</span>
+                    <select class="wiz-input" id="malleable-profile">
+                        <option value="amazon" selected>amazon.profile</option>
+                        <option value="jquery">jquery.profile</option>
+                        <option value="custom">Custom (paste)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="wiz-field">
+                <span class="wiz-field__label">CS team server password</span>
+                <input class="wiz-input" type="text" id="cs-password" value="auto-generated-on-deploy">
+                <span class="wiz-field__hint">Auto-generated, stored in AWS Secrets Manager. Override only if you need a known value.</span>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             STEP 7 — C2 INSTANCES (server count + instance types + attack box)
+             ============================================================ -->
+        <section class="wiz-step" data-step="7" aria-labelledby="step-7-title">
+            <header class="wiz-step__head">
+                <span class="wiz-step__caption">Step 7 · Compute</span>
+                <h2 class="wiz-step__title" id="step-7-title">Server count, instance types, attack box</h2>
+                <p class="wiz-step__hint">Defaults are sensible for adhoc engagements. Increase count for purple/full deployments.</p>
+            </header>
+
+            <div class="wiz-field-row">
+                <div class="wiz-field">
+                    <span class="wiz-field__label">C2 server count</span>
+                    <input class="wiz-input" type="number" id="c2-server-count" value="1" min="1" max="5">
+                </div>
+                <div class="wiz-field">
+                    <span class="wiz-field__label">C2 instance type</span>
+                    <select class="wiz-input" id="c2-instance-type">
+                        <option value="t3.medium" selected>t3.medium</option>
+                        <option value="t3.large">t3.large</option>
+                        <option value="m5.large">m5.large</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="wiz-field-row">
+                <div class="wiz-field">
+                    <span class="wiz-field__label">Redirector instance type</span>
+                    <select class="wiz-input" id="redirector-type">
+                        <option value="t3.small" selected>t3.small</option>
+                        <option value="t3.medium">t3.medium</option>
+                    </select>
+                </div>
+                <div class="wiz-field">
+                    <span class="wiz-field__label">Attack box instance type</span>
+                    <select class="wiz-input" id="attack-box-type">
+                        <option value="t3.large" selected>t3.large</option>
+                        <option value="t3.xlarge">t3.xlarge</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="wiz-field-row">
+                <div class="wiz-field">
+                    <span class="wiz-field__label">Attack box disk size (GB)</span>
+                    <input class="wiz-input" type="number" id="attack-box-disk" value="100" min="50" max="500">
+                </div>
+                <div class="wiz-field">
+                    <span class="wiz-field__label">Attack box admin password</span>
+                    <input class="wiz-input" type="text" id="attack-box-password" value="auto-generated">
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             STEP 8 — REVIEW (J3 spec-list pattern)
+             ============================================================ -->
+        <section class="wiz-step" data-step="8" aria-labelledby="step-8-title">
+            <header class="wiz-step__head">
+                <span class="wiz-step__caption">Final step · Review</span>
+                <h2 class="wiz-step__title" id="step-8-title">Confirm and save</h2>
+                <p class="wiz-step__hint">Hover any row to edit inline — no need to walk back through the wizard.</p>
+            </header>
+
+            <ol class="review-list" id="review-list" aria-label="Configuration review">
+                <!-- Populated by JS -->
+            </ol>
+        </section>
+
+        <!-- ── FOOTER NAV ───────────────────────────────────────── -->
+        <footer class="wiz-foot">
+            <button class="wiz-btn" type="button" id="back-btn">Back</button>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <span style="font-family: var(--font-family-mono); font-size: 11px; color: var(--text-secondary); letter-spacing: 0.08em; text-transform: uppercase;" id="branch-hint">Family → Type → SSH → Identity → Network → C2 → Compute → Review</span>
+                <button class="wiz-btn wiz-btn--primary" type="button" id="next-btn">Next →</button>
+            </div>
+        </footer>
+    </main>
+
+    <div class="wiz-toast" id="save-toast" role="status" aria-live="polite">
+        <span class="wiz-toast__dot"></span>Configuration saved — every required field captured.
+    </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        // ============================================================
+        // State machine
+        // ============================================================
+        const TYPES = {
+            c2: [
+                { value: 'c2-adhoc',  name: 'Adhoc', desc: '1 team server. Quick engagement.' },
+                { value: 'c2-purple', name: 'Purple team', desc: '2 servers for redundancy.' },
+                { value: 'c2-full',   name: 'Full red team', desc: '3 servers, phase-based.' },
+            ],
+            goad: [
+                { value: 'goad-mini',  name: 'Mini', desc: '2 VMs · 1 domain. Smallest lab.' },
+                { value: 'goad-light', name: 'Light', desc: '3 VMs · 1 domain.' },
+                { value: 'goad-sccm',  name: 'SCCM', desc: '4 VMs · adds SCCM attack paths.' },
+                { value: 'goad-full',  name: 'Full', desc: '5 VMs · 2 forests with trust.' },
+                { value: 'goad-nha',   name: 'NHA', desc: '5 VMs · Ninja Hack Academy.' },
+            ],
+            combined: [
+                { value: 'combined-adhoc-mini',  name: 'Adhoc + Mini',    desc: 'Smallest combined footprint.' },
+                { value: 'combined-adhoc-light', name: 'Adhoc + Light',   desc: '1 C2 + light AD lab.' },
+                { value: 'combined-full-full',   name: 'Full + Full',     desc: 'All servers · all VMs.' },
+            ],
+        };
+
+        // Step graph — depends on family
+        function stepsFor(family) {
+            const common = ['Family', 'Type', 'SSH', 'Identity', 'Network'];
+            if (family === 'c2') return [...common, 'C2 frontend', 'Compute', 'Review'];
+            if (family === 'goad') return [...common, 'Compute', 'Review'];
+            if (family === 'combined') return [...common, 'C2 frontend', 'Compute', 'Review'];
+            return [...common, 'Review'];
+        }
+
+        // Map step label → DOM data-step number
+        const STEP_MAP = {
+            'Family':       1,
+            'Type':         2,
+            'SSH':          3,
+            'Identity':     4,
+            'Network':      5,
+            'C2 frontend':  6,
+            'Compute':      7,
+            'Review':       8,
+        };
+
+        const state = {
+            family: null,
+            type:   null,
+            ssh:    'autogen',
+            stepIdx: 0,        // 0-indexed into stepsFor(family)
+        };
+
+        const $ = (sel, root) => (root || document).querySelector(sel);
+        const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+        // ============================================================
+        // Render progress rail
+        // ============================================================
+        function renderProgress() {
+            const rail = $('#progress-rail');
+            rail.innerHTML = '';
+            const steps = stepsFor(state.family || 'combined');
+            steps.forEach((s, idx) => {
+                const isActive = idx === state.stepIdx;
+                const isDone   = idx <  state.stepIdx;
+                const dot = document.createElement('button');
+                dot.type = 'button';
+                dot.className = 'wiz-progress__dot' +
+                    (isActive ? ' is-active' : '') +
+                    (isDone   ? ' is-done'   : '');
+                dot.setAttribute('data-step-idx', String(idx));
+                dot.innerHTML =
+                    '<span class="wiz-progress__dot-circle"></span>' +
+                    '<span>' + s + '</span>';
+                dot.addEventListener('click', () => {
+                    if (idx <= state.stepIdx) goToIdx(idx);
+                });
+                rail.appendChild(dot);
+                if (idx < steps.length - 1) {
+                    const c = document.createElement('span');
+                    c.className = 'wiz-progress__connector' + (isDone ? ' is-done' : '');
+                    rail.appendChild(c);
+                }
+            });
+            $('#step-num').textContent = String(state.stepIdx + 1);
+            $('#step-total').textContent = String(steps.length);
+            $('#branch-hint').textContent = steps.join(' → ');
+        }
+
+        // ============================================================
+        // Show / hide steps
+        // ============================================================
+        function goToIdx(idx) {
+            const steps = stepsFor(state.family || 'combined');
+            const label = steps[idx];
+            const targetDataStep = STEP_MAP[label];
+            $$('.wiz-step').forEach(el => el.classList.remove('is-active'));
+            const tgt = $('.wiz-step[data-step="' + targetDataStep + '"]');
+            if (tgt) tgt.classList.add('is-active');
+            state.stepIdx = idx;
+            // Toggle GOAD VPC CIDR vis on Network step
+            const goadField = $('#goad-vpc-cidr-field');
+            if (goadField) {
+                goadField.style.display = (state.family === 'goad' || state.family === 'combined') ? '' : 'none';
+            }
+            renderProgress();
+            updateFooter();
+            // If review, build it
+            if (label === 'Review') renderReview();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function updateFooter() {
+            const steps = stepsFor(state.family || 'combined');
+            const isFirst = state.stepIdx === 0;
+            const isLast  = state.stepIdx === steps.length - 1;
+            $('#back-btn').disabled = isFirst;
+            const nextBtn = $('#next-btn');
+            if (isLast) {
+                nextBtn.textContent = 'Save configuration';
+            } else {
+                nextBtn.textContent = 'Next →';
+            }
+            // Disable next at step Family / Type until selected
+            const label = steps[state.stepIdx];
+            if (label === 'Family')      nextBtn.disabled = !state.family;
+            else if (label === 'Type')   nextBtn.disabled = !state.type;
+            else                          nextBtn.disabled = false;
+        }
+
+        // ============================================================
+        // STEP 1 — Family tiles
+        // ============================================================
+        $$('[data-family]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                $$('[data-family]').forEach(b => {
+                    b.classList.remove('is-active');
+                    b.setAttribute('aria-checked', 'false');
+                });
+                btn.classList.add('is-active');
+                btn.setAttribute('aria-checked', 'true');
+                state.family = btn.dataset.family;
+                state.type = null;
+                renderTypeTiles();
+                updateFooter();
+                renderProgress();
+            });
+        });
+
+        // ============================================================
+        // STEP 2 — Type tiles (built from state.family)
+        // ============================================================
+        function renderTypeTiles() {
+            const root = $('#type-tiles');
+            const list = TYPES[state.family] || [];
+            root.innerHTML = '';
+            list.forEach(t => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'wiz-tile';
+                b.dataset.type = t.value;
+                b.innerHTML =
+                    '<span class="wiz-tile__meta">' + t.value + '</span>' +
+                    '<span class="wiz-tile__name">' + t.name + '</span>' +
+                    '<span class="wiz-tile__desc">' + t.desc + '</span>';
+                b.addEventListener('click', () => {
+                    $$('#type-tiles .wiz-tile').forEach(x => x.classList.remove('is-active'));
+                    b.classList.add('is-active');
+                    state.type = t.value;
+                    // Auto-derive project name
+                    $('#project-name').value = (t.value.replace(/-/g, '_')) + '_dev_harriss_macbook_pro';
+                    updateFooter();
+                });
+            });
+        }
+
+        // ============================================================
+        // STEP 3 — SSH choice
+        // ============================================================
+        $$('[data-ssh]').forEach(opt => {
+            opt.addEventListener('click', () => {
+                $$('[data-ssh]').forEach(o => o.classList.remove('is-active'));
+                opt.classList.add('is-active');
+                state.ssh = opt.dataset.ssh;
+            });
+        });
+
+        // ============================================================
+        // Review — J3 spec-list
+        // ============================================================
+        function renderReview() {
+            const root = $('#review-list');
+            root.innerHTML = '';
+            const sshLabel = {
+                autogen: 'Auto-generate ed25519',
+                upload:  'Upload from disk',
+                aws:     'Pick existing AWS key',
+            }[state.ssh] || state.ssh;
+            const rows = [
+                { k: 'Deployment Type', v: state.type || '—', hint: state.family },
+                { k: 'Project Name',    v: $('#project-name').value, hint: 'derived', mono: true },
+                { k: 'Environment',     v: '<span class="review-pill"><span class="review-pill__dot"></span>' + $('#environment').value.toUpperCase() + '</span>', hint: 'isolated' },
+                { k: 'AWS Region',      v: $('#aws-region').value, hint: 'Frankfurt', mono: true },
+                { k: 'Management CIDR', v: $('#management-cidr').value, hint: 'single host', mono: true },
+                { k: 'SSH Keys',        v: sshLabel, hint: 'ed25519' },
+                { k: 'Key Pair Name',   v: $('#ssh-keypair-name').value, hint: 'AWS keypair', mono: true },
+            ];
+            if (state.family === 'c2' || state.family === 'combined') {
+                rows.push(
+                    { k: 'Primary Domain', v: $('#primary-domain').value, mono: true, hint: 'callback' },
+                    { k: 'SSL Provider',   v: $('#ssl-provider').value },
+                    { k: 'Admin Email',    v: $('#admin-email').value, mono: true, hint: "Let's Encrypt" },
+                    { k: 'Malleable C2',   v: $('#malleable-profile').value },
+                    { k: 'CS Password',    v: '••••••••', hint: 'Secrets Manager' },
+                    { k: 'C2 Servers',     v: $('#c2-server-count').value + ' × ' + $('#c2-instance-type').value, mono: true },
+                    { k: 'Redirector',     v: $('#redirector-type').value, mono: true },
+                );
+            }
+            if (state.family === 'goad' || state.family === 'combined') {
+                rows.push(
+                    { k: 'GOAD VPC CIDR', v: $('#goad-vpc-cidr').value, mono: true, hint: 'lab subnet' },
+                );
+            }
+            rows.push(
+                { k: 'Attack Box',  v: $('#attack-box-type').value + ' · ' + $('#attack-box-disk').value + ' GB', mono: true, hint: 'Windows' },
+                { k: 'Est. Monthly', v: '~$340/mo', hint: 'estimate' },
+            );
+
+            rows.forEach(r => {
+                const li = document.createElement('li');
+                li.className = 'review-row';
+                li.innerHTML =
+                    '<span class="review-row__key">' + r.k + '</span>' +
+                    '<span class="review-row__value' + (r.mono ? ' review-row__value--mono' : '') + '">' + r.v + '</span>' +
+                    '<span class="review-row__hint">' + (r.hint || '') + '</span>';
+                root.appendChild(li);
+            });
+        }
+
+        // ============================================================
+        // Footer nav
+        // ============================================================
+        $('#back-btn').addEventListener('click', () => {
+            if (state.stepIdx > 0) goToIdx(state.stepIdx - 1);
+        });
+        $('#next-btn').addEventListener('click', () => {
+            const steps = stepsFor(state.family || 'combined');
+            if (state.stepIdx === steps.length - 1) {
+                // Save
+                const t = $('#save-toast');
+                t.setAttribute('data-show', 'true');
+                window.setTimeout(() => t.setAttribute('data-show', 'false'), 3200);
+                return;
+            }
+            goToIdx(state.stepIdx + 1);
+        });
+
+        // Theme toggle
+        $('#theme-toggle').addEventListener('click', () => {
+            const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', cur === 'light' ? 'dark' : 'light');
+        });
+
+        // Initial render
+        renderProgress();
+        updateFooter();
+    })();
+    </script>
+</body>
+</html>

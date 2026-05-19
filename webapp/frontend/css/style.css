@@ -6880,6 +6880,10 @@ body[data-journey-open="true"] .container > main {
     color: var(--text-primary);
 }
 .deploy-prereqs > summary::-webkit-details-marker { display: none; }
+/* Suppress the global details::before chevron (line ~816) on this specific
+   element — markup already provides its own .deploy-prereqs__chev span with
+   the [open] rotation logic. Without this override both arrows render. */
+.deploy-prereqs > summary::before { content: none; }
 .deploy-prereqs__chev {
     display: inline-block;
     width: 12px;
@@ -9137,9 +9141,26 @@ details.details-card--v3 > .resource-list-v3__body {
    we DO want the dot to read as the row's identity glyph — pull the
    key column down to fit the dot + operator name comfortably. */
 .activity-feed.spec-list .spec-row__head {
-    grid-template-columns: 168px 1fr auto 0;
-    padding: 10px 14px 10px 14px;
+    grid-template-columns: 160px 1fr auto 0;
+    padding: 5px 14px 5px 14px;
 }
+
+/* Cap the Recent Activity widget — the API returns 20 entries, which
+   would stretch the dashboard column past the architecture diagram.
+   Show ~5 rows; the rest scroll inside the widget. */
+#dashboard-activity-feed {
+    max-height: 220px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-subtle) transparent;
+}
+#dashboard-activity-feed::-webkit-scrollbar { width: 6px; }
+#dashboard-activity-feed::-webkit-scrollbar-thumb {
+    background: var(--border-subtle);
+    border-radius: 3px;
+}
+#dashboard-activity-feed::-webkit-scrollbar-track { background: transparent; }
 .activity-feed.spec-list .spec-row__key {
     display: inline-flex;
     align-items: center;
@@ -11507,3 +11528,516 @@ body[data-overlay-depth] .app-topbar {
 /* ════════════════════════════════════════════════════════════════════════
    END v3 OVERLAY STACK (Agent C)
    ════════════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════════════
+   2026-05-19 — Operations sub-pill aggregate fleet views.
+   Used by APP.beacons.renderFleet() and APP.payloads.renderFleet() in
+   "All deployments" mode (APP.activeDeployment.isAll()).
+   Read-only table with row click → focus deployment.
+   ════════════════════════════════════════════════════════════════════════ */
+
+.ops-fleet {
+    padding: 16px 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+}
+
+.ops-fleet__head {
+    margin-bottom: 4px;
+}
+
+.ops-fleet__title {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.ops-fleet__subtitle {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: 4px 0 12px;
+}
+
+.ops-fleet__banner {
+    background: var(--bg-section);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.ops-fleet__banner-text {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.ops-fleet__error-banner {
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    border: 1px solid var(--warning-border);
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    margin-bottom: 10px;
+}
+
+.ops-fleet__body {
+    overflow-x: auto;
+}
+
+.ops-fleet__table {
+    width: 100%;
+    border-collapse: collapse;
+    /* Override the global `table thead tr { background: var(--burgundy-dark) }`
+       rule so our fleet table sits on the card surface, not on a brand bar. */
+}
+
+.ops-fleet__table thead tr {
+    background: transparent;
+}
+
+.ops-fleet__table thead th {
+    text-align: left;
+    font-size: 10px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.ops-fleet__cell {
+    padding: 8px 12px;
+    font-size: 13px;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: middle;
+}
+
+.ops-fleet__cell--mono {
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-size: 12px;
+}
+
+.ops-fleet__cell--empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 24px 12px;
+    font-style: italic;
+}
+
+.ops-fleet__row {
+    cursor: pointer;
+    transition: background 0.12s ease;
+}
+
+.ops-fleet__row:hover {
+    background: var(--bg-card-hover);
+}
+
+.ops-fleet__row:focus-visible {
+    outline: 2px solid var(--brand-light);
+    outline-offset: -2px;
+}
+
+.ops-fleet__row.is-dead .ops-fleet__cell {
+    color: var(--text-muted);
+}
+
+.ops-fleet__row--readonly {
+    cursor: default;
+}
+
+.ops-fleet__row--readonly:hover {
+    background: transparent;
+}
+
+.ops-fleet__download {
+    color: var(--brand-light);
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: var(--font-weight-semibold);
+}
+
+.ops-fleet__download:hover {
+    text-decoration: underline;
+}
+
+/* Screen-reader-only helper used in the status column header. */
+.t-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Empty-state shared between fleet zero-rows + per-surface All-mode fallback. */
+.empty-state--all-mode {
+    padding: 32px 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    text-align: center;
+}
+
+.empty-state--all-mode .empty-state__title {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin: 0 0 8px;
+}
+
+.empty-state--all-mode .empty-state__body {
+    font-size: 13px;
+    color: var(--text-secondary);
+    max-width: 520px;
+    margin: 0 auto 16px;
+    line-height: 1.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ops-fleet__row {
+        transition: none;
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   2026-05-19 (deployments nav restructure) — Top-bar dropdown sentinel
+   entries + dividers, plus the Manage fleet table, empty CTA, draft
+   discard affordance, cleanup all-badge, and Manage edit drawer.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Out-of-mode sub-pill nav buttons: still in the DOM and selectable so
+   bookmarks + tests keep working, but visually dimmed so the operator
+   sees that the pill isn't part of the current flow. The button stays
+   clickable — landing on it shows the in-pane empty state. */
+.subpill-nav__pill.is-out-of-mode {
+    opacity: 0.42;
+}
+.subpill-nav__pill.is-out-of-mode:hover,
+.subpill-nav__pill.is-out-of-mode:focus-visible {
+    opacity: 1;
+}
+
+/* All-deployments + Draft sentinel listbox entries — distinct from
+   real project rows. Both inherit .global-header__combobox-option
+   chrome (padding, hover) and add a visual treatment. */
+.deploy-option--all,
+.deploy-option--draft {
+    border-left: 2px solid var(--brand-light);
+}
+
+.deploy-option--all .global-header__combobox-option-status--all,
+.deploy-option--draft .global-header__combobox-option-status--draft {
+    background: var(--bg-section);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* Non-selectable divider between sentinel(s) and real deployments. */
+.deploy-option-divider {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--border-subtle);
+    pointer-events: none;
+}
+
+/* ─── Manage fleet table (All mode) ─────────────────────────────────── */
+
+.manage-fleet {
+    padding: 16px 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+}
+
+.manage-fleet__head {
+    margin-bottom: 8px;
+}
+
+.manage-fleet__title {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.manage-fleet__subtitle {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: 4px 0 12px;
+}
+
+.manage-fleet__error-banner {
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    border: 1px solid var(--warning-border);
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    margin-bottom: 10px;
+}
+
+.manage-fleet__body {
+    overflow-x: auto;
+}
+
+.manage-fleet__table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+/* Override the global `table thead tr` burgundy bar. */
+.manage-fleet__table thead tr {
+    background: transparent;
+}
+
+.manage-fleet__table thead th {
+    text-align: left;
+    font-size: 10px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.manage-fleet__cell {
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: middle;
+}
+
+.manage-fleet__cell--mono {
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-size: 12px;
+}
+
+.manage-fleet__cell--empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 24px 12px;
+    font-style: italic;
+}
+
+.manage-fleet__name {
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+}
+
+.manage-fleet__arrow {
+    color: var(--text-muted);
+    text-align: right;
+    font-size: 16px;
+    padding-right: 14px;
+}
+
+.manage-fleet__row {
+    cursor: pointer;
+    transition: background 0.12s ease;
+}
+
+.manage-fleet__row:hover {
+    background: var(--bg-card-hover);
+}
+
+.manage-fleet__row:focus-visible {
+    outline: 2px solid var(--brand-light);
+    outline-offset: -2px;
+}
+
+/* ─── Manage empty-state CTA (no deployment picked) ─────────────────── */
+
+.manage-empty-cta {
+    padding: 40px 24px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    text-align: center;
+}
+
+.manage-empty-cta__title {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin: 0 0 8px;
+}
+
+.manage-empty-cta__body {
+    font-size: 13px;
+    color: var(--text-secondary);
+    max-width: 480px;
+    margin: 0 auto 16px;
+    line-height: 1.6;
+}
+
+/* ─── Configure: draft-mode "Discard draft" affordance ─────────────── */
+
+.configure-discard-draft {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    background: var(--bg-section);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+}
+
+.configure-discard-draft__label {
+    flex: 1;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* ─── Cleanup: "Showing all labs" badge ─────────────────────────────── */
+
+.cleanup-all-badge {
+    margin-bottom: 16px;
+}
+
+/* ─── Manage edit drawer (right-side scrim-takeover variant) ────────── */
+
+.takeover-card--right {
+    top: 0;
+    right: 0;
+    left: auto;
+    transform: translateX(16px);
+    width: min(560px, calc(100% - 32px));
+    max-width: 560px;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    box-shadow: -16px 0 64px rgba(0, 0, 0, 0.4);
+}
+
+.takeover-card--right[data-open="true"] {
+    transform: translateX(0);
+}
+
+.takeover-card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+}
+
+.takeover-card__head h3 {
+    margin: 0;
+    font-size: var(--font-size-base);
+    color: var(--text-primary);
+}
+
+.takeover-card__close {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.takeover-card__close:hover {
+    color: var(--text-primary);
+    background: var(--bg-card-hover);
+}
+
+.takeover-card__body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    background: var(--bg-body);
+}
+
+.takeover-card__foot {
+    display: flex;
+    gap: 8px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+}
+
+.manage-drawer__form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.manage-drawer__hint {
+    margin: 0 0 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+.manage-drawer__field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.manage-drawer__field-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-semibold);
+}
+
+.manage-drawer__input {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 13px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+}
+
+.manage-drawer__input:focus {
+    outline: 2px solid var(--brand-light);
+    outline-offset: -2px;
+    border-color: var(--brand-light);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .manage-fleet__row,
+    .takeover-card--right {
+        transition: none;
+    }
+}

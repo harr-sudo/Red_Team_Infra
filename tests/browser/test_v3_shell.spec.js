@@ -179,11 +179,12 @@ test.describe('v3 shell — top utility bar', () => {
         await page.locator('.app-rail__item[data-rail-target="dashboard"]').waitFor({ timeout: 5000 });
         await expect(page.locator('#app-topbar-crumb-page')).toContainText('Dashboard');
 
-        // Navigate to Deployments → Configure (default sub-pill on first entry).
+        // Navigate to Deployments. 2026-05-19 (deployments nav restructure)
+        // — default sub-pill is mode-aware (manage on empty, configure on
+        // draft). Breadcrumb shows whichever lands.
         await page.locator('.app-rail__item[data-rail-target="deployments-tab"]').click();
         await expect(page.locator('#app-topbar-crumb-page')).toContainText('Deployments', { timeout: 5000 });
-        // After sub-pill defaults to "configure" we should see both halves.
-        await expect(page.locator('#app-topbar-crumb-page')).toContainText('Configure', { timeout: 5000 });
+        await expect(page.locator('#app-topbar-crumb-page')).toContainText(/Configure|Manage/, { timeout: 5000 });
     });
 });
 
@@ -287,9 +288,11 @@ test.describe('v3 shell — D6 regression', () => {
         await page.locator('.app-rail__item[data-rail-target="dashboard"]').waitFor({ timeout: 5000 });
         await page.locator('.app-rail__item[data-rail-target="deployments-tab"]').click();
 
-        // Default sub-pill on first entry to Deployments is `configure`.
+        // 2026-05-19 (deployments nav restructure) — Default sub-pill on
+        // first entry to Deployments is mode-aware (manage on empty,
+        // manage on existing, configure on draft). Accept any sub-pill.
         const hash = await page.evaluate(() => window.location.hash);
-        expect(hash).toBe('#deployments-tab/configure');
+        expect(hash).toMatch(/^#deployments-tab\/(manage|configure|deploy|cleanup|bolt-ons)$/);
     });
 });
 

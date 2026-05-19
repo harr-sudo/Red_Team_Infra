@@ -266,6 +266,39 @@
     </header>
 
     <nav class="hub-sidebar" aria-label="Demo navigation">
+        <!-- Configure flow redesign (NEW) — 3 structurally distinct shapes -->
+        <section class="hub-sidebar__section hub-sidebar__section-decision">
+            <span class="hub-sidebar__section-label">Configure flow redesign (NEW)<span class="hub-sidebar__pending-pill">DECISION PENDING</span></span>
+            <button class="hub-sidebar__item" data-url="/preview/configure-flow-compare.html"
+                    data-title="Configure flow — 3-shape comparison"
+                    data-eyebrow="CONFIGURE · 3-WAY COMPARE"
+                    data-hypothesis="Three structurally different Configure-page redesigns side-by-side; pick one to replace the current hybrid form + wizard + spec-list patchwork.">
+                <span class="hub-sidebar__item-name">Compare all 3 shapes</span>
+                <span class="hub-sidebar__item-hint">3-pane grid + theme toggle</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/configure-flow-a-branched-wizard.html"
+                    data-title="Shape A — Branched wizard"
+                    data-eyebrow="CONFIGURE · A · BRANCHED WIZARD"
+                    data-hypothesis="Multi-step wizard with step count and content that branches by deployment type. SSH key surfaces as step 3 — never an afterthought. Final step is the J3 spec-list review.">
+                <span class="hub-sidebar__item-name">A · Branched wizard</span>
+                <span class="hub-sidebar__item-hint">Adaptive steps · SSH at step 3 · J3 review</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/configure-flow-b-smart-form.html"
+                    data-title="Shape B — Smart single-page form"
+                    data-eyebrow="CONFIGURE · B · SMART FORM"
+                    data-hypothesis="One scrolling page with sections that auto-expand based on type. Smart defaults fill every required field — save never fails on missing data.">
+                <span class="hub-sidebar__item-name">B · Smart form</span>
+                <span class="hub-sidebar__item-hint">Auto-expanding sections · TOC rail · smart defaults</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/configure-flow-c-progressive.html"
+                    data-title="Shape C — Progressive Unraveling (expanded)"
+                    data-eyebrow="CONFIGURE · C · PROGRESSIVE (EXPANDED)"
+                    data-hypothesis="The page IS the journey. Empty-state skeleton on first paint, sections materialize one-at-a-time as upstream confirms, confirmed sections collapse to spec-rows. Every legacy field surfaced across 8 sections (C2/Combined) or 5 (GOAD). Reset clears everything · Validate only appears at the end · Domain availability checked inline.">
+                <span class="hub-sidebar__item-name">C · Progressive unraveling (expanded)</span>
+                <span class="hub-sidebar__item-hint">Every legacy field · Reset + Validate-at-end · inline domain availability</span>
+            </button>
+        </section>
+
         <!-- Bolt-on feature (Phase 1) — blended target page is the pick -->
         <section class="hub-sidebar__section hub-sidebar__section-decision">
             <span class="hub-sidebar__section-label">Bolt-on feature (Phase 1)<span class="hub-sidebar__pending-pill">DECISION PENDING</span></span>

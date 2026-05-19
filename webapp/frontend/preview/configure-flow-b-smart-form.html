@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Configure flow — Shape B · Smart single-page form</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           CONFIGURE FLOW — SHAPE B · SMART SINGLE-PAGE FORM
+           Hypothesis: one scrolling page, sections grouped by intent,
+           collapsed by default. Picking a deployment type auto-expands
+           the sections that type needs (and dims sections it doesn't).
+           Every required field has a smart default — save NEVER fails
+           on missing data.
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            font-size: var(--font-size-base);
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP ─────────────────────────────────────── */
+        .preview-hypothesis {
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap;
+            position: sticky; top: 0; z-index: 100;
+        }
+        .preview-hypothesis strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: var(--letter-spacing-caps);
+        }
+        .preview-theme-toggle {
+            margin-left: auto;
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 5px 12px;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            font-family: var(--font-family-mono);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .preview-theme-toggle:hover { border-color: var(--brand-light); }
+
+        /* ── SHELL — two columns: TOC rail (24%) + form (76%) ────── */
+        .smart-shell {
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            gap: 32px;
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 36px 32px 96px;
+        }
+        @media (max-width: 880px) {
+            .smart-shell { grid-template-columns: 1fr; gap: 16px; padding: 24px 18px 96px; }
+            .smart-toc { display: none; }
+        }
+
+        /* ── TOC RAIL ─────────────────────────────────────────────── */
+        .smart-toc {
+            position: sticky;
+            top: 78px;
+            align-self: start;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            padding-top: 4px;
+        }
+        .smart-toc__head {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            padding: 0 10px 12px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 8px;
+        }
+        .smart-toc__item {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            position: relative;
+            display: grid;
+            grid-template-columns: 14px 1fr;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            text-align: left;
+            color: var(--text-secondary);
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: var(--radius-xs);
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .smart-toc__item:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .smart-toc__item.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .smart-toc__item.is-dim { opacity: 0.45; }
+        .smart-toc__bullet {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            border: 1.5px solid var(--border-light);
+            display: inline-block;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .smart-toc__item.is-complete .smart-toc__bullet {
+            background: var(--brand-light);
+            border-color: var(--brand-light);
+        }
+        .smart-toc__item.is-error .smart-toc__bullet {
+            background: var(--danger);
+            border-color: var(--danger);
+        }
+        .smart-toc__hint {
+            font-family: var(--font-family-mono);
+            font-size: 9px;
+            color: var(--text-secondary);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-top: 1px;
+        }
+
+        /* ── FORM CONTENT ─────────────────────────────────────────── */
+        .smart-main { min-width: 0; }
+
+        .smart-eyebrow {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 16px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 28px;
+        }
+        .smart-eyebrow__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .smart-eyebrow__defaults {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .smart-hero {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 32px;
+        }
+        .smart-hero__caption {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .smart-hero__title {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+            letter-spacing: -0.012em;
+        }
+        .smart-hero__desc {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.55;
+        }
+
+        /* ── SECTION COLLAPSE ─────────────────────────────────────── */
+        .smart-section {
+            margin-bottom: 14px;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            background: var(--bg-card);
+            overflow: hidden;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard),
+                        opacity var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .smart-section.is-dimmed {
+            opacity: 0.5;
+        }
+        .smart-section.is-required {
+            border-color: var(--brand-light);
+        }
+        .smart-section__head {
+            appearance: none;
+            width: 100%;
+            background: transparent;
+            border: 0;
+            display: grid;
+            grid-template-columns: 14px 1fr auto auto;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 18px;
+            cursor: pointer;
+            font-family: inherit;
+            text-align: left;
+            color: var(--text-primary);
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .smart-section__head:hover {
+            background: var(--bg-card-hover);
+        }
+        .smart-section__caret {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-right: 1.4px solid var(--text-secondary);
+            border-bottom: 1.4px solid var(--text-secondary);
+            transform: rotate(-45deg);
+            transition: transform var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .smart-section.is-open .smart-section__caret {
+            transform: rotate(45deg);
+        }
+        .smart-section__title {
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .smart-section__title-row {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+        .smart-section__sub {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+        .smart-section__badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 9px;
+            border-radius: 999px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .smart-section__badge--complete {
+            color: var(--success-text);
+            border-color: var(--success-border);
+            background: var(--success-bg);
+        }
+        .smart-section__badge--needed {
+            color: var(--brand-light);
+            border-color: var(--brand-light);
+        }
+        .smart-section__body {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .smart-section__body > div { overflow: hidden; }
+        .smart-section.is-open .smart-section__body {
+            grid-template-rows: 1fr;
+        }
+        .smart-section__body-inner {
+            padding: 4px 18px 18px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .smart-section.is-open .smart-section__body-inner {
+            padding-top: 16px;
+        }
+
+        /* ── FIELD CHROME ────────────────────────────────────────── */
+        .smart-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+        .smart-field__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 8px;
+        }
+        .smart-field__required {
+            color: var(--danger-text);
+            font-weight: 700;
+        }
+        .smart-field__defaulted {
+            font-family: var(--font-family-mono);
+            font-size: 8.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 1px 6px;
+            border-radius: 999px;
+            background: var(--bg-input);
+            border: 1px solid var(--border-subtle);
+        }
+        .smart-input {
+            width: 100%;
+            box-sizing: border-box;
+            appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 10px 12px;
+            border-radius: var(--radius-xs);
+            font-family: var(--font-family-mono);
+            font-size: 13px;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .smart-input:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 22%, transparent);
+        }
+        .smart-input.is-invalid {
+            border-color: var(--danger);
+        }
+        .smart-field__hint {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
+        }
+        .smart-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        @media (max-width: 560px) { .smart-row { grid-template-columns: 1fr; } }
+
+        /* ── Deployment family tabs (top of identity section) ────── */
+        .smart-types {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xs);
+            padding: 4px;
+            background: var(--bg-input);
+        }
+        .smart-types__btn {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            color: var(--text-secondary);
+            padding: 7px 12px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            border-radius: var(--radius-xs);
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .smart-types__btn:hover { color: var(--text-primary); }
+        .smart-types__btn.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+
+        /* SSH key cards inside its section */
+        .smart-ssh-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+        }
+        @media (max-width: 720px) { .smart-ssh-grid { grid-template-columns: 1fr; } }
+        .smart-ssh-card {
+            appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-primary);
+            padding: 12px 14px;
+            border-radius: var(--radius-xs);
+            text-align: left;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard),
+                        background-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .smart-ssh-card:hover {
+            border-color: var(--border-light);
+            background: var(--bg-card-hover);
+        }
+        .smart-ssh-card.is-active {
+            border-color: var(--brand-light);
+            background: var(--bg-card-hover);
+            box-shadow: inset 0 0 0 1px var(--brand-light);
+        }
+        .smart-ssh-card__name {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .smart-ssh-card__desc {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* ── STICKY SAVE BAR at bottom ────────────────────────────── */
+        .smart-savebar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--bg-container);
+            border-top: 1px solid var(--border);
+            padding: 14px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            z-index: 80;
+            box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
+        }
+        .smart-savebar__summary {
+            display: flex;
+            gap: 16px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            flex-wrap: wrap;
+        }
+        .smart-savebar__summary strong {
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+        .smart-savebar__group { display: flex; gap: 10px; align-items: center; }
+        .smart-savebar__btn {
+            appearance: none;
+            background: var(--brand-light);
+            border: 1px solid var(--brand-light);
+            color: var(--text-inverse);
+            padding: 10px 24px;
+            border-radius: var(--radius-xs);
+            font: inherit;
+            font-size: 12.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .smart-savebar__btn:hover {
+            background: var(--brand);
+            border-color: var(--brand);
+        }
+        .smart-savebar__btn--ghost {
+            background: transparent;
+            color: var(--text-primary);
+            border-color: var(--border);
+            font-weight: 600;
+        }
+        .smart-savebar__btn--ghost:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+
+        /* Toast */
+        .smart-toast {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%) translateY(10px);
+            background: var(--bg-elevated);
+            border: 1px solid var(--brand-light);
+            border-radius: var(--radius-sm);
+            padding: 12px 18px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-weight: 500;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 200;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            transition: opacity var(--motion-duration-base) var(--motion-easing-standard),
+                        transform var(--motion-duration-base) var(--motion-easing-spring);
+        }
+        .smart-toast[data-show="true"] {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        .smart-toast__dot {
+            display: inline-block;
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: var(--success);
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .smart-section, .smart-section__caret, .smart-toast { transition: none; }
+        }
+    </style>
+</head>
+<body>
+    <header class="preview-hypothesis">
+        <strong>Shape B</strong>
+        Smart single-page form — sections auto-expand based on type, smart defaults pre-fill everything, save never fails on missing data.
+        <button class="preview-theme-toggle" type="button" id="theme-toggle">Toggle theme</button>
+    </header>
+
+    <main class="smart-shell">
+        <!-- ── TOC RAIL ───────────────────────────────────────────── -->
+        <aside class="smart-toc" aria-label="Section index">
+            <div class="smart-toc__head">Sections</div>
+            <button class="smart-toc__item is-complete" type="button" data-jump="identity">
+                <span class="smart-toc__bullet"></span>
+                <span>Identity</span>
+            </button>
+            <button class="smart-toc__item is-complete" type="button" data-jump="network">
+                <span class="smart-toc__bullet"></span>
+                <span>Network &amp; access</span>
+            </button>
+            <button class="smart-toc__item is-complete" type="button" data-jump="ssh">
+                <span class="smart-toc__bullet"></span>
+                <span>SSH keys</span>
+            </button>
+            <button class="smart-toc__item is-complete" type="button" data-jump="c2">
+                <span class="smart-toc__bullet"></span>
+                <span>C2 frontend</span>
+            </button>
+            <button class="smart-toc__item is-dim" type="button" data-jump="goad">
+                <span class="smart-toc__bullet"></span>
+                <span>GOAD lab</span>
+            </button>
+            <button class="smart-toc__item is-complete" type="button" data-jump="attackbox">
+                <span class="smart-toc__bullet"></span>
+                <span>Attack box</span>
+            </button>
+            <button class="smart-toc__item is-complete" type="button" data-jump="compute">
+                <span class="smart-toc__bullet"></span>
+                <span>Compute &amp; cost</span>
+            </button>
+        </aside>
+
+        <!-- ── MAIN ────────────────────────────────────────────────── -->
+        <section class="smart-main">
+            <div class="smart-eyebrow">
+                <span class="smart-eyebrow__label">Configure new deployment</span>
+                <span class="smart-eyebrow__defaults">Smart defaults · all required fields pre-filled</span>
+            </div>
+
+            <header class="smart-hero">
+                <span class="smart-hero__caption">project</span>
+                <h1 class="smart-hero__title" id="hero-project">c2_adhoc_dev_harriss_macbook_pro</h1>
+                <p class="smart-hero__desc">Pick a deployment type below — sections that type needs will auto-expand. Everything else collapses out of the way. Save is always one click away.</p>
+            </header>
+
+            <!-- ===== IDENTITY ===== -->
+            <section class="smart-section is-open is-required" data-section="identity">
+                <button class="smart-section__head" type="button">
+                    <span class="smart-section__caret" aria-hidden="true"></span>
+                    <span class="smart-section__title-row">
+                        <span class="smart-section__title">Identity &amp; type</span>
+                        <span class="smart-section__sub">Deployment type · project name · environment · region</span>
+                    </span>
+                    <span class="smart-section__badge smart-section__badge--complete">Complete</span>
+                </button>
+                <div class="smart-section__body">
+                    <div class="smart-section__body-inner">
+                        <div class="smart-field">
+                            <span class="smart-field__label">
+                                <span>Deployment type <span class="smart-field__required">*</span></span>
+                            </span>
+                            <div class="smart-types" id="type-tabs" role="tablist" aria-label="Deployment type">
+                                <button class="smart-types__btn is-active" type="button" data-type="c2-adhoc"  data-family="c2">c2-adhoc</button>
+                                <button class="smart-types__btn" type="button" data-type="c2-purple" data-family="c2">c2-purple</button>
+                                <button class="smart-types__btn" type="button" data-type="c2-full"   data-family="c2">c2-full</button>
+                                <button class="smart-types__btn" type="button" data-type="goad-mini"  data-family="goad">goad-mini</button>
+                                <button class="smart-types__btn" type="button" data-type="goad-light" data-family="goad">goad-light</button>
+                                <button class="smart-types__btn" type="button" data-type="goad-sccm"  data-family="goad">goad-sccm</button>
+                                <button class="smart-types__btn" type="button" data-type="goad-full"  data-family="goad">goad-full</button>
+                                <button class="smart-types__btn" type="button" data-type="goad-nha"   data-family="goad">goad-nha</button>
+                                <button class="smart-types__btn" type="button" data-type="combined-adhoc-mini"  data-family="combined">combined-adhoc-mini</button>
+                                <button class="smart-types__btn" type="button" data-type="combined-adhoc-light" data-family="combined">combined-adhoc-light</button>
+                                <button class="smart-types__btn" type="button" data-type="combined-full-full"   data-family="combined">combined-full-full</button>
+                            </div>
+                            <span class="smart-field__hint">Picking a type auto-expands the sections it needs.</span>
+                        </div>
+
+                        <div class="smart-row">
+                            <div class="smart-field">
+                                <span class="smart-field__label">
+                                    <span>Project name <span class="smart-field__required">*</span></span>
+                                    <span class="smart-field__defaulted">Auto</span>
+                                </span>
+                                <input class="smart-input" type="text" id="project-name" value="c2_adhoc_dev_harriss_macbook_pro">
+                                <span class="smart-field__hint">Derived from {type}_{env}_{machine}. Override only if you need a custom suffix.</span>
+                            </div>
+                            <div class="smart-field">
+                                <span class="smart-field__label"><span>Environment <span class="smart-field__required">*</span></span></span>
+                                <select class="smart-input" id="environment">
+                                    <option value="dev" selected>dev</option>
+                                    <option value="staging">staging</option>
+                                    <option value="prod">prod</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="smart-field">
+                            <span class="smart-field__label"><span>AWS region <span class="smart-field__required">*</span></span></span>
+                            <select class="smart-input" id="aws-region">
+                                <option value="eu-central-1" selected>eu-central-1 · Frankfurt</option>
+                                <option value="us-east-1">us-east-1 · N. Virginia</option>
+                                <option value="us-west-2">us-west-2 · Oregon</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== NETWORK ===== -->
+            <section class="smart-section is-open is-required" data-section="network">
+                <button class="smart-section__head" type="button">
+                    <span class="smart-section__caret" aria-hidden="true"></span>
+                    <span class="smart-section__title-row">
+                        <span class="smart-section__title">Network &amp; access</span>
+                        <span class="smart-section__sub">Who is allowed to reach this deployment</span>
+                    </span>
+                    <span class="smart-section__badge smart-section__badge--complete">Complete</span>
+                </button>
+                <div class="smart-section__body">
+                    <div class="smart-section__body-inner">
+                        <div class="smart-field">
+                            <span class="smart-field__label">
+                                <span>Management CIDR blocks <span class="smart-field__required">*</span></span>
+                                <span class="smart-field__defaulted">From IP lookup</span>
+                            </span>
+                            <input class="smart-input" type="text" id="management-cidr" value="82.35.149.127/32">
+                            <span class="smart-field__hint">Pre-filled from your current public IP. Add more CIDRs comma-separated.</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== SSH KEYS ===== -->
+            <section class="smart-section is-open is-required" data-section="ssh">
+                <button class="smart-section__head" type="button">
+                    <span class="smart-section__caret" aria-hidden="true"></span>
+                    <span class="smart-section__title-row">
+                        <span class="smart-section__title">SSH access</span>
+                        <span class="smart-section__sub">First-class decision · default = auto-generate</span>
+                    </span>
+                    <span class="smart-section__badge smart-section__badge--complete">Complete</span>
+                </button>
+                <div class="smart-section__body">
+                    <div class="smart-section__body-inner">
+                        <div class="smart-field">
+                            <span class="smart-field__label"><span>SSH key source <span class="smart-field__required">*</span></span></span>
+                            <div class="smart-ssh-grid" id="ssh-grid">
+                                <button class="smart-ssh-card is-active" type="button" data-ssh="autogen">
+                                    <span class="smart-ssh-card__name">Auto-generate</span>
+                                    <span class="smart-ssh-card__desc">Fresh ed25519. Saved to ~/.ssh/</span>
+                                </button>
+                                <button class="smart-ssh-card" type="button" data-ssh="upload">
+                                    <span class="smart-ssh-card__name">Upload existing</span>
+                                    <span class="smart-ssh-card__desc">Paste public key from disk</span>
+                                </button>
+                                <button class="smart-ssh-card" type="button" data-ssh="aws">
+                                    <span class="smart-ssh-card__name">Existing AWS pair</span>
+                                    <span class="smart-ssh-card__desc">Reference by name in region</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="smart-field">
+                            <span class="smart-field__label"><span>Key pair name (AWS) <span class="smart-field__required">*</span></span></span>
+                            <input class="smart-input" type="text" id="keypair-name" value="red-team-keypair">
+                            <span class="smart-field__hint">Becomes the EC2 keypair name in this region.</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== C2 FRONTEND ===== -->
+            <section class="smart-section is-open is-required" data-section="c2">
+                <button class="smart-section__head" type="button">
+                    <span class="smart-section__caret" aria-hidden="true"></span>
+                    <span class="smart-section__title-row">
+                        <span class="smart-section__title">C2 frontend</span>
+                        <span class="smart-section__sub">Domain · SSL · admin email · listener profile</span>
+                    </span>
+                    <span class="smart-section__badge smart-section__badge--complete">Complete</span>
+                </button>
+                <div class="smart-section__body">
+                    <div class="smart-section__body-inner">
+                        <div class="smart-field">
+                            <span class="smart-field__label">
+                                <span>Primary domain name <span class="smart-field__required">*</span></span>
+                            </span>
+                            <input class="smart-input" type="text" id="primary-domain" value="evil-corp-acme.click">
+                            <span class="smart-field__hint">Must be registered in Route 53 already.</span>
+                        </div>
+                        <div class="smart-row">
+                            <div class="smart-field">
+                                <span class="smart-field__label"><span>SSL provider</span></span>
+                                <select class="smart-input" id="ssl-provider">
+                                    <option value="letsencrypt" selected>Let's Encrypt</option>
+                                    <option value="acm">ACM</option>
+                                    <option value="off">Off</option>
+                                </select>
+                            </div>
+                            <div class="smart-field">
+                                <span class="smart-field__label">
+                                    <span>Admin email <span class="smart-field__required">*</span></span>
+                                </span>
+                                <input class="smart-input" type="email" id="admin-email" value="ops-burner@protonmail.com">
+                                <span class="smart-field__hint">Burner address for Let's Encrypt.</span>
+                            </div>
+                        </div>
+                        <div class="smart-row">
+                            <div class="smart-field">
+                                <span class="smart-field__label"><span>Backup domains</span></span>
+                                <input class="smart-input" type="text" id="backup-domains" value="evil-corp-acme.shop, evil-corp-acme.bar">
+                            </div>
+                            <div class="smart-field">
+                                <span class="smart-field__label"><span>Domain fronting</span></span>
+                                <select class="smart-input" id="domain-fronting">
+                                    <option value="off" selected>Off</option>
+                                    <option value="on">On (CloudFront)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="smart-row">
+                            <div class="smart-field">
+                                <span class="smart-field__label"><span>Malleable C2 profile</span></span>
+                                <select class="smart-input" id="malleable-profile">
+                                    <option value="amazon" selected>amazon.profile</option>
+                                    <option value="jquery">jquery.profile</option>
+                                </select>
+                            </div>
+                            <div class="smart-field">
+                                <span class="smart-field__label">
+                                    <span>CS team server password</span>
+                                    <span class="smart-field__defaulted">Auto · Secrets</span>
+                                </span>
+                                <input class="smart-input" type="text" id="cs-password" value="auto-generated-on-deploy">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== GOAD LAB ===== -->
+            <section class="smart-section is-dimmed" data-section="goad">
+                <button class="smart-section__head" type="button">
+                    <span class="smart-section__caret" aria-hidden="true"></span>
+                    <span class="smart-section__title-row">
+                        <span class="smart-section__title">GOAD lab</span>
+                        <span class="smart-section__sub">Vulnerable AD lab subnet — only when type includes GOAD</span>
+                    </span>
+                    <span class="smart-section__badge">Not needed</span>
+                </button>
+                <div class="smart-section__body">
+                    <div class="smart-section__body-inner">
+                        <div class="smart-field">
+                            <span class="smart-field__label">
+                                <span>GOAD VPC CIDR</span>
+                                <span class="smart-field__defaulted">192.168.56.0/24</span>
+                            </span>
+                            <input class="smart-input" type="text" id="goad-vpc-cidr" value="192.168.56.0/24">
+                            <span class="smart-field__hint">Derived IP prefix: 192.168.56. VPC peered with C2 in combined deployments.</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== ATTACK BOX ===== -->
+            <section class="smart-section is-open" data-section="attackbox">
+                <button class="smart-section__head" type="button">
+                    <span class="smart-section__caret" aria-hidden="true"></span>
+                    <span class="smart-section__title-row">
+                        <span class="smart-section__title">Attack box</span>
+                        <span class="smart-section__sub">Windows VM with CS Client preinstalled</span>
+                    </span>
+                    <span class="smart-section__badge smart-section__badge--complete">Complete</span>
+                </button>
+                <div class="smart-section__body">
+                    <div class="smart-section__body-inner">
+                        <div class="smart-row">
+                            <div class="smart-field">
+                                <span class="smart-field__label"><span>Instance type</span></span>
+                                <select class="smart-input" id="attack-box-type">
+                                    <option value="t3.large" selected>t3.large</option>
+                                    <option value="t3.xlarge">t3.xlarge</option>
+                                </select>
+                            </div>
+                            <div class="smart-field">
+                                <span class="smart-field__label"><span>Disk size (GB)</span></span>
+                                <input class="smart-input" type="number" id="attack-box-disk" value="100" min="50" max="500">
+                            </div>
+                        </div>
+                        <div class="smart-field">
+                            <span class="smart-field__label">
+                                <span>Admin password</span>
+                                <span class="smart-field__defaulted">Auto · Secrets</span>
+                            </span>
+                            <input class="smart-input" type="text" id="attack-box-password" value="auto-generated">
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== COMPUTE ===== -->
+            <section class="smart-section" data-section="compute">
+                <button class="smart-section__head" type="button">
+                    <span class="smart-section__caret" aria-hidden="true"></span>
+                    <span class="smart-section__title-row">
+                        <span class="smart-section__title">Compute &amp; cost</span>
+                        <span class="smart-section__sub">Server count · instance types · estimated cost</span>
+                    </span>
+                    <span class="smart-section__badge smart-section__badge--complete">~$340/mo</span>
+                </button>
+                <div class="smart-section__body">
+                    <div class="smart-section__body-inner">
+                        <div class="smart-row">
+                            <div class="smart-field">
+                                <span class="smart-field__label"><span>C2 server count</span></span>
+                                <input class="smart-input" type="number" id="c2-server-count" value="1" min="1" max="5">
+                            </div>
+                            <div class="smart-field">
+                                <span class="smart-field__label"><span>C2 instance type</span></span>
+                                <select class="smart-input" id="c2-instance-type">
+                                    <option value="t3.medium" selected>t3.medium</option>
+                                    <option value="t3.large">t3.large</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="smart-field">
+                            <span class="smart-field__label"><span>Redirector instance type</span></span>
+                            <select class="smart-input" id="redirector-type">
+                                <option value="t3.small" selected>t3.small</option>
+                                <option value="t3.medium">t3.medium</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </section>
+    </main>
+
+    <!-- ── STICKY SAVE BAR ────────────────────────────────────── -->
+    <footer class="smart-savebar" role="contentinfo">
+        <div class="smart-savebar__summary">
+            <span>TYPE <strong id="sb-type">c2-adhoc</strong></span>
+            <span>SECTIONS <strong id="sb-sections">6 / 7</strong></span>
+            <span>READY <strong style="color: var(--success-text);" id="sb-ready">YES</strong></span>
+        </div>
+        <div class="smart-savebar__group">
+            <button class="smart-savebar__btn smart-savebar__btn--ghost" type="button" id="reset-btn">Reset defaults</button>
+            <button class="smart-savebar__btn" type="button" id="save-btn">Save configuration</button>
+        </div>
+    </footer>
+
+    <div class="smart-toast" id="save-toast" role="status" aria-live="polite">
+        <span class="smart-toast__dot"></span>Configuration saved — defaults filled every required field.
+    </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        const $ = (s, r) => (r || document).querySelector(s);
+        const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+        // Family → sections needed (everything else is dimmed)
+        const NEEDS = {
+            c2:       ['identity', 'network', 'ssh', 'c2', 'attackbox', 'compute'],
+            goad:     ['identity', 'network', 'ssh', 'goad', 'attackbox', 'compute'],
+            combined: ['identity', 'network', 'ssh', 'c2', 'goad', 'attackbox', 'compute'],
+        };
+
+        const state = {
+            family: 'c2',
+            type:   'c2-adhoc',
+            ssh:    'autogen',
+        };
+
+        // ── Section collapse ─────────────────────────────────────
+        $$('.smart-section__head').forEach(h => {
+            h.addEventListener('click', () => {
+                const sec = h.closest('.smart-section');
+                sec.classList.toggle('is-open');
+            });
+        });
+
+        // ── TOC jumps ────────────────────────────────────────────
+        $$('.smart-toc__item').forEach(item => {
+            item.addEventListener('click', () => {
+                const target = $('.smart-section[data-section="' + item.dataset.jump + '"]');
+                if (!target) return;
+                target.classList.add('is-open');
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+        });
+
+        // ── Type tab switching ───────────────────────────────────
+        $$('#type-tabs .smart-types__btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                $$('#type-tabs .smart-types__btn').forEach(b => b.classList.remove('is-active'));
+                btn.classList.add('is-active');
+                state.type   = btn.dataset.type;
+                state.family = btn.dataset.family;
+                $('#sb-type').textContent = state.type;
+                // Update auto-derived project name
+                $('#project-name').value = state.type.replace(/-/g, '_') + '_dev_harriss_macbook_pro';
+                $('#hero-project').textContent = $('#project-name').value;
+                applySectionVisibility();
+            });
+        });
+
+        // ── Section visibility based on family ───────────────────
+        function applySectionVisibility() {
+            const needed = NEEDS[state.family] || [];
+            const sections = $$('.smart-section');
+            let countNeeded = 0;
+            sections.forEach(s => {
+                const name = s.dataset.section;
+                if (needed.includes(name)) {
+                    s.classList.remove('is-dimmed');
+                    if (!s.classList.contains('is-open')) s.classList.add('is-open');
+                    countNeeded++;
+                    // Update badge
+                    const badge = s.querySelector('.smart-section__badge');
+                    if (badge && badge.textContent === 'Not needed') {
+                        badge.textContent = 'Complete';
+                        badge.classList.add('smart-section__badge--complete');
+                    }
+                } else {
+                    s.classList.add('is-dimmed');
+                    s.classList.remove('is-open');
+                    const badge = s.querySelector('.smart-section__badge');
+                    if (badge) {
+                        badge.textContent = 'Not needed';
+                        badge.classList.remove('smart-section__badge--complete');
+                    }
+                }
+            });
+            // Update TOC dim state
+            $$('.smart-toc__item').forEach(t => {
+                const name = t.dataset.jump;
+                t.classList.toggle('is-dim', !needed.includes(name));
+                t.classList.toggle('is-complete', needed.includes(name));
+            });
+            $('#sb-sections').textContent = countNeeded + ' / ' + countNeeded;
+        }
+
+        // ── SSH cards ────────────────────────────────────────────
+        $$('#ssh-grid .smart-ssh-card').forEach(c => {
+            c.addEventListener('click', () => {
+                $$('#ssh-grid .smart-ssh-card').forEach(x => x.classList.remove('is-active'));
+                c.classList.add('is-active');
+                state.ssh = c.dataset.ssh;
+            });
+        });
+
+        // ── Save ─────────────────────────────────────────────────
+        $('#save-btn').addEventListener('click', () => {
+            const t = $('#save-toast');
+            t.setAttribute('data-show', 'true');
+            window.setTimeout(() => t.setAttribute('data-show', 'false'), 3200);
+        });
+        $('#reset-btn').addEventListener('click', () => {
+            // Simple reset — re-apply defaults to a couple of fields
+            $('#management-cidr').value = '82.35.149.127/32';
+            $('#admin-email').value = 'ops-burner@protonmail.com';
+            $('#keypair-name').value = 'red-team-keypair';
+        });
+
+        // Theme toggle
+        $('#theme-toggle').addEventListener('click', () => {
+            const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', cur === 'light' ? 'dark' : 'light');
+        });
+
+        applySectionVisibility();
+    })();
+    </script>
+</body>
+</html>

@@ -195,17 +195,34 @@ function _initFromUrl() {
     // empty we fall back to the query suffix inside the hash (D6.1).
     const searchParams = new URLSearchParams(window.location.search);
     let dep = searchParams.get('dep');
+    // 2026-05-19 (deployments nav restructure) — prefer the new `?project=`
+    // param. Falls back to legacy `?dep=` for bookmarked deep-links.
+    let project = searchParams.get('project');
+    let isDraft = searchParams.get('draft') === '1';
     let isNewMode = searchParams.get('new') === '1';
-    if (!dep || !isNewMode) {
+    if (!dep || !project || !isNewMode || !isDraft) {
         const rawHash = (window.location.hash || '').replace('#', '');
         const hashQuery = rawHash.split('?')[1] || '';
         if (hashQuery) {
             const hashParams = new URLSearchParams(hashQuery);
             if (!dep) dep = hashParams.get('dep');
+            if (!project) project = hashParams.get('project');
             if (!isNewMode && hashParams.get('new') === '1') isNewMode = true;
+            if (!isDraft && hashParams.get('draft') === '1') isDraft = true;
         }
     }
-    if (dep && APP.activeDeployment) {
+    // Resolution order for activeDeployment:
+    //   1. ?draft=1 → DRAFT_SENTINEL (in-memory only, not persisted)
+    //   2. ?project=__all__ → ALL_SENTINEL
+    //   3. ?project=<name> → that name
+    //   4. ?dep=<name> (legacy) → that name
+    // Draft mode also implies new-mode for the wizard mount.
+    if (isDraft && APP.activeDeployment) {
+        APP.activeDeployment.set(APP.activeDeployment.DRAFT_SENTINEL);
+        isNewMode = true;
+    } else if (project && APP.activeDeployment) {
+        APP.activeDeployment.set(project);
+    } else if (dep && APP.activeDeployment) {
         APP.activeDeployment.set(dep);
     }
     // 2026-05-19 flow-stitching — Stash the new-mode flag so it survives
@@ -232,6 +249,7 @@ function _initFromUrl() {
 function _updateUrlState(parent, subPill) {
     const hashBase = subPill ? `${parent}/${subPill}` : parent;
     const dep = APP.activeDeployment && APP.activeDeployment.current;
+    const isDraft = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
     // 2026-05-19 flow-stitching — preserve `?new=1` across URL rewrites so
     // the Configure wizard mode survives `navigateTo`-driven URL updates.
     // We only carry it forward when (a) the operator is on Configure AND
@@ -243,17 +261,38 @@ function _updateUrlState(parent, subPill) {
         const inHash = hashQuery && new URLSearchParams(hashQuery).get('new') === '1';
         preservedNew = (inSearch || inHash) && parent === 'deployments-tab' && subPill === 'configure';
     } catch (_) { /* noop */ }
+    // 2026-05-19 (deployments nav restructure) — new URL grammar:
+    //   #deployments-tab/manage?project=<name>     — existing deployment
+    //   #deployments-tab/configure?draft=1          — draft (in-progress new)
+    //   #deployments-tab/manage?project=__all__     — All deployments view
+    //   #deployments-tab/manage                     — empty
+    //
+    // Legacy `?dep=` is kept as a write-through alias when not in draft/all
+    // mode so old bookmarks (and the prior global subscriber that wrote it
+    // for non-Deployments tabs) still resolve cleanly.
     const params = [];
-    if (dep) params.push(`dep=${encodeURIComponent(dep)}`);
+    const isDeploymentsTab = parent === 'deployments-tab';
+    if (isDeploymentsTab) {
+        if (isDraft) {
+            params.push('draft=1');
+        } else if (dep) {
+            params.push(`project=${encodeURIComponent(dep)}`);
+        }
+    } else if (dep && !isDraft) {
+        params.push(`dep=${encodeURIComponent(dep)}`);
+    }
     if (preservedNew) params.push('new=1');
     const queryPrefix = params.length ? `?${params.join('&')}` : '';
+    // 2026-05-19 — preserve `#deployments-tab/<subpill>` instead of clobbering
+    // with bare `#deployments` when subPill is null. The `hashBase` already
+    // emits `parent` alone in that case, which is the documented format.
     const fullUrl = `${window.location.pathname}${queryPrefix}#${hashBase}`;
     try {
         history.replaceState(null, '', fullUrl);
     } catch (e) {
         // Some sandboxed contexts (file://, opaque origins) reject replaceState.
         // Fall back to the legacy location.hash assignment — operators in those
-        // environments lose the ?dep= part but the tab/sub-pill still survives.
+        // environments lose the query string but the tab/sub-pill still survives.
         window.location.hash = hashBase;
     }
 }
@@ -613,13 +652,17 @@ const APP = {
         // (either explicitly via {parent, subPill} or via URL hash like
         // #deployments-tab/deploy), activate the matching pane. D3.6 also
         // activates sub-pills when navigating via legacy alias names.
-        // D3.5 — If entering 'deployments-tab' without a sub-pill (e.g.,
-        // direct click on the Deployments nav button), default to
-        // 'configure' so init hooks fire and a pane is always visible.
+        // 2026-05-19 (deployments nav restructure) — When entering
+        // 'deployments-tab' without a sub-pill, default to the
+        // mode-appropriate pill (manage for existing/all/empty, configure
+        // for draft) so the operator lands on a relevant surface.
         if (target.subPill && pageName === 'deployments-tab') {
             APP.setActiveSubPill(pageName, target.subPill);
         } else if (pageName === 'deployments-tab' && !target.subPill && !APP.currentSubPill) {
-            APP.setActiveSubPill('deployments-tab', 'configure');
+            const defaultPill = (APP._defaultSubPillForState && APP.activeDeployment)
+                ? APP._defaultSubPillForState(APP.activeDeployment)
+                : 'manage';
+            APP.setActiveSubPill('deployments-tab', defaultPill);
         }
 
         // D4.5 — Operations tab mirrors the Deployments default-sub-pill
@@ -1990,20 +2033,42 @@ location = <YOUR_STAGER_URI_X64> {
  */
 APP.activeDeployment = (function () {
     const STORAGE_KEY = 'activeDeployment';
+    // 2026-05-19 — sentinel value for "All deployments" fleet view. Set
+    // via APP.activeDeployment.set('__all__'); query via .isAll().
+    const ALL_SENTINEL = '__all__';
+    // 2026-05-19 (deployments nav restructure) — sentinel for the unsaved
+    // "Draft" project the operator is composing via "+ New Deployment".
+    // Draft state is IN-MEMORY only: _persist() clears the storage key when
+    // current is the draft sentinel so a page reload discards the draft.
+    // Visibility logic via APP.computeVisibleSubPills() reads .isDraft().
+    const DRAFT_SENTINEL = '__draft__';
     let _current = null;
     try {
-        _current = localStorage.getItem(STORAGE_KEY) || null;
+        const raw = localStorage.getItem(STORAGE_KEY) || null;
+        // Defensive: a stale `__draft__` left in storage by a prior session
+        // is meaningless (draft is in-memory) — discard on boot.
+        _current = raw === DRAFT_SENTINEL ? null : raw;
     } catch (e) { /* private-mode browsers — ignore */ }
     const _subscribers = new Set();
+    function _persist(name) {
+        try {
+            if (name && name !== DRAFT_SENTINEL) localStorage.setItem(STORAGE_KEY, name);
+            else localStorage.removeItem(STORAGE_KEY);
+        } catch (e) { /* private-mode — ignore */ }
+    }
     return {
+        ALL_SENTINEL,
+        DRAFT_SENTINEL,
         get current() { return _current; },
+        isAll() { return _current === ALL_SENTINEL; },
+        isDraft() { return _current === DRAFT_SENTINEL; },
+        isExisting() {
+            return !!_current && _current !== DRAFT_SENTINEL && _current !== ALL_SENTINEL;
+        },
         set(name) {
             if (_current === name) return;
             _current = name;
-            try {
-                if (name) localStorage.setItem(STORAGE_KEY, name);
-                else localStorage.removeItem(STORAGE_KEY);
-            } catch (e) { /* private-mode — ignore */ }
+            _persist(name);
             _subscribers.forEach(fn => {
                 try { fn(name); } catch (e) { console.error('activeDeployment subscriber error', e); }
             });
@@ -2016,6 +2081,227 @@ APP.activeDeployment = (function () {
         }
     };
 })();
+
+// ============================================================================
+// 2026-05-19 — Sub-pill visibility logic (deployments-tab nav restructure).
+//
+// Two distinct flows for the operator:
+//   - "Editing an existing deployment" (top-bar dropdown points at a real
+//     project): Configure + Deploy are NOT relevant — only Manage + Bolt-ons.
+//   - "Creating a new deployment" (clicked "+ New Deployment", draft sentinel
+//     pinned in the dropdown): Configure + Deploy are visible; Manage +
+//     Bolt-ons are hidden until the deployment exists.
+//   - "All deployments" sentinel: only Manage (fleet table) is visible.
+//   - Empty (nothing picked): Manage shows a "Pick or create" CTA.
+//
+// APP.subPills.applyFromState() reads APP.activeDeployment, computes which
+// pills should be visible, hides the rest via the `hidden` attribute on the
+// matching .subpill-nav__pill button, and auto-snaps the active pill to the
+// mode default if the previously active pill is no longer visible.
+//
+// Subscribers re-run applyFromState() on every dropdown change so the rail
+// + nav reflect the operator's flow in real time.
+// ============================================================================
+
+/**
+ * Compute which Deployments sub-pills the operator should see for the
+ * current activeDeployment state. Returns a tuple of pill names (in nav
+ * order). Empty array is treated as "nothing relevant" — only Manage
+ * survives so the empty-state CTA can be rendered.
+ *
+ * @param {object} active - APP.activeDeployment (must expose isDraft/isAll/isExisting)
+ * @returns {string[]} list of visible sub-pill names
+ */
+APP.computeVisibleSubPills = function (active) {
+    const isDraft    = active.isDraft();
+    const isAll      = active.isAll();
+    const isExisting = active.isExisting();
+    // Cleanup is an orphan-resource viewer that's relevant in every mode —
+    // it scans the whole account, not a specific deployment. Always append.
+    const base = isDraft
+        ? ['configure', 'deploy']
+        : isAll
+            ? ['manage']
+            : isExisting
+                ? ['manage', 'bolt-ons']
+                : ['manage']; // empty — Manage with "Pick or create" CTA
+    base.push('cleanup');
+    return base;
+};
+
+/**
+ * Mode → default sub-pill (snap-to fallback when previously active pill
+ * is no longer in the visible set after a dropdown change).
+ */
+APP._defaultSubPillForState = function (active) {
+    if (active.isDraft()) return 'configure';
+    if (active.isAll()) return 'manage';
+    if (active.isExisting()) return 'manage';
+    return 'manage';
+};
+
+APP.subPills = APP.subPills || {
+    /**
+     * Read APP.activeDeployment, hide out-of-mode pills, optionally snap
+     * the active pill to the mode default if it's no longer visible.
+     *
+     * @param {object} [opts]
+     * @param {boolean} [opts.snap=false] - Snap active pill to mode default
+     *   when the previously-active pill leaves the visible set. Only the
+     *   dropdown-change subscriber sets this to true; deliberate sub-pill
+     *   activations (rail clicks, URL navigation) leave the pane alone.
+     */
+    applyFromState(opts = {}) {
+        const snap = !!opts.snap;
+        const tabPage = document.querySelector('.tab-page[data-page="deployments-tab"]');
+        if (!tabPage) return;
+        const visible = APP.computeVisibleSubPills(APP.activeDeployment);
+        const visibleSet = new Set(visible);
+
+        // Toggle .is-out-of-mode + aria-hidden on each .subpill-nav__pill
+        // button. We avoid the `hidden` attribute itself because legacy
+        // tests + the existing keyboard nav still need to find these pills
+        // by selector — making them visually de-emphasised but still
+        // technically reachable preserves bookmarkability and keeps the
+        // rail consistent across modes.
+        const pills = tabPage.querySelectorAll('.subpill-nav__pill[data-subpill]');
+        pills.forEach((pill) => {
+            const name = pill.dataset.subpill;
+            const isVisible = visibleSet.has(name);
+            pill.classList.toggle('is-out-of-mode', !isVisible);
+            if (isVisible) {
+                pill.removeAttribute('aria-hidden');
+            } else {
+                pill.setAttribute('aria-hidden', 'true');
+            }
+        });
+
+        // Rail children stay reachable even when out of mode — clicking a
+        // hidden-in-nav pill (e.g., Configure while in existing-deployment
+        // mode) lands the operator on the pane and the per-pane content
+        // gates on its own. This preserves bookmarkability + lets the rail
+        // remain a static "what's here" list.
+
+        // Snap to mode default when explicitly requested (dropdown change).
+        const onDeployments = APP.currentPage === 'deployments-tab';
+        if (snap && onDeployments && APP.currentSubPill && !visibleSet.has(APP.currentSubPill)) {
+            const fallback = APP._defaultSubPillForState(APP.activeDeployment);
+            if (fallback && visibleSet.has(fallback)) {
+                APP.setActiveSubPill('deployments-tab', fallback);
+            }
+        }
+
+        // Toggle scoped/all-mode containers in each sub-pill pane so the
+        // per-pane rendering matches the dropdown state (Configure/Deploy
+        // hide their forms in All mode; Manage flips between scoped + fleet).
+        APP.subPills._applyPaneVisibility();
+    },
+
+    /**
+     * Programmatic sub-pill switch — wraps APP.setActiveSubPill with a
+     * tab activation guard so callers can switch pills without first
+     * navigating to deployments-tab.
+     */
+    setActive(name) {
+        if (APP.currentPage !== 'deployments-tab') {
+            APP.navigateTo('deployments-tab', name);
+            return;
+        }
+        APP.setActiveSubPill('deployments-tab', name);
+    },
+
+    /**
+     * Toggle the scoped-content vs all-mode-empty containers inside each
+     * Deployments sub-pill pane. Mirrors the Operations pane pattern
+     * (already in place at #beacons-scoped-content / #beacons-all-mode-empty).
+     */
+    _applyPaneVisibility() {
+        const isAll = APP.activeDeployment.isAll();
+        const isExisting = APP.activeDeployment.isExisting();
+        const isDraft = APP.activeDeployment.isDraft();
+
+        // Configure / Deploy / Bolt-ons → All-mode empty state when isAll.
+        ['configure', 'deploy', 'bolt-ons'].forEach((pill) => {
+            const empty = document.getElementById(`${pill}-all-mode-empty`);
+            const scoped = document.getElementById(`${pill}-scoped-content`);
+            if (!empty || !scoped) return;
+            if (isAll) {
+                APP.subPills._paintAllModeEmpty(pill, empty);
+                empty.hidden = false;
+                scoped.hidden = true;
+            } else {
+                empty.hidden = true;
+                scoped.hidden = false;
+            }
+        });
+
+        // Manage: fleet table vs scoped (per-project) view.
+        const manageAll = document.getElementById('manage-all-mode');
+        const manageScoped = document.getElementById('manage-scoped-content');
+        if (manageAll && manageScoped) {
+            if (isAll) {
+                manageAll.hidden = false;
+                manageScoped.hidden = true;
+                if (APP.manageFleet && typeof APP.manageFleet.render === 'function') {
+                    APP.manageFleet.render();
+                }
+            } else {
+                manageAll.hidden = true;
+                manageScoped.hidden = false;
+            }
+        }
+
+        // Cleanup: show the "Showing all labs" badge when isAll.
+        const cleanupBadge = document.getElementById('cleanup-all-badge');
+        if (cleanupBadge) cleanupBadge.hidden = !isAll;
+
+        // Draft mode: render the "Discard draft" affordance inside Configure.
+        const discard = document.getElementById('configure-discard-draft');
+        if (discard) discard.hidden = !isDraft;
+
+        // Manage empty-state CTA when nothing picked.
+        const manageEmpty = document.getElementById('manage-empty-cta');
+        if (manageEmpty) {
+            // Only visible when no project is picked AND we're not in All mode AND not draft.
+            manageEmpty.hidden = !!(isAll || isDraft || isExisting);
+        }
+    },
+
+    /**
+     * Idempotent paint for an All-mode empty-state container. Each pill
+     * gets a tailored title + body but shares the .empty-state--all-mode
+     * chrome (same as the Operations panes).
+     */
+    _paintAllModeEmpty(pill, host) {
+        // Don't repaint if already mounted (avoid clobbering operator state).
+        if (host.dataset.allMounted === pill) return;
+        host.dataset.allMounted = pill;
+        const copy = {
+            configure: {
+                title: 'Configure is per-deployment',
+                body: 'Pick a single deployment from the top-bar dropdown to edit its configuration, or start a new one.',
+            },
+            deploy: {
+                title: 'Deploy is per-deployment',
+                body: 'Pick a single deployment from the top-bar dropdown to plan, apply, or destroy it.',
+            },
+            'bolt-ons': {
+                title: 'Bolt-ons are per-deployment',
+                body: 'Pick a single deployment from the top-bar dropdown to manage its vulnerability bolt-ons.',
+            },
+        }[pill] || { title: 'Pick a deployment', body: 'Pick a single deployment from the top-bar dropdown.' };
+        host.innerHTML = `
+            <div class="empty-state empty-state--all-mode">
+              <h3 class="empty-state__title">${copy.title}</h3>
+              <p class="empty-state__body">${copy.body}</p>
+              <button type="button" class="btn btn-primary"
+                      data-action="open-global-deployment-dropdown"
+                      onclick="document.getElementById('global-deploy-trigger')?.click()">
+                Pick a deployment
+              </button>
+            </div>`;
+    },
+};
 
 // D3.1 — Sub-pill switcher for the merged Deployments tab.
 // On pill click: toggle .is-active class on all pills, toggle hidden
@@ -2093,6 +2379,21 @@ APP.setActiveSubPill = function (parentTabName, subPillName) {
 APP.activeDeployment.subscribe(() => {
     if (!APP._urlReady) return;
     _updateUrlState(APP.currentPage, APP.currentSubPill);
+});
+
+// 2026-05-19 (deployments nav restructure) — flow-aware sub-pill visibility.
+// Whenever the active deployment changes, recompute which pills the operator
+// can see (draft, existing, all, empty). Snap-to-default is deliberately
+// OFF: when an operator is on Configure and switches to All mode, the
+// Configure pane is now showing the All-mode empty state rather than being
+// yanked away — staying on the same sub-pill preserves intent. The active
+// pill is auto-snapped ONLY when the operator clicks "+ New Deployment"
+// (forced to Configure) or arrives via a flow-specific trigger.
+APP.activeDeployment.subscribe(() => {
+    if (APP.subPills && typeof APP.subPills.applyFromState === 'function') {
+        try { APP.subPills.applyFromState(); }
+        catch (e) { console.error('[subPills] applyFromState error', e); }
+    }
 });
 
 // ============================================================================
@@ -2391,6 +2692,13 @@ APP._runSubPillCleanup = function (parentTabName, subPillName) {
  */
 APP._runSubPillInit = function (parentTabName, subPillName) {
     if (parentTabName === 'deployments-tab') {
+        // 2026-05-19 (deployments nav restructure) — recompute sub-pill
+        // visibility every time a sub-pill is activated so the rail + nav
+        // chrome reflects the current activeDeployment state before the
+        // pane-specific init runs.
+        if (APP.subPills && typeof APP.subPills.applyFromState === 'function') {
+            try { APP.subPills.applyFromState(); } catch (_) { /* noop */ }
+        }
         if (subPillName === 'configure') {
             // 2026-05-19 flow-stitching — Configure has TWO modes.
             // If `?new=1` is in the URL (either query or hash-query) OR the
@@ -2454,15 +2762,40 @@ APP._runSubPillInit = function (parentTabName, subPillName) {
         // override semantics. Idempotent — first call wins, subsequent calls
         // are no-ops (guarded by APP._operationsSelectorSubscriptionsReady).
         APP._setupOperationsSelectorSubscriptions();
+        // 2026-05-19 — Fix dropdown-respect bug. On FIRST activation, the
+        // per-pane <select> options are populated asynchronously (BEACON.init,
+        // TERMINAL.init, loadToolsPage all fetch /api/deploy/active before
+        // appending option elements). The subscriber registered in
+        // _setupOperationsSelectorSubscriptions only syncs on subsequent
+        // global changes — so without this helper, the per-pane dropdown
+        // stays on its default value on first render even though the global
+        // selector has already been set. _syncSubPillSelectorToActive runs
+        // tryOnce() synchronously, then polls every 100ms for ~1.5s until
+        // the dropdown is populated and the active deployment can be matched.
+        APP._syncSubPillSelectorToActive(subPillName);
         if (subPillName === 'beacons') {
-            if (typeof BEACON !== 'undefined' && BEACON.init) BEACON.init();
+            if (APP.beacons?.init) APP.beacons.init();
+            if (!APP.activeDeployment.isAll()) {
+                if (typeof BEACON !== 'undefined' && BEACON.init) {
+                    Promise.resolve(BEACON.init())
+                        .then(() => APP._syncSubPillSelectorToActive('beacons'))
+                        .catch(() => APP._syncSubPillSelectorToActive('beacons'));
+                }
+            } else if (APP.beacons?.renderFleet) {
+                APP.beacons.renderFleet();
+            }
         } else if (subPillName === 'terminal') {
+            APP._syncSubPillSelectorToActive('terminal');
             if (typeof TERMINAL !== 'undefined' && TERMINAL.init) TERMINAL.init();
         } else if (subPillName === 'payloads') {
+            APP._syncSubPillSelectorToActive('payloads');
             if (typeof loadToolsPage === 'function') loadToolsPage();
             // Phase 3B.3 — initialize the V3 parameter spec-list + artifacts.
             if (APP.payloads && typeof APP.payloads.init === 'function') {
                 APP.payloads.init();
+            }
+            if (APP.activeDeployment.isAll() && APP.payloads?.renderFleet) {
+                APP.payloads.renderFleet();
             }
         }
     }
@@ -2501,8 +2834,148 @@ APP._closeAttachedModals = function () {
  * three subscribers are only registered once even if the Operations tab
  * is entered multiple times.
  */
+/**
+ * 2026-05-19 — Fix 1: per-pane selector first-render sync.
+ *
+ * The per-pane dropdowns inside Beacons / Terminal / Payloads are populated
+ * asynchronously by their respective init() functions (each fetches
+ * /api/deploy/active and appends <option> elements). On the FIRST activation
+ * of a sub-pill, the top-bar dropdown may already have a value selected —
+ * but the per-pane selector renders before its options exist, so the
+ * subscriber's value-set is a no-op (the option isn't there yet).
+ *
+ * This helper runs tryOnce() synchronously, then polls every 100ms for ~1.5s
+ * waiting for the dropdown to populate. It matches either:
+ *   - option.value === name (tools-project-select uses the project name)
+ *   - option.dataset.filename === name (beacon/terminal use the array index
+ *     as `value`, so loadDeployments() also tags the filename onto
+ *     `data-filename` for this helper to match on).
+ *
+ * No-op if the per-pane selector is locally overridden (sticky operator pick).
+ */
+APP._syncSubPillSelectorToActive = function (sub) {
+    const map = {
+        beacons:  'beacon-deployment-select',
+        terminal: 'terminal-deployment-select',
+        payloads: 'tools-project-select',
+    };
+    const selectId = map[sub];
+    if (!selectId) return;
+    const name = APP.activeDeployment.current;
+    if (!name || (APP.activeDeployment.isAll && APP.activeDeployment.isAll())) return;
+
+    const tryOnce = () => {
+        const el = document.getElementById(selectId);
+        if (!el || !el.options) return false;
+        if (el.dataset.localOverride === 'true') return true;  // operator override — stop
+        // Match by value OR by data-filename (beacon/terminal use index values).
+        const opts = Array.from(el.options);
+        const match = opts.find(o => o.value === name || o.dataset.filename === name);
+        if (!match) return false;
+        if (el.value === match.value) return true;  // already in sync
+        el.value = match.value;
+        // Fire change so the pane's existing handler runs.
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+    };
+
+    if (tryOnce()) return;
+    // Poll for up to ~1.5s (15 attempts at 100ms) while the dropdown populates.
+    let attempts = 0;
+    const handle = setInterval(() => {
+        attempts += 1;
+        if (tryOnce() || attempts >= 15) clearInterval(handle);
+    }, 100);
+};
+
 APP._setupOperationsSelectorSubscriptions = function () {
     if (APP._operationsSelectorSubscriptionsReady) return;
+    // 2026-05-19 — reactivity: when the top-bar dropdown changes WHILE an
+    // Operations sub-pill is open, the underlying namespace's init() must
+    // re-run so the pane re-loads against the new deployment. Gated on pane
+    // visibility — a hidden pane never re-runs init().
+    const paneVisible = (subPillId) => {
+        const pane = document.getElementById(`subpill-pane-${subPillId}`);
+        return pane && !pane.hidden;
+    };
+    // subscribe() immediately invokes the listener once with the current
+    // value — but on FIRST entry into Operations, the activation block
+    // itself is about to call BEACON.init / TERMINAL.init / loadToolsPage.
+    // Skip that one redundant fire so we don't race the activation block.
+    let _reactivityInitialFire = true;
+    APP.activeDeployment.subscribe(name => {
+        if (_reactivityInitialFire) { _reactivityInitialFire = false; return; }
+        if (!name) return;
+        const isAll = APP.activeDeployment.isAll && APP.activeDeployment.isAll();
+        // Beacons
+        if (paneVisible('beacons')) {
+            if (isAll) {
+                // All-mode: hide scoped content, render fleet table.
+                if (APP.beacons && typeof APP.beacons.renderFleet === 'function') {
+                    APP.beacons.renderFleet();
+                }
+            } else {
+                // Restore scoped content (hidden during All mode), kick BEACON.init.
+                const host = document.getElementById('beacons-all-mode-empty');
+                const scoped = document.getElementById('beacons-scoped-content');
+                if (host) host.hidden = true;
+                if (scoped) scoped.hidden = false;
+                if (typeof BEACON !== 'undefined' && typeof BEACON.init === 'function') {
+                    try { BEACON.init(); } catch (e) { console.error('[reactivity] BEACON.init', e); }
+                }
+            }
+        }
+        // Terminal
+        if (paneVisible('terminal')) {
+            const host = document.getElementById('terminal-all-mode-empty');
+            const scoped = document.getElementById('terminal-scoped-content');
+            if (isAll) {
+                if (host) { host.hidden = false; host.innerHTML = APP._terminalAllModeMarkup(); }
+                if (scoped) scoped.hidden = true;
+            } else {
+                if (host) host.hidden = true;
+                if (scoped) scoped.hidden = false;
+                if (typeof TERMINAL !== 'undefined' && typeof TERMINAL.init === 'function') {
+                    try { TERMINAL.init(); } catch (e) { console.error('[reactivity] TERMINAL.init', e); }
+                }
+            }
+        }
+        // Payloads
+        if (paneVisible('payloads')) {
+            if (isAll) {
+                if (APP.payloads && typeof APP.payloads.renderFleet === 'function') {
+                    APP.payloads.renderFleet();
+                }
+            } else {
+                const host = document.getElementById('payloads-all-mode-empty');
+                const scoped = document.getElementById('payloads-scoped-content');
+                if (host) host.hidden = true;
+                if (scoped) scoped.hidden = false;
+                if (typeof loadToolsPage === 'function') {
+                    try { loadToolsPage(); } catch (e) { console.error('[reactivity] loadToolsPage', e); }
+                }
+            }
+        }
+    });
+
+    // 2026-05-19 — Markup for the Terminal All-mode empty state. Returned
+    // as a function so subscribers can re-paint on every entry into All mode.
+    APP._terminalAllModeMarkup = function () {
+        return `
+            <div class="empty-state empty-state--all-mode">
+              <h3 class="empty-state__title">Terminal sessions are per-deployment</h3>
+              <p class="empty-state__body">
+                Pick a deployment from the top-bar dropdown to SSH into its
+                bastion or attack-box hosts.
+              </p>
+              <button type="button" class="btn btn-primary"
+                      data-action="open-global-deployment-dropdown"
+                      onclick="document.getElementById('global-deploy-trigger')?.click()">
+                Pick a deployment
+              </button>
+            </div>`;
+    };
+
     const selectors = [
         { id: 'beacon-deployment-select',   handler: () => (typeof BEACON   !== 'undefined' && BEACON.onDeploymentSelected)   && BEACON.onDeploymentSelected() },
         { id: 'terminal-deployment-select', handler: () => (typeof TERMINAL !== 'undefined' && TERMINAL.onDeploymentSelected) && TERMINAL.onDeploymentSelected() },
@@ -2526,10 +2999,15 @@ APP._setupOperationsSelectorSubscriptions = function () {
         });
         // Mark as locally overridden when the operator manually changes
         // it to something other than the current global.
+        // 2026-05-19 — when the dropdown <option value> is an index (beacons,
+        // terminal), compare the option's data-filename against the global
+        // deployment name. Otherwise we'd flag every sync as an override.
         el.addEventListener('change', () => {
             const userValue = el.value;
             const globalValue = APP.activeDeployment.current;
-            el.dataset.localOverride = (userValue && userValue !== globalValue) ? 'true' : 'false';
+            const selectedOpt = el.options[el.selectedIndex];
+            const userIdentity = (selectedOpt && selectedOpt.dataset.filename) || userValue;
+            el.dataset.localOverride = (userIdentity && userIdentity !== globalValue) ? 'true' : 'false';
         });
     });
     APP._operationsSelectorSubscriptionsReady = true;
@@ -2613,22 +3091,54 @@ function initGlobalHeader() {
     // Refresh cost whenever the active deployment changes.
     APP.activeDeployment.subscribe(_refreshGlobalCost);
 
-    // D3.8 — Wire the "+ New" button in the global header to start a fresh
-    // deployment flow. Paired with the prominent banner button at the top
-    // of the Configure sub-pane (#configure-new-deployment-btn).
+    // 2026-05-19 (deployments nav restructure) — Wire the "+ New" button.
+    // Sets the draft sentinel (so the dropdown pins "Draft (unnamed)" and
+    // the sub-pill visibility recomputes to {configure, deploy}), navigates
+    // to the Configure sub-pill, then mounts the inline wizard via
+    // APP.journey.open(). The journey opens against draft state — no
+    // existing deployment is referenced.
+    const startDraftFlow = (trigger) => {
+        // 1) Pin draft sentinel — drops the operator into "creating a new
+        //    one" mode. Subscribers (sub-pill visibility, URL) re-fire.
+        APP.activeDeployment.set(APP.activeDeployment.DRAFT_SENTINEL);
+        // 2) Activate Configure sub-pill within deployments-tab.
+        APP.subPills.setActive('configure');
+        // 3) Mount the wizard inline (Phase 2B journey behavior preserved).
+        if (APP.journey && typeof APP.journey.open === 'function') {
+            APP.journey.open({ trigger });
+        }
+    };
     const newBtn = document.getElementById('global-new-deployment-btn');
     if (newBtn && !newBtn.dataset.ghWired) {
-        // Phase 2B — wire to Hybrid takeover journey rather than legacy
-        // jump-to-Configure. APP.journey.open() mounts the wizard surface
-        // and dims the dashboard. Cancel/Escape/scrim-click restore.
-        newBtn.addEventListener('click', () => APP.journey.open({ trigger: newBtn }));
+        newBtn.addEventListener('click', () => startDraftFlow(newBtn));
         newBtn.dataset.ghWired = '1';
     }
     const bannerBtn = document.getElementById('configure-new-deployment-btn');
     if (bannerBtn && !bannerBtn.dataset.ghWired) {
-        bannerBtn.addEventListener('click', () => APP.journey.open({ trigger: bannerBtn }));
+        bannerBtn.addEventListener('click', () => startDraftFlow(bannerBtn));
         bannerBtn.dataset.ghWired = '1';
     }
+    // Manage empty-state "+ Start a new deployment" CTA — wired identically.
+    const manageEmptyCta = document.getElementById('manage-empty-cta-btn');
+    if (manageEmptyCta && !manageEmptyCta.dataset.ghWired) {
+        manageEmptyCta.addEventListener('click', () => startDraftFlow(manageEmptyCta));
+        manageEmptyCta.dataset.ghWired = '1';
+    }
+    // 2026-05-19 — "Discard draft" affordance inside Configure. Clears the
+    // draft sentinel which resets sub-pill visibility back to the empty
+    // default ({manage}), preserving the rest of the app state.
+    const discardBtn = document.getElementById('configure-discard-draft-btn');
+    if (discardBtn && !discardBtn.dataset.ghWired) {
+        discardBtn.addEventListener('click', () => {
+            if (APP.journey && typeof APP.journey.close === 'function') {
+                try { APP.journey.close({ confirmIfDirty: false }); } catch (_) { /* noop */ }
+            }
+            APP.activeDeployment.set(null);
+        });
+        discardBtn.dataset.ghWired = '1';
+    }
+    // Expose for tests + programmatic callers.
+    APP._startDraftFlow = startDraftFlow;
 
     // 2026-05-19 audit — the Configure banner hint must reflect the active
     // deployment so a journey handoff (or a top-bar selector change) makes
@@ -3718,6 +4228,78 @@ async function _refreshGlobalDeployments() {
 
     listbox.innerHTML = '';
 
+    // 2026-05-19 (deployments nav restructure) — when the operator is
+    // composing a NEW deployment (draft sentinel), pin a "Draft (unnamed)"
+    // entry at the top of the listbox. Disappears as soon as a different
+    // value is picked. The Draft option is rendered before the "All
+    // deployments" sentinel so the operator's in-progress work is visually
+    // the most prominent thing in the menu.
+    const isDraft = APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+    if (isDraft) {
+        const draftOption = document.createElement('li');
+        draftOption.className = 'global-header__combobox-option deploy-option--draft';
+        draftOption.setAttribute('role', 'option');
+        draftOption.id = 'global-deploy-option-draft';
+        draftOption.dataset.value = APP.activeDeployment.DRAFT_SENTINEL;
+        draftOption.setAttribute('aria-selected', 'true');
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'global-header__combobox-option-name';
+        nameSpan.textContent = 'Draft (unnamed)';
+        draftOption.appendChild(nameSpan);
+        const badge = document.createElement('span');
+        badge.className = 'global-header__combobox-option-status global-header__combobox-option-status--draft';
+        badge.textContent = 'new';
+        draftOption.appendChild(badge);
+        draftOption.addEventListener('mouseenter', () => _setActiveOption(draftOption));
+        draftOption.addEventListener('click', (e) => {
+            e.preventDefault();
+            _selectGlobalOption(draftOption);
+        });
+        listbox.appendChild(draftOption);
+        // Divider to separate draft from rest.
+        const dividerD = document.createElement('li');
+        dividerD.className = 'deploy-option-divider deploy-option-divider--draft';
+        dividerD.setAttribute('role', 'presentation');
+        dividerD.setAttribute('aria-hidden', 'true');
+        listbox.appendChild(dividerD);
+    }
+
+    // 2026-05-19 — pin the "All deployments" fleet-view sentinel entry at
+    // the top of the listbox (after Draft if present). Clicking it sets
+    // APP.activeDeployment.set('__all__') and the per-pill fleet views
+    // light up. The divider below separates the sentinel from real
+    // deployments. Hidden in zero-state since there's no fleet to show.
+    if (deployments.length > 0) {
+        const allOption = document.createElement('li');
+        allOption.className = 'global-header__combobox-option deploy-option--all';
+        allOption.setAttribute('role', 'option');
+        allOption.id = 'global-deploy-option-all';
+        allOption.dataset.value = APP.activeDeployment.ALL_SENTINEL;
+        const isAllSelected = APP.activeDeployment.isAll && APP.activeDeployment.isAll();
+        allOption.setAttribute('aria-selected', isAllSelected ? 'true' : 'false');
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'global-header__combobox-option-name';
+        nameSpan.textContent = 'All deployments';
+        allOption.appendChild(nameSpan);
+        const caption = document.createElement('span');
+        caption.className = 'global-header__combobox-option-status global-header__combobox-option-status--all';
+        caption.textContent = 'Fleet view';
+        allOption.appendChild(caption);
+        allOption.addEventListener('mouseenter', () => _setActiveOption(allOption));
+        allOption.addEventListener('click', (e) => {
+            e.preventDefault();
+            _selectGlobalOption(allOption);
+        });
+        listbox.appendChild(allOption);
+        // Divider — non-selectable presentational entry that separates the
+        // sentinel from real deployments.
+        const divider = document.createElement('li');
+        divider.className = 'deploy-option-divider';
+        divider.setAttribute('role', 'presentation');
+        divider.setAttribute('aria-hidden', 'true');
+        listbox.appendChild(divider);
+    }
+
     if (deployments.length === 0) {
         const empty = document.createElement('li');
         empty.className = 'global-header__combobox-empty';
@@ -3729,14 +4311,19 @@ async function _refreshGlobalDeployments() {
             APP.navigateTo('deployment');
         });
         listbox.appendChild(empty);
-        valueEl.textContent = 'No deployment';
-        APP.activeDeployment.set(null);
+        valueEl.textContent = isDraft ? 'Draft (unnamed)' : 'No deployment';
+        if (!isDraft) APP.activeDeployment.set(null);
         return;
     }
 
-    // Pick initial selection: persisted active OR first deployment.
+    // Pick initial selection: respect draft / all sentinels; otherwise use
+    // persisted active OR first deployment.
     let selected = APP.activeDeployment.current;
-    if (!selected || !deployments.find(d => d.project_name === selected)) {
+    if (isDraft) {
+        selected = APP.activeDeployment.DRAFT_SENTINEL;
+    } else if (selected === APP.activeDeployment.ALL_SENTINEL) {
+        // keep All
+    } else if (!selected || !deployments.find(d => d.project_name === selected)) {
         selected = deployments[0].project_name;
     }
 
@@ -3770,7 +4357,15 @@ async function _refreshGlobalDeployments() {
         listbox.appendChild(li);
     });
 
-    valueEl.textContent = selected;
+    // 2026-05-19 — Render a human-readable label for sentinels in the
+    // trigger button. Real project names render as-is.
+    if (selected === APP.activeDeployment.DRAFT_SENTINEL) {
+        valueEl.textContent = 'Draft (unnamed)';
+    } else if (selected === APP.activeDeployment.ALL_SENTINEL) {
+        valueEl.textContent = 'All deployments';
+    } else {
+        valueEl.textContent = selected;
+    }
     APP.activeDeployment.set(selected);
 }
 
@@ -3915,7 +4510,14 @@ function _selectGlobalOption(li) {
         o.setAttribute('aria-selected', o === li ? 'true' : 'false');
     });
     const value = li.dataset.value || '';
-    valueEl.textContent = value;
+    // 2026-05-19 — Human label for sentinels.
+    if (value === APP.activeDeployment.DRAFT_SENTINEL) {
+        valueEl.textContent = 'Draft (unnamed)';
+    } else if (value === APP.activeDeployment.ALL_SENTINEL) {
+        valueEl.textContent = 'All deployments';
+    } else {
+        valueEl.textContent = value;
+    }
     APP.activeDeployment.set(value);
 
     // Close listbox.
@@ -5228,6 +5830,9 @@ const BEACON = {
                 const tag = restApi ? ' [REST API]' : '';
                 const opt = document.createElement('option');
                 opt.value = i;
+                // 2026-05-19 — Fix 1: tag the filename so _syncSubPillSelectorToActive
+                // can match by data-filename (the dropdown value is the array index).
+                opt.dataset.filename = d._filename || '';
                 opt.textContent = `${name} (${type}) — ${date}${tag}`;
                 select.appendChild(opt);
             });
@@ -23702,6 +24307,9 @@ const TERMINAL = {
                 const type = d.deployment_type || 'unknown';
                 const opt = document.createElement('option');
                 opt.value = i;
+                // 2026-05-19 — Fix 1: tag the filename so _syncSubPillSelectorToActive
+                // can match by data-filename (the dropdown value is the array index).
+                opt.dataset.filename = d._filename || '';
                 opt.textContent = `${name} (${type})`;
                 select.appendChild(opt);
             });
@@ -26396,6 +27004,114 @@ APP.beacons = APP.beacons || {
             return BEACON.refreshCmdHistory();
         }
     },
+    init() {
+        // No-op stub — kept so the activation block can call APP.beacons.init()
+        // before BEACON.init() (BEACON owns the heavy connect-and-fetch path).
+    },
+    // 2026-05-19 — Aggregate fleet view rendered in the Beacons sub-pill
+    // when APP.activeDeployment.isAll() is true. Hits GET /api/beacon/all
+    // and paints a table with one row per beacon across every active C2.
+    async renderFleet() {
+        const host = document.getElementById('beacons-all-mode-empty');
+        const scoped = document.getElementById('beacons-scoped-content');
+        if (!host) return;
+        // Toggle scoped content off, all-mode container on.
+        if (scoped) scoped.hidden = true;
+        host.hidden = false;
+        host.innerHTML = `
+            <div class="ops-fleet ops-fleet--beacons" role="region" aria-label="Fleet beacons">
+              <div class="ops-fleet__head">
+                <h3 class="ops-fleet__title empty-state__title">Fleet beacons</h3>
+                <p class="ops-fleet__subtitle">Aggregated across every active C2 deployment. Click a row to focus.</p>
+              </div>
+              <div class="ops-fleet__error-banner" data-fleet-errors hidden></div>
+              <div class="ops-fleet__body">
+                <table class="ops-fleet__table" role="table">
+                  <thead><tr>
+                    <th>Beacon ID</th><th>Deployment</th><th>Operator</th>
+                    <th>Host</th><th>PID</th><th>Last checkin</th>
+                    <th><span class="t-sr">Status</span></th>
+                  </tr></thead>
+                  <tbody data-fleet-tbody></tbody>
+                </table>
+              </div>
+            </div>`;
+        const tbody = host.querySelector('[data-fleet-tbody]');
+        const errBanner = host.querySelector('[data-fleet-errors]');
+        const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        const fmtAgo = (ts) => {
+            if (!ts) return '—';
+            const sec = Math.floor(Date.now() / 1000) - Number(ts);
+            if (sec < 60) return `${sec}s ago`;
+            if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+            if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+            return `${Math.floor(sec / 86400)}d ago`;
+        };
+        try {
+            const resp = await fetch('/api/beacon/all');
+            const data = await resp.json();
+            const beacons = Array.isArray(data?.beacons) ? data.beacons : [];
+            const errors = Array.isArray(data?.errors) ? data.errors : [];
+            if (errors.length && errBanner) {
+                const names = errors.map(e => esc(e.deployment || '(unknown)')).join(', ');
+                errBanner.textContent = `Could not poll ${errors.length} deployment${errors.length === 1 ? '' : 's'}: ${names}.`;
+                errBanner.hidden = false;
+            }
+            if (!beacons.length) {
+                // Replace the entire fleet host with the empty-state CTA.
+                host.innerHTML = `
+                    <div class="empty-state empty-state--all-mode">
+                      <h3 class="empty-state__title">No active beacons across the fleet</h3>
+                      <p class="empty-state__body">
+                        Pick a c2-* or combined-* deployment from the top-bar dropdown
+                        to start one.
+                      </p>
+                      <button type="button" class="btn btn-primary"
+                              data-action="open-global-deployment-dropdown"
+                              onclick="document.getElementById('global-deploy-trigger')?.click()">
+                        Pick a deployment
+                      </button>
+                    </div>`;
+                return;
+            }
+            tbody.innerHTML = beacons.map(b => {
+                const dead = b.is_dead ? ' is-dead' : '';
+                return `<tr class="ops-fleet__row${dead}" role="link" tabindex="0"
+                            data-fleet-beacon-id="${esc(b.id)}"
+                            data-fleet-deployment="${esc(b.deployment)}">
+                          <td class="ops-fleet__cell ops-fleet__cell--mono">${esc(b.id)}</td>
+                          <td class="ops-fleet__cell">${esc(b.deployment)}</td>
+                          <td class="ops-fleet__cell">${esc(b.operator || '—')}</td>
+                          <td class="ops-fleet__cell">${esc(b.host || '—')}</td>
+                          <td class="ops-fleet__cell ops-fleet__cell--mono">${esc(b.pid != null ? b.pid : '—')}</td>
+                          <td class="ops-fleet__cell">${esc(fmtAgo(b.last))}</td>
+                          <td class="ops-fleet__cell">${b.is_dead ? '<span class="badge badge-warning">dead</span>' : '<span class="badge badge-success">live</span>'}</td>
+                        </tr>`;
+            }).join('');
+            // Wire row clicks + Enter key to focus the deployment.
+            tbody.querySelectorAll('.ops-fleet__row').forEach(row => {
+                const onActivate = () => {
+                    const dep = row.dataset.fleetDeployment;
+                    const bid = row.dataset.fleetBeaconId;
+                    if (!dep) return;
+                    APP.activeDeployment.set(dep);
+                    setTimeout(() => {
+                        try { APP.beacons.select(bid); } catch (e) { /* best-effort */ }
+                    }, 50);
+                };
+                row.addEventListener('click', onActivate);
+                row.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate(); }
+                });
+            });
+        } catch (e) {
+            console.error('[fleet] beacons/all fetch failed', e);
+            host.innerHTML = `
+                <div class="ops-fleet__error-banner" data-fleet-errors>
+                  Failed to load fleet beacons: ${esc(e.message || 'network error')}.
+                </div>`;
+        }
+    },
 };
 
 APP.terminal = APP.terminal || {
@@ -26551,6 +27267,100 @@ APP.payloads = APP.payloads || {
         if (!art) return;
         if (art.url) window.open(art.url, '_blank');
         else if (typeof APP.toast === 'function') APP.toast(`Artifact: ${art.name}`, 'info');
+    },
+
+    // 2026-05-19 — Aggregate read-only payload history rendered in the
+    // Payloads sub-pill when APP.activeDeployment.isAll() is true. Hits
+    // GET /api/tools/payloads/all and lists every generated artifact across
+    // every active deployment, newest first. Clicking the download link
+    // (when present) opens the artifact URL.
+    async renderFleet() {
+        const host = document.getElementById('payloads-all-mode-empty');
+        const scoped = document.getElementById('payloads-scoped-content');
+        if (!host) return;
+        if (scoped) scoped.hidden = true;
+        host.hidden = false;
+        const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        const fmtTime = (ts) => {
+            if (!ts) return '—';
+            try { return new Date(Number(ts) * 1000).toLocaleString(); }
+            catch (e) { return String(ts); }
+        };
+        host.innerHTML = `
+            <div class="ops-fleet ops-fleet--payloads" role="region" aria-label="Fleet payload history">
+              <div class="ops-fleet__banner">
+                <span class="ops-fleet__banner-text">
+                  Generating new payloads requires picking a specific deployment from the top-bar dropdown.
+                </span>
+              </div>
+              <div class="ops-fleet__head">
+                <h3 class="ops-fleet__title empty-state__title">Payload history</h3>
+                <p class="ops-fleet__subtitle">Read-only aggregate across every active deployment, newest first.</p>
+              </div>
+              <div class="ops-fleet__error-banner" data-fleet-errors hidden></div>
+              <div class="ops-fleet__body">
+                <table class="ops-fleet__table" role="table">
+                  <thead><tr>
+                    <th>Payload name</th><th>Type</th><th>Deployment</th>
+                    <th>Generated by</th><th>Generated at</th><th>Download</th>
+                  </tr></thead>
+                  <tbody data-fleet-tbody></tbody>
+                </table>
+              </div>
+            </div>`;
+        const tbody = host.querySelector('[data-fleet-tbody]');
+        const errBanner = host.querySelector('[data-fleet-errors]');
+        try {
+            const resp = await fetch('/api/tools/payloads/all');
+            const data = await resp.json();
+            const payloads = Array.isArray(data?.payloads) ? data.payloads.slice() : [];
+            const errors = Array.isArray(data?.errors) ? data.errors : [];
+            // Sort newest first (backend already does this, but defensive).
+            payloads.sort((a, b) => (Number(b.generated_at || 0) - Number(a.generated_at || 0)));
+            if (errors.length && errBanner) {
+                const names = errors.map(e => esc(e.deployment || '(unknown)')).join(', ');
+                errBanner.textContent = `Could not poll ${errors.length} deployment${errors.length === 1 ? '' : 's'}: ${names}.`;
+                errBanner.hidden = false;
+            }
+            if (!payloads.length) {
+                host.innerHTML = `
+                    <div class="empty-state empty-state--all-mode">
+                      <h3 class="empty-state__title">Payloads are per-deployment</h3>
+                      <p class="empty-state__body">
+                        No payloads generated yet across the fleet. Pick a deployment
+                        from the top-bar dropdown to stage and transfer one.
+                      </p>
+                      <button type="button" class="btn btn-primary"
+                              data-action="open-global-deployment-dropdown"
+                              onclick="document.getElementById('global-deploy-trigger')?.click()">
+                        Pick a deployment
+                      </button>
+                    </div>`;
+                return;
+            }
+            tbody.innerHTML = payloads.map(p => {
+                const url = p.download ? esc(p.download) : '';
+                const dl = url
+                    ? `<a class="ops-fleet__download" href="${url}" download="${esc(p.name)}">Download</a>`
+                    : '<span class="t-muted">—</span>';
+                return `<tr class="ops-fleet__row ops-fleet__row--readonly"
+                            data-fleet-deployment="${esc(p.deployment)}"
+                            data-fleet-transfer-id="${esc(p.transfer_id || '')}">
+                          <td class="ops-fleet__cell ops-fleet__cell--mono">${esc(p.name)}</td>
+                          <td class="ops-fleet__cell">${esc(p.type || '—')}</td>
+                          <td class="ops-fleet__cell">${esc(p.deployment)}</td>
+                          <td class="ops-fleet__cell">${esc(p.generated_by || '—')}</td>
+                          <td class="ops-fleet__cell">${esc(fmtTime(p.generated_at))}</td>
+                          <td class="ops-fleet__cell">${dl}</td>
+                        </tr>`;
+            }).join('');
+        } catch (e) {
+            console.error('[fleet] payloads/all fetch failed', e);
+            host.innerHTML = `
+                <div class="ops-fleet__error-banner" data-fleet-errors>
+                  Failed to load fleet payloads: ${esc(e.message || 'network error')}.
+                </div>`;
+        }
     },
 };
 
@@ -27718,7 +28528,16 @@ APP.manage.init = function () {
     if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function') {
         APP.activeDeployment.subscribe(() => {
             const pane = document.getElementById('subpill-pane-manage');
-            if (pane && !pane.hidden) APP.manage.render();
+            if (!pane || pane.hidden) return;
+            // 2026-05-19 (deployments nav restructure) — In All mode the
+            // scoped manage view is hidden; render the fleet table instead.
+            if (APP.activeDeployment.isAll && APP.activeDeployment.isAll()) {
+                if (APP.manageFleet && typeof APP.manageFleet.render === 'function') {
+                    APP.manageFleet.render();
+                }
+                return;
+            }
+            APP.manage.render();
         });
     }
 };
@@ -27735,6 +28554,385 @@ if (typeof window !== 'undefined') {
     }
 }
 // === end PHASE 3A Manage sub-pill =====================================
+
+// ============================================================================
+// 2026-05-19 (deployments nav restructure) — APP.manageFleet
+//
+// Renders the All-mode fleet table in the Manage sub-pill. Columns:
+//   Project (mono) · Type · Status · Resources · Cost · Operator · Last touched · →
+// Row click → APP.activeDeployment.set(projectName) which causes the
+// per-deployment Manage view to reappear via the existing subscriber wiring.
+// ============================================================================
+APP.manageFleet = APP.manageFleet || {
+    _esc(v) {
+        return String(v == null ? '' : v).replace(/[&<>"']/g, m => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]
+        ));
+    },
+    _fmtAgo(ts) {
+        if (!ts) return '—';
+        let sec;
+        if (typeof ts === 'number') {
+            sec = Math.floor(Date.now() / 1000) - Number(ts);
+        } else {
+            const t = Date.parse(ts);
+            if (Number.isNaN(t)) return '—';
+            sec = Math.floor((Date.now() - t) / 1000);
+        }
+        if (sec < 60) return `${sec}s ago`;
+        if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+        if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+        return `${Math.floor(sec / 86400)}d ago`;
+    },
+    async render() {
+        const host = document.getElementById('manage-all-mode');
+        if (!host) return;
+        const esc = this._esc;
+        const fmtAgo = this._fmtAgo;
+
+        host.innerHTML = `
+            <div class="manage-fleet" role="region" aria-label="Fleet deployments">
+              <div class="manage-fleet__head">
+                <h3 class="manage-fleet__title empty-state__title">All deployments</h3>
+                <p class="manage-fleet__subtitle">Click a row to focus a project. Use the top-bar selector to leave All mode.</p>
+              </div>
+              <div class="manage-fleet__error-banner" data-fleet-errors hidden></div>
+              <div class="manage-fleet__body">
+                <table class="manage-fleet__table" role="table">
+                  <thead><tr>
+                    <th>Project</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Resources</th>
+                    <th>Cost</th>
+                    <th>Operator</th>
+                    <th>Last touched</th>
+                    <th aria-label="Open"></th>
+                  </tr></thead>
+                  <tbody data-fleet-tbody>
+                    <tr><td colspan="8" class="manage-fleet__cell--empty">Loading deployments…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>`;
+        const tbody = host.querySelector('[data-fleet-tbody]');
+        const errBanner = host.querySelector('[data-fleet-errors]');
+
+        let deployments = [];
+        let costs = {};
+        try {
+            const [activeRes, costRes] = await Promise.all([
+                fetch('/api/deploy/active').then(r => r.json()).catch(() => ({})),
+                fetch('/api/costs/aggregate').then(r => r.json()).catch(() => ({})),
+            ]);
+            const raw = Array.isArray(activeRes)
+                ? activeRes
+                : (Array.isArray(activeRes?.deployments) ? activeRes.deployments
+                   : (Array.isArray(activeRes?.active_deployments) ? activeRes.active_deployments : []));
+            deployments = raw.map(d => ({
+                ...d,
+                project_name: d.project_name || d._filename || d.name || 'unknown',
+            }));
+            if (costRes && Array.isArray(costRes.deployments)) {
+                costRes.deployments.forEach(c => {
+                    if (c && c.project_name) costs[c.project_name] = c.monthly;
+                });
+            }
+        } catch (e) {
+            if (errBanner) {
+                errBanner.textContent = `Failed to load fleet: ${esc(e.message || 'network error')}`;
+                errBanner.hidden = false;
+            }
+        }
+
+        if (!deployments.length) {
+            tbody.innerHTML = `
+                <tr><td colspan="8" class="manage-fleet__cell--empty">
+                    No active deployments — click <strong>+ New</strong> in the top bar to start one.
+                </td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = deployments.map(d => {
+            const name = d.project_name;
+            const type = d.deployment_type || d.deployment_mode || '—';
+            const status = (d.status || 'unknown').toLowerCase();
+            const statusLabel = status === 'success' ? 'live' : status;
+            const resourceCount = Array.isArray(d.resources)
+                ? d.resources.length
+                : (typeof d.resource_count === 'number' ? d.resource_count : '—');
+            const cost = costs[name];
+            const costLabel = (cost != null && Number.isFinite(cost)) ? `$${cost.toFixed(0)}/mo` : '—';
+            const op = d.operator || d.owner || '—';
+            const lastTouched = d.last_touched || d.updated_at || d.timestamp || d.completed_at;
+            return `<tr class="manage-fleet__row" role="link" tabindex="0"
+                        data-fleet-project="${esc(name)}">
+                      <td class="manage-fleet__cell manage-fleet__cell--mono manage-fleet__name">${esc(name)}</td>
+                      <td class="manage-fleet__cell">${esc(type)}</td>
+                      <td class="manage-fleet__cell">
+                        <span class="spec-pill spec-pill--${status === 'success' ? 'live' : 'draft'}">
+                          <span class="spec-pill__dot" aria-hidden="true"></span>${esc(statusLabel)}
+                        </span>
+                      </td>
+                      <td class="manage-fleet__cell manage-fleet__cell--mono">${esc(resourceCount)}</td>
+                      <td class="manage-fleet__cell manage-fleet__cell--mono">${esc(costLabel)}</td>
+                      <td class="manage-fleet__cell">${esc(op)}</td>
+                      <td class="manage-fleet__cell">${esc(fmtAgo(lastTouched))}</td>
+                      <td class="manage-fleet__cell manage-fleet__arrow" aria-hidden="true">›</td>
+                    </tr>`;
+        }).join('');
+
+        tbody.querySelectorAll('.manage-fleet__row').forEach(row => {
+            const activate = () => {
+                const project = row.dataset.fleetProject;
+                if (!project) return;
+                APP.activeDeployment.set(project);
+            };
+            row.addEventListener('click', activate);
+            row.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); }
+            });
+        });
+    },
+};
+
+// ============================================================================
+// 2026-05-19 (deployments nav restructure) — APP.manageDrawer
+//
+// Right-side scrim takeover for "Edit configuration" of the active project.
+// Loads via GET /api/config (backend does not yet support ?project= filter
+// at the route level, so the drawer scopes by name in the form metadata;
+// the POST writes the active terraform.tfvars). Apply hands off to the
+// existing startDeployment() flow.
+// ============================================================================
+APP.manageDrawer = APP.manageDrawer || {
+    _project: null,
+    _config: null,
+    _wired: false,
+
+    _esc(v) {
+        return String(v == null ? '' : v).replace(/[&<>"']/g, m => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]
+        ));
+    },
+
+    _wire() {
+        if (this._wired) return;
+        this._wired = true;
+        const scrim = document.getElementById('manage-drawer-scrim');
+        const card = document.getElementById('manage-drawer-card');
+        if (!scrim || !card) return;
+        // Backdrop click on scrim (outside card) closes.
+        scrim.addEventListener('click', (e) => {
+            if (e.target === scrim) this.close();
+        });
+        // Any [data-drawer-dismiss] closes.
+        scrim.querySelectorAll('[data-drawer-dismiss]').forEach(btn => {
+            btn.addEventListener('click', () => this.close());
+        });
+        // Save commits the form values via POST /api/config.
+        scrim.querySelectorAll('[data-drawer-save]').forEach(btn => {
+            btn.addEventListener('click', () => this._save());
+        });
+        // Apply hands off to startDeployment().
+        scrim.querySelectorAll('[data-drawer-apply]').forEach(btn => {
+            btn.addEventListener('click', () => this._apply());
+        });
+        // ESC closes (only when drawer is open).
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            if (scrim.getAttribute('data-open') === 'true') {
+                e.preventDefault();
+                this.close();
+            }
+        });
+    },
+
+    async open(projectName) {
+        this._wire();
+        const scrim = document.getElementById('manage-drawer-scrim');
+        const card = document.getElementById('manage-drawer-card');
+        const body = document.getElementById('manage-drawer-body');
+        const titleProject = scrim?.querySelector('[data-drawer-project]');
+        if (!scrim || !card || !body) return;
+        this._project = projectName || (APP.activeDeployment.current || '');
+        if (titleProject) titleProject.textContent = this._project || '—';
+        body.innerHTML = '<p class="t-muted">Loading…</p>';
+        scrim.hidden = false;
+        card.hidden = false;
+        // Force reflow before flipping data-open so transitions play.
+        // eslint-disable-next-line no-unused-expressions
+        scrim.offsetHeight;
+        scrim.setAttribute('data-open', 'true');
+        card.setAttribute('data-open', 'true');
+
+        // GET /api/config?project=<name> — backend now honors the
+        // ?project= filter (sanitizes the name + resolves to
+        // configs/<name>.tfvars, falling back to the global tfvars).
+        try {
+            const url = `/api/config/?project=${encodeURIComponent(this._project)}`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+            if (!data || !data.success) throw new Error(data?.error || 'Failed to load config');
+            this._config = data.config || {};
+            this._renderForm(body, this._config);
+        } catch (e) {
+            body.innerHTML = `<p class="message error">Failed to load configuration: ${this._esc(e.message || e)}</p>`;
+        }
+    },
+
+    close() {
+        const scrim = document.getElementById('manage-drawer-scrim');
+        const card = document.getElementById('manage-drawer-card');
+        if (!scrim || !card) return;
+        scrim.setAttribute('data-open', 'false');
+        card.setAttribute('data-open', 'false');
+        setTimeout(() => {
+            if (scrim.getAttribute('data-open') !== 'true') {
+                scrim.hidden = true;
+                card.hidden = true;
+            }
+        }, 220);
+    },
+
+    _renderForm(body, config) {
+        const esc = this._esc;
+        const isSecret = (k) => /password|secret|key|token/i.test(k);
+        // Sort keys: identity first, then alphabetical.
+        const priority = ['project_name', 'deployment_type', 'environment', 'aws_region',
+                          'primary_domain', 'admin_email'];
+        const keys = Object.keys(config);
+        keys.sort((a, b) => {
+            const ai = priority.indexOf(a);
+            const bi = priority.indexOf(b);
+            if (ai !== -1 && bi !== -1) return ai - bi;
+            if (ai !== -1) return -1;
+            if (bi !== -1) return 1;
+            return a.localeCompare(b);
+        });
+        const rows = keys.map(k => {
+            const v = config[k];
+            const display = (v == null) ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+            const inputType = isSecret(k) ? 'password' : 'text';
+            const valueAttr = isSecret(k) ? '' : ` value="${esc(display)}"`;
+            const placeholder = isSecret(k) ? `placeholder="leave blank to keep existing"` : '';
+            return `<label class="manage-drawer__field">
+                      <span class="manage-drawer__field-label">${esc(k)}</span>
+                      <input type="${inputType}" class="form-input manage-drawer__input"
+                             data-config-key="${esc(k)}"${valueAttr} ${placeholder} autocomplete="off">
+                    </label>`;
+        }).join('');
+        body.innerHTML = `
+            <div class="manage-drawer__form" data-drawer-form>
+                <p class="t-muted manage-drawer__hint">
+                    Editing terraform.tfvars for <strong>${esc(this._project || '—')}</strong>.
+                    Save writes to disk; Apply runs <code>terraform apply</code>.
+                </p>
+                ${rows || '<p class="t-muted">No configuration loaded.</p>'}
+            </div>`;
+    },
+
+    _readForm() {
+        const body = document.getElementById('manage-drawer-body');
+        if (!body) return null;
+        const config = { ...(this._config || {}) };
+        body.querySelectorAll('[data-config-key]').forEach(inp => {
+            const k = inp.dataset.configKey;
+            const v = inp.value;
+            // For secret fields: if blank, preserve existing (don't clobber).
+            const isSecret = inp.type === 'password';
+            if (isSecret && v === '') return;
+            config[k] = v;
+        });
+        return config;
+    },
+
+    async _save() {
+        const body = document.getElementById('manage-drawer-body');
+        const config = this._readForm();
+        if (!config) return;
+        try {
+            const url = `/api/config/?project=${encodeURIComponent(this._project || '')}`;
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                const errs = (data && data.errors) ? '\n' + (Array.isArray(data.errors) ? data.errors.join('\n') : data.errors) : '';
+                throw new Error((data && data.error) ? data.error + errs : 'Save failed');
+            }
+            this._config = config;
+            if (typeof showSuccess === 'function') showSuccess('Configuration saved');
+            this.close();
+            // Refresh the Manage view since we wrote new config.
+            if (APP.manage && typeof APP.manage.render === 'function') {
+                APP.manage.render();
+            }
+        } catch (e) {
+            if (body) {
+                const banner = document.createElement('p');
+                banner.className = 'message error';
+                banner.textContent = `Save failed: ${e.message || e}`;
+                body.prepend(banner);
+            } else {
+                window.alert(`Save failed: ${e.message || e}`);
+            }
+        }
+    },
+
+    async _apply() {
+        // Save first, then hand off to startDeployment() which runs terraform.
+        const ok = await this._saveAndStay();
+        if (!ok) return;
+        this.close();
+        if (typeof startDeployment === 'function') {
+            try { startDeployment(); } catch (e) { console.error('startDeployment failed', e); }
+        } else {
+            // Fallback: navigate to Deploy sub-pill so the operator can apply manually.
+            APP.subPills.setActive('deploy');
+        }
+    },
+
+    async _saveAndStay() {
+        const config = this._readForm();
+        if (!config) return false;
+        try {
+            const url = `/api/config/?project=${encodeURIComponent(this._project || '')}`;
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                throw new Error((data && data.error) || 'Save failed');
+            }
+            this._config = config;
+            return true;
+        } catch (e) {
+            window.alert(`Save failed: ${e.message || e}`);
+            return false;
+        }
+    },
+};
+
+// Wire the manage-actions toolbar's "Edit configuration" entry (if rendered)
+// + a fallback: any element in Manage with data-action="edit-config" opens
+// the drawer. The actions strip's existing logs/health buttons remain.
+if (typeof document !== 'undefined') {
+    document.addEventListener('click', (e) => {
+        const trigger = e.target.closest('[data-action="manage-edit-config"]');
+        if (!trigger) return;
+        e.preventDefault();
+        const project = APP.activeDeployment.current;
+        if (!project || project === APP.activeDeployment.ALL_SENTINEL || project === APP.activeDeployment.DRAFT_SENTINEL) {
+            return;
+        }
+        APP.manageDrawer.open(project);
+    });
+}
 
 
 // ============================================================================

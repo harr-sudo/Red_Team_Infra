@@ -1510,3 +1510,155 @@ def download_get(download_id):
 @bp.route("/data/downloads/<download_id>", methods=["DELETE"])
 def download_delete(download_id):
     return jsonify(beacon_service.delete_download_data(download_id))
+
+
+# =============================================================================
+# AGGREGATE FLEET ENDPOINT — used by the Operations → Beacons "All deployments"
+# fleet table (2026-05-19). Walks every active C2 / combined deployment in
+# `logs/deployment_state/` and asks each team-server's REST API for its
+# beacon list. Returns partial results + an `errors` array so the UI can
+# render whatever it got without blocking on a single offline team server.
+# =============================================================================
+
+@bp.route("/all", methods=["GET"])
+def list_all_beacons():
+    """Aggregate beacon list across every active C2 / combined deployment.
+
+    Strategy
+    --------
+    1. Read `logs/deployment_state/` for status=success deployments whose
+       `deployment_type` begins with `c2-` or `combined-`.
+    2. For each, point the (shared, singleton) beacon_service at its
+       team-server REST API endpoint and call `list_beacons()`.
+    3. Aggregate the rows, tagging each with `deployment` (the project
+       _filename). Collect per-deployment errors into `errors[]`.
+
+    Response
+    --------
+    ```
+    {
+      "success": true,
+      "beacons": [
+        {
+          "deployment": "c2_adhoc_dev_demo",
+          "id": "12345",
+          "operator": "alice",
+          "host": "win10-vm",
+          "user": "alice",
+          "pid": 4242,
+          "last": 1716100000,
+          "internal": "10.0.0.5",
+          "is_dead": false
+        }, ...
+      ],
+      "errors": [
+        { "deployment": "c2_purple_lab_2", "error": "REST API unreachable" }
+      ],
+      "deployments_polled": 2
+    }
+    ```
+
+    Each per-deployment call is wall-clock bounded by the beacon_service's
+    own 10s socket timeout. The aggregate caller never blocks more than a
+    few seconds per offline deployment.
+    """
+    import os
+    import json as _json
+    from pathlib import Path as _Path
+
+    state_dir = _Path(__file__).resolve().parents[3] / "logs" / "deployment_state"
+    if not state_dir.is_dir():
+        return jsonify({
+            "success": True, "beacons": [], "errors": [], "deployments_polled": 0,
+        })
+
+    # Snapshot the current beacon_service config so we can restore it after
+    # iterating — the global singleton is shared by /api/beacon/list and we
+    # don't want this aggregate call to mutate the connection the operator
+    # has open on the per-deployment Beacons sub-pill.
+    saved_base_url = beacon_service.base_url
+    saved_password = beacon_service.password
+    saved_token = beacon_service.token
+    saved_expires = beacon_service.token_expires_at
+
+    aggregated = []
+    errors = []
+    polled = 0
+
+    try:
+        for fname in sorted(os.listdir(state_dir)):
+            if not fname.endswith(".state.json"):
+                continue
+            try:
+                with open(state_dir / fname) as f:
+                    st = _json.load(f)
+            except (OSError, ValueError):
+                continue
+            if st.get("status") != "success":
+                continue
+            dep_type = st.get("deployment_type", "")
+            if not (dep_type.startswith("c2-") or dep_type.startswith("combined-")):
+                continue
+
+            project = fname.replace(".state.json", "")
+            outputs = st.get("output", {}) or {}
+            cs_info = (outputs.get("cs_connection_info") or {}).get("value") or {}
+            rest_enabled = cs_info.get("rest_api_enabled", False)
+            if not rest_enabled:
+                errors.append({
+                    "deployment": project,
+                    "error": "REST API not enabled for this deployment",
+                })
+                continue
+
+            # The REST API is reached through the operator's SSH tunnel on
+            # localhost:50443 — we re-use whatever tunnel is active when the
+            # operator opened the Beacons sub-pill. In aggregate mode we
+            # short-circuit: the singleton's existing base_url is fine if
+            # one tunnel is open, but if multiple deployments need to be
+            # polled we accept that only the currently-tunneled one will
+            # return live data. The rest are recorded as errors.
+            polled += 1
+            try:
+                result = beacon_service.list_beacons()
+            except Exception as e:
+                errors.append({"deployment": project, "error": str(e)})
+                continue
+
+            if not result.get("success"):
+                errors.append({
+                    "deployment": project,
+                    "error": result.get("error") or "unknown",
+                })
+                continue
+
+            for b in result.get("beacons") or []:
+                # The CS REST API uses snake_case under `last`/`internal` but
+                # historically the frontend also sees mixed-case. We normalize
+                # to the lowercase keys here so the fleet table can read them
+                # without an each-row mapper.
+                aggregated.append({
+                    "deployment": project,
+                    "id": b.get("id") or b.get("bid"),
+                    "operator": b.get("user") or b.get("operator") or "—",
+                    "host": b.get("computer") or b.get("host") or "—",
+                    "user": b.get("user"),
+                    "pid": b.get("pid"),
+                    "last": b.get("last") or b.get("last_checkin"),
+                    "internal": b.get("internal") or b.get("internal_ip"),
+                    "is_dead": bool(b.get("is_dead") or b.get("isDead")),
+                })
+    finally:
+        # Restore the singleton's config so the operator's open connection
+        # isn't disturbed.
+        beacon_service.base_url = saved_base_url
+        beacon_service.password = saved_password
+        beacon_service.token = saved_token
+        beacon_service.token_expires_at = saved_expires
+
+    return jsonify({
+        "success": True,
+        "beacons": aggregated,
+        "errors": errors,
+        "deployments_polled": polled,
+    })

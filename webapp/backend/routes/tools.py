@@ -455,6 +455,125 @@ def start_transfer():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+# =============================================================================
+# AGGREGATE PAYLOAD HISTORY — used by Operations → Payloads "All deployments"
+# (2026-05-19). Walks every active deployment + every recorded transfer to
+# render a read-only history listing for the fleet. Generating new payloads
+# is gated to single-deployment mode in the UI.
+# =============================================================================
+
+@bp.route('/payloads/all', methods=['GET'])
+def list_all_payloads():
+    """Aggregate payload history across every active deployment.
+
+    Source of truth for the listing is the in-memory `transfer_states` dict
+    (transfers initiated since the dashboard last started) PLUS the local
+    staging directory contents (operator-uploaded artifacts that have not
+    yet been transferred). The listing is read-only — the UI hides the
+    generator form when the top-bar selector is on `__all__`.
+
+    Response shape:
+    ```
+    {
+      "success": true,
+      "payloads": [
+        {
+          "name": "loader.exe",
+          "type": "exe",
+          "deployment": "c2_adhoc_dev",
+          "generated_by": "alice",
+          "generated_at": 1716100000.0,
+          "status": "success",
+          "size_mb": 1.4,
+          "download": null
+        }, ...
+      ],
+      "errors": [
+        { "deployment": "<staging>", "error": "could not read staging" }
+      ]
+    }
+    ```
+
+    Errors are non-fatal — partial results are returned even if some
+    deployments cannot be queried.
+    """
+    payloads = []
+    errors = []
+
+    # 1) In-flight + completed transfer history (per-deployment).
+    try:
+        for tid, state in list(transfer_states.items()):
+            project = state.get("project") or "—"
+            files = state.get("files") or []
+            started_at = state.get("started_at")
+            completed_at = state.get("completed_at") or started_at
+            status = state.get("status") or "unknown"
+            generated_by = state.get("operator") or state.get("generated_by") or "—"
+            for fname in files:
+                # Infer payload type from the extension. The Tools Upload
+                # flow accepts any file (exe / dll / raw / zip / py / etc.) —
+                # we surface the bare extension so operators can scan the
+                # column without having to read each filename.
+                ptype = "raw"
+                if isinstance(fname, str) and "." in fname:
+                    ptype = fname.rsplit(".", 1)[-1].lower()
+                size_mb = None
+                try:
+                    staged = TOOLS_UPLOAD_FOLDER / secure_filename(fname)
+                    if staged.exists():
+                        size_mb = round(staged.stat().st_size / (1024 * 1024), 2)
+                except Exception:
+                    pass
+                payloads.append({
+                    "name": fname,
+                    "type": ptype,
+                    "deployment": project,
+                    "generated_by": generated_by,
+                    "generated_at": completed_at,
+                    "status": status,
+                    "size_mb": size_mb,
+                    "download": None,
+                    "transfer_id": tid,
+                })
+    except Exception as e:
+        errors.append({"deployment": "<transfers>", "error": str(e)})
+
+    # 2) Staged files that have not yet been transferred — they belong to
+    #    no specific deployment yet, so we mark them as "(staged)".
+    try:
+        seen_names = {p["name"] for p in payloads}
+        for f in TOOLS_UPLOAD_FOLDER.iterdir():
+            if not f.is_file() or f.name == ".gitkeep":
+                continue
+            if f.name in seen_names:
+                continue
+            ptype = "raw"
+            if "." in f.name:
+                ptype = f.name.rsplit(".", 1)[-1].lower()
+            payloads.append({
+                "name": f.name,
+                "type": ptype,
+                "deployment": "(staged)",
+                "generated_by": "—",
+                "generated_at": f.stat().st_mtime,
+                "status": "staged",
+                "size_mb": round(f.stat().st_size / (1024 * 1024), 2),
+                "download": None,
+                "transfer_id": None,
+            })
+    except Exception as e:
+        errors.append({"deployment": "<staging>", "error": str(e)})
+
+    # Newest first.
+    payloads.sort(key=lambda p: p.get("generated_at") or 0, reverse=True)
+
+    return jsonify({
+        "success": True,
+        "payloads": payloads,
+        "errors": errors,
+    })
+
+
 @bp.route('/transfer/<transfer_id>', methods=['GET'])
 def get_transfer_status(transfer_id):
     """Get the status of an ongoing or completed transfer."""

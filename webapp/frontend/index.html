@@ -607,6 +607,22 @@
                 </div>
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="configure" id="subpill-pane-configure">
+                        <!-- 2026-05-19 (deployments nav restructure) — All-mode
+                             empty state. Visible only when APP.activeDeployment.isAll()
+                             is true; #configure-scoped-content hides at the same time.
+                             Painted lazily by APP.subPills._paintAllModeEmpty(). -->
+                        <div id="configure-all-mode-empty" hidden></div>
+                        <div id="configure-scoped-content">
+                        <!-- 2026-05-19 (deployments nav restructure) — Discard draft
+                             affordance. Visible only when APP.activeDeployment.isDraft()
+                             is true. Clears the draft sentinel so the operator drops
+                             back to the empty / Manage flow. -->
+                        <div id="configure-discard-draft" class="configure-discard-draft" hidden>
+                            <span class="configure-discard-draft__label">Composing a new deployment</span>
+                            <button id="configure-discard-draft-btn"
+                                    class="btn btn-secondary btn-sm"
+                                    type="button">Discard draft</button>
+                        </div>
                         <!-- D3.2: Configuration tab content re-parents here -->
                     <!-- 2026-05-19 flow-stitching — Configure has TWO modes:
                           (1) NEW MODE  → renders the 4-step wizard inline inside
@@ -1463,8 +1479,13 @@ ns-143.awsdns-17.org
 
                     <div id="config-message" class="message"></div>
                     </div><!-- /#configure-edit-pane -->
+                    </div><!-- /#configure-scoped-content -->
                     </div>
                     <div class="subpill-pane" data-subpill-pane="deploy" id="subpill-pane-deploy" hidden>
+                        <!-- 2026-05-19 (deployments nav restructure) — All-mode
+                             empty state. Mirrors Configure's pattern. -->
+                        <div id="deploy-all-mode-empty" hidden></div>
+                        <div id="deploy-scoped-content">
                         <!-- D3.3: Deploy sub-pill — V3-native (v3-production-rollout 2026-05-19).
                              Layout: spec-list summary → primary action strip (Apply / Plan /
                              Destroy) → collapsed prerequisites details. The legacy emoji
@@ -1931,8 +1952,29 @@ ns-143.awsdns-17.org
                     </div>
 
                     <div id="deployment-output" class="output-display"></div>
+                    </div><!-- /#deploy-scoped-content -->
                     </div>
                     <div class="subpill-pane" data-subpill-pane="manage" id="subpill-pane-manage" hidden>
+                        <!-- 2026-05-19 (deployments nav restructure) — All-mode
+                             fleet view. Visible when APP.activeDeployment.isAll();
+                             rendered by APP.manageFleet.render() from
+                             /api/deploy/active aggregate. Row click sets that
+                             project as active, which flips the visibility
+                             logic back to scoped view. -->
+                        <div id="manage-all-mode" hidden></div>
+                        <!-- 2026-05-19 — Empty-state CTA shown when no project
+                             is picked AND not in All mode. Pairs with the
+                             "+ New" header button via APP.startDraftFlow. -->
+                        <div id="manage-empty-cta" class="manage-empty-cta" hidden>
+                            <h3 class="manage-empty-cta__title">No deployment selected</h3>
+                            <p class="manage-empty-cta__body">
+                                Pick a deployment from the top-bar dropdown, or start a new one.
+                            </p>
+                            <button id="manage-empty-cta-btn" class="btn btn-primary" type="button">
+                                + Start a new deployment
+                            </button>
+                        </div>
+                        <div id="manage-scoped-content">
                         <!-- D3.4: Deployment Manager content re-parents here.
                              Phase 3a — V3-native rebuild: hero + spec-list +
                              actions strip replace the old "Deployment Manager"
@@ -1971,6 +2013,10 @@ ns-143.awsdns-17.org
                             <button class="manage-action" id="manage-action-refresh" type="button" data-manage-action="refresh">
                                 <svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg>
                                 <span>Refresh</span>
+                            </button>
+                            <button class="manage-action" id="manage-action-edit-config" type="button" data-manage-action="edit-config" data-action="manage-edit-config">
+                                <svg class="icon" aria-hidden="true"><use href="#icon-edit-pencil"/></svg>
+                                <span>Edit configuration</span>
                             </button>
                             <button class="manage-action" id="manage-action-logs" type="button" data-manage-action="logs">
                                 <svg class="icon" aria-hidden="true"><use href="#icon-logs"/></svg>
@@ -2189,6 +2235,7 @@ ns-143.awsdns-17.org
 
 
 
+                    </div><!-- /#manage-scoped-content -->
                     </div>
 
                     <!-- D8 Agent B — Cleanup sub-pane (orphan AWS resources)
@@ -2196,6 +2243,15 @@ ns-143.awsdns-17.org
                          with `.cleanup-v3 *` namespace, summary stat tiles + spec-list
                          resource groups composing the Phase 2b primitives. -->
                     <div class="subpill-pane" data-subpill-pane="cleanup" id="subpill-pane-cleanup" hidden>
+                        <!-- 2026-05-19 (deployments nav restructure) — "Showing
+                             all labs" badge surfaces in All mode so the operator
+                             knows the orphan scan covers every project. -->
+                        <div id="cleanup-all-badge" class="cleanup-all-badge" hidden>
+                            <span class="spec-pill spec-pill--live">
+                                <span class="spec-pill__dot" aria-hidden="true"></span>
+                                Showing all labs
+                            </span>
+                        </div>
                         <div class="cleanup-v3">
                             <div class="cleanup-v3__eyebrow">
                                 <div class="cleanup-v3__eyebrow-text">
@@ -2250,6 +2306,11 @@ ns-143.awsdns-17.org
                          Mirrors webapp/frontend/preview/page-bolton-target.html with
                          live wiring to /api/bolton/*. JS controller is APP.bolton. -->
                     <div class="subpill-pane" data-subpill-pane="bolt-ons" id="subpill-pane-bolt-ons" hidden>
+                        <!-- 2026-05-19 (deployments nav restructure) — All-mode
+                             empty state. Visible when isAll(); painted by
+                             APP.subPills._paintAllModeEmpty('bolt-ons', ...). -->
+                        <div id="bolt-ons-all-mode-empty" hidden></div>
+                        <div id="bolt-ons-scoped-content">
                         <div class="bolton-live" data-bolton-root>
                             <div class="bolton-live__eyebrow">
                                 <div class="bolton-live__eyebrow-text">
@@ -2438,6 +2499,7 @@ ns-143.awsdns-17.org
                                 </section>
                             </div>
                         </div>
+                        </div><!-- /#bolt-ons-scoped-content -->
                     </div>
                 </div>
             </div>
@@ -2467,6 +2529,10 @@ ns-143.awsdns-17.org
                 </div>
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="beacons" id="subpill-pane-beacons">
+                <!-- 2026-05-19 — All-mode aggregate fleet container. Populated by
+                     APP.beacons.renderFleet() when APP.activeDeployment.isAll(). -->
+                <div id="beacons-all-mode-empty" hidden></div>
+                <div id="beacons-scoped-content">
                 <h2>Beacon Management</h2>
 
                 <!-- Deployment Selector -->
@@ -3083,8 +3149,12 @@ ns-143.awsdns-17.org
                     </div>
 
                 </div>
+                </div><!-- /#beacons-scoped-content -->
                     </div>
                     <div class="subpill-pane" data-subpill-pane="terminal" id="subpill-pane-terminal" hidden>
+                <!-- 2026-05-19 — All-mode empty-state container for Terminal. -->
+                <div id="terminal-all-mode-empty" hidden></div>
+                <div id="terminal-scoped-content">
                 <h2 class="page-title">Terminal</h2>
 
                 <!-- Local Shell — primary action, always available -->
@@ -3127,8 +3197,12 @@ ns-143.awsdns-17.org
                     <strong>Terminal dependencies not installed.</strong><br>
                     Run: <code>pip install flask-sock</code> then restart the webapp.
                 </div>
+                </div><!-- /#terminal-scoped-content -->
                     </div>
                     <div class="subpill-pane" data-subpill-pane="payloads" id="subpill-pane-payloads" hidden>
+                <!-- 2026-05-19 — All-mode aggregate history container for Payloads. -->
+                <div id="payloads-all-mode-empty" hidden></div>
+                <div id="payloads-scoped-content">
                 <h2 class="page-title">Tools Upload</h2>
                 <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
                     Upload files to the Windows Attack Box via SCP through the bastion host. Use this for Outflank tools, custom loaders, or any binaries your operators need.
@@ -3687,6 +3761,7 @@ ns-143.awsdns-17.org
                     </section>
 
                         </main>
+                        </div><!-- /#payloads-scoped-content -->
                     </div>
             </div>
 
@@ -3859,6 +3934,35 @@ ns-143.awsdns-17.org
     <!-- Stub: kept hidden for any legacy contrast tests that scan body-level
          takeovers. APP.journey no longer uses these IDs. -->
     <div id="journey-scrim" class="scrim-takeover" hidden aria-hidden="true" data-removed="2026-05-19-flow-stitching"></div>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         2026-05-19 (deployments nav restructure) — Manage edit drawer.
+         Right-side scrim takeover for inline "Edit configuration" of the
+         active deployment. Opened by APP.manageDrawer.open(projectName);
+         loads via GET /api/config/?project=<name>, saves via
+         POST /api/config/?project=<name>, "Apply" hands off to the
+         existing Deploy logic (startDeployment).
+
+         Markup is intentionally light — fields render dynamically based on
+         the GET response so the drawer mirrors whatever config is live
+         for the project (no hand-maintained per-key form here).
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="scrim-takeover" data-drawer="manage-edit" id="manage-drawer-scrim" hidden>
+        <div class="takeover-card takeover-card--right" id="manage-drawer-card" role="dialog" aria-modal="true" aria-labelledby="manage-drawer-title">
+            <header class="takeover-card__head">
+                <h3 id="manage-drawer-title">Edit configuration · <span data-drawer-project>—</span></h3>
+                <button class="takeover-card__close" type="button" aria-label="Close drawer" data-drawer-dismiss>&times;</button>
+            </header>
+            <div class="takeover-card__body" id="manage-drawer-body">
+                <p class="t-muted">Loading…</p>
+            </div>
+            <footer class="takeover-card__foot">
+                <button class="btn btn-secondary" type="button" data-drawer-dismiss>Cancel</button>
+                <button class="btn btn-primary" type="button" data-drawer-save>Save</button>
+                <button class="btn btn-warning" type="button" data-drawer-apply>Apply changes (terraform)</button>
+            </footer>
+        </div>
+    </div>
 
     <!-- ════════════════════════════════════════════════════════════════════
          v3 OVERLAY STACK MOUNT (Agent C, 2026-05-18)

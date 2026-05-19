@@ -29,6 +29,47 @@ config_dir = project_root / "configs"
 tfvars_file = config_dir / "terraform.tfvars"
 tfvars_example = config_dir / "terraform.tfvars.example"
 
+
+# Drafts and the "all" fleet-view sentinel never round-trip through the
+# config endpoints — they're transient UI states with no on-disk tfvars.
+_RESERVED_PROJECT_NAMES = {"__draft__", "__all__"}
+
+
+def _rel_to_project(p):
+    """Display path relative to project root when possible — falls back to
+    the absolute path (e.g. when tests redirect ``config_dir`` to a tmpdir)."""
+    try:
+        return str(p.relative_to(project_root))
+    except (ValueError, AttributeError):
+        return str(p)
+
+
+def _resolve_tfvars_path(project_param):
+    """
+    Resolve the on-disk tfvars file for a given ?project= value.
+
+    - No param / empty / sentinel → the global ``configs/terraform.tfvars``
+      (legacy single-config behavior preserved).
+    - Real name → ``configs/<sanitized>.tfvars``.
+
+    The name is sanitized to only allow alphanumerics, ``-``, and ``_`` so
+    no path-traversal characters survive. Returned path is then resolved
+    and re-rooted under ``configs/`` as a defense-in-depth guard against
+    symlink shenanigans.
+    """
+    if not project_param or project_param in _RESERVED_PROJECT_NAMES:
+        return tfvars_file
+    safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in project_param)
+    if not safe:
+        return tfvars_file
+    candidate = (config_dir / f"{safe}.tfvars").resolve()
+    # Defense in depth: refuse anything that escapes the configs dir.
+    try:
+        candidate.relative_to(config_dir.resolve())
+    except ValueError:
+        return tfvars_file
+    return candidate
+
 # SSH public key file (shared with deploy.py)
 SSH_KEY_FILE = Path(__file__).parent / ".." / "data" / "ssh_public_key.txt"
 
@@ -49,18 +90,28 @@ def get_user_public_key_for_tfvars() -> str:
 
 @bp.route('/', methods=['GET'])
 def get_config():
-    """Get current configuration"""
+    """Get current configuration.
+
+    Honors ``?project=<name>`` — if a per-project tfvars file exists at
+    ``configs/<name>.tfvars`` it's loaded; otherwise the global tfvars is
+    used (or the example file if even that's missing).
+    """
     try:
-        if tfvars_file.exists():
+        project_param = request.args.get("project")
+        target = _resolve_tfvars_path(project_param)
+        if target.exists():
+            config = ConfigParser.parse_tfvars(target)
+        elif tfvars_file.exists():
             config = ConfigParser.parse_tfvars(tfvars_file)
         else:
-            # Return example config if actual config doesn't exist
             config = ConfigParser.parse_tfvars(tfvars_example)
-        
+
         return jsonify({
             "success": True,
             "config": config,
-            "file_exists": tfvars_file.exists()
+            "project": project_param or None,
+            "tfvars_path": _rel_to_project(target) if target.exists() else None,
+            "file_exists": target.exists()
         })
     except Exception as e:
         return jsonify({
@@ -70,13 +121,20 @@ def get_config():
 
 @bp.route('/', methods=['DELETE'])
 def delete_config():
-    """Delete the saved configuration file"""
+    """Delete the saved configuration file (per-project when ?project= is set)."""
     try:
-        if tfvars_file.exists():
-            tfvars_file.unlink()
+        project_param = request.args.get("project")
+        target = _resolve_tfvars_path(project_param)
+        if target.exists():
+            target.unlink()
+            audit_service.write(
+                _audit_actor(),
+                "deploy.delete_config",
+                project=project_param,
+            )
             return jsonify({
                 "success": True,
-                "message": "Configuration file deleted successfully"
+                "message": f"Configuration file deleted: {target.name}"
             })
         else:
             return jsonify({
@@ -91,7 +149,13 @@ def delete_config():
 
 @bp.route('/', methods=['POST'])
 def update_config():
-    """Update configuration"""
+    """Update configuration.
+
+    Resolution precedence for the target tfvars path:
+      1. ``?project=<name>`` query param (sanitized to ``configs/<name>.tfvars``)
+      2. ``config.project_name`` from the request body
+      3. Global ``configs/terraform.tfvars``
+    """
     try:
         data = request.get_json()
         if not data or 'config' not in data:
@@ -99,9 +163,9 @@ def update_config():
                 "success": False,
                 "error": "Configuration data required"
             }), 400
-        
+
         config = data['config']
-        
+
         # Validate configuration
         is_valid, errors = ConfigValidator.validate_config(config)
         if not is_valid:
@@ -110,39 +174,52 @@ def update_config():
                 "error": "Validation failed",
                 "errors": errors
             }), 400
-        
+
         # Add user's SSH public key if available (for GOAD deployments)
         # This enables the new secure SSH key architecture
         user_public_key = get_user_public_key_for_tfvars()
         if user_public_key:
             config['user_public_key'] = user_public_key
-        
+
         # Generate terraform.tfvars content
         content = ConfigParser.generate_tfvars(config)
-        
+
+        # Pick the on-disk target. URL param wins UNLESS it's a UI sentinel
+        # (e.g. ``__draft__`` means "draft state, no committed name yet"),
+        # in which case fall through to the body's project_name. Then the
+        # global tfvars.
+        project_param = request.args.get("project")
+        body_project = (config or {}).get("project_name") if isinstance(config, dict) else None
+        if project_param and project_param not in _RESERVED_PROJECT_NAMES:
+            target = _resolve_tfvars_path(project_param)
+        elif body_project:
+            target = _resolve_tfvars_path(body_project)
+        else:
+            target = _resolve_tfvars_path(None)
+
         # Ensure configs directory exists
         config_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Write atomically (temp file + rename prevents partial writes on crash)
         import tempfile
         tmp_fd, tmp_path = tempfile.mkstemp(dir=str(config_dir), suffix='.tfvars.tmp')
         try:
             with os.fdopen(tmp_fd, 'w') as f:
                 f.write(content)
-            os.replace(tmp_path, str(tfvars_file))
+            os.replace(tmp_path, str(target))
         except Exception:
             os.unlink(tmp_path)
             raise
-        
-        project_name = (config or {}).get("project_name") if isinstance(config, dict) else None
+
         audit_service.write(
             _audit_actor(),
             "deploy.save_config",
-            project=project_name,
+            project=project_param or body_project,
         )
         return jsonify({
             "success": True,
             "message": "Configuration saved successfully",
+            "tfvars_path": _rel_to_project(target),
             "ssh_key_included": bool(user_public_key)
         })
     except Exception as e:

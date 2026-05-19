@@ -32,6 +32,12 @@ Operator configuration
     BOLTON_ANSIBLE_BIN=...      override ``ansible-playbook`` path
     BOLTON_ANSIBLE_TIMEOUT_X=3  multiplier on descriptor estimated_time;
                                 hard kill threshold. Default = 3.
+    BOLTON_ROLES_SEARCH_PATH    colon-separated role search paths.
+                                Default: <project>/ansible/roles +
+                                <project>/tools/goad/ansible/roles so
+                                descriptors can opt into upstream GOAD
+                                vuln roles via ``import_role: name: vulns/<n>``
+                                (see docs/internal/BOLTON_ANSIBLE_AUDIT.md).
 
 State machine
 -------------
@@ -293,6 +299,14 @@ def _transition(job: Job, new_status: JobStatus, *, error: str | None = None) ->
 
 _PROJECT_ANSIBLE_ROOT = _PROJECT_ROOT / "ansible"
 _PROJECT_BOLTON_ROLES = _PROJECT_ANSIBLE_ROOT / "roles"
+# Upstream GOAD vuln roles ship as a submodule under tools/goad/. They live
+# at tools/goad/ansible/roles/vulns/<name>/. Including the parent directory
+# (tools/goad/ansible/roles) in the Ansible roles search path lets a
+# descriptor write ``import_role: name: vulns/enable_llmnr`` and resolve it
+# without per-descriptor path gymnastics. The audit doc
+# (docs/internal/BOLTON_ANSIBLE_AUDIT.md) explains why no descriptor uses
+# this today and what the prerequisites are before any of them can.
+_UPSTREAM_GOAD_ROLES = _PROJECT_ROOT / "tools" / "goad" / "ansible" / "roles"
 
 # Minimum hard-timeout floor (seconds). Avoids a 5-second descriptor
 # being killed before Ansible even finishes booting. Tests may patch
@@ -633,10 +647,17 @@ def _run_ansible_job(job: Job) -> None:
     hard_timeout = max(int(estimated * multiplier), _HARD_TIMEOUT_FLOOR_SECONDS)
 
     env = os.environ.copy()
-    # Make project-local roles discoverable.
+    # Make project-local + upstream GOAD vuln roles discoverable.
+    # BOLTON_ROLES_SEARCH_PATH override (colon-separated) lets operators
+    # point at a different roles checkout; default is project-local
+    # ansible/roles + tools/goad/ansible/roles. We always prepend the
+    # resolved path to any inherited ANSIBLE_ROLES_PATH so collections
+    # installed at the system level still work.
+    default_search = f"{_PROJECT_BOLTON_ROLES}:{_UPSTREAM_GOAD_ROLES}"
+    configured_search = os.environ.get("BOLTON_ROLES_SEARCH_PATH") or default_search
     existing_roles_path = env.get("ANSIBLE_ROLES_PATH", "")
     env["ANSIBLE_ROLES_PATH"] = (
-        f"{_PROJECT_BOLTON_ROLES}:{existing_roles_path}".rstrip(":")
+        f"{configured_search}:{existing_roles_path}".rstrip(":")
     )
 
     with open(log, "a") as logf:

@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Configure flow — Shape C · Document editor</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ============================================================
+           CONFIGURE FLOW — SHAPE C · DOCUMENT EDITOR
+           Hypothesis: read the deployment as prose. Each blue token in
+           the document is a clickable inline edit. Operator never sees
+           a form — they see a description of what they're about to
+           build. Auto-saves on every edit. Most distinctive swing.
+           ============================================================ */
+
+        body {
+            margin: 0;
+            font-family: var(--font-family-base);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            font-size: var(--font-size-base);
+            line-height: 1.55;
+        }
+
+        /* ── HYPOTHESIS STRIP ─────────────────────────────────────── */
+        .preview-hypothesis {
+            padding: 14px 32px;
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-secondary);
+            display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap;
+            position: sticky; top: 0; z-index: 100;
+        }
+        .preview-hypothesis strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: var(--letter-spacing-caps);
+        }
+        .preview-theme-toggle {
+            margin-left: auto;
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 5px 12px;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            font-family: var(--font-family-mono);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .preview-theme-toggle:hover { border-color: var(--brand-light); }
+
+        /* ── PAGE FRAME ───────────────────────────────────────────── */
+        .doc-shell {
+            max-width: 820px;
+            margin: 0 auto;
+            padding: 48px 40px 96px;
+        }
+
+        .doc-eyebrow {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 16px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 32px;
+        }
+        .doc-eyebrow__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .doc-eyebrow__status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        .doc-eyebrow__status-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 50%, transparent);
+            animation: doc-pulse 2.4s ease-in-out infinite;
+        }
+        @keyframes doc-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 50%, transparent); }
+            50%      { box-shadow: 0 0 0 5px color-mix(in srgb, var(--success) 0%, transparent); }
+        }
+
+        .doc-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 16px;
+            margin-bottom: 24px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .doc-meta__title {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+        }
+        .doc-meta__date {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        /* ── DOCUMENT TYPOGRAPHY ─────────────────────────────────── */
+        .doc-body {
+            font-size: 15.5px;
+            line-height: 1.85;
+            color: var(--text-primary);
+            font-weight: 400;
+            letter-spacing: 0.005em;
+        }
+        .doc-body p {
+            margin: 0 0 18px 0;
+        }
+        .doc-body h2 {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin: 36px 0 14px 0;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .doc-body h2:first-child { margin-top: 0; }
+
+        /* Optional sentence (greyed out if not applicable) */
+        .doc-body p.is-muted { opacity: 0.4; }
+
+        /* ── INLINE TOKENS (the clickable bits) ──────────────────── */
+        .tok {
+            position: relative;
+            display: inline-block;
+            padding: 0 6px;
+            margin: 0 1px;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--brand-light);
+            border-radius: 3px 3px 0 0;
+            font-family: var(--font-family-mono);
+            font-size: 13.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        color var(--motion-duration-base) var(--motion-easing-standard),
+                        box-shadow var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .tok:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-light) 28%, transparent);
+        }
+        .tok:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 38%, transparent);
+        }
+        .tok.is-open {
+            background: var(--bg-card-hover);
+            box-shadow: 0 0 0 2px var(--brand-light);
+        }
+        .tok.is-just-saved {
+            animation: tok-saved 800ms var(--motion-easing-standard);
+        }
+        @keyframes tok-saved {
+            0%   { background: color-mix(in srgb, var(--success) 35%, transparent); }
+            100% { background: var(--bg-input); }
+        }
+        .tok__caret {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            margin-left: 5px;
+            border-right: 1.4px solid var(--text-secondary);
+            border-bottom: 1.4px solid var(--text-secondary);
+            transform: rotate(45deg) translate(-1px, -1px);
+            vertical-align: 2px;
+            opacity: 0.7;
+        }
+        .tok--required-empty {
+            border-bottom-color: var(--danger);
+            background: var(--danger-bg);
+        }
+        .tok--required-empty:hover {
+            background: var(--danger-bg);
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 30%, transparent);
+        }
+
+        /* ── POPOVER ─────────────────────────────────────────────── */
+        .pop {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            z-index: 50;
+            min-width: 280px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.32);
+            padding: 14px 14px 12px;
+            display: none;
+            text-align: left;
+        }
+        .pop.is-open { display: block; animation: pop-in 200ms var(--motion-easing-standard); }
+        @keyframes pop-in {
+            from { opacity: 0; transform: translateY(-4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .pop__label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: var(--letter-spacing-caps);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            display: block;
+        }
+        .pop__input {
+            width: 100%;
+            box-sizing: border-box;
+            appearance: none;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 8px 10px;
+            border-radius: var(--radius-xs);
+            font-family: var(--font-family-mono);
+            font-size: 13px;
+        }
+        .pop__input:focus {
+            outline: none;
+            border-color: var(--brand-light);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 22%, transparent);
+        }
+        .pop__hint {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+            letter-spacing: 0.02em;
+        }
+        .pop__options {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            max-height: 240px;
+            overflow-y: auto;
+            margin-top: 4px;
+        }
+        .pop__option {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            text-align: left;
+            padding: 7px 10px;
+            color: var(--text-primary);
+            font-family: var(--font-family-mono);
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .pop__option:hover {
+            background: var(--bg-card-hover);
+        }
+        .pop__option.is-current {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .pop__option.is-current::after {
+            content: "•";
+            color: var(--brand-light);
+            font-weight: 700;
+        }
+        .pop__option-meta {
+            font-size: 10px;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+        .pop__foot {
+            display: flex;
+            justify-content: flex-end;
+            gap: 6px;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .pop__btn {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 5px 11px;
+            border-radius: var(--radius-xs);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .pop__btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-light);
+        }
+        .pop__btn--primary {
+            background: var(--brand-light);
+            border-color: var(--brand-light);
+            color: var(--text-inverse);
+        }
+        .pop__btn--primary:hover { background: var(--brand); border-color: var(--brand); }
+        .pop__regen {
+            appearance: none;
+            background: var(--bg-input);
+            border: 1px dashed var(--border-light);
+            color: var(--text-secondary);
+            padding: 8px 10px;
+            border-radius: var(--radius-xs);
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            margin-top: 6px;
+            width: 100%;
+            text-align: left;
+        }
+        .pop__regen:hover { border-color: var(--brand-light); color: var(--text-primary); }
+
+        /* ── SAVE STATUS STRIP (sticky bottom, calm) ─────────────── */
+        .doc-status {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 8px 18px;
+            display: flex;
+            gap: 14px;
+            align-items: center;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
+            z-index: 60;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+        .doc-status strong {
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+        .doc-status__divider {
+            width: 1px; height: 12px; background: var(--border);
+        }
+        .doc-status__btn {
+            appearance: none;
+            background: var(--brand-light);
+            border: 1px solid var(--brand-light);
+            color: var(--text-inverse);
+            padding: 5px 14px;
+            border-radius: 999px;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .doc-status__btn:hover { background: var(--brand); border-color: var(--brand); }
+
+        /* Toast */
+        .doc-toast {
+            position: fixed;
+            bottom: 76px;
+            left: 50%;
+            transform: translateX(-50%) translateY(10px);
+            background: var(--bg-elevated);
+            border: 1px solid var(--brand-light);
+            border-radius: var(--radius-sm);
+            padding: 12px 18px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-weight: 500;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 200;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            transition: opacity var(--motion-duration-base) var(--motion-easing-standard),
+                        transform var(--motion-duration-base) var(--motion-easing-spring);
+        }
+        .doc-toast[data-show="true"] {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        .doc-toast__dot {
+            display: inline-block;
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: var(--success);
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .tok, .pop, .doc-eyebrow__status-dot { animation: none; transition: none; }
+        }
+
+        @media (max-width: 640px) {
+            .doc-shell { padding: 32px 20px 96px; }
+            .doc-body { font-size: 14.5px; line-height: 1.75; }
+            .pop { left: 0; right: 0; min-width: 0; }
+        }
+    </style>
+</head>
+<body>
+    <header class="preview-hypothesis">
+        <strong>Shape C</strong>
+        Document editor — the deployment reads as prose. Click any blue token to edit inline; auto-saves on blur. The wildest swing of the three.
+        <button class="preview-theme-toggle" type="button" id="theme-toggle">Toggle theme</button>
+    </header>
+
+    <main class="doc-shell">
+        <div class="doc-eyebrow">
+            <span class="doc-eyebrow__label">Configuration brief · editable</span>
+            <span class="doc-eyebrow__status">
+                <span class="doc-eyebrow__status-dot" aria-hidden="true"></span>
+                Auto-saving on blur
+            </span>
+        </div>
+
+        <div class="doc-meta">
+            <span class="doc-meta__title">CFG-2026-05-19-A · DRAFT</span>
+            <span class="doc-meta__date">Operator · alice  ·  Modified now</span>
+        </div>
+
+        <article class="doc-body" id="doc-body">
+
+            <h2>Overview</h2>
+            <p>
+                This deployment is a
+                <button class="tok" type="button" data-token="type">c2-adhoc<span class="tok__caret"></span></button>
+                engagement named
+                <button class="tok" type="button" data-token="project">c2_adhoc_dev_harriss_macbook_pro<span class="tok__caret"></span></button>
+                running in environment
+                <button class="tok" type="button" data-token="env">dev<span class="tok__caret"></span></button>
+                inside AWS region
+                <button class="tok" type="button" data-token="region">eu-central-1<span class="tok__caret"></span></button>.
+                The lifecycle is owned by the operator
+                <button class="tok" type="button" data-token="operator">alice<span class="tok__caret"></span></button>.
+            </p>
+
+            <h2>Access</h2>
+            <p>
+                Operator access is restricted to source
+                <button class="tok" type="button" data-token="cidr">82.35.149.127/32<span class="tok__caret"></span></button>.
+                SSH authentication uses
+                <button class="tok" type="button" data-token="ssh">auto-generated ed25519<span class="tok__caret"></span></button>
+                keys, registered in AWS as the
+                <button class="tok" type="button" data-token="keypair">red-team-keypair<span class="tok__caret"></span></button>
+                key pair.
+            </p>
+
+            <h2>C2 frontend</h2>
+            <p id="c2-paragraph">
+                Beacon traffic fronts at the primary domain
+                <button class="tok" type="button" data-token="domain">evil-corp-acme.click<span class="tok__caret"></span></button>
+                with SSL provisioned via
+                <button class="tok" type="button" data-token="ssl">Let's Encrypt<span class="tok__caret"></span></button>
+                (admin contact
+                <button class="tok" type="button" data-token="email">ops-burner@protonmail.com<span class="tok__caret"></span></button>).
+                Domain fronting is
+                <button class="tok" type="button" data-token="fronting">off<span class="tok__caret"></span></button>.
+                Backup domains
+                <button class="tok" type="button" data-token="backupdomains">evil-corp-acme.shop, evil-corp-acme.bar<span class="tok__caret"></span></button>
+                are pre-loaded for rotation.
+            </p>
+            <p id="c2-paragraph-2">
+                The team server uses the
+                <button class="tok" type="button" data-token="cs-password">auto-generated CS password<span class="tok__caret"></span></button>
+                stored in AWS Secrets Manager, and the listener uses the
+                <button class="tok" type="button" data-token="malleable">amazon.profile<span class="tok__caret"></span></button>
+                malleable C2 profile.
+            </p>
+
+            <h2 id="goad-heading" class="is-muted-h">Lab</h2>
+            <p id="goad-paragraph" class="is-muted">
+                The vulnerable Active Directory lab uses the VPC subnet
+                <button class="tok" type="button" data-token="goad-vpc">192.168.56.0/24</button>
+                with the derived host prefix 192.168.56.x. The lab is VPC-peered with the C2 network when the deployment family is combined.
+            </p>
+
+            <h2>Compute</h2>
+            <p>
+                The C2 backend runs
+                <button class="tok" type="button" data-token="c2-count">1<span class="tok__caret"></span></button>
+                team server(s) of instance type
+                <button class="tok" type="button" data-token="c2-type">t3.medium<span class="tok__caret"></span></button>,
+                fronted by redirectors of type
+                <button class="tok" type="button" data-token="redir-type">t3.small<span class="tok__caret"></span></button>.
+                An attack box (Windows VM with CS Client preinstalled) runs at
+                <button class="tok" type="button" data-token="ab-type">t3.large<span class="tok__caret"></span></button>
+                with a
+                <button class="tok" type="button" data-token="ab-disk">100 GB<span class="tok__caret"></span></button>
+                root volume, accessed via
+                <button class="tok" type="button" data-token="ab-password">an auto-generated admin password<span class="tok__caret"></span></button>.
+            </p>
+
+            <h2>Estimate</h2>
+            <p>
+                Estimated monthly cost:
+                <button class="tok" type="button" data-token="cost" disabled aria-disabled="true" style="cursor: default; opacity: 0.9;">~$340/mo<span class="tok__caret" style="visibility:hidden;"></span></button>
+                across approximately
+                <button class="tok" type="button" data-token="count" disabled aria-disabled="true" style="cursor: default; opacity: 0.9;">5 EC2 instances<span class="tok__caret" style="visibility:hidden;"></span></button>.
+            </p>
+        </article>
+    </main>
+
+    <!-- POPOVER (single instance, mounted next to the active token) -->
+    <div class="pop" id="popover" role="dialog" aria-modal="false"></div>
+
+    <!-- Bottom save-status pill -->
+    <footer class="doc-status" role="contentinfo">
+        <span>STATUS <strong style="color: var(--success-text);">READY</strong></span>
+        <span class="doc-status__divider" aria-hidden="true"></span>
+        <span>SAVED <strong id="last-saved">just now</strong></span>
+        <span class="doc-status__divider" aria-hidden="true"></span>
+        <button class="doc-status__btn" type="button" id="save-btn">Save &amp; deploy →</button>
+    </footer>
+
+    <div class="doc-toast" id="save-toast" role="status" aria-live="polite">
+        <span class="doc-toast__dot"></span>Configuration committed — every required token captured.
+    </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        const $ = (s, r) => (r || document).querySelector(s);
+        const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+        // ============================================================
+        // Token configs — text input vs select
+        // ============================================================
+        const TOKEN_CONFIG = {
+            type: {
+                label: 'Deployment type',
+                kind: 'select',
+                options: [
+                    { v: 'c2-adhoc',  meta: 'C2 · 1 server' },
+                    { v: 'c2-purple', meta: 'C2 · 2 servers' },
+                    { v: 'c2-full',   meta: 'C2 · 3 servers' },
+                    { v: 'goad-mini',  meta: 'GOAD · 2 VMs' },
+                    { v: 'goad-light', meta: 'GOAD · 3 VMs' },
+                    { v: 'goad-sccm',  meta: 'GOAD · SCCM' },
+                    { v: 'goad-full',  meta: 'GOAD · 5 VMs' },
+                    { v: 'goad-nha',   meta: 'GOAD · Ninja Hack' },
+                    { v: 'combined-adhoc-mini',  meta: 'Combined · S' },
+                    { v: 'combined-adhoc-light', meta: 'Combined · M' },
+                    { v: 'combined-full-full',   meta: 'Combined · L' },
+                ],
+                hint: 'Picking a GOAD or combined type unlocks the lab paragraph below.',
+            },
+            project: {
+                label: 'Project name',
+                kind: 'text',
+                hint: 'Auto-derived from {type}_{env}_{machine}. Override only if you need a custom suffix.',
+            },
+            env: {
+                label: 'Environment',
+                kind: 'select',
+                options: [
+                    { v: 'dev',     meta: 'Isolated' },
+                    { v: 'staging', meta: 'Pre-prod' },
+                    { v: 'prod',    meta: 'Live engagement' },
+                ],
+            },
+            region: {
+                label: 'AWS region',
+                kind: 'select',
+                options: [
+                    { v: 'eu-central-1', meta: 'Frankfurt' },
+                    { v: 'us-east-1',    meta: 'N. Virginia' },
+                    { v: 'us-west-2',    meta: 'Oregon' },
+                ],
+            },
+            operator: {
+                label: 'Lifecycle owner',
+                kind: 'select',
+                options: [
+                    { v: 'alice',  meta: 'A · current' },
+                    { v: 'bob',    meta: 'B' },
+                    { v: 'carol',  meta: 'C' },
+                ],
+            },
+            cidr: {
+                label: 'Management CIDR',
+                kind: 'text',
+                hint: 'e.g. 1.2.3.4/32, 198.51.100.0/24. 0.0.0.0/0 is rejected.',
+            },
+            ssh: {
+                label: 'SSH key source',
+                kind: 'select',
+                options: [
+                    { v: 'auto-generated ed25519', meta: 'Generated locally' },
+                    { v: 'upload existing public key',       meta: 'From disk' },
+                    { v: 'pick existing AWS key pair',       meta: 'In region' },
+                ],
+            },
+            keypair: {
+                label: 'AWS key pair name',
+                kind: 'text',
+            },
+            domain: {
+                label: 'Primary domain name',
+                kind: 'text',
+                hint: 'Must be registered in Route 53 already.',
+            },
+            ssl: {
+                label: 'SSL provider',
+                kind: 'select',
+                options: [
+                    { v: "Let's Encrypt", meta: 'auto-renewal' },
+                    { v: 'ACM',           meta: 'AWS managed' },
+                    { v: 'off',           meta: 'HTTP only' },
+                ],
+            },
+            email: {
+                label: 'Admin email',
+                kind: 'text',
+                hint: 'Burner address. Used by Let\'s Encrypt only.',
+            },
+            fronting: {
+                label: 'Domain fronting',
+                kind: 'select',
+                options: [
+                    { v: 'off', meta: 'Direct redirector' },
+                    { v: 'on',  meta: 'CloudFront CDN' },
+                ],
+            },
+            backupdomains: {
+                label: 'Backup domains',
+                kind: 'text',
+                hint: 'Comma separated. Pre-loaded as CloudFront aliases.',
+            },
+            'cs-password': {
+                label: 'CS team server password',
+                kind: 'password',
+                hint: 'Auto-generated by default. Override only if you need a known value. Stored in Secrets Manager.',
+            },
+            malleable: {
+                label: 'Malleable C2 profile',
+                kind: 'select',
+                options: [
+                    { v: 'amazon.profile',  meta: 'AWS API mimic' },
+                    { v: 'jquery.profile',  meta: 'CDN-like' },
+                    { v: 'webbug_getonly',  meta: 'Min footprint' },
+                    { v: 'custom',          meta: 'Paste your own' },
+                ],
+            },
+            'goad-vpc': {
+                label: 'GOAD VPC CIDR',
+                kind: 'text',
+                hint: 'Internal subnet for the AD lab.',
+            },
+            'c2-count': {
+                label: 'C2 server count',
+                kind: 'select',
+                options: [
+                    { v: '1', meta: 'adhoc' },
+                    { v: '2', meta: 'purple-team' },
+                    { v: '3', meta: 'full-red-team' },
+                ],
+            },
+            'c2-type': {
+                label: 'C2 instance type',
+                kind: 'select',
+                options: [
+                    { v: 't3.medium', meta: '2 vCPU · 4 GB' },
+                    { v: 't3.large',  meta: '2 vCPU · 8 GB' },
+                    { v: 'm5.large',  meta: '2 vCPU · 8 GB · perf' },
+                ],
+            },
+            'redir-type': {
+                label: 'Redirector instance type',
+                kind: 'select',
+                options: [
+                    { v: 't3.small',  meta: '2 vCPU · 2 GB' },
+                    { v: 't3.medium', meta: '2 vCPU · 4 GB' },
+                ],
+            },
+            'ab-type': {
+                label: 'Attack box instance type',
+                kind: 'select',
+                options: [
+                    { v: 't3.large',  meta: '2 vCPU · 8 GB' },
+                    { v: 't3.xlarge', meta: '4 vCPU · 16 GB' },
+                    { v: 'm5.large',  meta: '2 vCPU · 8 GB · perf' },
+                ],
+            },
+            'ab-disk': {
+                label: 'Attack box disk size',
+                kind: 'select',
+                options: [
+                    { v: '50 GB',  meta: 'minimal' },
+                    { v: '100 GB', meta: 'default' },
+                    { v: '200 GB', meta: 'plenty' },
+                    { v: '500 GB', meta: 'archive' },
+                ],
+            },
+            'ab-password': {
+                label: 'Attack box admin password',
+                kind: 'password',
+                hint: 'Default: auto-generated, stored in Secrets Manager.',
+            },
+        };
+
+        // ============================================================
+        // Popover open/close
+        // ============================================================
+        let openToken = null;
+        const pop = $('#popover');
+
+        function buildPop(tokenKey, currentText, tokEl) {
+            const cfg = TOKEN_CONFIG[tokenKey];
+            if (!cfg) return;
+            const inputId = 'pop-input-' + tokenKey;
+            let bodyHtml = '<span class="pop__label">' + cfg.label + '</span>';
+            if (cfg.kind === 'select') {
+                bodyHtml += '<div class="pop__options" role="listbox">';
+                cfg.options.forEach(o => {
+                    const isCurrent = o.v === currentText;
+                    bodyHtml += '<button class="pop__option' + (isCurrent ? ' is-current' : '') +
+                        '" type="button" data-value="' + escapeHtml(o.v) + '">' +
+                        '<span>' + escapeHtml(o.v) + '</span>' +
+                        '<span class="pop__option-meta">' + escapeHtml(o.meta) + '</span>' +
+                        '</button>';
+                });
+                bodyHtml += '</div>';
+            } else if (cfg.kind === 'password') {
+                bodyHtml += '<input class="pop__input" type="text" id="' + inputId + '" value="' + escapeHtml(currentText) + '">';
+                bodyHtml += '<button class="pop__regen" type="button" data-regen>Regenerate strong password</button>';
+            } else {
+                bodyHtml += '<input class="pop__input" type="text" id="' + inputId + '" value="' + escapeHtml(currentText) + '">';
+            }
+            if (cfg.hint) {
+                bodyHtml += '<span class="pop__hint">' + cfg.hint + '</span>';
+            }
+            bodyHtml += '<div class="pop__foot">' +
+                '<button class="pop__btn" type="button" data-cancel>Cancel</button>' +
+                '<button class="pop__btn pop__btn--primary" type="button" data-confirm>Save</button>' +
+                '</div>';
+            pop.innerHTML = bodyHtml;
+
+            // Position popover beneath the token (anchored to article)
+            const article = $('#doc-body');
+            const tokRect  = tokEl.getBoundingClientRect();
+            const artRect  = article.getBoundingClientRect();
+            pop.style.position = 'absolute';
+            pop.style.top  = (tokRect.bottom - artRect.top + 8) + 'px';
+            pop.style.left = Math.min(tokRect.left - artRect.left, artRect.width - 320) + 'px';
+            // The pop is appended into the article so it scrolls with it
+            if (pop.parentElement !== article) article.appendChild(pop);
+
+            // Wire up
+            const cancel = pop.querySelector('[data-cancel]');
+            const confirm = pop.querySelector('[data-confirm]');
+            const input  = pop.querySelector('.pop__input');
+            const regen  = pop.querySelector('[data-regen]');
+            cancel.addEventListener('click', closePop);
+            confirm.addEventListener('click', () => {
+                let newVal = currentText;
+                if (cfg.kind === 'select') {
+                    const cur = pop.querySelector('.pop__option.is-current');
+                    if (cur) newVal = cur.dataset.value;
+                } else if (input) {
+                    newVal = input.value || currentText;
+                }
+                commit(tokenKey, newVal, tokEl);
+            });
+            if (regen) {
+                regen.addEventListener('click', () => {
+                    if (input) input.value = randomPassword();
+                });
+            }
+            if (cfg.kind === 'select') {
+                pop.querySelectorAll('.pop__option').forEach(o => {
+                    o.addEventListener('click', () => {
+                        pop.querySelectorAll('.pop__option').forEach(x => x.classList.remove('is-current'));
+                        o.classList.add('is-current');
+                        commit(tokenKey, o.dataset.value, tokEl);
+                    });
+                });
+            }
+            if (input) {
+                input.focus();
+                input.select();
+                input.addEventListener('keydown', (ev) => {
+                    if (ev.key === 'Enter') {
+                        ev.preventDefault();
+                        commit(tokenKey, input.value || currentText, tokEl);
+                    }
+                    if (ev.key === 'Escape') closePop();
+                });
+            }
+        }
+
+        function openPop(tokEl) {
+            const tokenKey = tokEl.dataset.token;
+            if (!TOKEN_CONFIG[tokenKey]) return;
+            closePop(true);
+            tokEl.classList.add('is-open');
+            openToken = tokEl;
+            const currentText = tokEl.textContent.trim();
+            buildPop(tokenKey, currentText, tokEl);
+            pop.classList.add('is-open');
+        }
+        function closePop(silent) {
+            if (openToken) openToken.classList.remove('is-open');
+            openToken = null;
+            pop.classList.remove('is-open');
+            if (!silent) markSaved();
+        }
+
+        function commit(tokenKey, newVal, tokEl) {
+            const caretHtml = tokEl.querySelector('.tok__caret') ? '<span class="tok__caret"></span>' : '';
+            tokEl.innerHTML = escapeHtml(newVal) + caretHtml;
+            tokEl.classList.add('is-just-saved');
+            window.setTimeout(() => tokEl.classList.remove('is-just-saved'), 800);
+            // Cross-token reactions
+            if (tokenKey === 'type') {
+                applyTypeContext(newVal);
+            }
+            closePop();
+        }
+
+        function applyTypeContext(typeVal) {
+            // Auto-derive project name
+            const projTok = document.querySelector('[data-token="project"]');
+            if (projTok) {
+                const caret = '<span class="tok__caret"></span>';
+                projTok.innerHTML = escapeHtml(typeVal.replace(/-/g, '_') + '_dev_harriss_macbook_pro') + caret;
+            }
+            const isGoad = typeVal.startsWith('goad-') || typeVal.startsWith('combined-');
+            const isC2   = typeVal.startsWith('c2-')  || typeVal.startsWith('combined-');
+            const goadP  = $('#goad-paragraph');
+            const goadH  = $('#goad-heading');
+            const c2P    = $('#c2-paragraph');
+            const c2P2   = $('#c2-paragraph-2');
+            if (goadP) goadP.classList.toggle('is-muted', !isGoad);
+            if (goadH) goadH.style.opacity = isGoad ? 1 : 0.4;
+            if (c2P)   c2P.classList.toggle('is-muted', !isC2);
+            if (c2P2)  c2P2.classList.toggle('is-muted', !isC2);
+        }
+
+        function markSaved() {
+            const s = $('#last-saved');
+            if (!s) return;
+            s.textContent = 'just now';
+        }
+
+        function randomPassword() {
+            const set = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789-_';
+            let out = '';
+            for (let i = 0; i < 18; i++) out += set[Math.floor(Math.random() * set.length)];
+            return out;
+        }
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+            }[c]));
+        }
+
+        // Wire up every token
+        $$('.tok').forEach(t => {
+            if (t.hasAttribute('disabled')) return;
+            t.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                if (openToken === t) {
+                    closePop();
+                    return;
+                }
+                openPop(t);
+            });
+        });
+        // Click outside → close
+        document.addEventListener('click', (ev) => {
+            if (!openToken) return;
+            if (pop.contains(ev.target) || openToken.contains(ev.target)) return;
+            closePop();
+        });
+        document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closePop(); });
+
+        // Save & deploy
+        $('#save-btn').addEventListener('click', () => {
+            const t = $('#save-toast');
+            t.setAttribute('data-show', 'true');
+            window.setTimeout(() => t.setAttribute('data-show', 'false'), 3200);
+        });
+
+        // Theme toggle
+        $('#theme-toggle').addEventListener('click', () => {
+            const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', cur === 'light' ? 'dark' : 'light');
+        });
+    })();
+    </script>
+</body>
+</html>

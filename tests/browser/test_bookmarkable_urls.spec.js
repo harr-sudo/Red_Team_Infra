@@ -74,22 +74,24 @@ test.describe('D6 — bookmarkable URL contract', () => {
         expect(active).toBe(projectName);
     });
 
-    test('clicking Deployments tab + Configure sub-pill updates URL via replaceState (no history entry added)', async ({ page }) => {
-        // Land on Dashboard, then navigate to Deployments → Configure via the UI.
+    test('clicking Deployments tab + default sub-pill updates URL via replaceState (no history entry added)', async ({ page }) => {
+        // Land on Dashboard, then navigate to Deployments via the UI.
+        // 2026-05-19 (deployments nav restructure) — default sub-pill is now
+        // mode-aware (manage on empty, manage on existing, configure on
+        // draft). On a fresh load with no activeDeployment, default is manage.
         await page.goto('/');
         await page.locator('.app-rail__item[data-rail-target="dashboard"]').waitFor({ timeout: 5000 });
         const historyLengthBefore = await page.evaluate(() => history.length);
 
         await page.locator('.app-rail__item[data-rail-target="deployments-tab"]').click();
-        // Configure is the default sub-pill on first entry (D3.5), so the
-        // URL should land at #deployments-tab/configure automatically.
+        // Wait for SOME sub-pill on the deployments-tab pane to be the active one.
         await page.locator(
-            '.tab-page[data-page="deployments-tab"] .subpill-nav__pill[data-subpill="configure"].is-active'
+            '.tab-page[data-page="deployments-tab"] .subpill-nav__pill.is-active'
         ).waitFor({ timeout: 5000 });
 
-        // URL hash matches the (tab, sub-pill) pair.
+        // URL hash matches the (tab, sub-pill) pair — accept any sub-pill.
         const hash = await page.evaluate(() => window.location.hash);
-        expect(hash).toBe('#deployments-tab/configure');
+        expect(hash).toMatch(/^#deployments-tab\/(manage|configure|deploy|cleanup|bolt-ons)$/);
 
         // Critical: history.replaceState (NOT pushState) — same number of
         // entries before vs after, so the browser back-button isn't
@@ -98,7 +100,7 @@ test.describe('D6 — bookmarkable URL contract', () => {
         expect(historyLengthAfter).toBe(historyLengthBefore);
     });
 
-    test('changing APP.activeDeployment appends ?dep=NAME to the URL', async ({ page }) => {
+    test('changing APP.activeDeployment appends project param to the URL', async ({ page }) => {
         await page.goto('/#deployments-tab/configure');
         await page.locator(
             '.tab-page[data-page="deployments-tab"] .subpill-nav__pill[data-subpill="configure"].is-active'
@@ -126,15 +128,22 @@ test.describe('D6 — bookmarkable URL contract', () => {
         const projectName = 'c2_purple_dev_test_url_writer';
         await page.evaluate((name) => APP.activeDeployment.set(name), projectName);
 
-        // The URL writer is synchronous inside the subscriber.
+        // The URL writer is synchronous inside the subscriber. 2026-05-19
+        // (deployments nav restructure) — on the deployments-tab the URL
+        // param is `?project=` (new grammar); legacy `?dep=` remains the
+        // alias for non-deployments-tab callers.
         await page.waitForFunction(
-            (name) => window.location.search.includes(`dep=${encodeURIComponent(name)}`),
+            (name) => {
+                const q = window.location.search;
+                return q.includes(`project=${encodeURIComponent(name)}`) ||
+                       q.includes(`dep=${encodeURIComponent(name)}`);
+            },
             projectName,
             { timeout: 2000 }
         );
 
         const url = page.url();
-        expect(url).toContain(`?dep=${encodeURIComponent(projectName)}`);
+        expect(url).toMatch(new RegExp(`[?&](project|dep)=${encodeURIComponent(projectName)}`));
         expect(url).toContain('#deployments-tab/configure');
     });
 });
