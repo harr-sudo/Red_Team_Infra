@@ -2569,6 +2569,33 @@ function initGlobalHeader() {
         bannerBtn.addEventListener('click', () => APP.journey.open({ trigger: bannerBtn }));
         bannerBtn.dataset.ghWired = '1';
     }
+
+    // 2026-05-19 audit — the Configure banner hint must reflect the active
+    // deployment so a journey handoff (or a top-bar selector change) makes
+    // the editing context unambiguous. The hint defaults to a static "Or
+    // edit the deployment currently selected in the header." but is swapped
+    // to "Editing: <project>" when an active deployment is set. Subscribed
+    // once; the subscriber runs immediately + on every change.
+    APP.activeDeployment.subscribe(_refreshConfigureContextBanner);
+}
+
+/**
+ * 2026-05-19 audit — sync the Configure sub-pill banner hint with the
+ * currently-selected deployment so the operator always knows which spec
+ * the form below them is editing. The hint element has its default empty-
+ * state copy stored in data-empty so we can restore it when no deployment
+ * is active.
+ */
+function _refreshConfigureContextBanner(activeProject) {
+    const hint = document.getElementById('configure-context-hint');
+    if (!hint) return;
+    const empty = hint.getAttribute('data-empty') ||
+        'Or edit the deployment currently selected in the header.';
+    if (activeProject && typeof activeProject === 'string') {
+        hint.innerHTML = `Editing <strong>${activeProject.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</strong>. Click "+ New Deployment" to create a fresh one instead.`;
+    } else {
+        hint.textContent = empty;
+    }
 }
 
 // ============================================================================
@@ -3308,17 +3335,45 @@ APP.journey = (function () {
             if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
             return;
         }
-        // Config saved — close journey and navigate to the Deploy sub-pill
-        // so the operator can review + click Apply (we deliberately don't
-        // auto-fire terraform apply from here; that's an explicit click).
+        // Config saved — close journey and hand off to the Configure
+        // sub-pill so the operator can review + edit the spec before
+        // explicitly clicking Apply on the Deploy sub-pill. Per the
+        // 2026-05-19 audit: Configure is the "edit existing deployment"
+        // surface — the journey is the "create" surface. We deliberately
+        // do NOT auto-fire terraform apply from here; that's an explicit
+        // operator action on the Deploy sub-pill.
+        //
+        // Side-effects required for the handoff to feel coherent:
+        //   1. Set APP.activeDeployment so the top-bar selector reflects
+        //      the new project immediately.
+        //   2. Persist activeDeployment to localStorage (handled inside
+        //      APP.activeDeployment.set — see D1.2).
+        //   3. Navigate to Configure sub-pill.
+        //   4. Repopulate the form via loadConfig() so the saved spec
+        //      surfaces on arrival (otherwise the form would still show
+        //      whatever stale values were in it before journey opened).
+        //   5. Refresh the Deploy sub-pill spec-list summary too, so when
+        //      the operator pivots from Configure → Deploy they see the
+        //      live saved spec without an extra reload.
         state.dirty = false;
+        const newProject = state.projectName;
         close({ confirmIfDirty: false });
         // Briefly defer to let the takeover animate out
         setTimeout(() => {
             try {
-                APP.navigateTo('deployments-tab', 'deploy');
+                if (newProject && APP.activeDeployment && typeof APP.activeDeployment.set === 'function') {
+                    APP.activeDeployment.set(newProject);
+                }
             } catch (_) { /* noop */ }
-            // Refresh the summary spec-list with the new saved config
+            try {
+                APP.navigateTo('deployments-tab', 'configure');
+            } catch (_) { /* noop */ }
+            // Repopulate the Configure form from the just-saved tfvars
+            if (typeof loadConfig === 'function') {
+                try { loadConfig(); } catch (_) {}
+            }
+            // Pre-warm the Deploy summary spec-list so a Configure → Deploy
+            // pivot is instant.
             if (typeof loadConfigSummary === 'function') {
                 try { loadConfigSummary(); } catch (_) {}
             }
@@ -9721,9 +9776,11 @@ async function fetchMyPublicIP() {
     
     if (!btn || !cidrInput) return;
     
-    // Show loading state
+    // Show loading state. Preserve the canonical "Use my IP" label
+    // (J3 spec-edit pattern) — the only transient swap is into a Fetching
+    // → Got/Failed flash, then back.
     const originalText = btn.innerHTML;
-    btn.innerHTML = '⏳ Fetching...';
+    btn.innerHTML = 'Fetching...';
     btn.disabled = true;
     
     try {
@@ -9755,7 +9812,7 @@ async function fetchMyPublicIP() {
                 showMessage(`Your public IP: ${publicIP}`, 'success');
             }
             
-            btn.innerHTML = '✅ Got IP!';
+            btn.innerHTML = 'Got IP!';
             setTimeout(() => {
                 btn.innerHTML = originalText;
             }, 2000);
@@ -9765,7 +9822,7 @@ async function fetchMyPublicIP() {
     } catch (error) {
         console.error('Error fetching public IP:', error);
         showMessage('Could not fetch public IP. Please enter manually.', 'error');
-        btn.innerHTML = '❌ Failed';
+        btn.innerHTML = 'Failed';
         setTimeout(() => {
             btn.innerHTML = originalText;
         }, 2000);
@@ -10761,44 +10818,69 @@ async function validateConfig() {
 /**
  * Reset the deploy page validation state (called on tab navigation)
  */
+/**
+ * v3-production-rollout 2026-05-19 — reset the action strip on subpill
+ * re-entry. With the new layout the action-strip is always visible, but
+ * the Apply / Plan / Destroy buttons start disabled until Validate
+ * succeeds. Validate itself returns to its idle label.
+ */
 function resetDeployValidation() {
     const btn = document.getElementById('validate-deploy-btn');
     const hint = document.getElementById('validate-deploy-hint');
-    const actionsDiv = document.getElementById('deployment-actions');
-    const section = document.getElementById('validate-deploy-section');
 
     if (btn) {
-        btn.textContent = 'Validate Configuration';
+        btn.textContent = 'Validate';
         btn.disabled = false;
         btn.style.background = '';
         btn.style.borderColor = '';
     }
     if (hint) {
-        hint.style.color = 'var(--text-muted)';
-        hint.textContent = 'Validate your configuration to unlock deployment';
+        hint.classList.remove('deploy-action-hint--success', 'deploy-action-hint--error');
+        hint.textContent = 'Validate the configuration to unlock Apply, Plan, and Destroy.';
     }
-    if (actionsDiv) {
-        actionsDiv.style.display = 'none';
-        actionsDiv.style.opacity = '0';
-        actionsDiv.style.transform = 'translateY(-10px)';
-    }
-    if (section) {
-        section.style.display = '';
-    }
+    // Lock the destructive + apply actions until a fresh validate pass.
+    if (typeof _setDeployActionsEnabled === 'function') _setDeployActionsEnabled(false);
+    // Close any open destroy-confirm panel.
+    const panel = document.getElementById('deploy-destroy-confirm');
+    if (panel) panel.hidden = true;
 }
 
 /**
  * Validate config from the Deploy page and animate in the deploy buttons on success
  */
+/**
+ * v3-production-rollout 2026-05-19 — gate Apply/Plan/Destroy on validate.
+ * Flips disabled/aria-disabled on the action-strip buttons together.
+ * Validate itself stays interactive so the operator can re-run after
+ * editing spec rows inline.
+ */
+function _setDeployActionsEnabled(enable) {
+    const ids = ['deploy-btn', 'deploy-plan-btn', 'deploy-destroy-btn'];
+    ids.forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (enable) {
+            el.removeAttribute('disabled');
+            el.removeAttribute('aria-disabled');
+        } else {
+            el.setAttribute('disabled', 'disabled');
+            el.setAttribute('aria-disabled', 'true');
+        }
+    });
+}
+
 async function validateAndUnlockDeploy() {
     const btn = document.getElementById('validate-deploy-btn');
     const hint = document.getElementById('validate-deploy-hint');
-    const actionsDiv = document.getElementById('deployment-actions');
     if (!btn) return;
 
     const originalText = btn.textContent;
-    btn.textContent = 'Validating...';
+    btn.textContent = 'Validating…';
     btn.disabled = true;
+    if (hint) {
+        hint.classList.remove('deploy-action-hint--success', 'deploy-action-hint--error');
+        hint.textContent = 'Validating configuration…';
+    }
 
     try {
         // Load saved config from backend and validate it
@@ -10807,11 +10889,12 @@ async function validateAndUnlockDeploy() {
 
         if (!cfgData.success || !cfgData.config || !cfgData.file_exists) {
             if (hint) {
-                hint.style.color = 'var(--danger-text)';
-                hint.textContent = 'No saved configuration found. Go to the Configuration tab and save your settings first.';
+                hint.classList.add('deploy-action-hint--error');
+                hint.textContent = 'No saved configuration found. Open the Configure sub-pill and save your settings first.';
             }
             btn.textContent = originalText;
             btn.disabled = false;
+            _setDeployActionsEnabled(false);
             return;
         }
 
@@ -10823,43 +10906,76 @@ async function validateAndUnlockDeploy() {
         const data = await response.json();
 
         if (data.success) {
-            // Validation passed — animate in the deploy buttons
+            // Validation passed — unlock the action strip
             btn.textContent = 'Validated';
-            btn.style.background = 'var(--success)';
-            btn.style.borderColor = 'var(--success)';
             if (hint) {
-                hint.style.color = 'var(--success-text)';
-                hint.textContent = 'Configuration is valid — ready to deploy';
+                hint.classList.add('deploy-action-hint--success');
+                hint.textContent = 'Configuration is valid — Apply, Plan, and Destroy are unlocked.';
             }
-
-            if (actionsDiv) {
-                actionsDiv.style.display = '';
-                // Trigger reflow so the transition plays
-                void actionsDiv.offsetHeight;
-                actionsDiv.style.opacity = '1';
-                actionsDiv.style.transform = 'translateY(0)';
-            }
-
-            // Also run prerequisite checks (SSH key, CS file, domain)
-            await updateDeploymentPrerequisites();
+            _setDeployActionsEnabled(true);
+            // Also run prerequisite checks (SSH key, CS file, domain) so
+            // the collapsed Prerequisites panel reflects current state.
+            try { await updateDeploymentPrerequisites(); } catch (_) { /* surfaced inline */ }
+            btn.disabled = false;
         } else {
             const errors = data.errors || [data.error || 'Validation failed'];
             if (hint) {
-                hint.style.color = 'var(--danger-text)';
+                hint.classList.add('deploy-action-hint--error');
                 hint.textContent = errors.join(', ');
             }
             btn.textContent = originalText;
             btn.disabled = false;
+            _setDeployActionsEnabled(false);
         }
     } catch (error) {
         if (hint) {
-            hint.style.color = 'var(--danger-text)';
+            hint.classList.add('deploy-action-hint--error');
             hint.textContent = 'Validation error: ' + error.message;
         }
         btn.textContent = originalText;
         btn.disabled = false;
+        _setDeployActionsEnabled(false);
     }
 }
+
+/**
+ * v3-production-rollout 2026-05-19 — two-stage destroy confirm. Stage 1
+ * reveals the danger-tinted confirm card. Stage 2 fires
+ * destroyInfrastructure (which audits via deploy.destroy server-side).
+ */
+function confirmDeployDestroy() {
+    const panel = document.getElementById('deploy-destroy-confirm');
+    if (!panel) return;
+    panel.hidden = false;
+    const yesBtn = document.getElementById('deploy-destroy-confirm-btn');
+    if (yesBtn) { try { yesBtn.focus(); } catch (_) { /* noop */ } }
+}
+
+function cancelDeployDestroy() {
+    const panel = document.getElementById('deploy-destroy-confirm');
+    if (panel) panel.hidden = true;
+}
+
+async function confirmDeployDestroyStage2() {
+    const panel = document.getElementById('deploy-destroy-confirm');
+    const projectLabel = document.getElementById('deploy-destroy-confirm-project');
+    const project = projectLabel && projectLabel.textContent && projectLabel.textContent !== 'this deployment'
+        ? projectLabel.textContent.trim()
+        : null;
+    if (panel) panel.hidden = true;
+    if (typeof destroyInfrastructure === 'function') {
+        try { destroyInfrastructure(project); }
+        catch (e) {
+            console.error('Destroy invocation failed:', e);
+            if (APP && APP.toast) APP.toast('Destroy failed: ' + e.message, 'danger', 8000);
+        }
+    }
+}
+// Expose for inline onclick handlers and tests.
+window.confirmDeployDestroy = confirmDeployDestroy;
+window.cancelDeployDestroy = cancelDeployDestroy;
+window.confirmDeployDestroyStage2 = confirmDeployDestroyStage2;
+window._setDeployActionsEnabled = _setDeployActionsEnabled;
 
 /**
  * Clear all configuration - resets form and deletes saved config file
@@ -11014,11 +11130,56 @@ function _deploySummaryGetCost(deployConfig) {
 }
 
 /**
+ * Look up the most-recent deploy.* audit entry for a project. Returns
+ * { operator, color, ts, action } or null. v3-production-rollout
+ * 2026-05-19: surfaces "Last applied by alice · 2h ago" in the spec-list.
+ */
+async function _deploySummaryLoadLastApplied(projectName) {
+    if (!projectName) return null;
+    try {
+        const r = await fetch(`/api/audit?action_prefix=deploy.&project=${encodeURIComponent(projectName)}&limit=1`);
+        const d = await r.json();
+        if (!d || !d.success) return null;
+        const entry = (d.entries || [])[0];
+        if (!entry) return null;
+        const opMeta = APP.cleanup && typeof APP.cleanup.operatorFor === 'function'
+            ? APP.cleanup.operatorFor(entry.op)
+            : { display: entry.op || 'unknown', color: '#7A849E' };
+        return {
+            operator: opMeta.display || entry.op || 'unknown',
+            color: opMeta.color || '#7A849E',
+            ts: entry.ts || '',
+            action: entry.action || '',
+        };
+    } catch (e) {
+        console.warn('deploySummary: lastApplied fetch failed:', e);
+        return null;
+    }
+}
+
+/**
+ * Humanised relative-time for ISO timestamps. Mirrors APP.manage._timeAgo.
+ */
+function _deploySummaryTimeAgo(iso) {
+    if (!iso) return '';
+    let t;
+    try { t = new Date(iso).getTime(); } catch (_) { return ''; }
+    if (!Number.isFinite(t)) return '';
+    const diff = Math.floor((Date.now() - t) / 1000);
+    if (diff < 10) return 'just now';
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+}
+
+/**
  * Build the spec-list rows from a config object. Each row is { key, value,
  * hint, editable, fieldType, options? } — value is the visible string, the
- * editor is built based on fieldType.
+ * editor is built based on fieldType. v3-production-rollout: appends a
+ * read-only "Last applied by" row when audit attribution is available.
  */
-function _deploySummaryBuildRows(config, deployConfig) {
+function _deploySummaryBuildRows(config, deployConfig, audit) {
     const rows = [];
     const isGoadOnly = deployConfig?.type === 'goad';
 
@@ -11104,12 +11265,15 @@ function _deploySummaryBuildRows(config, deployConfig) {
     }
 
     if (deployConfig?.requiresDomain) {
+        // 2026-05-19 audit — operators were asking "where do I see the dummy
+        // websites linked to a deployment?" The redirector decoy / fronting
+        // domain *is* this field — surface it explicitly in the row label.
         rows.push({
             key: 'primary_domain_name',
-            label: 'Primary Domain',
+            label: 'Redirector Domain',
             value: config.primary_domain_name || '—',
             valueMono: true,
-            hint: 'Route 53',
+            hint: 'decoy + fronting site',
             editable: true,
             fieldType: 'text',
             placeholder: 'example.com',
@@ -11129,6 +11293,22 @@ function _deploySummaryBuildRows(config, deployConfig) {
         });
     }
 
+    // "Last applied by" — operator attribution from the audit log when a
+    // deploy.* entry exists for this project. v3-production-rollout
+    // 2026-05-19: surface most-recent operator + relative time + colour dot.
+    if (audit && audit.operator) {
+        const color = _deploySummaryEscape(audit.color || '#7A849E');
+        const opName = _deploySummaryEscape(audit.operator);
+        const timeAgo = _deploySummaryEscape(_deploySummaryTimeAgo(audit.ts) || 'recently');
+        rows.push({
+            key: 'last_applied',
+            label: 'Last applied by',
+            valueHtml: `<span class="deploy-attr" data-deploy-attr><span class="operator-dot operator-dot--sm" style="background: ${color}" aria-hidden="true"></span><span data-deploy-attr-operator>${opName}</span> <span class="deploy-attr__time" data-deploy-attr-time>· ${timeAgo}</span></span>`,
+            hint: audit.action ? _deploySummaryEscape(audit.action) : '',
+            editable: false,
+        });
+    }
+
     return rows;
 }
 
@@ -11138,8 +11318,11 @@ function _deploySummaryRenderRow(row) {
     if (row.valueStrong) valueClasses.push('spec-row__value--strong');
     let valueHtml;
     if (row.isPill) {
-        const live = String(row.value).toUpperCase() === 'PROD' ? '' : '';
         valueHtml = `<dd class="${valueClasses.join(' ')}"><span class="spec-pill"><span class="spec-pill__dot" aria-hidden="true"></span>${_deploySummaryEscape(row.value)}</span></dd>`;
+    } else if (row.valueHtml) {
+        // Pre-rendered HTML (e.g. operator-dot + name + relative time).
+        // The producer is responsible for escaping the inserted content.
+        valueHtml = `<dd class="${valueClasses.join(' ')}" data-summary-value="${_deploySummaryEscape(row.key)}">${row.valueHtml}</dd>`;
     } else {
         valueHtml = `<dd class="${valueClasses.join(' ')}" data-summary-value="${_deploySummaryEscape(row.key)}">${_deploySummaryEscape(row.value)}</dd>`;
     }
@@ -11363,9 +11546,22 @@ async function loadConfigSummary() {
         // Status pill
         _deploySummaryUpdateStatus(config.project_name);
 
-        // Build + render rows
-        const rows = _deploySummaryBuildRows(config, deployConfig);
+        // v3-production-rollout 2026-05-19 — fetch latest deploy.* audit
+        // entry so the spec-list can surface "Last applied by X · Yh ago"
+        // and so the action strip can show the destroy-confirm project
+        // name + audit-aware destroy gating.
+        const audit = await _deploySummaryLoadLastApplied(config.project_name);
+
+        // Build + render rows (audit row appended only when entry exists)
+        const rows = _deploySummaryBuildRows(config, deployConfig, audit);
         specList.innerHTML = rows.map(_deploySummaryRenderRow).join('');
+
+        // Update destroy-confirm project label so the two-stage UI says
+        // "Destroying will tear down all AWS resources for <project>".
+        const destroyConfirmProject = document.getElementById('deploy-destroy-confirm-project');
+        if (destroyConfirmProject && config.project_name) {
+            destroyConfirmProject.textContent = config.project_name;
+        }
 
         // Validation warnings (use the same heuristics as before)
         const warnings = [];
@@ -11823,17 +12019,12 @@ async function checkForActiveDeployment() {
         if (data.success && data.status) {
             const status = data.status;
 
-            // If there's an active or completed deployment, show deploy actions
-            // directly (skip the validate gate)
+            // If there's an active or completed deployment, unlock the
+            // deploy action strip directly (skip the validate gate). The
+            // strip itself is always visible now; we just flip the
+            // disabled state. v3-production-rollout 2026-05-19.
             if (status.status === 'running' || status.status === 'success' || status.status === 'error') {
-                const actionsDiv = document.getElementById('deployment-actions');
-                const validateSection = document.getElementById('validate-deploy-section');
-                if (actionsDiv) {
-                    actionsDiv.style.display = '';
-                    actionsDiv.style.opacity = '1';
-                    actionsDiv.style.transform = 'translateY(0)';
-                }
-                if (validateSection) validateSection.style.display = 'none';
+                if (typeof _setDeployActionsEnabled === 'function') _setDeployActionsEnabled(true);
 
                 updateDeploymentUI(status);
                 if (status.status === 'running') {
@@ -11937,6 +12128,45 @@ function renderPhaseChecklist(status) {
     html += '</div>';
     return html;
 }
+
+/**
+ * v3-production-rollout 2026-05-19 — open the live-deploy progress overlay
+ * via APP.overlay. The overlay body is bound to #deployment-status (the
+ * legacy inline host) by mounting it inside the overlay; updateDeploymentUI
+ * keeps writing to the same id, so the overlay shows live progress without
+ * a parallel rendering pipeline. On close, the host is re-parented back to
+ * its original location so future deploys still work inline.
+ *
+ * Eyebrow: "Live Deploy". Title: "Deploying <project>". Cancel button is
+ * rendered inline by updateDeploymentUI via cancelDeployment(). The X close
+ * in the overlay header just dismisses the scrim — the deployment keeps
+ * running in the background and the inline div continues to update.
+ */
+function _openDeployProgressOverlay(projectName) {
+    if (!APP || !APP.overlay || typeof APP.overlay.open !== 'function') return null;
+    const statusDiv = document.getElementById('deployment-status');
+    if (!statusDiv) return null;
+    // Capture original parent + position so we can restore on close.
+    const originalParent = statusDiv.parentNode;
+    const originalNext = statusDiv.nextSibling;
+    statusDiv._deployOverlayRestore = () => {
+        if (originalParent && statusDiv.parentNode !== originalParent) {
+            originalParent.insertBefore(statusDiv, originalNext || null);
+        }
+    };
+    const id = `deploy:${projectName || 'unnamed'}`;
+    const handle = APP.overlay.open(id, statusDiv, {
+        title: `Deploying ${projectName || ''}`.trim(),
+        eyebrow: 'Live Deploy',
+        wide: true,
+        onClose: () => {
+            try { statusDiv._deployOverlayRestore && statusDiv._deployOverlayRestore(); }
+            catch (_) { /* noop */ }
+        },
+    });
+    return handle;
+}
+window._openDeployProgressOverlay = _openDeployProgressOverlay;
 
 function updateDeploymentUI(status) {
     const statusDiv = document.getElementById('deployment-status');
@@ -13284,6 +13514,13 @@ async function startDeployment() {
         const data = await response.json();
         
         if (data.success) {
+            // Open the live-progress scrim takeover (APP.overlay) when
+            // available — v3-production-rollout 2026-05-19. The overlay
+            // hosts the same statusDiv content via #deployment-status
+            // mirroring, so updateDeploymentUI keeps working unchanged.
+            // If APP.overlay isn't loaded for any reason, the inline
+            // #deployment-status div continues to function as the host.
+            try { _openDeployProgressOverlay(projectName); } catch (_) { /* fallback inline */ }
             // Start polling immediately with project name
             pollDeploymentStatus(projectName);
             // M-Redesign Agent 3 — operator-facing confirmation toast
@@ -16429,27 +16666,46 @@ function populateGoadSection(data) {
     const section = document.getElementById('goad-lab-section');
     const details = document.getElementById('goad-lab-details');
     const actions = document.getElementById('goad-lab-actions');
-    
+
     if (!section) return;
-    
+
+    // 2026-05-19 audit fix — Manage view authoritative gate. The GOAD section
+    // must NEVER appear on a C2-only deployment, regardless of what
+    // /api/goad/status returns. The Manage view computes the active project's
+    // deployment_type and hides the section before populateGoadSection runs;
+    // here we additionally guard against the case where this function is
+    // called from a path that bypassed APP.manage._evaluateGoadSection.
+    const activeName = (window.APP && APP.activeDeployment && APP.activeDeployment.current) || '';
+    if (activeName) {
+        // Best-effort sync check — look up the deployment_type via outputs cache.
+        const cachedOutputs = (typeof _getCachedOutputs === 'function') ? _getCachedOutputs(activeName) : null;
+        const cachedType = String((cachedOutputs && cachedOutputs.deployment_type) || '').toLowerCase();
+        if (cachedType && !(cachedType.startsWith('goad-') || cachedType.startsWith('combined-'))) {
+            section.style.display = 'none';
+            const provSection = document.getElementById('goad-provision-section');
+            if (provSection) provSection.style.display = 'none';
+            return;
+        }
+    }
+
     // If no data or request failed, hide the section
     if (!data || !data.success) {
         section.style.display = 'none';
         return;
     }
-    
+
     // If GOAD tools not available, only show warning if there's supposed to be a GOAD deployment
     // Don't show warning for C2-only deployments
     if (!data.goad_available) {
         // Only show warning if user has selected a GOAD deployment type
         const deploymentType = document.getElementById('deployment-type')?.value || '';
         const isGoadDeployment = deploymentType.includes('goad') || deploymentType.includes('combined');
-        
+
         if (isGoadDeployment) {
             section.style.display = 'block';
             details.innerHTML = `
                 <div class="status-display warning">
-                    <p><strong>⚠️ GOAD Not Available</strong></p>
+                    <p><strong>&#9888; GOAD Not Available</strong></p>
                     <p>GOAD tools not found. Run: <code>git submodule update --init</code></p>
                 </div>
             `;
@@ -16459,7 +16715,7 @@ function populateGoadSection(data) {
         }
         return;
     }
-    
+
     // No GOAD deployment active
     if (!data.has_deployment) {
         section.style.display = 'none';
@@ -17628,45 +17884,57 @@ function renderResourceTable(resources) {
         return state !== 'deleted' && state !== 'terminated' && state !== 'deleting';
     });
 
+    // V3 state mapping → .spec-pill variant + display label.
+    // No saturated fills — neutral pill chrome on every row; the dot colour
+    // (existing .spec-pill--live/--draft/--error CSS) is the only state hint.
     const stateBadge = (state) => {
         const s = (state || 'unknown').toLowerCase();
-        const colors = {
-            'running': { bg: 'var(--success-bg)', text: 'var(--success-text)', border: 'var(--success-border)' },
-            'available': { bg: 'var(--success-bg)', text: 'var(--success-text)', border: 'var(--success-border)' },
-            'active': { bg: 'var(--success-bg)', text: 'var(--success-text)', border: 'var(--success-border)' },
-            'stopped': { bg: 'var(--warning-bg)', text: 'var(--warning-text)', border: 'var(--warning-border)' },
-            'pending': { bg: 'var(--info-bg)', text: 'var(--info-text)', border: 'var(--info-border)' },
-            'terminated': { bg: 'var(--danger-bg)', text: 'var(--danger-text)', border: 'var(--danger-border)' },
-            'deleted': { bg: 'var(--danger-bg)', text: 'var(--danger-text)', border: 'var(--danger-border)' }
+        const variantMap = {
+            'running':    'spec-pill--live',
+            'available':  'spec-pill--live',
+            'active':     'spec-pill--live',
+            'stopped':    'spec-pill--draft',
+            'pending':    'spec-pill--draft',
+            'terminated': 'spec-pill--error',
+            'deleted':    'spec-pill--error',
+            'error':      'spec-pill--error',
+            'problem':    'spec-pill--error'
         };
-        const c = colors[s] || { bg: 'var(--bg-section)', text: 'var(--text-secondary)', border: 'var(--border)' };
-        return `<span style="background: ${c.bg}; color: ${c.text}; border: 1px solid ${c.border}; padding: 2px 8px; border-radius: 10px; font-size: 0.82em; text-transform: uppercase; font-weight: 500;">${state || 'unknown'}</span>`;
+        const variant = variantMap[s] || 'spec-pill--draft';
+        const label = (state || 'unknown').toUpperCase();
+        return `<span class="spec-pill ${variant}"><span class="spec-pill__dot" aria-hidden="true"></span>${label}</span>`;
+    };
+
+    // Neutral mono type badge — uppercased type name on .bg-input surface.
+    // Width-stable across types (min-width: 48px). NO saturated colour per type.
+    const typeBadge = (type) => {
+        const label = (type || 'res').toUpperCase();
+        return `<span class="resource-row-v3__type-pill">${label}</span>`;
     };
 
     if (activeResources.length === 0) {
-        tableBody.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-secondary);">No active resources</div>`;
+        tableBody.innerHTML = `<div class="resource-list-v3__empty">No active resources</div>`;
         if (countDiv) countDiv.textContent = '0 resources';
         return;
     }
 
-    tableBody.innerHTML = activeResources.map((r, idx) => `
-        <div class="resource-row" style="border-bottom: 1px solid var(--border); background: ${idx % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-section)'};">
-            <div class="resource-row-summary" onclick="this.parentElement.classList.toggle('expanded')" style="display: flex; align-items: center; padding: 10px 14px; cursor: pointer; gap: 12px; user-select: none;">
-                <span style="flex-shrink: 0;">${awsIcon(r.type, 22)}</span>
-                <span style="text-transform: uppercase; font-size: 0.82em; color: var(--text-secondary); width: 70px; flex-shrink: 0;">${r.type}</span>
-                <span style="font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${r.name || '-'}</span>
+    tableBody.innerHTML = activeResources.map((r) => `
+        <div class="resource-row-v3 resource-row">
+            <div class="resource-row-v3__summary resource-row-summary" onclick="this.parentElement.classList.toggle('expanded')">
+                ${typeBadge(r.type)}
+                <span class="resource-row-v3__name">${r.name || '-'}</span>
                 ${stateBadge(r.state)}
-                <span style="color: var(--text-muted); font-size: 0.85em; transition: transform 0.2s;" class="resource-chevron">&#9662;</span>
+                <svg class="resource-row-v3__chevron resource-chevron icon" aria-hidden="true"><use href="#icon-chevron-down"/></svg>
             </div>
-            <div class="resource-row-details" style="display: none; padding: 0 14px 12px 14px; font-size: 0.88em;">
-                <div style="display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; padding: 10px 12px; background: var(--bg-elevated); border-radius: 6px;">
-                    <span class="t-muted">Resource ID</span>
-                    <code style="color: var(--text-primary); background: var(--bg-input); padding: 2px 6px; border-radius: 3px; font-size: 0.92em; border: 1px solid var(--border);">${r.id || '-'}</code>
-                    <span class="t-muted">State</span>
+            <div class="resource-row-v3__details resource-row-details">
+                <div class="resource-row-v3__details-grid">
+                    <span class="resource-row-v3__label">Resource ID</span>
+                    <code class="resource-row-v3__code">${r.id || '-'}</code>
+                    <span class="resource-row-v3__label">State</span>
                     <span>${stateBadge(r.state)}</span>
-                    <span class="t-muted">Project</span>
-                    <span>${r.project ? `<a href="#" onclick="event.preventDefault(); event.stopPropagation(); showDestroyConfirmation('${r.project}', 'purge')" style="color: var(--info-text); text-decoration: underline;" title="Click to purge this project">${r.project}</a>` : '-'}</span>
-                    ${r.details ? `<span class="t-muted">Details</span><span class="t-secondary">${r.details}</span>` : ''}
+                    <span class="resource-row-v3__label">Project</span>
+                    <span>${r.project ? `<a href="#" onclick="event.preventDefault(); event.stopPropagation(); showDestroyConfirmation('${r.project}', 'purge')" class="resource-row-v3__project-link" title="Click to purge this project">${r.project}</a>` : '-'}</span>
+                    ${r.details ? `<span class="resource-row-v3__label">Details</span><span class="resource-row-v3__details-text">${r.details}</span>` : ''}
                 </div>
             </div>
         </div>
@@ -18136,10 +18404,23 @@ function _renderDeploymentTimelineNow() {
         }
     });
     
-    const sessionList = Object.values(sessions).reverse().slice(0, 10);
-    
+    // 2026-05-19 audit fix — Manage view scopes the timeline to the active
+    // deployment so operators don't see every project's history on the page.
+    // The filter is set by APP.manage._scopeProjectViews; the Manage sub-pill
+    // is the only consumer of the filter — other callers (Archived Logs,
+    // background auto-refresh) leave it unset and see the full list.
+    const _manageProjectFilter = (window.APP && APP.manage && APP.manage._timelineFilter) || null;
+    let sessionList = Object.values(sessions).reverse();
+    if (_manageProjectFilter) {
+        sessionList = sessionList.filter(s => s.projectName === _manageProjectFilter);
+    }
+    sessionList = sessionList.slice(0, 10);
+
     if (sessionList.length === 0) {
-        timelineContent.innerHTML = '<div style="color: var(--text-muted); text-align: center;">No deployment history yet</div>';
+        const emptyMsg = _manageProjectFilter
+            ? `No history yet for <code>${(typeof APP !== 'undefined' && APP.manage ? APP.manage._escape(_manageProjectFilter) : _manageProjectFilter)}</code>`
+            : 'No deployment history yet';
+        timelineContent.innerHTML = `<div style="color: var(--text-muted); text-align: center;">${emptyMsg}</div>`;
         return;
     }
     
@@ -18168,30 +18449,26 @@ function _renderDeploymentTimelineNow() {
             log.level === 'error' && !log.message.includes('cancelled') ? i : idx, -1);
         const endedInSuccess = lastSuccessIdx > lastErrorIdx && lastSuccessIdx >= 0;
 
-        let statusIcon, statusColor, statusText;
+        // V3 status mapping → .spec-pill variant + display label.
+        // No saturated left-strip — the pill is the only state signal.
+        let statusVariant, statusText;
         if (wasDestroyed) {
-            statusIcon = '🗑️';
-            statusColor = 'var(--text-muted)';
+            statusVariant = 'spec-pill--draft';
             statusText = 'Destroyed';
         } else if (endedInSuccess || (s.hasSuccess && !s.hasError)) {
-            statusIcon = '✅';
-            statusColor = 'var(--success-text)';
+            statusVariant = 'spec-pill--live';
             statusText = 'Success';
         } else if (s.hasError) {
-            statusIcon = '❌';
-            statusColor = 'var(--danger-text)';
+            statusVariant = 'spec-pill--error';
             statusText = 'Failed';
         } else if (s.hasSuccess) {
-            statusIcon = '✅';
-            statusColor = 'var(--success-text)';
+            statusVariant = 'spec-pill--live';
             statusText = 'Success';
         } else if (s.hasWarning) {
-            statusIcon = '&#9888;';
-            statusColor = 'var(--warning-text)';
+            statusVariant = 'spec-pill--draft';
             statusText = 'Completed';
         } else {
-            statusIcon = '&#128260;';
-            statusColor = 'var(--info-text)';
+            statusVariant = 'spec-pill--draft';
             statusText = 'In Progress';
         }
         
@@ -18226,17 +18503,18 @@ function _renderDeploymentTimelineNow() {
             allResources.filter(r => r.project === projectName).length : 0;
         const resourceCountLabel = projectResourceCount > 0 ? ` (${projectResourceCount})` : '';
         
-        // Deployment type badge (e.g., goad-mini, c2-full)
-        const deploymentTypeBadge = s.deploymentType ? `<span style="background: var(--info-bg); color: var(--info-text); padding: 3px 8px; border-radius: 4px; font-size: 0.75em; font-weight: 500;">${s.deploymentType}</span>` : '';
-        
+        // Deployment type badge (e.g., goad-mini, c2-full) — neutral .spec-pill
+        const deploymentTypeBadge = s.deploymentType ? `<span class="spec-pill history-card-v3__type-pill">${s.deploymentType}</span>` : '';
+
         // Show purge button for failed deployments (but not if already destroyed or unknown project)
         const purgeButton = (s.hasError && !wasDestroyed && hasValidProjectName) ? `
-            <button onclick="event.stopPropagation(); showDestroyConfirmation('${projectName}', 'purge')" class="btn" style="background: var(--danger); color: white; font-size: 0.75em; padding: 6px 12px; margin-left: 10px;" title="Clean up ${projectResourceCount} resources from this failed deployment">
-                🧹 Purge${resourceCountLabel}
+            <button onclick="event.stopPropagation(); showDestroyConfirmation('${projectName}', 'purge')" class="spec-edit-btn spec-edit-btn--danger history-card-v3__purge" title="Clean up ${projectResourceCount} resources from this failed deployment">
+                <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-trash"/></svg>
+                <span>Purge${resourceCountLabel}</span>
             </button>
         ` : (s.hasError && !wasDestroyed && !hasValidProjectName) ? `
-            <span style="color: var(--text-muted); font-size: 0.75em; margin-left: 10px;" title="Cannot purge: project name unknown. Use the Resources section to manually delete.">
-                ⚠️ Manual cleanup required
+            <span class="history-card-v3__manual-note" title="Cannot purge: project name unknown. Use the Resources section to manually delete.">
+                Manual cleanup required
             </span>
         ` : '';
         
@@ -18248,31 +18526,29 @@ function _renderDeploymentTimelineNow() {
         const truncatedMessage = lastLogMessage.length > 80 ? lastLogMessage.substring(0, 80) + '...' : lastLogMessage;
         
         return `
-            <div style="margin-bottom: 16px;">
-                <!-- Clickable Header -->
-                <div onclick="toggleSessionExpand('${sessionId}')" style="display: flex; align-items: center; gap: 15px; padding: 16px 20px; background: var(--bg-card); border-radius: ${isExpanded ? '8px 8px 0 0' : '8px'}; border-left: 5px solid ${statusColor}; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.05);" onmouseover="this.style.background='var(--bg-elevated)'; this.style.boxShadow='0 4px 8px rgba(0,0,0,0.2)'" onmouseout="this.style.background='var(--bg-card)'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'">
-                    <span style="font-size: 1em; transition: transform 0.2s; transform: rotate(${isExpanded ? '90deg' : '0deg'}); color: var(--text-secondary);">▶</span>
-                    <div style="flex: 1; min-width: 0;">
-                        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px;">
-                            <span style="font-weight: 700; color: var(--text-primary); font-size: 1.1em;">${projectName}</span>
+            <div class="history-card-v3${isExpanded ? ' history-card-v3--expanded' : ''}">
+                <!-- Clickable Header (no saturated left-strip — status communicated via .spec-pill) -->
+                <div class="history-card-v3__head" onclick="toggleSessionExpand('${sessionId}')">
+                    <svg class="history-card-v3__chevron icon" aria-hidden="true"><use href="#icon-chevron-down"/></svg>
+                    <div class="history-card-v3__body">
+                        <div class="history-card-v3__title-row">
+                            <span class="history-card-v3__project">${projectName}</span>
                             ${deploymentTypeBadge}
-                            <span style="background: ${statusColor}15; color: ${statusColor}; padding: 3px 10px; border-radius: 4px; font-size: 0.75em; font-weight: 600; text-transform: uppercase;">${statusText}</span>
+                            <span class="spec-pill ${statusVariant}"><span class="spec-pill__dot" aria-hidden="true"></span>${statusText}</span>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 12px; color: var(--text-secondary); font-size: 0.88em;">
-                            ${spansMultipleDays ? '' : `<span>📅 ${formatDate(s.date)}</span>`}
-                            <span>🕐 ${timeRange}</span>
-                            <span>⏱️ ${duration || 'N/A'}</span>
-                            <span>📊 ${logCount} events</span>
+                        <div class="history-card-v3__meta">
+                            ${spansMultipleDays ? '' : `<span class="history-card-v3__meta-item">${formatDate(s.date)}</span>`}
+                            <span class="history-card-v3__meta-item">${timeRange}</span>
+                            <span class="history-card-v3__meta-item">${duration || 'N/A'}</span>
+                            <span class="history-card-v3__meta-item">${logCount} events</span>
                         </div>
-                        <div style="font-size: 0.88em; color: var(--text-muted); margin-top: 8px; font-style: italic;">
-                            Last: ${truncatedMessage}
-                        </div>
+                        <div class="history-card-v3__last">Last: ${truncatedMessage}</div>
                     </div>
-                    <div style="display: flex; align-items: center;">
+                    <div class="history-card-v3__actions">
                         ${purgeButton}
                     </div>
                 </div>
-                
+
                 <!-- Expanded Details -->
                 ${expandedContent}
             </div>
@@ -18567,23 +18843,23 @@ function buildSessionDetails(session, sessionId) {
         <div id="${sessionId}-details" style="background: var(--bg-container); border: 1px solid var(--border); border-top: none; border-radius: 0 0 8px 8px; padding: 20px;">
             <!-- Inline Destroy/Purge Confirmation (for failed deployments without management section) -->
             ${!isSuccess ? `<div id="destroy-confirm-${projectName}" style="display: none;"></div>` : ''}
-            <!-- Summary Stats -->
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px;">
-                <div style="background: var(--bg-card); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">
-                    <div style="font-size: 1.5em; font-weight: bold; color: var(--info-text);">${infoCount}</div>
-                    <div style="font-size: 0.75em; color: var(--text-secondary);">Info</div>
+            <!-- Summary Stats — V3 neutral tiles (numbers --text-primary, labels --text-secondary) -->
+            <div class="history-stats-v3">
+                <div class="history-stats-v3__tile">
+                    <span class="history-stats-v3__num">${infoCount}</span>
+                    <span class="history-stats-v3__label">Info</span>
                 </div>
-                <div style="background: var(--bg-card); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">
-                    <div style="font-size: 1.5em; font-weight: bold; color: var(--success-text);">${successCount}</div>
-                    <div style="font-size: 0.75em; color: var(--text-secondary);">Success</div>
+                <div class="history-stats-v3__tile">
+                    <span class="history-stats-v3__num">${successCount}</span>
+                    <span class="history-stats-v3__label">Success</span>
                 </div>
-                <div style="background: var(--bg-card); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">
-                    <div style="font-size: 1.5em; font-weight: bold; color: var(--warning-text);">${warningCount}</div>
-                    <div style="font-size: 0.75em; color: var(--text-secondary);">Warnings</div>
+                <div class="history-stats-v3__tile">
+                    <span class="history-stats-v3__num">${warningCount}</span>
+                    <span class="history-stats-v3__label">Warnings</span>
                 </div>
-                <div style="background: var(--bg-card); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">
-                    <div style="font-size: 1.5em; font-weight: bold; color: var(--danger-text);">${errorLogs.length}</div>
-                    <div style="font-size: 0.75em; color: var(--text-secondary);">Errors</div>
+                <div class="history-stats-v3__tile">
+                    <span class="history-stats-v3__num">${errorLogs.length}</span>
+                    <span class="history-stats-v3__label">Errors</span>
                 </div>
             </div>
             
@@ -24756,6 +25032,8 @@ async function loadCleanupResources(forceRefresh = false) {
         const known = APP.cleanup.readKnown();
 
         const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        // Summary tiles ALWAYS render — 0s are still informative ("scan ran,
+        // no orphans found") and prevent the "page is empty" UX complaint.
         setText('cleanup-orphan-count', orphans.total);
         setText('cleanup-eip-count', orphans.eips.length);
         setText('cleanup-acm-count', orphans.acm_certs.length);
@@ -24769,11 +25047,13 @@ async function loadCleanupResources(forceRefresh = false) {
         }
 
         if (orphans.total === 0) {
-            list.innerHTML = `<div class="empty-state">
-                <div class="empty-state__icon"><span class="empty-state__icon-inner"></span></div>
-                <h3 class="empty-state__title">No orphan resources detected</h3>
-                <p class="empty-state__description">All AWS resources in this account are tracked by an active deployment.</p>
-            </div>`;
+            // No orphans detected — keep the 4 summary tiles visible above
+            // (set via setText) and render a rich empty-state below with:
+            //   1. The "all-clear" message
+            //   2. A scan-scope readout (totals before orphan filtering)
+            //   3. A per-deployment summary so operators see WHAT was scanned
+            //   4. A Refresh affordance in the list area itself
+            list.innerHTML = _renderCleanupEmptyState(data);
             return;
         }
         list.innerHTML = _renderCleanupGroups(orphans, known);
@@ -24783,6 +25063,87 @@ async function loadCleanupResources(forceRefresh = false) {
     } finally {
         if (refreshBtn) refreshBtn.removeAttribute('data-loading');
     }
+}
+
+/**
+ * Render the "no orphans" empty-state with deployment summary.
+ *
+ * The user's 2026-05-19 complaint was that the Cleanup page appeared
+ * blank when no orphans were found. The 4 summary tiles already render
+ * (with 0s) but the main resource list area was visually empty, which
+ * read as broken. This adds:
+ *   - scan-scope readout (the operator sees WHAT was scanned)
+ *   - per-project deployment summary (resource counts + region)
+ *   - inline Refresh affordance in the list area
+ */
+function _renderCleanupEmptyState(data) {
+    const projects = (data && Array.isArray(data.projects)) ? data.projects : [];
+    const region = (data && data.region) ? data.region : '—';
+
+    // Tally raw scan counts (before orphan filtering) so the operator can
+    // see the scope, not just an empty result.
+    const totalEips = ((data && data.eips) || []).length;
+    const totalAcm = (((data && data.acm_certs) || []).length) + (((data && data.acm_us_east_1) || []).length);
+    const totalBuckets = ((data && data.s3_buckets) || []).length;
+    const totalSnaps = ((data && data.snapshots) || []).length;
+
+    let projectsBlock = '';
+    if (projects.length) {
+        const rows = projects.map(p => {
+            const name = escapeHtml(p.project_name || '—');
+            const dtype = escapeHtml(p.deployment_type || '—');
+            const projRegion = escapeHtml(p.region || region);
+            const count = (p.resource_count != null) ? p.resource_count : 0;
+            return `
+            <div class="spec-row cleanup-summary-row" data-kind="deployment">
+                <div class="spec-row__head">
+                    <div class="spec-row__key">${dtype.toUpperCase()}</div>
+                    <div class="spec-row__value">${name}</div>
+                    <div class="cleanup-summary-row__meta">
+                        <span class="cleanup-summary-row__count">${count} resources</span>
+                        <span class="cleanup-summary-row__region">${projRegion}</span>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+        projectsBlock = `
+            <section class="cleanup-group cleanup-empty__projects" data-group-kind="summary">
+                <header class="cleanup-group__header">
+                    <h4 class="cleanup-group__title">Tracked Deployments</h4>
+                    <span class="cleanup-group__count">${projects.length} active</span>
+                </header>
+                <div class="spec-list cleanup-group__list" role="list" aria-label="Tracked deployments">
+                    ${rows}
+                </div>
+            </section>`;
+    }
+
+    const scopeBits = [
+        `${totalEips} EIPs`,
+        `${totalAcm} ACM certs`,
+        `${totalBuckets} S3 buckets`,
+        `${totalSnaps} snapshots`,
+    ];
+
+    return `
+        <div class="empty-state cleanup-empty">
+            <div class="empty-state__icon"><span class="empty-state__icon-inner"></span></div>
+            <h3 class="empty-state__title">No orphan resources detected</h3>
+            <p class="empty-state__description">
+                All AWS resources in <code>${escapeHtml(region)}</code> are tracked by an active deployment.
+            </p>
+            <p class="cleanup-empty__scope">
+                Scan inspected ${scopeBits.map(b => `<span>${escapeHtml(b)}</span>`).join(' &middot; ')}.
+            </p>
+            <div class="empty-state__cta">
+                <button class="spec-edit-btn" type="button" onclick="loadCleanupResources(true)">
+                    <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                    Re-scan AWS
+                </button>
+            </div>
+        </div>
+        ${projectsBlock}
+    `;
 }
 
 function _detectOrphans(data) {
@@ -24799,9 +25160,21 @@ function _detectOrphans(data) {
         total: 0
     };
 
-    // Unattached EIPs — no instance_id means floating allocation.
+    // Unattached EIPs — floating allocation.
+    //
+    // 2026-05-19: An EIP attached to a NAT gateway shows `instance_id=null`
+    // but has a `network_interface_id` AND a Project tag from Terraform.
+    // The original rule (!instance_id) over-flagged every NAT EIP as an
+    // orphan. Real orphans either have no binding at all (no instance and
+    // no NIC) or have a binding but no Project tag (e.g. console-created
+    // resources). Both branches are kept distinct so the rule is auditable.
     (data.eips || []).forEach(e => {
-        if (!e.instance_id) {
+        const hasInstance = !!(e.instance_id || e.InstanceId);
+        const hasNic = !!(e.network_interface_id || e.NetworkInterfaceId);
+        const hasProjectTag = !!(e.project_tag || e.ProjectTag);
+        const floating = !hasInstance && !hasNic;
+        const untaggedBinding = (hasInstance || hasNic) && !hasProjectTag;
+        if (floating || untaggedBinding) {
             const id = APP.cleanup.resourceId(e, 'eip');
             orphans.eips.push(Object.assign({ _id: id, _kind: 'eip' }, e));
         }
@@ -25949,6 +26322,9 @@ APP.manage._buildRows = function (ctx) {
     const cost = ctx.cost;
     const audit = ctx.audit;
     const config = ctx.config || {};
+    const outputs = ctx.outputs || {};
+    const deployType = String(ctx.deploymentType || '').toLowerCase();
+    const isC2OrCombined = deployType.startsWith('c2-') || deployType.startsWith('combined-');
 
     rows.push({
         key: 'region',
@@ -25999,6 +26375,31 @@ APP.manage._buildRows = function (ctx) {
             value: redirIps.length === 1 ? redirIps[0] : `${redirIps.length} public IPs`,
             valueMono: true,
             hint: redirIps.length === 1 ? 'HTTPS 443' : `${redirIps.length} · HTTPS 443`,
+        });
+    }
+
+    // Redirector front-domain row — the "dummy website" surfaced for operators.
+    // Pulls from per-project terraform outputs (primary_domain_name /
+    // redirector_domain / dns_domain) which /api/deploy/outputs exposes. Only
+    // shown for C2 / combined deployments where redirectors exist. Operators
+    // can open the URL directly to verify front categorization.
+    const frontDomain =
+        (outputs.redirector_domain && String(outputs.redirector_domain).trim()) ||
+        (outputs.primary_domain_name && String(outputs.primary_domain_name).trim()) ||
+        (outputs.dns_domain && String(outputs.dns_domain).trim()) ||
+        '';
+    if (isC2OrCombined && frontDomain) {
+        const esc = APP.manage._escape;
+        const safeDomain = esc(frontDomain);
+        const linkHtml =
+            `<a href="https://${safeDomain}" target="_blank" rel="noopener noreferrer" class="manage-front-domain">${safeDomain}</a>` +
+            ` <span class="manage-front-domain__open" aria-hidden="true">Open in browser &#8599;</span>`;
+        rows.push({
+            key: 'redirector_domain',
+            label: 'Redirector · Front Domain',
+            valueHtml: linkHtml,
+            valueMono: true,
+            hint: 'public callback FQDN — check categorization before use',
         });
     }
     if (infra.jumpbox_public_ip) {
@@ -26164,6 +26565,72 @@ APP.manage._confirmDestroy = function () {
     if (window.confirm(msg)) proceed();
 };
 
+/**
+ * 2026-05-19 audit fix — Hide / show the GOAD Lab section based on the active
+ * deployment's type. The section only makes sense for goad-* or combined-*
+ * deployments; for every other case (including "no deployment selected"),
+ * it stays hidden.
+ *
+ * Sibling concern: populateGoadSection() (refreshDeployments → loadGoadStatus)
+ * also flips display based on the /api/goad/status payload. This guard is the
+ * authoritative override — it hard-hides when the active project isn't a
+ * GOAD-bearing type, so the operator never sees the "Vulnerable Active
+ * Directory environment for testing." copy on a C2-only project.
+ */
+APP.manage._evaluateGoadSection = function (deployType) {
+    const section = document.getElementById('goad-lab-section');
+    if (!section) return;
+    const t = String(deployType || '').toLowerCase();
+    const isGoadOrCombined = t.startsWith('goad-') || t.startsWith('combined-');
+    if (!isGoadOrCombined) {
+        section.style.display = 'none';
+        const provSection = document.getElementById('goad-provision-section');
+        if (provSection) provSection.style.display = 'none';
+        return;
+    }
+    // GOAD-bearing project — populateGoadSection (loadGoadStatus) is the
+    // source of truth for whether the project actually has provisioned GOAD
+    // infrastructure. Trigger a refresh so the section reflects the live
+    // state of the currently-active project, not whatever was visible last.
+    if (typeof loadGoadStatus === 'function') {
+        try { loadGoadStatus(); } catch (_) { /* surfaced via populate */ }
+    }
+};
+
+/**
+ * 2026-05-19 audit fix — Scope the resource-list-section + deployment timeline
+ * to the active project. The full inventory + history still loads in the
+ * background (refreshAll() still triggers the underlying fetches), but the
+ * visible rows are filtered to entries tagged with the active project so
+ * operators don't see every deployment in the account on the Manage page.
+ */
+APP.manage._scopeProjectViews = function (projectName) {
+    const tableBody = document.getElementById('resource-table-body');
+    const scopeDiv = document.getElementById('resource-scope-info');
+    if (tableBody && typeof window.allResources !== 'undefined' && Array.isArray(window.allResources)) {
+        if (!projectName) {
+            tableBody.innerHTML = `<div class="resource-list-v3__empty">Pick a deployment from the top bar to manage it.</div>`;
+            if (scopeDiv) scopeDiv.innerHTML = '<span class="t-muted">No deployment selected &mdash; full inventory hidden.</span>';
+        } else {
+            const scoped = window.allResources.filter(r => r.project === projectName);
+            if (scoped.length === 0) {
+                tableBody.innerHTML = `<div class="resource-list-v3__empty">No live resources tagged <code>${APP.manage._escape(projectName)}</code>.</div>`;
+            } else if (typeof renderResourceTable === 'function') {
+                renderResourceTable(scoped);
+            }
+            if (scopeDiv) {
+                scopeDiv.innerHTML = `<span class="spec-pill spec-pill--live"><span class="spec-pill__dot" aria-hidden="true"></span>SCOPED</span> &nbsp;Showing resources tagged <strong>${APP.manage._escape(projectName)}</strong>`;
+            }
+        }
+    }
+
+    // Timeline filter — read by _renderDeploymentTimelineNow.
+    APP.manage._timelineFilter = projectName || null;
+    if (typeof renderDeploymentTimeline === 'function') {
+        try { renderDeploymentTimeline(); } catch (_) { /* render guards on its own */ }
+    }
+};
+
 /** Pull live data + render the hero / spec-list. Re-entrant. */
 APP.manage.render = async function () {
     const view = document.getElementById('manage-view');
@@ -26185,9 +26652,11 @@ APP.manage.render = async function () {
         specList.innerHTML = `
             <div class="manage-empty">
                 <p class="manage-empty__title">No deployment selected</p>
-                <p class="manage-empty__body">Pick a deployment from the header selector, or deploy a new one from the Deploy sub-pill.</p>
+                <p class="manage-empty__body">Pick a deployment from the top-bar selector to manage it, or deploy a new one from the Deploy sub-pill.</p>
             </div>
         `;
+        APP.manage._evaluateGoadSection('');
+        APP.manage._scopeProjectViews(null);
         return;
     }
 
@@ -26196,17 +26665,26 @@ APP.manage.render = async function () {
     if (heroState) heroState.textContent = '';
     if (heroType) heroType.textContent = 'loading…';
 
-    const [infraRes, statusRes, costRes, auditEntry, configRes] = await Promise.all([
+    const [infraRes, statusRes, costRes, auditEntry, configRes, outputsRes] = await Promise.all([
         fetch(`/api/deploy/infrastructure?project=${encodeURIComponent(project)}`).then(r => r.json()).catch(() => ({ success: false })),
         fetch(`/api/deploy/status?project=${encodeURIComponent(project)}`).then(r => r.json()).catch(() => ({ success: false })),
         fetch('/api/costs/aggregate').then(r => r.json()).catch(() => ({ success: false })),
         APP.manage._loadLastTouched(project),
         fetch('/api/config').then(r => r.json()).catch(() => ({ success: false })),
+        fetch(`/api/deploy/outputs?project=${encodeURIComponent(project)}`).then(r => r.json()).catch(() => ({ success: false })),
     ]);
 
     const hasDeployment = !!(infraRes && infraRes.has_deployment);
     const config = (configRes && configRes.config) || {};
-    const deployType = config.deployment_type || (infraRes && infraRes.deployment_mode) || '';
+    const outputs = (outputsRes && outputsRes.success && outputsRes.outputs) ? outputsRes.outputs : {};
+    // deployment_type resolution order: per-project status (most authoritative) →
+    // terraform output → infra deployment_mode → global config (fallback).
+    const deployType =
+        (statusRes?.status?.deployment_type) ||
+        (outputs.deployment_type) ||
+        (infraRes && infraRes.deployment_mode) ||
+        config.deployment_type ||
+        '';
     const deployConfig = (typeof DEPLOYMENT_CONFIGS !== 'undefined') ? DEPLOYMENT_CONFIGS[deployType] : null;
 
     if (heroType) heroType.textContent = deployConfig?.title || deployType || '—';
@@ -26231,12 +26709,18 @@ APP.manage.render = async function () {
         cost: projectCost,
         audit: auditEntry,
         config: config,
+        outputs: outputs,
+        deploymentType: deployType,
         account_id: infraRes?.account_id || '',
         instance_states: {},
         hasDeployment: hasDeployment,
     });
 
     specList.innerHTML = rows.map(APP.manage._renderRow).join('');
+
+    // Reactive show/hide of the GOAD section + scoped resource / history views.
+    APP.manage._evaluateGoadSection(deployType);
+    APP.manage._scopeProjectViews(project);
 };
 
 /** Init hook — idempotent. */

@@ -613,12 +613,18 @@
                         <!-- D3.2: Configuration tab content re-parents here -->
                     <!-- D3.8 — Explicit "New Deployment" banner. Pairs with the
                          "+ New" button in the global header. Both wired to
-                         APP.startNewDeployment() in app.js. -->
+                         APP.journey.open() in app.js (Phase 2b hybrid takeover).
+                         2026-05-19 audit: also surface the active-deployment
+                         context so an operator arriving via the journey or via
+                         the top-bar selector immediately sees which spec they
+                         are editing. The "editing" line is populated in
+                         APP._refreshConfigureContextBanner() and re-runs every
+                         time the active deployment changes. -->
                     <div class="configure-new-deployment-banner" id="configure-new-deployment-banner">
                         <button class="btn btn-primary" id="configure-new-deployment-btn" type="button">
                             + New Deployment
                         </button>
-                        <span class="t-muted">Or edit the deployment currently selected in the header.</span>
+                        <span class="t-muted" id="configure-context-hint" data-empty="Or edit the deployment currently selected in the header.">Or edit the deployment currently selected in the header.</span>
                     </div>
                     <h2 class="page-title">Configuration Editor</h2>
 
@@ -704,8 +710,8 @@
                         <label for="management-cidr">Management CIDR Blocks: <span class="t-danger">*</span></label>
                         <div style="display: flex; gap: 10px; align-items: flex-start;">
                             <input type="text" id="management-cidr" placeholder="e.g. 203.0.113.50/32, 198.51.100.0/24" style="flex: 1;">
-                            <button type="button" class="btn btn-secondary" onclick="fetchMyPublicIP()" id="fetch-ip-btn" style="white-space: nowrap;">
-                                Fetch My IP
+                            <button type="button" class="btn btn-secondary" onclick="fetchMyPublicIP()" id="fetch-ip-btn" data-action="my-ip" style="white-space: nowrap;">
+                                Use my IP
                             </button>
                         </div>
                         <small>
@@ -713,7 +719,7 @@
                             Only these IPs can SSH/RDP/connect to CS. Use <code>/32</code> for a single IP.<br>
                             <span style="color: var(--text-muted); font-size: 0.9em;">Examples: <code>1.2.3.4/32</code> (single IP) &middot; <code>10.0.0.0/24</code> (IP range) &middot; <code>1.2.3.4/32, 5.6.7.8/32</code> (multiple)</span><br>
                             <span style="color: var(--text-muted); font-size: 0.9em;">
-                                <strong>Fetch My IP</strong> uses a server-side <code>curl</code> to detect your real public IP &mdash; this bypasses iCloud Private Relay and VPN split-tunnelling, which would otherwise return a relay IP that AWS security groups won't recognise for SSH/RDP.
+                                <strong>Use my IP</strong> uses a server-side <code>curl</code> to detect your real public IP &mdash; this bypasses iCloud Private Relay and VPN split-tunnelling, which would otherwise return a relay IP that AWS security groups won't recognise for SSH/RDP.
                             </span><br>
                             <span style="color: var(--text-muted); font-size: 0.9em;">
                                 <strong>IP changed post-deploy?</strong> Update directly in AWS Console: EC2 &rarr; Security Groups &rarr; filter by your project name &rarr; Edit inbound rules &rarr; replace your old IP with new <code>/32</code>.
@@ -723,14 +729,21 @@
 
                     <!-- Domain Configuration Section (C2 deployments only) -->
                     <div id="domain-config-section" class="section-card section-card--highlight">
-                        <h3>Domain Configuration</h3>
+                        <h3>Redirector Domain Configuration</h3>
                         <p>
-                            These are domains <strong>you purchase and own</strong>. They are used for DNS records, SSL certificates, and CloudFront aliases.
-                            This is NOT the front domain — that is a third-party domain configured separately in the malleable C2 profile.
+                            These are the <strong>decoy / fronting domains</strong> served by your redirectors &mdash; the
+                            "dummy websites" linked to this deployment. They are domains
+                            <strong>you purchase and own</strong>, used for DNS records, SSL certificates, and CloudFront aliases.
+                            This is NOT the third-party <em>front domain</em> &mdash; that is configured separately in the malleable C2 profile.
+                        </p>
+                        <p class="t-muted" data-bolton-domain-categorization style="font-size: 0.88em; margin-top: -4px;">
+                            Need to check what category your domain falls under to a web filter? Run
+                            <code>scripts/utilities/check_domain_categorization.py &lt;domain&gt;</code> to query
+                            Bluecoat / Fortiguard / Cisco Talos in one shot.
                         </p>
 
                         <div class="form-group">
-                            <label for="primary-domain">Primary Domain:</label>
+                            <label for="primary-domain">Primary Domain (decoy + fronting site):</label>
                             <div style="display: flex; gap: 8px; align-items: center;">
                                 <select id="primary-domain" style="flex: 1;">
                                     <option value="">-- Select a domain from your AWS account --</option>
@@ -1364,19 +1377,12 @@ ns-143.awsdns-17.org
                     <div id="config-message" class="message"></div>
                     </div>
                     <div class="subpill-pane" data-subpill-pane="deploy" id="subpill-pane-deploy" hidden>
-                        <!-- D3.3: Deploy tab content re-parents here -->
-                    <h2 class="page-title">Deployment Control</h2>
-
-                    <!-- Prerequisites Section -->
-                    <div style="margin-bottom: 30px;">
-                        <h3 style="margin-bottom: 20px;">Deployment Prerequisites</h3>
-
-                        <!-- Deployment Type Overview (mirrors config page) -->
-                        <div id="deploy-type-info" class="deployment-overview" style="display: none;">
-                            <h4><span id="deploy-type-title">Deployment Overview</span></h4>
-                            <div id="deploy-type-components" class="overview-grid"></div>
-                            <div id="deploy-type-details" class="overview-detail"></div>
-                        </div>
+                        <!-- D3.3: Deploy sub-pill — V3-native (v3-production-rollout 2026-05-19).
+                             Layout: spec-list summary → primary action strip (Apply / Plan /
+                             Destroy) → collapsed prerequisites details. The legacy emoji
+                             tile grid, the inline-config-panel, and the standalone "Edit
+                             Config" button were removed in v2.5.0; per-row inline edit
+                             plus the Configure sub-pill replace them. -->
 
                         <!-- Configuration Summary Section — Phase 2B Composition A.
                              V3-native spec-list: hero project identity + key/value rows
@@ -1405,6 +1411,60 @@ ns-143.awsdns-17.org
                             <!-- Validation warnings — rendered if config is incomplete -->
                             <div id="config-summary-warnings" class="deploy-summary__warnings" style="display: none;"></div>
                         </div>
+
+                        <!-- Primary action strip — Apply / Plan / Destroy.
+                             v3-production-rollout 2026-05-19: surfaced directly under the
+                             spec-list so they aren't buried beneath the prereq pile.
+                             Apply uses .btn-primary (v2.5.5 dim-brand fix), Plan +
+                             Validate are .btn-secondary, Destroy is .btn-danger with
+                             two-stage confirm. All gated by validateAndUnlockDeploy(). -->
+                        <div id="deployment-actions" class="deploy-action-strip" role="toolbar" aria-label="Deployment actions">
+                            <button class="btn btn-primary" type="button" id="deploy-btn" data-deploy-action="apply" onclick="startDeployment()" disabled aria-disabled="true">
+                                Apply
+                            </button>
+                            <button class="btn btn-secondary" type="button" id="deploy-plan-btn" data-deploy-action="plan" onclick="runPlan()" disabled aria-disabled="true">
+                                Plan
+                            </button>
+                            <button class="btn btn-secondary" type="button" id="validate-deploy-btn" data-deploy-action="validate" onclick="validateAndUnlockDeploy()">
+                                Validate
+                            </button>
+                            <button class="btn btn-danger" type="button" id="deploy-destroy-btn" data-deploy-action="destroy" onclick="confirmDeployDestroy()" disabled aria-disabled="true" style="margin-left: auto;">
+                                Destroy
+                            </button>
+                        </div>
+                        <p id="validate-deploy-hint" class="deploy-action-hint">
+                            Validate the configuration to unlock Apply, Plan, and Destroy.
+                        </p>
+                        <!-- Two-stage destroy confirm (per v3-production-rollout spec).
+                             Hidden until operator clicks Destroy. Confirm CTA triggers
+                             destroyInfrastructure() (which audits via deploy.destroy). -->
+                        <div id="deploy-destroy-confirm" class="deploy-destroy-confirm" hidden>
+                            <p class="deploy-destroy-confirm__msg">
+                                Destroying will tear down all AWS resources for
+                                <strong id="deploy-destroy-confirm-project">this deployment</strong>.
+                                This is irreversible — Terraform state and snapshots are preserved.
+                            </p>
+                            <div class="deploy-destroy-confirm__actions">
+                                <button class="btn btn-secondary btn-sm" type="button" onclick="cancelDeployDestroy()">Cancel</button>
+                                <button class="btn btn-danger btn-sm" type="button" id="deploy-destroy-confirm-btn" onclick="confirmDeployDestroyStage2()">Yes, destroy</button>
+                            </div>
+                        </div>
+
+                        <!-- Deployment Type Overview (mirrors config page) -->
+                        <div id="deploy-type-info" class="deployment-overview" style="display: none; margin-top: 18px;">
+                            <h4><span id="deploy-type-title">Deployment Overview</span></h4>
+                            <div id="deploy-type-components" class="overview-grid"></div>
+                            <div id="deploy-type-details" class="overview-detail"></div>
+                        </div>
+
+                        <!-- Prerequisites — collapsed below the spec-list so the
+                             operator sees the summary + CTAs first. -->
+                        <details class="deploy-prereqs" id="deploy-prereqs">
+                            <summary>
+                                <span class="deploy-prereqs__chev" aria-hidden="true">▸</span>
+                                <span class="deploy-prereqs__title">Prerequisites &amp; Uploads</span>
+                                <span class="deploy-prereqs__hint" id="deploy-prereqs-status">Click to expand</span>
+                            </summary>
 
                         <!-- Domain Configuration Check (C2 deployments only) -->
                         <div id="domain-prereq-section" class="upload-section">
@@ -1682,27 +1742,20 @@ ns-143.awsdns-17.org
                                 </div>
                             </div>
                         </div>
-                    </div>
+                        </details>
+                        <!-- end .deploy-prereqs details -->
 
-                    <div id="deployment-status" class="status-display">
-                        <p>Ready to deploy</p>
-                    </div>
-
-                    <!-- Validate before deploying -->
-                    <div id="validate-deploy-section" style="text-align: center; margin: 20px 0;">
-                        <button class="btn btn-primary" onclick="validateAndUnlockDeploy()" id="validate-deploy-btn" style="padding: 12px 32px; font-size: 1.05em;">
-                            Validate Configuration
-                        </button>
-                        <p id="validate-deploy-hint" style="margin-top: 8px; font-size: 0.88em; color: var(--text-muted);">
-                            Validate your configuration to unlock deployment
-                        </p>
-                    </div>
-
-                    <!-- Hidden until validation passes -->
-                    <div class="deployment-actions" id="deployment-actions" style="display: none; opacity: 0; transform: translateY(-10px); transition: opacity 0.4s ease, transform 0.4s ease;">
-                        <button class="btn btn-success" onclick="startDeployment()" id="deploy-btn">Deploy Infrastructure</button>
-                        <button class="btn btn-warning" onclick="runPlan()">Run Plan (Preview)</button>
-                    </div>
+                        <!-- Inline live-deploy status fallback target.
+                             The Apply flow upgrades to APP.overlay when available;
+                             this div remains as a fallback host so legacy code paths
+                             (pollDeploymentStatus, updateDeploymentUI) keep working
+                             even if the overlay is dismissed. v3-production-rollout
+                             moved Validate + Apply + Plan into the top action strip;
+                             #deploy-btn, #validate-deploy-btn, #validate-deploy-hint,
+                             #deployment-actions IDs are preserved by the new buttons. -->
+                        <div id="deployment-status" class="status-display" style="margin-top: 20px;">
+                            <p>Ready to deploy</p>
+                        </div>
 
                     <div class="callout callout--info" style="margin-top: 15px;">
                         <p style="margin: 0; font-size: 0.9em;">
@@ -1895,23 +1948,32 @@ ns-143.awsdns-17.org
                     </div>
 
                     <!-- Full Resource List Section (collapsed by default) -->
-                    <div id="resource-list-section" style="margin-bottom: 30px;">
-                        <details class="details-card">
-                            <summary>All Deployed Resources</summary>
-                            <div>
-                                <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;">
-                                    <div id="resource-scope-info" style="color: var(--text-muted); font-size: 0.88em;"></div>
-                                    <div style="display: flex; gap: 5px;">
-                                        <button class="btn btn-secondary btn-sm" onclick="refreshResourceList()">
-                                            Refresh
+                    <!-- V3-native rebuild: chevron via #icon-chevron-down, neutral mono
+                         type pill per row (no saturated AWS-icon ribbons), .spec-pill state
+                         badge on the right. -->
+                    <div id="resource-list-section" class="resource-list-v3" style="margin-bottom: 30px;">
+                        <details class="details-card details-card--v3">
+                            <summary>
+                                <svg class="details-card__chevron icon" aria-hidden="true"><use href="#icon-chevron-down"/></svg>
+                                <span class="details-card__eyebrow">DEPLOYED INVENTORY</span>
+                                <span class="details-card__title">All Deployed Resources</span>
+                            </summary>
+                            <div class="resource-list-v3__body">
+                                <div class="resource-list-v3__filter-row">
+                                    <div id="resource-scope-info" class="resource-list-v3__scope"></div>
+                                    <div class="resource-list-v3__btn-group">
+                                        <button class="spec-edit-btn" type="button" onclick="refreshResourceList()">
+                                            <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-refresh"/></svg>
+                                            <span>Refresh</span>
                                         </button>
-                                        <button class="btn btn-secondary btn-sm" onclick="exportResourceList()">
-                                            Export CSV
+                                        <button class="spec-edit-btn" type="button" onclick="exportResourceList()">
+                                            <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-download"/></svg>
+                                            <span>Export CSV</span>
                                         </button>
                                     </div>
                                 </div>
-                                <div style="margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
-                                    <select id="resource-type-filter" onchange="filterResources()">
+                                <div class="resource-list-v3__filters">
+                                    <select id="resource-type-filter" class="resource-list-v3__select" onchange="filterResources()" aria-label="Filter by resource type">
                                         <option value="all">All Types</option>
                                         <option value="ec2">EC2 Instances</option>
                                         <option value="vpc">VPC</option>
@@ -1921,28 +1983,35 @@ ns-143.awsdns-17.org
                                         <option value="nat">NAT Gateways</option>
                                         <option value="s3">S3 Buckets</option>
                                     </select>
-                                    <input type="text" id="resource-search" placeholder="Search by name or ID..."
+                                    <input type="text" id="resource-search" class="resource-list-v3__search"
+                                           placeholder="Search by name or ID..."
                                            onkeyup="filterResources()"
-                                           style="flex: 1; min-width: 200px;">
+                                           aria-label="Search resources">
                                 </div>
-                                <div id="resource-list-container" style="border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;">
-                                    <div id="resource-table-body" style="max-height: 520px; overflow-y: auto;">
+                                <div id="resource-list-container" class="resource-list-v3__container">
+                                    <div id="resource-table-body" class="resource-list-v3__rows">
                                     </div>
                                 </div>
-                                <div id="resource-count" style="margin-top: 8px; color: var(--text-muted); font-size: 0.88em;"></div>
+                                <div id="resource-count" class="resource-list-v3__count"></div>
                             </div>
                         </details>
                     </div>
 
                     <!-- Deployment History & Logs Section -->
-                    <div id="deployment-history-section" style="margin-bottom: 30px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                            <h3 style="margin: 0;">Deployment History & Logs</h3>
-                            <div>
-                                <button class="btn btn-secondary btn-sm" onclick="viewArchivedLogs()">
+                    <!-- V3-native: each history entry is a .history-card-v3 (neutral surface,
+                         1px border-subtle, status communicated via .spec-pill — no saturated
+                         full-height left strip). -->
+                    <div id="deployment-history-section" class="deployment-history-v3" style="margin-bottom: 30px;">
+                        <div class="deployment-history-v3__header">
+                            <div class="deployment-history-v3__title-block">
+                                <span class="deployment-history-v3__eyebrow">SESSION LOG</span>
+                                <h3 class="deployment-history-v3__title">Deployment History &amp; Logs</h3>
+                            </div>
+                            <div class="deployment-history-v3__actions">
+                                <button class="spec-edit-btn" type="button" onclick="viewArchivedLogs()">
                                     Archived Logs
                                 </button>
-                                <button class="btn btn-secondary btn-sm" onclick="clearDeploymentLogs()" style="margin-left: 5px;">
+                                <button class="spec-edit-btn" type="button" onclick="clearDeploymentLogs()">
                                     Clear Logs
                                 </button>
                             </div>
@@ -1955,22 +2024,23 @@ ns-143.awsdns-17.org
                             </div>
                         </div>
 
-                        <!-- Detailed Logs -->
-                        <div style="background: var(--bg-terminal); border-radius: var(--radius-lg); overflow: hidden; border: 1px solid var(--border);">
-                            <div style="background: var(--bg-elevated); padding: 10px 15px; display: flex; justify-content: space-between; align-items: center;">
-                                <span style="font-weight: bold; color: var(--text-terminal);">Detailed Logs</span>
-                                <div>
-                                    <button onclick="copyLogs()" class="btn btn-secondary btn-sm">
+                        <!-- Detailed Logs — V3 chrome on the wrapper header,
+                             terminal-safe tokens only inside the log body. -->
+                        <div class="detailed-logs-v3">
+                            <div class="detailed-logs-v3__head">
+                                <span class="detailed-logs-v3__title">Detailed Logs</span>
+                                <div class="detailed-logs-v3__actions">
+                                    <button onclick="copyLogs()" class="spec-edit-btn">
                                         Copy
                                     </button>
-                                    <button onclick="downloadLogs()" class="btn btn-secondary btn-sm" style="margin-left: 5px;">
+                                    <button onclick="downloadLogs()" class="spec-edit-btn">
                                         Download
                                     </button>
                                 </div>
                             </div>
                             <!-- Log Level Filter -->
-                            <div style="padding: 8px 15px; display: flex; gap: 10px; align-items: center; border-bottom: 1px solid var(--border);">
-                                <span style="color: var(--text-muted); font-size: 0.88em;">Filter:</span>
+                            <div class="detailed-logs-v3__filter">
+                                <span class="detailed-logs-v3__filter-label">Filter:</span>
                                 <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
                                     <input type="checkbox" id="log-filter-info" checked onchange="filterLogs()">
                                     <span class="btn btn-info btn-sm">INFO</span>
@@ -1988,7 +2058,7 @@ ns-143.awsdns-17.org
                                     <span class="btn btn-danger btn-sm">ERROR</span>
                                 </label>
                             </div>
-                            <div id="deployment-logs" style="padding: 15px; max-height: 400px; overflow-y: auto; font-family: 'SF Mono', 'Consolas', monospace; font-size: 0.88em; line-height: 1.6;">
+                            <div id="deployment-logs" class="detailed-logs-v3__body">
                                 <div class="t-muted">No deployment logs yet. Deploy infrastructure to see logs here.</div>
                             </div>
                         </div>

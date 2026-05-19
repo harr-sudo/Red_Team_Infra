@@ -6640,6 +6640,137 @@ body[data-journey-open="true"] .container > main {
     line-height: 1.55;
 }
 
+/* ── v3-production-rollout 2026-05-19 — Deploy sub-pill action strip.
+   Apply / Plan / Validate / Destroy live directly under the spec-list.
+   Reuses .btn primitives (.btn-primary, .btn-secondary, .btn-danger);
+   only the layout chrome is local. -------------------------------------- */
+.deploy-action-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin: 22px 0 8px;
+    padding: 14px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+}
+.deploy-action-strip .btn {
+    min-width: 110px;
+    padding: 9px 18px;
+}
+.deploy-action-strip .btn[disabled],
+.deploy-action-strip .btn[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+.deploy-action-hint {
+    margin: 0 0 18px;
+    padding: 0 4px;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+.deploy-action-hint--error   { color: var(--danger-text); }
+.deploy-action-hint--success { color: var(--success-text); }
+
+/* Two-stage destroy confirm panel. Hidden by default via [hidden].
+   Surface: danger-tinted card, danger border, prominent confirm button. */
+.deploy-destroy-confirm {
+    margin: 6px 0 22px;
+    padding: 14px 16px;
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
+    border-radius: var(--radius);
+    animation: deploy-destroy-confirm-in 200ms var(--motion-easing-standard) both;
+}
+.deploy-destroy-confirm__msg {
+    margin: 0 0 12px;
+    font-size: var(--font-size-sm);
+    color: var(--danger-text);
+    line-height: 1.5;
+}
+.deploy-destroy-confirm__msg strong {
+    font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-bold);
+    color: var(--danger-text);
+}
+.deploy-destroy-confirm__actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+@keyframes deploy-destroy-confirm-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Collapsible prerequisites panel — keeps the upload sections accessible
+   without burying the spec-list + CTAs. */
+.deploy-prereqs {
+    margin: 18px 0;
+    padding: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.deploy-prereqs > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.deploy-prereqs > summary:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+.deploy-prereqs > summary::-webkit-details-marker { display: none; }
+.deploy-prereqs__chev {
+    display: inline-block;
+    width: 12px;
+    text-align: center;
+    transition: transform var(--motion-duration-base) var(--motion-easing-standard);
+}
+.deploy-prereqs[open] > summary .deploy-prereqs__chev { transform: rotate(90deg); }
+.deploy-prereqs__title { flex: 1 1 auto; color: var(--text-primary); text-transform: none; letter-spacing: 0; font-family: var(--font-family-base); font-size: var(--font-size-sm); }
+.deploy-prereqs__hint  { font-weight: var(--font-weight-medium); color: var(--text-muted); text-transform: none; letter-spacing: 0; font-size: 11px; }
+.deploy-prereqs > .upload-section,
+.deploy-prereqs > .deployment-overview,
+.deploy-prereqs > .form-group {
+    margin: 14px 16px;
+}
+
+/* "Last applied by" row — operator dot + relative time, lives inside the
+   spec-list. Pairs with the same .operator-dot primitive used on manage,
+   so the colour mapping stays consistent. */
+.deploy-attr {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-family-mono);
+    font-size: 12.5px;
+    color: var(--text-primary);
+}
+.deploy-attr--unknown {
+    color: var(--text-muted);
+    font-style: italic;
+}
+.deploy-attr__time {
+    color: var(--text-secondary);
+    font-size: 11.5px;
+}
+
 /* ── Phase 2b.3 — Journey takeover internals ───────────────────────── */
 .journey-card {
     /* extends .takeover-card; no overrides needed at the surface level */
@@ -7463,6 +7594,75 @@ body[data-journey-open="true"] .container > main {
     border-radius: var(--radius);
 }
 
+/* ── Cleanup empty-state extensions ─────────────────────────────────────
+   When the scan returns no orphans, we replace the legacy 4-line empty
+   state with a richer panel: scan-scope readout + per-project summary.
+   The 4 stat tiles above keep rendering with 0s — this block fills the
+   list area so the surface never reads as a broken/blank page.
+   Both themes are layer-aware: surfaces use var(--bg-card), text on
+   those surfaces uses var(--text-secondary) (NOT --text-muted, which
+   would drop below AA on the --bg-card layer).                       */
+.cleanup-empty {
+    /* Inherits .empty-state padding + icon — gap tightens the readout. */
+    gap: 8px;
+}
+.cleanup-empty__scope {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    /* On --bg-card (empty-state surface) — --text-secondary tested AA
+       in both themes per palette.css L198 (dark) + L279 (light). */
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+    margin: 4px 0 12px;
+    text-align: center;
+    line-height: 1.5;
+}
+.cleanup-empty__scope span {
+    /* Tabular numerals so the counts line up between separators. */
+    font-variant-numeric: tabular-nums;
+}
+.cleanup-empty__projects {
+    /* Sits below the empty-state hero. Inherits .cleanup-group chrome
+       so it visually reads as a section under the summary rather than
+       orphan content. */
+    margin-top: 22px;
+}
+.cleanup-summary-row .spec-row__head {
+    /* Tracked-deployments rows: kind + name + meta cluster. Read-only. */
+    grid-template-columns: 160px 1fr auto;
+    align-items: center;
+    cursor: default;
+}
+.cleanup-summary-row:hover .spec-row__head {
+    /* Read-only summary rows — cancel the hover transform that click-to-edit
+       rows use, matching .cleanup-row's affordance. */
+    transform: none;
+}
+.cleanup-summary-row__meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: nowrap;
+}
+.cleanup-summary-row__count,
+.cleanup-summary-row__region {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.cleanup-summary-row__region {
+    /* Region tag — subtle pill so it reads separate from the count. */
+    padding: 2px 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: var(--letter-spacing-caps);
+    font-size: 10.5px;
+}
+
 .cleanup-group {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
@@ -7848,6 +8048,39 @@ body[data-journey-open="true"] .container > main {
     font-style: italic;
 }
 
+/* 2026-05-19 audit fix — Redirector front-domain row.
+   `.manage-front-domain` is the anchor wrapping the FQDN; the trailing
+   `.manage-front-domain__open` is a small inline caption ("Open in browser ↗")
+   that hints clickability without taking a full row. Both colours resolve
+   to `--text-primary` / `--text-secondary` so contrast is layer-safe on
+   both `--bg-app` (dark) and the resolved `--bg-app` (light) surfaces. */
+.spec-row__value .manage-front-domain {
+    color: var(--text-primary);
+    font-family: var(--font-family-mono);
+    text-decoration: underline;
+    text-decoration-color: var(--border-light);
+    text-underline-offset: 3px;
+    word-break: break-all;
+    transition: text-decoration-color var(--motion-duration-base) var(--motion-easing-standard),
+                color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.spec-row__value .manage-front-domain:hover,
+.spec-row__value .manage-front-domain:focus-visible {
+    color: var(--brand-light);
+    text-decoration-color: var(--brand-light);
+    outline: none;
+}
+.spec-row__value .manage-front-domain__open {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    font-weight: var(--font-weight-medium);
+    color: var(--text-secondary);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-left: 6px;
+    white-space: nowrap;
+}
+
 /* Empty state when no deployment selected */
 .manage-empty {
     padding: 36px 24px;
@@ -7901,6 +8134,597 @@ body[data-journey-open="true"] .container > main {
 }
 
 /* === END PHASE 3A — MANAGE SUB-PILL === */
+
+/* ════════════════════════════════════════════════════════════════════════
+   === PHASE 3A.2 — MANAGE SUB-PILL: "All Deployed Resources" +
+       "Deployment History & Logs" V3-NATIVE RESTYLE ===
+
+   Replaces:
+     - Saturated AWS-icon ribbons on each resource row (orange #d86613 EC2,
+       purple #693cc5 VPC, etc.) → neutral mono type pill (.spec-pill chrome
+       on --bg-input).
+     - Saturated semantic state pills (success-bg / warning-bg / danger-bg
+       inline fills) → existing .spec-pill--live / --draft / --error
+       primitives. Dot colour is the only state hint.
+     - Full-height saturated left strip on each timeline card (border-left:
+       5px solid var(--success-text)/danger-text/etc.) → neutral
+       .section-card surface; status communicated via .spec-pill on the
+       header.
+     - Default browser <summary> chevron + plain text header on details-card
+       → SVG #icon-chevron-down with 280ms ease, 9.5px caps eyebrow above
+       the title.
+     - All emoji glyphs in chrome rows (📅🕐⏱️📊🧹⚠️) → text-only meta with
+       hairline separators; trash icon via #icon-trash for purge button.
+
+   Composes Phase 2B primitives only: .spec-pill, .spec-edit-btn, .icon,
+   .section-card. Token-only colour; no raw hex.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Details-card V3 variant: SVG chevron + caps eyebrow header ───── */
+details.details-card--v3 {
+    margin: 0 0 15px 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+details.details-card--v3:hover {
+    border-color: var(--border);
+}
+details.details-card--v3 > summary,
+details.details-card--v3[open] > summary {
+    list-style: none;
+    padding: 14px 18px;
+    margin-bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+    /* Override the default details > summary ::before chevron */
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    color: var(--text-primary);
+}
+details.details-card--v3 > summary::-webkit-details-marker { display: none; }
+details.details-card--v3 > summary::before,
+details.details-card--v3[open] > summary::before { content: none; display: none; }
+details.details-card--v3 > summary::marker { content: ''; }
+details.details-card--v3 > summary:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary); /* Override global summary:hover { color: --accent } */
+}
+details.details-card--v3[open] {
+    background: var(--bg-card); /* Override global details[open] { background: --bg-elevated } */
+    padding: 0;
+}
+details.details-card--v3[open] > summary {
+    border-bottom: 1px solid var(--border-subtle);
+}
+.details-card__chevron {
+    width: 14px;
+    height: 14px;
+    color: var(--text-secondary);
+    transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    flex-shrink: 0;
+    transform: rotate(-90deg);
+}
+details.details-card--v3[open] > summary .details-card__chevron {
+    transform: rotate(0deg);
+}
+.details-card__eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.details-card__eyebrow::after {
+    content: " ·";
+    color: var(--border-light);
+    margin: 0 2px 0 4px;
+}
+.details-card__title {
+    font-size: 14px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    line-height: 1.4;
+}
+details.details-card--v3 > .resource-list-v3__body {
+    padding: 16px 18px 18px;
+}
+
+/* ── 2. Resource list V3 — filter strip ─────────────────────────────── */
+.resource-list-v3__filter-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+.resource-list-v3__scope {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-family: var(--font-family-mono);
+    letter-spacing: 0.02em;
+}
+.resource-list-v3__btn-group {
+    display: inline-flex;
+    gap: 8px;
+}
+.resource-list-v3__btn-group .spec-edit-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.resource-list-v3__btn-group .spec-edit-btn .icon {
+    color: var(--text-secondary);
+}
+.resource-list-v3__btn-group .spec-edit-btn:hover .icon {
+    color: var(--text-primary);
+}
+
+.resource-list-v3__filters {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+.resource-list-v3__select,
+.resource-list-v3__search {
+    appearance: none;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    border-radius: var(--radius-xs);
+    font: inherit;
+    font-size: var(--font-size-base);
+    font-family: var(--font-family-mono);
+    transition: border-color var(--motion-duration-base) var(--motion-easing-standard),
+                box-shadow var(--motion-duration-base) var(--motion-easing-standard);
+}
+.resource-list-v3__select {
+    /* Neutral native select; remove default arrow + draw our own chevron */
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%),
+        linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%);
+    background-position:
+        calc(100% - 14px) 50%,
+        calc(100% - 9px) 50%;
+    background-size:
+        5px 5px,
+        5px 5px;
+    background-repeat: no-repeat;
+    padding-right: 28px;
+    cursor: pointer;
+}
+.resource-list-v3__search {
+    flex: 1;
+    min-width: 200px;
+}
+.resource-list-v3__select:focus,
+.resource-list-v3__search:focus {
+    outline: none;
+    border-color: var(--brand-light);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 24%, transparent);
+}
+
+.resource-list-v3__container {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    overflow: hidden;
+    background: var(--bg-card);
+}
+.resource-list-v3__rows {
+    max-height: 520px;
+    overflow-y: auto;
+}
+.resource-list-v3__count {
+    margin-top: 10px;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-family: var(--font-family-mono);
+    letter-spacing: 0.02em;
+}
+.resource-list-v3__empty {
+    padding: 28px 18px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: var(--font-size-base);
+}
+
+/* ── 3. Resource row V3 — neutral chrome, no per-type saturated ribbon ─ */
+.resource-row-v3 {
+    position: relative;
+    border-bottom: 1px solid var(--border-subtle);
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.resource-row-v3:last-child { border-bottom: none; }
+
+.resource-row-v3::before {
+    /* 2px brand-light left rail on hover (same family as .spec-row::before) */
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--brand-light);
+    opacity: 0;
+    transform: scaleY(0.4);
+    transform-origin: center;
+    transition: opacity 200ms var(--motion-easing-standard),
+                transform 200ms var(--motion-easing-spring);
+    pointer-events: none;
+}
+.resource-row-v3:hover::before {
+    opacity: 1;
+    transform: scaleY(1);
+}
+.resource-row-v3:hover {
+    background: var(--bg-card-hover);
+}
+
+.resource-row-v3__summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 14px;
+    cursor: pointer;
+    user-select: none;
+}
+.resource-row-v3__type-pill {
+    /* Neutral mono type badge — width-stable across types */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 48px;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-bold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+    flex-shrink: 0;
+}
+.resource-row-v3__name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-base);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-medium);
+}
+.resource-row-v3__chevron {
+    width: 12px;
+    height: 12px;
+    color: var(--text-secondary);
+    transition: transform var(--motion-duration-base) var(--motion-easing-standard);
+    flex-shrink: 0;
+}
+.resource-row-v3.expanded .resource-row-v3__chevron {
+    transform: rotate(180deg);
+}
+
+.resource-row-v3__details {
+    display: none;
+    padding: 0 14px 14px 14px;
+}
+.resource-row-v3.expanded .resource-row-v3__details {
+    display: block;
+}
+.resource-row-v3__details-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 14px;
+    padding: 10px 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+}
+.resource-row-v3__label {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    align-self: center;
+}
+.resource-row-v3__code {
+    color: var(--text-primary);
+    background: var(--bg-input);
+    padding: 2px 6px;
+    border-radius: var(--radius-xs);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    border: 1px solid var(--border-subtle);
+}
+.resource-row-v3__project-link {
+    color: var(--text-primary);
+    text-decoration: underline;
+    text-decoration-color: var(--border);
+    text-underline-offset: 2px;
+    font-family: var(--font-family-mono);
+}
+.resource-row-v3__project-link:hover {
+    text-decoration-color: var(--brand-light);
+    color: var(--brand-light);
+}
+.resource-row-v3__details-text {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+/* ── 4. Deployment history V3 — header bar ──────────────────────────── */
+.deployment-history-v3__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    margin-bottom: 18px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-subtle);
+    flex-wrap: wrap;
+}
+.deployment-history-v3__title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.deployment-history-v3__eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.deployment-history-v3__title {
+    font-size: 14px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin: 0;
+    line-height: 1.3;
+}
+.deployment-history-v3__actions {
+    display: inline-flex;
+    gap: 8px;
+}
+
+/* ── 5. History card V3 — neutral surface; status via .spec-pill ────── */
+.history-card-v3 {
+    margin-bottom: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.history-card-v3:hover {
+    border-color: var(--border);
+}
+.history-card-v3__head {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 18px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.history-card-v3__head:hover {
+    background: var(--bg-card-hover);
+}
+.history-card-v3__chevron {
+    width: 13px;
+    height: 13px;
+    color: var(--text-secondary);
+    transition: transform var(--motion-duration-base) var(--motion-easing-standard);
+    transform: rotate(-90deg);
+    flex-shrink: 0;
+}
+.history-card-v3--expanded .history-card-v3__chevron {
+    transform: rotate(0deg);
+}
+.history-card-v3__body {
+    min-width: 0;
+}
+.history-card-v3__title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.history-card-v3__project {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    word-break: break-all;
+}
+.history-card-v3__type-pill {
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+}
+.history-card-v3__meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-family: var(--font-family-mono);
+    letter-spacing: 0.02em;
+}
+.history-card-v3__meta-item {
+    display: inline-block;
+    font-variant-numeric: tabular-nums;
+}
+.history-card-v3__meta-item + .history-card-v3__meta-item::before {
+    content: "·";
+    color: var(--border-light);
+    margin-right: 14px;
+}
+.history-card-v3__last {
+    margin-top: 6px;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    font-style: italic;
+}
+.history-card-v3__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.history-card-v3__purge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.history-card-v3__manual-note {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+
+/* spec-edit-btn--danger — neutral border, danger token only on hover */
+.spec-edit-btn--danger {
+    color: var(--text-primary);
+    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+.spec-edit-btn--danger:hover {
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    border-color: var(--danger);
+}
+
+/* ── 6. Detailed Logs panel V3 — neutral header on bg-card ─────────── */
+.detailed-logs-v3 {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+.detailed-logs-v3__head {
+    background: var(--bg-card);
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.detailed-logs-v3__title {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+.detailed-logs-v3__actions {
+    display: inline-flex;
+    gap: 8px;
+}
+.detailed-logs-v3__filter {
+    padding: 10px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+    flex-wrap: wrap;
+}
+.detailed-logs-v3__filter-label {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+/* Stats grid inside an expanded history card — neutral tiles, no
+   saturated number fills. Number uses --text-primary, label --text-secondary. */
+.history-stats-v3 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
+}
+.history-stats-v3__tile {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    padding: 14px 12px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
+}
+.history-stats-v3__num {
+    font-family: var(--font-family-mono);
+    font-size: 22px;
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+.history-stats-v3__label {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+}
+
+/* Log body keeps the always-dark terminal surface (CLAUDE.md rule:
+   terminal-safe variables ok on terminal backgrounds). */
+.detailed-logs-v3__body {
+    padding: 14px 16px;
+    max-height: 400px;
+    overflow-y: auto;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    line-height: 1.6;
+    background: var(--bg-terminal);
+    color: var(--text-terminal);
+}
+
+@media (max-width: 720px) {
+    .resource-row-v3__summary {
+        flex-wrap: wrap;
+    }
+    .deployment-history-v3__header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .history-card-v3__head {
+        grid-template-columns: auto 1fr;
+    }
+    .history-card-v3__actions {
+        grid-column: 1 / -1;
+        justify-content: flex-end;
+    }
+}
+
+/* === END PHASE 3A.2 === */
 
 /* === END PHASE 3C — CLEANUP SUB-PILL === */
 

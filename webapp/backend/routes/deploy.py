@@ -4419,46 +4419,184 @@ def _query_us_east_1_resources():
     return out
 
 
+def _query_orphan_candidates(region):
+    """Query AWS for resource types the Cleanup sub-pill flags as orphans.
+
+    Used by /resources/all-projects so the frontend's `_detectOrphans()` has
+    something to detect against. The endpoint previously only returned the
+    per-project summary list, which is why the Cleanup sub-pill rendered
+    empty even when orphan EIPs, untagged S3 buckets, and !in_use ACM certs
+    existed in the account.
+
+    Returns a dict with keys: eips, acm_certs, s3_buckets, snapshots. Each
+    value is a list of plain dicts shaped for the frontend (snake_case
+    field names matching _detectOrphans + _renderGroup expectations).
+    Never raises — per-resource queries swallow boto exceptions and log to
+    stderr so a single unhealthy service can't blank the whole pane.
+    """
+    import boto3
+    out = {
+        'eips': [],
+        'acm_certs': [],
+        's3_buckets': [],
+        'snapshots': [],
+    }
+
+    # ── Elastic IPs (region-scoped) ────────────────────────────────────────
+    # _detectOrphans() flags any EIP with no `instance_id`. We return ALL
+    # EIPs (attached + unattached) and let the frontend filter so the
+    # detection rules stay client-side, matching the existing contract.
+    try:
+        ec2 = boto3.client('ec2', region_name=region)
+        for eip in ec2.describe_addresses().get('Addresses', []):
+            tags = {t['Key']: t['Value'] for t in eip.get('Tags', []) or []}
+            out['eips'].append({
+                'allocation_id': eip.get('AllocationId'),
+                'public_ip': eip.get('PublicIp'),
+                'instance_id': eip.get('InstanceId'),  # None == orphan
+                'network_interface_id': eip.get('NetworkInterfaceId'),
+                'region': region,
+                'project_tag': tags.get('Project'),
+                'name_tag': tags.get('Name'),
+            })
+    except Exception as e:
+        print(f"[deploy] EIP query failed (region={region}): {e}")
+
+    # ── ACM certs (region-scoped — us-east-1 added separately) ─────────────
+    try:
+        acm = boto3.client('acm', region_name=region)
+        for c in acm.list_certificates(MaxItems=100).get('CertificateSummaryList', []):
+            out['acm_certs'].append({
+                'arn': c.get('CertificateArn'),
+                'domain': c.get('DomainName'),
+                'status': c.get('Status'),
+                'in_use': c.get('InUse'),
+                'region': region,
+            })
+    except Exception as e:
+        print(f"[deploy] ACM query failed (region={region}): {e}")
+
+    # ── S3 buckets (global namespace, region-agnostic listing) ─────────────
+    # list_buckets returns every bucket in the account — the frontend's
+    # _detectOrphans() applies the project-prefix regex. We do NOT pre-filter
+    # so the detection rule remains in one place (and is auditable in JS).
+    try:
+        s3 = boto3.client('s3', region_name=region)
+        resp = s3.list_buckets()
+        for b in resp.get('Buckets', []):
+            entry = {
+                'name': b['Name'],
+                'creation_date': b['CreationDate'].isoformat() if b.get('CreationDate') else None,
+            }
+            # Best-effort region lookup — get_bucket_location returns None for
+            # us-east-1. Wrap each call so a 403 on one bucket doesn't break
+            # the whole list.
+            try:
+                loc = s3.get_bucket_location(Bucket=b['Name'])
+                entry['region'] = loc.get('LocationConstraint') or 'us-east-1'
+            except Exception:
+                entry['region'] = None
+            out['s3_buckets'].append(entry)
+    except Exception as e:
+        print(f"[deploy] S3 bucket query failed: {e}")
+
+    # ── EBS snapshots (region-scoped, owner=self only) ─────────────────────
+    # We surface owner=self snapshots so policy-managed DailySnapshot entries
+    # show up — the frontend can group/filter as needed. Description is
+    # included so DLM-policy snapshots are recognizable.
+    try:
+        ec2 = boto3.client('ec2', region_name=region)
+        # OwnerIds=['self'] is critical — without it the API returns every
+        # public AMI snapshot and breaks the timeout budget.
+        snaps = ec2.describe_snapshots(OwnerIds=['self']).get('Snapshots', [])
+        for s in snaps:
+            tags = {t['Key']: t['Value'] for t in s.get('Tags', []) or []}
+            out['snapshots'].append({
+                'snapshot_id': s.get('SnapshotId'),
+                'volume_id': s.get('VolumeId'),
+                'state': s.get('State'),
+                'start_time': s['StartTime'].isoformat() if s.get('StartTime') else None,
+                'description': s.get('Description'),
+                'volume_size': s.get('VolumeSize'),
+                'region': region,
+                'project_tag': tags.get('Project'),
+            })
+    except Exception as e:
+        print(f"[deploy] Snapshot query failed (region={region}): {e}")
+
+    return out
+
+
 @bp.route('/resources/all-projects', methods=['GET'])
 def get_all_project_resources():
     """
-    Get a summary of resources for all deployed projects.
+    Resource catalog used by the Deployments → Cleanup sub-pill.
+
+    Returns:
+      - `projects`: per-deployment summary read from
+        logs/deployment_resources.json (cached, written at apply time).
+      - `eips`, `acm_certs`, `s3_buckets`, `snapshots`: live AWS resource
+        listings for the configured region. The frontend `_detectOrphans()`
+        applies orphan detection rules (no instance_id, !in_use, regex
+        against project prefixes, etc.).
+      - `acm_us_east_1`: us-east-1 ACM certs (CloudFront-bound) so domain
+        fronting cert orphans surface alongside region-local ones.
+
+    Before this rebuild the endpoint only returned `projects` + the
+    cross-region ACM list, leaving the Cleanup sub-pill blank in any
+    account that actually had orphan EIPs/buckets/certs (visible in the
+    AWS console but never delivered to the frontend).
     """
     try:
+        from webapp.backend.utils.config_parser import ConfigParser
+
         resources_file = project_root / "logs" / "deployment_resources.json"
 
-        # Always include cross-region resources (CloudFront ACM lives in us-east-1)
+        # Resolve the configured region. Falls back to eu-central-1 (the
+        # project default) so a missing tfvars doesn't blank the response.
+        aws_region = 'eu-central-1'
+        try:
+            tfvars_file = project_root / "configs" / "terraform.tfvars"
+            if tfvars_file.exists():
+                cfg = ConfigParser.parse_tfvars(tfvars_file)
+                aws_region = cfg.get('aws_region', aws_region) or aws_region
+        except Exception as e:
+            print(f"[deploy] Could not read aws_region from tfvars: {e}")
+
+        # Always include cross-region ACM (CloudFront ACM lives in us-east-1)
         cross_region = _query_us_east_1_resources()
+        # Live AWS scan of orphan-candidate resource types.
+        orphan_candidates = _query_orphan_candidates(aws_region)
 
-        if not resources_file.exists():
-            return jsonify({
-                "success": True,
-                "projects": [],
-                "acm_us_east_1": cross_region.get("acm_us_east_1", []),
-                "message": "No deployments found"
-            })
-
-        with open(resources_file, 'r') as f:
-            all_deployments = json.load(f)
-
+        # Per-project summary (read from cached deployment_resources.json).
         projects = []
-        for project_name, data in all_deployments.items():
-            projects.append({
-                "project_name": project_name,
-                "deployment_type": data.get('deployment_type'),
-                "deployed_at": data.get('deployed_at'),
-                "region": data.get('region'),
-                "resource_count": data.get('resource_count', len(data.get('resources', [])))
-            })
-
-        # Sort by deployment time (newest first)
-        projects.sort(key=lambda x: x.get('deployed_at', ''), reverse=True)
+        if resources_file.exists():
+            try:
+                with open(resources_file, 'r') as f:
+                    all_deployments = json.load(f)
+                for project_name, data in all_deployments.items():
+                    projects.append({
+                        "project_name": project_name,
+                        "deployment_type": data.get('deployment_type'),
+                        "deployed_at": data.get('deployed_at'),
+                        "region": data.get('region'),
+                        "resource_count": data.get('resource_count', len(data.get('resources', []))),
+                    })
+                projects.sort(key=lambda x: x.get('deployed_at', ''), reverse=True)
+            except Exception as e:
+                print(f"[deploy] Failed to read deployment_resources.json: {e}")
 
         return jsonify({
             "success": True,
+            "region": aws_region,
+            "scanned_at": __import__('datetime').datetime.utcnow().isoformat() + 'Z',
             "projects": projects,
             "total_projects": len(projects),
-            "acm_us_east_1": cross_region.get("acm_us_east_1", []),
+            "eips": orphan_candidates.get('eips', []),
+            "acm_certs": orphan_candidates.get('acm_certs', []),
+            "s3_buckets": orphan_candidates.get('s3_buckets', []),
+            "snapshots": orphan_candidates.get('snapshots', []),
+            "acm_us_east_1": cross_region.get('acm_us_east_1', []),
         })
 
     except Exception as e:

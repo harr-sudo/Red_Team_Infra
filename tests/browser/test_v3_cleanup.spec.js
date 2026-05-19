@@ -80,6 +80,154 @@ test.describe('Cleanup sub-pill (Phase 3c V3-native)', () => {
         expect(text, 'refreshed-at must read "LAST SCAN HH:MM:SS"').toMatch(/LAST SCAN \d{2}:\d{2}:\d{2}/);
     });
 
+    test('Refresh button issues a GET to /api/deploy/resources/all-projects', async ({ page }) => {
+        // 2026-05-19 regression: operator reported the Cleanup page was
+        // empty. Root cause was the endpoint omitting eips/acm/s3 — but
+        // the click→fetch path must also work end-to-end. This test
+        // intercepts the request and asserts the URL.
+        await navigateToCleanupSubPill(page);
+        const reqPromise = page.waitForRequest(req =>
+            req.url().includes('/api/deploy/resources/all-projects') && req.method() === 'GET',
+            { timeout: 8000 }
+        );
+        await page.locator('#cleanup-refresh-btn').click();
+        const req = await reqPromise;
+        // Force-refresh button passes `?refresh=1` so the URL must contain it.
+        expect(req.url(), 'force refresh must pass ?refresh=1').toContain('refresh=1');
+    });
+
+    test('empty-state renders with scope readout + per-project summary when no orphans', async ({ page }) => {
+        // 2026-05-19 fix: when the scan returns no orphans the list area
+        // used to render a 4-line empty-state with no operational context.
+        // It now renders a richer panel: scan-scope readout (e.g. "7 EIPs ·
+        // 1 ACM cert · 4 S3 buckets · 14 snapshots") + a Tracked Deployments
+        // section listing every project from `data.projects` + an inline
+        // Re-scan button.
+        //
+        // Strategy: stub /api/deploy/resources/all-projects with a 200
+        // response that has zero orphans but a non-empty projects array.
+        // This works in CI without depending on real AWS state.
+        await page.route('**/api/deploy/resources/all-projects*', async (route) => {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({
+                    success: true,
+                    region: 'eu-central-1',
+                    scanned_at: '2026-05-19T12:00:00Z',
+                    projects: [
+                        { project_name: 'c2_adhoc_test', deployment_type: 'c2-adhoc', deployed_at: '2026-05-01T00:00:00', region: 'eu-central-1', resource_count: 30 },
+                        { project_name: 'goad_mini_test', deployment_type: 'goad-mini', deployed_at: '2026-05-02T00:00:00', region: 'eu-central-1', resource_count: 24 },
+                    ],
+                    total_projects: 2,
+                    eips: [
+                        // All attached — no orphans
+                        { allocation_id: 'eipalloc-1', public_ip: '1.2.3.4', instance_id: 'i-aaa', region: 'eu-central-1' },
+                    ],
+                    acm_certs: [
+                        { arn: 'arn:aws:acm:eu-central-1:1:certificate/aaa', domain: 'example.com', status: 'ISSUED', in_use: true, region: 'eu-central-1' },
+                    ],
+                    s3_buckets: [
+                        { name: 'c2-adhoc-test-tfstate', region: 'eu-central-1' },
+                    ],
+                    snapshots: [
+                        { snapshot_id: 'snap-aaa', volume_id: 'vol-aaa', state: 'completed', region: 'eu-central-1' },
+                    ],
+                    acm_us_east_1: [],
+                }),
+            });
+        });
+
+        await navigateToCleanupSubPill(page);
+        // Force the load so our route stub serves the payload.
+        await page.evaluate(() => loadCleanupResources(true));
+        await page.waitForTimeout(400);
+
+        // 4 summary tiles still render with 0s.
+        await expect(page.locator('#cleanup-orphan-count')).toHaveText('0');
+        await expect(page.locator('#cleanup-eip-count')).toHaveText('0');
+        await expect(page.locator('#cleanup-acm-count')).toHaveText('0');
+        await expect(page.locator('#cleanup-buckets-count')).toHaveText('0');
+
+        // The empty-state title is present.
+        await expect(page.locator('#subpill-pane-cleanup .cleanup-empty')).toBeVisible();
+        await expect(page.locator('#subpill-pane-cleanup .empty-state__title')).toHaveText('No orphan resources detected');
+
+        // Scope readout calls out the numbers we stubbed.
+        const scope = await page.locator('#subpill-pane-cleanup .cleanup-empty__scope').textContent();
+        expect(scope || '').toContain('1 EIPs');
+        expect(scope || '').toContain('1 ACM certs');
+        expect(scope || '').toContain('1 S3 buckets');
+        expect(scope || '').toContain('1 snapshots');
+
+        // Per-project summary panel renders both deployments.
+        await expect(page.locator('#subpill-pane-cleanup .cleanup-empty__projects')).toBeVisible();
+        const projRows = page.locator('#subpill-pane-cleanup .cleanup-summary-row');
+        await expect(projRows).toHaveCount(2);
+        // First project row content.
+        await expect(projRows.nth(0).locator('.spec-row__key')).toHaveText('C2-ADHOC');
+        await expect(projRows.nth(0).locator('.spec-row__value')).toHaveText('c2_adhoc_test');
+
+        // Inline Re-scan CTA in the empty-state body.
+        await expect(page.locator('#subpill-pane-cleanup .cleanup-empty .empty-state__cta button')).toBeVisible();
+    });
+
+    test('empty-state Re-scan button triggers a new fetch', async ({ page }) => {
+        // The inline Re-scan button calls loadCleanupResources(true). Stub
+        // the endpoint and assert the second fetch fires when clicked.
+        let callCount = 0;
+        await page.route('**/api/deploy/resources/all-projects*', async (route) => {
+            callCount += 1;
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({
+                    success: true, region: 'eu-central-1', scanned_at: '2026-05-19T12:00:00Z',
+                    projects: [], total_projects: 0,
+                    eips: [], acm_certs: [], s3_buckets: [], snapshots: [], acm_us_east_1: [],
+                }),
+            });
+        });
+        await navigateToCleanupSubPill(page);
+        await page.evaluate(() => loadCleanupResources(true));
+        await page.waitForTimeout(300);
+        const before = callCount;
+        await page.locator('#subpill-pane-cleanup .cleanup-empty .empty-state__cta button').click();
+        await page.waitForTimeout(300);
+        expect(callCount, 'inline Re-scan must trigger another endpoint hit').toBeGreaterThan(before);
+    });
+
+    test('orphan EIPs render as cleanup-rows when the endpoint returns unattached ones', async ({ page }) => {
+        // Asserts the round-trip from backend payload to rendered orphan row.
+        // Stubs an unattached EIP (instance_id=null) — _detectOrphans should
+        // promote it into orphans.eips and the renderer should emit a
+        // .spec-row.cleanup-row with the EIP value.
+        await page.route('**/api/deploy/resources/all-projects*', async (route) => {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({
+                    success: true, region: 'eu-central-1', scanned_at: '2026-05-19T12:00:00Z',
+                    projects: [], total_projects: 0,
+                    eips: [
+                        { allocation_id: 'eipalloc-orphan', public_ip: '203.0.113.99', instance_id: null, region: 'eu-central-1' },
+                    ],
+                    acm_certs: [], s3_buckets: [], snapshots: [], acm_us_east_1: [],
+                }),
+            });
+        });
+        await navigateToCleanupSubPill(page);
+        await page.evaluate(() => loadCleanupResources(true));
+        await page.waitForTimeout(400);
+        // Orphan tile + EIP tile both 1.
+        await expect(page.locator('#cleanup-orphan-count')).toHaveText('1');
+        await expect(page.locator('#cleanup-eip-count')).toHaveText('1');
+        // Row rendered.
+        const rows = page.locator('#subpill-pane-cleanup .cleanup-row[data-kind="eip"]');
+        await expect(rows).toHaveCount(1);
+        await expect(rows.first().locator('.spec-row__value').first()).toContainText('203.0.113.99');
+    });
+
     test('resource rows (if any) use the .spec-row .cleanup-row format', async ({ page }) => {
         await navigateToCleanupSubPill(page);
         await page.locator('#cleanup-refresh-btn').click();
