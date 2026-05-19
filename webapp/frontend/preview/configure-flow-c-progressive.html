@@ -3935,7 +3935,7 @@ location /w/api.php    { proxy_pass https://teamserver_upstream; }`,
             const key = $('#malleable-profile').value;
             const primary = ($('#primary-domain').value || '').trim();
             const fqdn = primary
-                ? (($('#c2-subdomain').value || 'api') + '.' + primary)
+                ? (($('#sub-c2').value || 'api') + '.' + primary)
                 : '<primary-domain>';
             const csPane      = document.querySelector('.cfg-preview-pane[data-preview-pane="cs"]');
             const nginxPane   = document.querySelector('.cfg-preview-pane[data-preview-pane="nginx"]');
@@ -4162,9 +4162,16 @@ Server: nginx
             scheduleCheck('primary', $('#primary-domain-status'), e.target.value);
             renderProfilePreview();
         });
-        $('[data-recheck="primary"]').addEventListener('click', () => {
-            runCheckNow('primary', $('#primary-domain-status'), $('#primary-domain').value);
-        });
+        // The legacy "Check availability" button (data-recheck) was removed
+        // when the primary-domain input became a Route 53 picker dropdown —
+        // the select's change event runs runCheckNow directly. Keep this
+        // guarded in case the button comes back.
+        const recheckBtn = $('[data-recheck="primary"]');
+        if (recheckBtn) {
+            recheckBtn.addEventListener('click', () => {
+                runCheckNow('primary', $('#primary-domain-status'), $('#primary-domain').value);
+            });
+        }
 
         // Add backup domain
         $('#add-backup').addEventListener('click', () => addBackupRow(''));
@@ -4202,7 +4209,7 @@ Server: nginx
             });
         });
         // C2 subdomain change → refresh example traffic Host header
-        $('#c2-subdomain').addEventListener('input', renderProfilePreview);
+        $('#sub-c2').addEventListener('input', renderProfilePreview);
 
         // CS license browse (mock)
         $('#cs-license-pick').addEventListener('click', () => {
