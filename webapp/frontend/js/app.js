@@ -3081,8 +3081,11 @@ APP.journey = (function () {
                         </div>
                         <div class="journey-field">
                             <label class="journey-field__label" for="journey-cidr">Management CIDR</label>
-                            <input class="journey-field__input" id="journey-cidr" type="text" value="${esc(state.cidr)}" placeholder="82.35.149.127/32" autocomplete="off" spellcheck="false">
-                            <span class="journey-field__hint">Your laptop's IP. /32 = exact host.</span>
+                            <div class="journey-field__input-row">
+                                <input class="journey-field__input" id="journey-cidr" type="text" value="${esc(state.cidr)}" placeholder="82.35.149.127/32" autocomplete="off" spellcheck="false">
+                                <button type="button" class="journey-field__use-my-ip" id="journey-use-my-ip" data-action="my-ip">Use my IP</button>
+                            </div>
+                            <span class="journey-field__hint" id="journey-use-my-ip-hint">Your laptop's IP. /32 = exact host.</span>
                         </div>
                     </div>
                 </section>
@@ -3147,6 +3150,35 @@ APP.journey = (function () {
             $('journey-cidr')?.addEventListener('input', e => {
                 state.cidr = e.target.value;
                 setDirty();
+            });
+            // "Use my IP" — server-side curl bypasses iCloud Private Relay /
+            // split-tunnel VPN. Reuses the same endpoint as the legacy Configure
+            // form so behavior stays consistent.
+            $('journey-use-my-ip')?.addEventListener('click', async () => {
+                const btn = $('journey-use-my-ip');
+                const cidrInput = $('journey-cidr');
+                const hint = $('journey-use-my-ip-hint');
+                if (!btn || !cidrInput) return;
+                const orig = btn.textContent;
+                btn.disabled = true;
+                btn.textContent = 'Fetching…';
+                try {
+                    const res = await fetch('/api/config/public-ip');
+                    const data = await res.json();
+                    if (data && data.ip) {
+                        cidrInput.value = `${data.ip}/32`;
+                        state.cidr = cidrInput.value;
+                        setDirty();
+                        if (hint) hint.textContent = `Detected ${data.ip} — /32 lock applied.`;
+                    } else {
+                        if (hint) hint.textContent = 'Could not detect IP — enter manually.';
+                    }
+                } catch (e) {
+                    if (hint) hint.textContent = 'Network error — enter manually.';
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = orig;
+                }
             });
         }
     }
@@ -3402,9 +3434,20 @@ APP.journey = (function () {
         // Assemble the config payload. We keep the shape minimal — the
         // server's ConfigValidator will fail loudly if anything is wrong,
         // so map errors back into the breadcrumb area.
+        // engagement_type is C2-only and validates against
+        // ["", "adhoc", "purple-team", "full-red-team"] (see
+        // webapp/backend/utils/validators.py). Map from the C2 deployment_type
+        // prefix; for goad-* / combined-* / unknown send "" so the validator
+        // skips the check. The legacy Configure form (post-handoff) lets the
+        // operator override if needed for C2 deployments.
+        const ENGAGEMENT_BY_TYPE = {
+            'c2-adhoc': 'adhoc',
+            'c2-purple': 'purple-team',
+            'c2-full': 'full-red-team',
+        };
         const config = {
             deployment_type: state.type,
-            engagement_type: state.type,
+            engagement_type: ENGAGEMENT_BY_TYPE[state.type] || '',
             project_name: state.projectName,
             environment: state.environment,
             aws_region: state.region,
@@ -12354,6 +12397,10 @@ function initSettingsPage() {
     if (typeof loadSettingsDomains === 'function') loadSettingsDomains(false);
     if (typeof loadSettingsSecrets === 'function') loadSettingsSecrets(false);
     if (typeof loadSettingsServices === 'function') loadSettingsServices(false);
+    // task #52 — surface ANTHROPIC_API_KEY status in Prereqs. Runs on
+    // every Settings open so a rotated env var is reflected without a
+    // page reload.
+    if (typeof loadSettingsAgentCheck === 'function') loadSettingsAgentCheck();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -12542,6 +12589,121 @@ async function loadSettingsServices(forceRefresh) {
         list.innerHTML = '<p class="settings-spec-error">Failed to load infrastructure services. Check AWS credentials.</p>';
         _setSettingsStatus(status, 'Error', 'error');
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// task #52 — Detection Agent (bolt-on agentic fallback) status check.
+// Renders a spec-row inside #settings-agent-check-row showing
+// configured-state, model id, key source, and SDK install state.
+// Reuses Phase 2b primitives (.spec-list, .spec-row, .spec-pill, .callout)
+// so the row inherits both-theme contrast guarantees from those classes.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch + cache /api/health/agent for use by both the Settings row and
+ * the bolt-on STUCK overlay. Cached on APP.bolton._agentConfigured per
+ * session; force=true bypasses the cache (used by Settings open + the
+ * STUCK overlay open path).
+ *
+ * Returns: { configured, model, key_source, anthropic_sdk_installed }
+ * or null on fetch failure (caller should treat as "unknown" — default
+ * to permissive UI so we don't accidentally lock operators out).
+ */
+async function fetchAgentHealth(force) {
+    if (!window.APP) window.APP = {};
+    if (!APP.bolton) APP.bolton = {};
+    if (!force && APP.bolton._agentHealthCache) {
+        return APP.bolton._agentHealthCache;
+    }
+    try {
+        const res = await fetch('/api/health/agent');
+        const data = await res.json();
+        if (!data || data.success === false) {
+            return null;
+        }
+        APP.bolton._agentHealthCache = data;
+        APP.bolton._agentConfigured = !!data.configured;
+        return data;
+    } catch (_e) {
+        return null;
+    }
+}
+
+async function loadSettingsAgentCheck() {
+    const container = document.getElementById('settings-agent-check-row');
+    if (!container) return;
+    const data = await fetchAgentHealth(true);
+    if (!data) {
+        container.innerHTML = '<p class="settings-spec-error">Failed to load detection-agent status. Verify the dashboard is running.</p>';
+        return;
+    }
+    const sdk = !!data.anthropic_sdk_installed;
+    const configured = !!data.configured;
+    const model = escapeHtml(data.model || 'unknown');
+    const keySource = escapeHtml(data.key_source || 'none');
+
+    // Pill state ladder:
+    //   - SDK missing                 → error (cannot recover without pip install)
+    //   - SDK present + key missing   → draft (operator action: set env var)
+    //   - SDK present + key present   → live (ready to invoke)
+    let pillClass = 'spec-pill--draft';
+    let pillLabel = 'NOT CONFIGURED';
+    if (!sdk) {
+        pillClass = 'spec-pill--error';
+        pillLabel = 'SDK MISSING';
+    } else if (configured) {
+        pillClass = 'spec-pill--live';
+        pillLabel = 'READY';
+    }
+
+    const eyebrow = sdk
+        ? `${model} &middot; key source: ${keySource}`
+        : `anthropic SDK not installed &middot; key source: ${keySource}`;
+
+    const rowHtml = `
+        <dl class="spec-list spec-list--inset motion-stagger-in" aria-label="Detection agent configuration">
+            <div class="spec-row" data-readonly="true" data-settings-row="anthropic-key">
+                <div class="spec-row__head">
+                    <dt class="spec-row__key">ANTHROPIC_API_KEY</dt>
+                    <dd class="spec-row__value">
+                        <span class="spec-pill ${pillClass}" data-agent-pill="${pillLabel}">
+                            <span class="spec-pill__dot" aria-hidden="true"></span>
+                            ${pillLabel}
+                        </span>
+                    </dd>
+                    <dd class="spec-row__hint">${eyebrow}</dd>
+                    <span class="spec-row__action" aria-hidden="true"></span>
+                </div>
+            </div>
+        </dl>`;
+
+    let calloutHtml = '';
+    if (!configured || !sdk) {
+        const calloutClass = sdk ? 'callout--warning' : 'callout--danger';
+        const headline = sdk
+            ? 'Agent fallback unavailable — <code>ANTHROPIC_API_KEY</code> not set in dashboard environment.'
+            : 'Anthropic SDK is not installed in the dashboard Python environment.';
+        const remedy = sdk
+            ? `<p style="margin: 8px 0 0;">Export the key in the dashboard service environment, then restart:</p>
+               <pre style="margin: 6px 0 0; padding: 8px 10px; background: var(--bg-terminal); color: var(--text-terminal); border-radius: 4px; font-family: var(--font-family-mono); font-size: 12px; overflow-x: auto;">export ANTHROPIC_API_KEY="sk-ant-..."
+./scripts/server/dashboard-manage.sh restart</pre>`
+            : `<p style="margin: 8px 0 0;">Install the SDK in the dashboard Python environment, then restart:</p>
+               <pre style="margin: 6px 0 0; padding: 8px 10px; background: var(--bg-terminal); color: var(--text-terminal); border-radius: 4px; font-family: var(--font-family-mono); font-size: 12px; overflow-x: auto;">pip install 'anthropic&gt;=0.40.0'
+./scripts/server/dashboard-manage.sh restart</pre>`;
+        calloutHtml = `
+            <div class="callout ${calloutClass}" data-agent-callout="true" style="margin-top: 12px;">
+                <strong>${headline}</strong>
+                ${remedy}
+                <p style="margin: 8px 0 0; font-size: 12px;">
+                    Full configuration walk-through:
+                    <a href="docs/internal/VULNERABLE_LAB_BOLTON_PLAN.md#79-operator-configuration"
+                       target="_blank" rel="noopener">VULNERABLE_LAB_BOLTON_PLAN.md §7.9 — Operator configuration</a>.
+                </p>
+            </div>`;
+    }
+
+    container.innerHTML = rowHtml + calloutHtml;
+    APP._staggerOnce && APP._staggerOnce(container.querySelector('.spec-list'));
 }
 
 // M-Redesign Agent 1 — Settings TOC active-section tracker.
@@ -28713,7 +28875,13 @@ APP.bolton = APP.bolton || {
     // operator approves (→ retry) or rejects (→ no state change).
     // ──────────────────────────────────────────────────────────────────
 
-    /** Show the agent invocation panel for a stuck job. Idempotent. */
+    /** Show the agent invocation panel for a stuck job. Idempotent.
+     *
+     * task #52: before showing the "Invoke agent" button, we fetch
+     * /api/health/agent — if ANTHROPIC_API_KEY is unset OR the anthropic
+     * SDK is missing, we render the button disabled with an explainer +
+     * a deep-link to Settings → Prereqs. This prevents the operator from
+     * discovering the 503 response only after clicking through. */
     _showAgentPanel(jobId) {
         const body = document.getElementById('bolton-progress-body');
         if (!body) return;
@@ -28730,6 +28898,20 @@ APP.bolton = APP.bolton || {
               <div class="bolton-agent-panel__body">
                 <button class="btn btn-primary" data-bolton-agent-action="invoke">Invoke agent</button>
                 <button class="btn btn-secondary" data-bolton-agent-action="dismiss">Dismiss</button>
+              </div>
+              <div class="bolton-agent-panel__unavailable" hidden>
+                <div class="callout callout--warning" data-bolton-agent-unavailable="true" style="margin:0">
+                    <strong data-agent-unavailable-headline></strong>
+                    <p style="margin:6px 0 0;font-size:12px;color:inherit" data-agent-unavailable-body></p>
+                    <p style="margin:8px 0 0;font-size:12px">
+                        <a href="#settings-prereqs"
+                           class="btn btn-link"
+                           data-bolton-agent-action="goto-settings"
+                           style="padding:0;background:transparent;border:none;color:var(--info-text);text-decoration:underline">
+                            Go to Settings &rarr;
+                        </a>
+                    </p>
+                </div>
               </div>
               <div class="bolton-agent-panel__proposal" hidden>
                 <hr style="margin:12px 0;border:none;border-top:1px solid var(--border-default)">
@@ -28752,11 +28934,90 @@ APP.bolton = APP.bolton || {
             const target = ev.target.closest('[data-bolton-agent-action]');
             if (!target) return;
             const act = target.dataset.boltonAgentAction;
-            if (act === 'invoke') this._invokeAgent(jobId, panel);
-            else if (act === 'dismiss') panel.remove();
-            else if (act === 'approve') this._approveAgentProposal(jobId, panel);
-            else if (act === 'reject') this._rejectAgentProposal(jobId, panel);
+            if (act === 'invoke') {
+                if (target.disabled || target.getAttribute('aria-disabled') === 'true') {
+                    ev.preventDefault();
+                    return;
+                }
+                this._invokeAgent(jobId, panel);
+            } else if (act === 'dismiss') {
+                panel.remove();
+            } else if (act === 'approve') {
+                this._approveAgentProposal(jobId, panel);
+            } else if (act === 'reject') {
+                this._rejectAgentProposal(jobId, panel);
+            } else if (act === 'goto-settings') {
+                ev.preventDefault();
+                this._navigateToAgentSettings();
+            }
         });
+
+        // task #52 — gate the invoke button on agent health. Default to
+        // permissive (button enabled) so a transient fetch failure doesn't
+        // strand the operator; only DISABLE on confirmed not-configured.
+        this._gateInvokeAgentButton(panel);
+    },
+
+    /** task #52 — fetch /api/health/agent and disable the invoke button
+     * if the agent fallback is not configured. Called from _showAgentPanel. */
+    _gateInvokeAgentButton(panel) {
+        if (typeof fetchAgentHealth !== 'function') return;
+        fetchAgentHealth(true).then((health) => {
+            if (!health) return;  // fetch failed — leave button as-is
+            const invokeBtn = panel.querySelector('[data-bolton-agent-action="invoke"]');
+            const unavail = panel.querySelector('.bolton-agent-panel__unavailable');
+            const headlineEl = panel.querySelector('[data-agent-unavailable-headline]');
+            const bodyEl = panel.querySelector('[data-agent-unavailable-body]');
+            const usable = !!health.configured && !!health.anthropic_sdk_installed;
+            if (usable) return;  // green path — nothing to do, button stays enabled
+            if (invokeBtn) {
+                invokeBtn.disabled = true;
+                invokeBtn.setAttribute('aria-disabled', 'true');
+                invokeBtn.classList.add('is-disabled');
+                invokeBtn.title = 'Agent fallback unavailable — configure in Settings';
+            }
+            if (unavail) unavail.hidden = false;
+            if (headlineEl) {
+                headlineEl.textContent = health.anthropic_sdk_installed
+                    ? 'Agent fallback unavailable'
+                    : 'Anthropic SDK missing';
+            }
+            if (bodyEl) {
+                bodyEl.innerHTML = health.anthropic_sdk_installed
+                    ? '<code>ANTHROPIC_API_KEY</code> not set in dashboard environment. Configure in Settings &rarr; AWS &amp; SSH Prerequisites.'
+                    : 'The <code>anthropic</code> Python SDK is not installed in the dashboard environment. Configure in Settings &rarr; AWS &amp; SSH Prerequisites.';
+            }
+        });
+    },
+
+    /** task #52 — navigate from the bolt-on overlay to Settings → Prereqs.
+     * Closes any open overlays first so the Settings anchor scroll lands. */
+    _navigateToAgentSettings() {
+        try {
+            if (APP.overlay && typeof APP.overlay.closeAll === 'function') {
+                APP.overlay.closeAll();
+            }
+            const fallback = document.getElementById('bolton-progress-fallback');
+            if (fallback) fallback.remove();
+            if (APP.shell && typeof APP.shell.setActiveRoute === 'function') {
+                APP.shell.setActiveRoute('settings');
+            } else if (typeof APP.navigateTo === 'function') {
+                APP.navigateTo('settings');
+            }
+            setTimeout(() => {
+                const target = document.getElementById('settings-prereqs');
+                if (target && typeof target.scrollIntoView === 'function') {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                // Refresh the agent check now that the operator is here
+                // — they may have just rotated the key.
+                if (typeof loadSettingsAgentCheck === 'function') loadSettingsAgentCheck();
+            }, 220);
+        } catch (e) {
+            // Last-ditch: location hash fallback so we don't strand the
+            // operator on a broken navigation path.
+            window.location.hash = '#settings-prereqs';
+        }
     },
 
     /** Public: dispatch the agent intervention for a stuck job. */

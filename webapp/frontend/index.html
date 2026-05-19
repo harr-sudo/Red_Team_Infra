@@ -3415,6 +3415,20 @@ ns-143.awsdns-17.org
                             <button class="btn btn-primary btn-sm" onclick="checkGitHubCLI()">Check GitHub CLI</button>
                             <div id="github-cli-status" class="status-display"></div>
                         </div>
+
+                        <!-- Detection Agent (bolt-on agentic fallback) — task #52.
+                             Surfaces ANTHROPIC_API_KEY + anthropic SDK presence
+                             so operators discover the fallback is unconfigured
+                             BEFORE a job goes STUCK. Populated by
+                             loadSettingsAgentCheck() in app.js. -->
+                        <div class="section-card section-card--highlight section-card--compact" id="settings-agent-check">
+                            <h3>Detection Agent (bolt-on agentic fallback)</h3>
+                            <p>Claude-powered diagnostic that runs when a bolt-on install job hits <code>STUCK</code>. Requires <code>ANTHROPIC_API_KEY</code> in the dashboard environment.</p>
+                            <div id="settings-agent-check-row" class="motion-stagger-in">
+                                <!-- Populated by loadSettingsAgentCheck() — emits .spec-list/.spec-row + optional .callout. -->
+                                <small class="t-muted">Checking detection agent configuration&hellip;</small>
+                            </div>
+                        </div>
                         </div>
                     </section>
 

@@ -2,6 +2,7 @@
 from flask import Blueprint, jsonify
 from pathlib import Path
 import json
+import os
 import sys
 import subprocess
 import shutil
@@ -441,6 +442,45 @@ def check_system_deps():
         })
 
     return jsonify({'success': True, 'deps': results})
+
+
+@bp.route('/agent', methods=['GET'])
+def check_agent():
+    """Surface ANTHROPIC_API_KEY + anthropic SDK presence for the bolt-on agentic fallback.
+
+    Operators need to know BEFORE a job goes STUCK whether the agent
+    fallback path is usable. The actual API key is NEVER returned — we
+    only report presence ("configured": bool) and where the key came
+    from ("env" today; "secrets-manager" reserved for a future lookup
+    path; "none" when unset).
+
+    See ``webapp/backend/services/bolton_agent_service.py`` which reads
+    the same env vars on invocation, and
+    ``docs/internal/VULNERABLE_LAB_BOLTON_PLAN.md`` §7.9 for the
+    end-to-end operator configuration story.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    configured = bool(api_key)
+    key_source = "env" if api_key else "none"
+
+    # Default mirrors bolton_agent_service.DEFAULT_MODEL — we read the
+    # env var directly here so this endpoint stays cheap (no import of
+    # the agent service, which pulls in audit + lazy-imports).
+    model = os.environ.get("BOLTON_AGENT_MODEL", "claude-sonnet-4-6")
+
+    try:
+        import anthropic  # noqa: F401
+        anthropic_sdk_installed = True
+    except ImportError:
+        anthropic_sdk_installed = False
+
+    return jsonify({
+        "success": True,
+        "configured": configured,
+        "model": model,
+        "key_source": key_source,
+        "anthropic_sdk_installed": anthropic_sdk_installed,
+    })
 
 
 @bp.route('/cobalt-strike-file', methods=['GET'])
