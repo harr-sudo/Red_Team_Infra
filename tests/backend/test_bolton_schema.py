@@ -195,6 +195,15 @@ def test_catalog_loads_keyed_by_id(loaded_catalog):
         "bolton.infrastructure.winlogbeat-shipper",
         "bolton.infrastructure.filebeat-shipper",
         "bolton.infrastructure.sysmon",
+        # Catalog expansion (task #51) — additional 8 descriptors
+        "bolton.known-cve.petitpotam",
+        "bolton.web-app.dvwa-lite",
+        "bolton.protocol-network.smb-signing-disabled",
+        "bolton.credential-exposure.gpp-cpassword-sysvol",
+        "bolton.credential-exposure.laps-readable-by-domain-users",
+        "bolton.service-misconfig.writable-share-everyone",
+        "bolton.cloud-container.docker-socket-exposed",
+        "bolton.endpoint-phishing.macro-enabled-doc-share",
     }
     assert required_ids.issubset(set(loaded_catalog.keys())), (
         f"Required IDs missing: {required_ids - set(loaded_catalog.keys())}"

@@ -1,0 +1,282 @@
+# Bolt-on: LAPS Attribute Readable by Domain Users
+# -------------------------------------------------
+# Install grants `Read All Properties` on the `ms-Mcs-AdmPwd` attribute
+# of the Computers OU to Domain Users — any authenticated user can then
+# enumerate LAPS-managed local administrator passwords with a single
+# Get-ADComputer query. This breaks the LAPS threat model entirely.
+#
+# Patch revokes the bad ACE, restores the canonical baseline (admins-
+# only Read), and uses Find-AdmPwdExtendedRights to confirm no non-admin
+# principal retains the right.
+#
+# Elastic rule coverage is intentionally `no-rule` — LAPS attribute reads
+# fire as ordinary LDAP queries (Event 1644) which most envs don't log
+# without explicit Directory-Services-Field-Engineering auditing on. The
+# fallback template covers the canonical 5136 (Directory Service Object
+# Modified) write pattern that fires when the bad ACE is INITIALLY granted,
+# plus the LDAP 1644 search filter `ms-mcs-admpwd=*` heuristic.
+
+id: bolton.credential-exposure.laps-readable-by-domain-users
+slug: laps-readable-by-domain-users
+name: "LAPS Attribute Readable by Domain Users"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: credential-exposure
+subcategory: laps
+tags:
+  - laps
+  - ms-mcs-admpwd
+  - acl-misconfig
+  - credential-access
+  - local-admin
+description: >
+  Grants the Domain Users group `Read All Properties` (and crucially the
+  `Read ms-Mcs-AdmPwd` extended right) on the Computers OU. The result:
+  any authenticated user can `Get-ADComputer -Filter * -Properties
+  ms-Mcs-AdmPwd` and harvest every LAPS-managed local administrator
+  password across the domain. The misconfig usually appears in real
+  environments when an admin clones a `Read All Properties` permission
+  from an OU template without realising the LAPS attribute is
+  Confidential-flagged and inherits the broader Read.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1552/004/"
+  - "https://www.microsoft.com/en-us/download/details.aspx?id=46899"
+  - "https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-overview"
+  - "https://specterops.io/wp-content/uploads/sites/3/2022/06/an_ace_up_the_sleeve.pdf"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1552
+    name: "Unsecured Credentials"
+  subtechnique:
+    id: T1552.004
+    name: "Private Keys"
+  notes: >
+    LAPS doesn't fit neatly under any T1552 sub — `Private Keys` is the
+    closest published sub (the LAPS attribute is a stored credential
+    secret). The descriptor primarily models the parent T1552 (Unsecured
+    Credentials). Phase 2 schema may add a T1552.999 (Local Admin Password)
+    custom sub.
+
+detection:
+  # LAPS reads via LDAP are not directly visible in standard Windows event
+  # streams without enabling DS Field Engineering category auditing
+  # (Event 1644). The public Elastic rules repo does not include a rule
+  # that fires on ms-Mcs-AdmPwd attribute reads.
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/laps-read-domain-users.j2.yml"
+  signal_sources:
+    - "Windows Event 5136 (Directory Service object modified — nTSecurityDescriptor on Computers OU)"
+    - "Windows Event 1644 (LDAP search — filter contains ms-Mcs-AdmPwd or msLAPS-Password)"
+    - "Sysmon Event 1 — powershell.exe with Get-AdmPwdPassword / Get-LapsADPassword cmdlets"
+    - "Auditd via SACL — Read access to objects of class computer in protected OU"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+  required_services: []
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true         # ACL change on a domain-wide OU
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Capture the baseline ACL on the Computers OU for clean revert in patch."
+      role_vars:
+        script: |
+          Import-Module ActiveDirectory
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          $baseline = Get-Acl "AD:$ouDn"
+          $baselinePath = "C:\ProgramData\bolton\laps-computers-baseline.sddl"
+          New-Item -Path (Split-Path $baselinePath) -ItemType Directory -Force | Out-Null
+          $baseline.Sddl | Out-File -Encoding UTF8 -FilePath $baselinePath
+    - ansible_role: community.windows.win_powershell
+      description: "Grant Domain Users Read All Properties on the Computers OU — leaks ms-Mcs-AdmPwd."
+      role_vars:
+        script: |
+          Import-Module ActiveDirectory
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          $acl   = Get-Acl "AD:$ouDn"
+          $sid   = (Get-ADGroup 'Domain Users').SID
+          $ace   = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid,
+            'ReadProperty',
+            'Allow',
+            [System.DirectoryServices.ActiveDirectorySecurityInheritance]::Descendents,
+            [Guid]'00000000-0000-0000-0000-000000000000')
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:$ouDn" -AclObject $acl
+  verify:
+    probe: |
+      Import-Module ActiveDirectory
+      $domDn = (Get-ADDomain).DistinguishedName
+      $ouDn  = "CN=Computers,$domDn"
+      $acl   = Get-Acl "AD:$ouDn"
+      $sid   = (Get-ADGroup 'Domain Users').SID
+      $hit   = $acl.Access | Where-Object {
+        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and
+        $_.ActiveDirectoryRights -match 'ReadProperty'
+      }
+      if ($hit) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Strip the Domain Users Read ACE from the Computers OU."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Remove the bolt-on Read ACE."
+      role_vars:
+        script: |
+          Import-Module ActiveDirectory
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          $acl   = Get-Acl "AD:$ouDn"
+          $sid   = (Get-ADGroup 'Domain Users').SID
+          $toRemove = $acl.Access | Where-Object {
+            $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and
+            $_.ActiveDirectoryRights -match 'ReadProperty'
+          }
+          foreach ($ace in $toRemove) { [void]$acl.RemoveAccessRule($ace) }
+          Set-Acl "AD:$ouDn" -AclObject $acl
+  verify:
+    probe: |
+      Import-Module ActiveDirectory
+      $domDn = (Get-ADDomain).DistinguishedName
+      $ouDn  = "CN=Computers,$domDn"
+      $acl   = Get-Acl "AD:$ouDn"
+      $sid   = (Get-ADGroup 'Domain Users').SID
+      $hit   = $acl.Access | Where-Object {
+        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and
+        $_.ActiveDirectoryRights -match 'ReadProperty'
+      }
+      if ($hit) { exit 1 } else { exit 0 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Restore the captured baseline ACL on the Computers OU and explicitly
+    re-confine `Read ms-Mcs-AdmPwd` to the Tier-0 admin group. Uses the
+    LAPS Admin module's Set-AdmPwdReadPasswordPermission cmdlet to layer
+    the canonical permission on top of the restored baseline. The
+    confidentiality bit on ms-Mcs-AdmPwd remains intact (it was never
+    cleared by the install — only the parent-ACL inheritance was abused).
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-management-policy-settings"
+    - "https://www.microsoft.com/en-us/download/details.aspx?id=46899"
+  complexity: low
+  side_effects:
+    - "Computers OU ACL reverted to captured baseline"
+    - "Read-ms-Mcs-AdmPwd extended right granted only to Tier-0 admin group (default: Domain Admins)"
+    - "Find-AdmPwdExtendedRights output enumerated to audit log"
+    - "Any tool/script that depended on Domain-Users readability of ms-Mcs-AdmPwd will break"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Restore the baseline OU ACL."
+      role_vars:
+        script: |
+          Import-Module ActiveDirectory
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          $baselinePath = "C:\ProgramData\bolton\laps-computers-baseline.sddl"
+          $sddl = Get-Content $baselinePath -Raw
+          $acl  = Get-Acl "AD:$ouDn"
+          $acl.SetSecurityDescriptorSddlForm($sddl)
+          Set-Acl "AD:$ouDn" -AclObject $acl
+    - ansible_role: community.windows.win_powershell
+      description: "Re-grant LAPS extended right to Tier-0 admin group only."
+      role_vars:
+        script: |
+          Import-Module AdmPwd.PS -ErrorAction SilentlyContinue
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          if (Get-Command Set-AdmPwdReadPasswordPermission -ErrorAction SilentlyContinue) {
+            Set-AdmPwdReadPasswordPermission -OrgUnit $ouDn -AllowedPrincipals "Domain Admins"
+          }
+          # Emit current state for verification
+          Find-AdmPwdExtendedRights -Identity $ouDn | Format-Table -AutoSize
+  verify:
+    probe: |
+      Import-Module ActiveDirectory
+      $domDn = (Get-ADDomain).DistinguishedName
+      $ouDn  = "CN=Computers,$domDn"
+      $acl   = Get-Acl "AD:$ouDn"
+      $sid   = (Get-ADGroup 'Domain Users').SID
+      $domUsersHit = $acl.Access | Where-Object {
+        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and
+        $_.ActiveDirectoryRights -match 'ReadProperty'
+      }
+      if (-not $domUsersHit) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/laps_read_check.sh"
+
+patch_revert:
+  description: "Re-grant Domain Users Read on the Computers OU — Get-ADComputer -Properties ms-Mcs-AdmPwd works again."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Re-add the bad Read ACE."
+      role_vars:
+        script: |
+          Import-Module ActiveDirectory
+          $domDn = (Get-ADDomain).DistinguishedName
+          $ouDn  = "CN=Computers,$domDn"
+          $acl   = Get-Acl "AD:$ouDn"
+          $sid   = (Get-ADGroup 'Domain Users').SID
+          $ace   = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid,
+            'ReadProperty',
+            'Allow',
+            [System.DirectoryServices.ActiveDirectorySecurityInheritance]::Descendents,
+            [Guid]'00000000-0000-0000-0000-000000000000')
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:$ouDn" -AclObject $acl
+  verify:
+    probe: |
+      Import-Module ActiveDirectory
+      $domDn = (Get-ADDomain).DistinguishedName
+      $ouDn  = "CN=Computers,$domDn"
+      $acl   = Get-Acl "AD:$ouDn"
+      $sid   = (Get-ADGroup 'Domain Users').SID
+      $hit   = $acl.Access | Where-Object {
+        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and
+        $_.ActiveDirectoryRights -match 'ReadProperty'
+      }
+      if ($hit) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Domain Users can read ms-Mcs-AdmPwd again. Get-ADComputer -Filter * -Properties ms-Mcs-AdmPwd leaks all LAPS passwords."
+
+cost:
+  storage_mb: 1
+  cpu_pct: 0
+  detectability: quiet
+
+status: stable

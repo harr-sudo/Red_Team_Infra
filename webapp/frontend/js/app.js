@@ -2940,7 +2940,7 @@ APP.journey = (function () {
             </div>
             <section class="journey-review" id="journey-review">
                 <div class="deploy-summary__eyebrow">
-                    <span class="deploy-summary__eyebrow-label">New Deployment · Review</span>
+                    <span class="deploy-summary__eyebrow-label" id="journey-review-eyebrow">READY TO SAVE</span>
                     <button class="journey-progress__close" type="button" data-journey-cancel>Cancel</button>
                 </div>
                 <span class="journey-review__breadcrumb">
@@ -2958,12 +2958,15 @@ APP.journey = (function () {
                 </section>
                 <dl class="spec-list" id="journey-spec-list"></dl>
                 <div class="journey-foot">
-                    <span class="journey-foot__crumb">Ready to deploy</span>
+                    <span class="journey-foot__crumb">Ready to save</span>
                     <div class="journey-foot__buttons">
                         <button class="journey-btn" type="button" data-journey-cancel>Cancel</button>
-                        <button class="journey-btn journey-btn--primary" type="button" id="journey-deploy">Deploy &#9656;</button>
+                        <button class="journey-btn journey-btn--primary" type="button" id="journey-deploy">Save &amp; continue &#9656;</button>
                     </div>
                 </div>
+                <p class="journey-review__cta-hint" id="journey-review-cta-hint">
+                    Saves these settings; you'll fine-tune Attack Box, C2 profile, and other options in Configure next.
+                </p>
             </section>
         `;
 
@@ -9869,11 +9872,381 @@ async function loadConfig() {
             updateDeploymentType();
 
             showMessage('Configuration loaded', 'success');
+
+            // Task 51 Item 4 — refresh the V3 spec-list mirror at the top of
+            // Configure once the legacy form has been populated. The mirror
+            // reads its values back from the legacy inputs (single source of
+            // truth) so we only need to re-render after any change.
+            try {
+                if (typeof loadConfigureSummary === 'function') loadConfigureSummary();
+            } catch (_) { /* noop */ }
         }
     } catch (error) {
         console.error('Error loading configuration:', error);
         showMessage('Error loading configuration: ' + error.message, 'error');
     }
+}
+
+// ============================================================================
+// Task 51 Item 4 — Configure V3 TASTE redesign (Composition A spec-list).
+// Mirrors the Deploy summary pattern but in EDIT-BY-DEFAULT mode: clicking
+// any row expands an inline editor, Save commits to the legacy form input
+// (and re-renders), Cancel reverts. The 7 core rows are: deployment type,
+// project name, environment, AWS region, management CIDR, key pair name,
+// estimated monthly cost. Type-specific config (Attack Box, Malleable C2,
+// Redirector Domain, Domain Fronting, GOAD Network) lives in the legacy
+// section-cards wrapped under <details id="configure-advanced-details">.
+// ============================================================================
+
+function _configureSummaryEsc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _configureSummaryReadValues() {
+    // Pull current values from the legacy inputs — these are the source
+    // of truth. The spec-list mirrors and writes back to them.
+    const $get = (id) => document.getElementById(id);
+    const depType = $get('deployment-type')?.value || 'c2-adhoc';
+    const projectName = $get('project-name')?.value || '';
+    const env = $get('environment')?.value || 'dev';
+    const region = $get('aws-region')?.value || 'eu-central-1';
+    const cidr = ($get('management-cidr')?.value || '').trim();
+    const keyPair = $get('key-pair-name')?.value || '';
+    const cfg = DEPLOYMENT_CONFIGS[depType] || {};
+    const cost = (cfg.components || []).find(c => /Cost/i.test(c.label))?.value || '';
+    const isGoadOnly = cfg.type === 'goad';
+    return { depType, projectName, env, region, cidr, keyPair, cost, isGoadOnly, cfgTitle: cfg.title || depType, cfgFamily: cfg.type };
+}
+
+function _configureSummaryBuildRows(v) {
+    const rows = [
+        {
+            key: 'deployment_type',
+            label: 'Deployment Type',
+            value: v.cfgTitle,
+            hint: v.cfgFamily === 'goad' ? 'Training lab' : v.cfgFamily === 'c2' ? 'Red team C2' : 'Combined',
+            editable: true,
+            fieldType: 'type',
+        },
+        {
+            key: 'project_name',
+            label: 'Project Name',
+            value: v.projectName || '—',
+            valueMono: true,
+            hint: v.projectName ? `${v.projectName.length} chars` : '',
+            editable: true,
+            fieldType: 'text',
+            placeholder: 'project_name',
+        },
+        {
+            key: 'environment',
+            label: 'Environment',
+            value: (v.env || 'dev').toUpperCase(),
+            isPill: true,
+            hint: { dev: 'isolated', staging: 'pre-production', prod: 'production' }[v.env] || '',
+            editable: true,
+            fieldType: 'seg',
+            options: [
+                { val: 'dev', label: 'DEV' },
+                { val: 'staging', label: 'Staging' },
+                { val: 'prod', label: 'Prod' },
+            ],
+        },
+        {
+            key: 'aws_region',
+            label: 'AWS Region',
+            value: v.region,
+            valueMono: true,
+            hint: 'Frankfurt',
+            editable: false,  // region fixed in the legacy form
+        },
+        {
+            key: 'management_cidr',
+            label: 'Management CIDR',
+            value: v.cidr || '—',
+            valueMono: true,
+            hint: v.cidr ? (v.cidr.includes(',') ? `${v.cidr.split(',').length} blocks` : 'single host') : '',
+            editable: true,
+            fieldType: 'cidr',
+        },
+        {
+            key: 'key_pair_name',
+            label: 'Key Pair Name',
+            value: v.isGoadOnly ? 'Auto-generated' : (v.keyPair || '—'),
+            valueMono: true,
+            hint: v.isGoadOnly ? 'GOAD ed25519' : 'AWS keypair',
+            editable: !v.isGoadOnly,
+            fieldType: 'text',
+            placeholder: 'red-team-keypair',
+        },
+        {
+            key: 'cost',
+            label: 'Est. Monthly Cost',
+            value: v.cost || '—',
+            valueMono: true,
+            valueStrong: true,
+            hint: 'computed',
+            editable: false,
+        },
+    ];
+    return rows;
+}
+
+function _configureSummaryRenderRow(row) {
+    const valueClasses = ['spec-row__value'];
+    if (row.valueMono) valueClasses.push('spec-row__value--mono');
+    if (row.valueStrong) valueClasses.push('spec-row__value--strong');
+    let valueHtml;
+    if (row.isPill) {
+        valueHtml = `<dd class="${valueClasses.join(' ')}"><span class="spec-pill"><span class="spec-pill__dot" aria-hidden="true"></span>${_configureSummaryEsc(row.value)}</span></dd>`;
+    } else {
+        valueHtml = `<dd class="${valueClasses.join(' ')}">${_configureSummaryEsc(row.value)}</dd>`;
+    }
+    const hintHtml = row.hint
+        ? `<dd class="spec-row__hint">${_configureSummaryEsc(row.hint)}</dd>`
+        : '<dd class="spec-row__hint"></dd>';
+    const pencilHtml = row.editable
+        ? `<button class="spec-row__action" type="button" aria-label="Edit ${_configureSummaryEsc(row.label)}"><svg class="icon" aria-hidden="true"><use href="#icon-edit-pencil"/></svg></button>`
+        : '<span class="spec-row__action" aria-hidden="true"></span>';
+    const readonlyAttr = row.editable ? '' : ' data-readonly="true"';
+    return `
+        <div class="spec-row" data-configure-row="${_configureSummaryEsc(row.key)}"${readonlyAttr}>
+            <div class="spec-row__head">
+                <dt class="spec-row__key">${_configureSummaryEsc(row.label)}</dt>
+                ${valueHtml}
+                ${hintHtml}
+                ${pencilHtml}
+            </div>
+            <div class="spec-row__editor" data-configure-editor="${_configureSummaryEsc(row.key)}"></div>
+        </div>
+    `;
+}
+
+function _configureSummaryBuildEditor(row, v) {
+    let fieldHtml = '';
+    if (row.fieldType === 'text') {
+        const cur = row.value !== '—' ? row.value : '';
+        fieldHtml = `<input class="spec-row__editor-input" type="text" value="${_configureSummaryEsc(cur)}" data-edit-input placeholder="${_configureSummaryEsc(row.placeholder || '')}" autocomplete="off" spellcheck="false">`;
+    } else if (row.fieldType === 'cidr') {
+        const cur = v.cidr || '';
+        fieldHtml = `
+            <div style="display:flex; gap:8px; align-items:center;">
+                <input class="spec-row__editor-input" type="text" value="${_configureSummaryEsc(cur)}" data-edit-input placeholder="82.35.149.127/32" autocomplete="off" spellcheck="false" style="flex:1">
+                <button class="spec-edit-btn" type="button" data-edit-action="my-ip">Use my IP</button>
+            </div>
+            <span class="spec-row__editor-hint">Comma-separated CIDR blocks. /32 = exact host.</span>
+        `;
+    } else if (row.fieldType === 'seg') {
+        const opts = (row.options || []).map(o => {
+            const isActive = String(o.val).toLowerCase() === String(v.env).toLowerCase();
+            return `<button class="seg-control__option${isActive ? ' is-active' : ''}" type="button" data-seg-val="${_configureSummaryEsc(o.val)}">${_configureSummaryEsc(o.label)}</button>`;
+        }).join('');
+        fieldHtml = `<div class="seg-control" role="radiogroup" data-edit-seg>${opts}</div>`;
+    } else if (row.fieldType === 'type') {
+        const groups = [
+            { label: 'Red team C2', ids: ['c2-adhoc', 'c2-purple', 'c2-full'] },
+            { label: 'Training lab', ids: ['goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha'] },
+            { label: 'Combined', ids: ['combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full'] },
+        ];
+        let inner = '';
+        groups.forEach(g => {
+            inner += `<div class="spec-type-grid__group">${_configureSummaryEsc(g.label)}</div>`;
+            g.ids.forEach(id => {
+                const def = DEPLOYMENT_CONFIGS[id];
+                if (!def) return;
+                const isActive = id === v.depType;
+                const hint = (def.components || []).find(c => /Cost/i.test(c.label))?.value || '';
+                inner += `
+                    <label class="spec-type-card${isActive ? ' is-checked' : ''}" data-type-card="${_configureSummaryEsc(id)}">
+                        <input type="radio" name="configure-type-edit" value="${_configureSummaryEsc(id)}" ${isActive ? 'checked' : ''}>
+                        <span class="spec-type-card__title">${_configureSummaryEsc(def.title || id)}</span>
+                        <span class="spec-type-card__hint">${_configureSummaryEsc(hint)}</span>
+                    </label>
+                `;
+            });
+        });
+        fieldHtml = `<div class="spec-type-grid" data-edit-type-grid>${inner}</div>`;
+    }
+    return `
+        <div class="spec-row__editor-field">
+            <span class="spec-row__editor-label">${_configureSummaryEsc(row.label)}</span>
+            ${fieldHtml}
+        </div>
+        <div class="spec-row__editor-foot">
+            <button class="spec-edit-btn" type="button" data-edit-action="cancel">Cancel</button>
+            <button class="spec-edit-btn spec-edit-btn--save" type="button" data-edit-action="save">Save</button>
+        </div>
+    `;
+}
+
+function _configureSummaryCloseAll(list) {
+    list.querySelectorAll('.spec-row[data-editing="true"]').forEach(r => {
+        r.removeAttribute('data-editing');
+        const editor = r.querySelector('[data-configure-editor]');
+        if (editor) editor.innerHTML = '';
+    });
+    list.removeAttribute('data-editing');
+}
+
+function _configureSummaryOpenRow(rowEl, row, v) {
+    const list = rowEl.closest('.spec-list');
+    if (!list) return;
+    _configureSummaryCloseAll(list);
+    const editor = rowEl.querySelector('[data-configure-editor]');
+    editor.innerHTML = _configureSummaryBuildEditor(row, v);
+    rowEl.setAttribute('data-editing', 'true');
+    list.setAttribute('data-editing', 'true');
+    const input = editor.querySelector('[data-edit-input]');
+    if (input) { input.focus(); input.select && input.select(); }
+}
+
+async function _configureSummarySaveRow(rowEl, row, _v) {
+    const editor = rowEl.querySelector('[data-configure-editor]');
+    if (!editor) return;
+    const $get = (id) => document.getElementById(id);
+
+    if (row.fieldType === 'text') {
+        const v = editor.querySelector('[data-edit-input]')?.value.trim() || '';
+        if (row.key === 'project_name') {
+            const el = $get('project-name');
+            if (el) { el.value = v; el.dispatchEvent(new Event('change')); }
+        } else if (row.key === 'key_pair_name') {
+            const el = $get('key-pair-name');
+            if (el) { el.value = v; el.dispatchEvent(new Event('change')); }
+        }
+    } else if (row.fieldType === 'cidr') {
+        const v = editor.querySelector('[data-edit-input]')?.value.trim() || '';
+        const el = $get('management-cidr');
+        if (el) { el.value = v; el.dispatchEvent(new Event('change')); }
+    } else if (row.fieldType === 'seg') {
+        const active = editor.querySelector('.seg-control__option.is-active');
+        if (!active) return;
+        const val = active.dataset.segVal;
+        if (row.key === 'environment') {
+            const el = $get('environment');
+            if (el) {
+                el.value = val;
+                el.dispatchEvent(new Event('change'));
+                // updateProjectName() is the onchange handler; ensure project name re-derives.
+                if (typeof updateProjectName === 'function') updateProjectName();
+            }
+        }
+    } else if (row.fieldType === 'type') {
+        const checked = editor.querySelector('input[name="configure-type-edit"]:checked');
+        if (!checked) return;
+        const newType = checked.value;
+        const el = $get('deployment-type');
+        if (el) {
+            el.value = newType;
+            // updateDeploymentType is the canonical handler — it cascades section visibility.
+            if (typeof updateDeploymentType === 'function') updateDeploymentType();
+        }
+    }
+    // Re-render the V3 mirror so the row reflects the new value immediately.
+    loadConfigureSummary();
+}
+
+async function _configureSummaryUpdateStatus(projectName) {
+    const pill = document.getElementById('configure-summary-status');
+    const label = document.getElementById('configure-summary-status-label');
+    if (!pill || !label) return;
+    pill.classList.remove('spec-pill--live', 'spec-pill--error', 'spec-pill--draft');
+    pill.classList.add('spec-pill--draft');
+    label.textContent = 'DRAFT';
+    if (!projectName) return;
+    try {
+        const r = await fetch(`/api/deploy/status?project=${encodeURIComponent(projectName)}`);
+        const d = await r.json();
+        if (d?.status?.deployed) {
+            pill.classList.remove('spec-pill--draft');
+            pill.classList.add('spec-pill--live');
+            label.textContent = 'LIVE';
+        } else if (d?.status?.last_error) {
+            pill.classList.remove('spec-pill--draft');
+            pill.classList.add('spec-pill--error');
+            label.textContent = 'ERROR';
+        }
+    } catch (_) { /* leave as DRAFT */ }
+}
+
+function loadConfigureSummary() {
+    const section = document.getElementById('configure-summary-section');
+    const specList = document.getElementById('configure-summary-spec-list');
+    const heroName = document.getElementById('configure-summary-hero-name');
+    const heroType = document.getElementById('configure-summary-hero-type');
+    if (!section || !specList) return;
+
+    const v = _configureSummaryReadValues();
+    if (heroName) heroName.textContent = v.projectName || '(unnamed)';
+    if (heroType) heroType.textContent = v.cfgTitle;
+    _configureSummaryUpdateStatus(v.projectName);
+
+    const rows = _configureSummaryBuildRows(v);
+    specList.innerHTML = rows.map(_configureSummaryRenderRow).join('');
+
+    // Wire row click → open editor
+    rows.forEach(row => {
+        if (!row.editable) return;
+        const rowEl = specList.querySelector(`.spec-row[data-configure-row="${row.key}"]`);
+        if (!rowEl) return;
+        const head = rowEl.querySelector('.spec-row__head');
+        head.addEventListener('click', () => {
+            if (rowEl.getAttribute('data-editing') === 'true') return;
+            _configureSummaryOpenRow(rowEl, row, v);
+        });
+    });
+
+    // Wire delegate for editor actions (once)
+    if (!specList._configureDelegateWired) {
+        specList._configureDelegateWired = true;
+        specList.addEventListener('click', (e) => {
+            const segBtn = e.target.closest('.seg-control__option');
+            const typeCard = e.target.closest('[data-type-card]');
+            const action = e.target.closest('[data-edit-action]');
+            if (segBtn) {
+                e.stopPropagation();
+                segBtn.parentElement.querySelectorAll('.seg-control__option').forEach(b => b.classList.remove('is-active'));
+                segBtn.classList.add('is-active');
+                return;
+            }
+            if (typeCard) {
+                e.stopPropagation();
+                const grid = typeCard.closest('[data-edit-type-grid]');
+                if (grid) grid.querySelectorAll('.spec-type-card').forEach(c => c.classList.remove('is-checked'));
+                typeCard.classList.add('is-checked');
+                const radio = typeCard.querySelector('input[type="radio"]');
+                if (radio) radio.checked = true;
+                return;
+            }
+            if (!action) return;
+            e.stopPropagation();
+            const act = action.dataset.editAction;
+            const rowEl = action.closest('.spec-row');
+            if (!rowEl) return;
+            const rowKey = rowEl.dataset.configureRow;
+            const rowDef = (specList._configureRows || []).find(r => r.key === rowKey);
+            if (act === 'cancel') {
+                _configureSummaryCloseAll(specList);
+                return;
+            }
+            if (act === 'my-ip') {
+                if (typeof fetchMyPublicIP === 'function') {
+                    // Reuse the existing helper — it writes to #management-cidr.
+                    fetchMyPublicIP().then(() => {
+                        const input = rowEl.querySelector('[data-edit-input]');
+                        if (input) input.value = document.getElementById('management-cidr')?.value || '';
+                    });
+                }
+                return;
+            }
+            if (act === 'save' && rowDef) {
+                _configureSummarySaveRow(rowEl, rowDef, _configureSummaryReadValues());
+            }
+        });
+    }
+    specList._configureRows = rows;
 }
 
 // ============================================================================
@@ -10746,6 +11119,13 @@ function updateDeploymentType() {
     // visible, Malleable / Redirector / Domain Fronting only for c2-*
     // and combined-*, GOAD Network only for goad-* and combined-*).
     _applyConfigGating(deploymentType);
+
+    // Task 51 Item 4 — Refresh the V3 spec-list mirror so the row values
+    // (deployment_type, est. cost, key pair hint) stay in sync with the
+    // legacy form state. Safe if the mirror is not yet mounted.
+    try {
+        if (typeof loadConfigureSummary === 'function') loadConfigureSummary();
+    } catch (_) { /* noop */ }
 }
 
 /**
@@ -10940,6 +11320,10 @@ async function saveConfig() {
             // M-Redesign Agent 3 — also emit a toast for cross-page visibility
             // (operators often save then immediately navigate away).
             if (APP && APP.toast) APP.toast('Configuration saved', 'success');
+            // Task 51 Item 4 — refresh the V3 spec-list mirror so the row
+            // values (and the LIVE/DRAFT/ERROR status pill) reflect the
+            // newly-saved state without requiring a manual reload.
+            try { if (typeof loadConfigureSummary === 'function') loadConfigureSummary(); } catch (_) {}
         } else {
             showMessage('Error: ' + (data.error || 'Unknown error'), 'error');
             if (APP && APP.toast) APP.toast('Save failed: ' + (data.error || 'Unknown error'), 'danger', 8000);
@@ -28159,6 +28543,19 @@ APP.bolton = APP.bolton || {
                     APP.bolton[action] && APP.bolton[action](vid, APP.bolton.state.host);
                 });
             });
+            // Task 51 Item 2 — wire "Why?" / "View conflict" buttons to the
+            // tooltip. These were previously inert <span title="…"> shells;
+            // they now open a Phase 2b-styled popover with state + reason +
+            // suggested action pulled straight from the catalog row data.
+            target.querySelectorAll('[data-bolton-why]').forEach(btn => {
+                if (btn._boltonWhyWired) return;
+                btn._boltonWhyWired = true;
+                btn.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    APP.bolton._openWhyTooltip(btn);
+                });
+            });
         });
     },
 
@@ -28181,11 +28578,106 @@ APP.bolton = APP.bolton || {
         if (s === 'INSTALLABLE') {
             return btn('Install', 'install', 'spec-edit-btn--save');
         }
+        // Task 51 Item 2 — Why? / View conflict now render as real <button>s
+        // wired to a click handler that opens a positioned tooltip showing
+        // the compatibility state, reason string, and suggested action.
+        const escAttr = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const reason = escAttr(r.reason || '');
+        const sug = escAttr(r.suggested_action || '');
+        const state = escAttr(r.state || '');
         if (s === 'CONFLICTS_WITH_INSTALLED') {
-            return `<span class="bt-row__why" title="${(r.reason || '').replace(/"/g, '&quot;')}">View conflict</span>`;
+            return `<button type="button" class="bt-row__why" data-bolton-why data-vuln-id="${id}" data-state="${state}" data-reason="${reason}" data-suggested="${sug}">View conflict</button>`;
         }
         // INCOMPATIBLE_* / MISSING_*
-        return `<span class="bt-row__why" title="${(r.reason || '').replace(/"/g, '&quot;')}">Why?</span>`;
+        return `<button type="button" class="bt-row__why" data-bolton-why data-vuln-id="${id}" data-state="${state}" data-reason="${reason}" data-suggested="${sug}">Why?</button>`;
+    },
+
+    /**
+     * Task 51 Item 2 — open a small popover anchored below the Why? button.
+     * Shows compatibility state, reason, and optional suggested action.
+     * Outside-click + Escape close it. Position via getBoundingClientRect()
+     * + position:fixed, mirroring the deployment-menu pattern elsewhere in
+     * app.js. Idempotent: an existing tooltip is replaced.
+     */
+    _openWhyTooltip(triggerBtn) {
+        // Close any existing tooltip first.
+        this._closeWhyTooltip();
+        if (!triggerBtn) return;
+        const state = triggerBtn.dataset.state || '';
+        const reason = triggerBtn.dataset.reason || '';
+        const sug = triggerBtn.dataset.suggested || '';
+        const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const tooltip = document.createElement('div');
+        tooltip.className = 'bolton-why-tooltip';
+        tooltip.setAttribute('role', 'tooltip');
+        tooltip.dataset.boltonWhyTooltip = '1';
+        tooltip.innerHTML = `
+            <div class="bolton-why-tooltip__head">
+                <span class="bolton-why-tooltip__eyebrow">${esc(state || 'Why?')}</span>
+                <button type="button" class="bolton-why-tooltip__close" aria-label="Close">
+                    <svg class="icon" aria-hidden="true"><use href="#icon-x"/></svg>
+                </button>
+            </div>
+            <div class="bolton-why-tooltip__body">
+                ${reason ? `<p class="bolton-why-tooltip__reason">${esc(reason)}</p>` : '<p class="bolton-why-tooltip__reason"><em>No reason supplied by the catalog.</em></p>'}
+                ${sug ? `<div class="bolton-why-tooltip__suggested"><span class="bolton-why-tooltip__suggested-label">Suggested action</span><p>${esc(sug)}</p></div>` : ''}
+            </div>
+        `;
+        document.body.appendChild(tooltip);
+
+        // Anchor below the trigger, clamped to viewport. Width caps at 320px.
+        const rect = triggerBtn.getBoundingClientRect();
+        const ttRect = tooltip.getBoundingClientRect();
+        const maxW = 320;
+        const margin = 8;
+        let left = rect.left;
+        if (left + maxW > window.innerWidth - margin) {
+            left = Math.max(margin, window.innerWidth - maxW - margin);
+        }
+        let top = rect.bottom + 6;
+        if (top + ttRect.height > window.innerHeight - margin) {
+            // Flip above the trigger if there's no room below.
+            top = Math.max(margin, rect.top - ttRect.height - 6);
+        }
+        tooltip.style.left = `${Math.round(left)}px`;
+        tooltip.style.top = `${Math.round(top)}px`;
+
+        // Wire close + outside-click + Escape (capture so the row's row-edit
+        // delegate doesn't preempt).
+        const closeBtn = tooltip.querySelector('.bolton-why-tooltip__close');
+        if (closeBtn) closeBtn.addEventListener('click', () => this._closeWhyTooltip());
+        this._whyTooltipEl = tooltip;
+        this._whyTooltipTrigger = triggerBtn;
+        this._whyOutsideHandler = (ev) => {
+            if (!this._whyTooltipEl) return;
+            if (ev.target.closest('.bolton-why-tooltip')) return;
+            if (ev.target.closest('[data-bolton-why]')) return;
+            this._closeWhyTooltip();
+        };
+        this._whyEscHandler = (ev) => {
+            if (ev.key === 'Escape') this._closeWhyTooltip();
+        };
+        // Defer so the click that opened it doesn't immediately close it.
+        setTimeout(() => {
+            document.addEventListener('click', this._whyOutsideHandler, true);
+            document.addEventListener('keydown', this._whyEscHandler, true);
+        }, 0);
+    },
+
+    _closeWhyTooltip() {
+        if (this._whyTooltipEl && this._whyTooltipEl.parentNode) {
+            this._whyTooltipEl.parentNode.removeChild(this._whyTooltipEl);
+        }
+        this._whyTooltipEl = null;
+        this._whyTooltipTrigger = null;
+        if (this._whyOutsideHandler) {
+            document.removeEventListener('click', this._whyOutsideHandler, true);
+            this._whyOutsideHandler = null;
+        }
+        if (this._whyEscHandler) {
+            document.removeEventListener('keydown', this._whyEscHandler, true);
+            this._whyEscHandler = null;
+        }
     },
 
     /** Dispatch helpers — all four operations share an envelope. */

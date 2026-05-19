@@ -1,0 +1,275 @@
+# Bolt-on: SMB Signing Disabled
+# ------------------------------
+# Install disables SMB packet signing on member servers
+# (RequireSecuritySignature = 0, EnableSecuritySignature = 0) so an NTLM
+# relay attacker can hijack the server's auth and execute as the relayed
+# user without packets being rejected for signature mismatch.
+#
+# DCs are excluded — the default GPO forces SMB signing on DCs and
+# overriding that is its own dedicated lab scenario.
+#
+# Patch re-enables RequireSecuritySignature + EnableSecuritySignature
+# and verifies via Get-SmbServerConfiguration.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/windows/credential_access_dollar_account_relay_ntlm.toml
+#   Research/elastic-detection-rules/rules/windows/credential_access_dollar_account_relay.toml
+#   Research/elastic-detection-rules/rules/windows/credential_access_relay_ntlm_auth_via_http_spoolss.toml
+
+id: bolton.protocol-network.smb-signing-disabled
+slug: smb-signing-disabled
+name: "SMB Signing Disabled"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: protocol-network
+subcategory: smb
+tags:
+  - smb
+  - ntlm-relay
+  - signing
+  - adversary-in-the-middle
+description: >
+  Disables SMB server-side packet signing on a member server so authentication
+  bytes captured via NTLM coercion (PetitPotam, printer bug, file:// link
+  rendering, etc.) can be relayed to this host without being rejected for
+  signature failure. Sets HKLM\SYSTEM\CurrentControlSet\Services\
+  LanmanServer\Parameters\RequireSecuritySignature = 0 and
+  EnableSecuritySignature = 0. Domain controllers are excluded — DC signing
+  is forced by the default DC GPO and altering it warrants its own descriptor.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1187/"
+  - "https://attack.mitre.org/techniques/T1557/001/"
+  - "https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/overview-server-message-block-signing"
+  - "https://www.thehacker.recipes/ad/movement/ntlm/relay"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1557
+    name: "Adversary-in-the-Middle"
+  subtechnique:
+    id: T1557.001
+    name: "LLMNR/NBT-NS Poisoning and SMB Relay"
+  notes: >
+    Pairs with T1187 (Forced Authentication) — SMB signing disabled is the
+    receiver-side enabler; coercion (PetitPotam, LLMNR) is the sender-side
+    enabler.
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "23e5407a-b696-4433-9297-087645f2726c"
+      rule_name: "Potential NTLM Relay Attack against a Computer Account"
+      rule_filename: "windows/credential_access_dollar_account_relay_ntlm.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Fires on the relayed NTLM auth pattern — direct match for the post-exploit flow."
+    - rule_uuid: "263481c8-1e9b-492e-912d-d1760707f810"
+      rule_name: "Potential Computer Account NTLM Relay Activity"
+      rule_filename: "windows/credential_access_dollar_account_relay.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Detects machine-account auth from non-owner host — fires when relayed credential lands."
+    - rule_uuid: "4682fd2c-cfae-47ed-a543-9bed37657aa6"
+      rule_name: "Potential Relay Attack against a Domain Controller"
+      rule_filename: "windows/credential_access_relay_ntlm_auth_via_http_spoolss.toml"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Catches the HTTP-front-end NTLM relay variant — applies when SMB signing OFF is paired with ADCS ESC8."
+  signal_sources:
+    - "Windows Event 4624 logon type 3 from a remote IP using a different machine's $ account"
+    - "Windows Event 5145 (network share object accessed) — sudden remote shares opened by relayed user"
+    - "Sysmon Event 3 (Network connection) — port 445 connections to the member server from unusual hosts"
+    - "Get-SmbServerConfiguration / 16-byte SMB header signature absence on packet capture"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - member_server
+  required_services:
+    - smb
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Disable SMB server-side signing requirement."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: RequireSecuritySignature
+        data: 0
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Disable opportunistic SMB signing entirely."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: EnableSecuritySignature
+        data: 0
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_service
+      description: "Restart the Server service so new signing config takes effect."
+      role_vars:
+        name: LanmanServer
+        state: restarted
+  verify:
+    probe: |
+      $cfg = Get-SmbServerConfiguration
+      if (-not $cfg.RequireSecuritySignature -and -not $cfg.EnableSecuritySignature) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Re-enable SMB signing requirement; restart the Server service."
+  estimated_time_seconds: 25
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Re-require SMB signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: RequireSecuritySignature
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Re-enable opportunistic SMB signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: EnableSecuritySignature
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_service
+      description: "Restart Server service."
+      role_vars:
+        name: LanmanServer
+        state: restarted
+  verify:
+    probe: |
+      $cfg = Get-SmbServerConfiguration
+      if ($cfg.RequireSecuritySignature -and $cfg.EnableSecuritySignature) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Re-enable SMB packet signing as required by the canonical hardening
+    baseline (CIS Windows Server 2022 Benchmark §2.3.8.1-3 / Microsoft
+    Security Compliance Toolkit). Sets both RequireSecuritySignature and
+    EnableSecuritySignature to 1 on the server side, then enforces the
+    same on the client side (LanmanWorkstation), preventing this host
+    from accepting unsigned SMB sessions in either direction.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/overview-server-message-block-signing"
+    - "https://www.microsoft.com/en-us/download/details.aspx?id=55319"
+  complexity: low
+  side_effects:
+    - "RequireSecuritySignature = 1 on LanmanServer + LanmanWorkstation"
+    - "EnableSecuritySignature = 1 on both"
+    - "SMB throughput drops ~5-15% on signed sessions (CPU-bound hash verification)"
+    - "Legacy SMBv1 clients without signing capability lose connectivity"
+    - "Restart of Server + Workstation services — 3-5 second SMB session drop"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Server-side: require SMB signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: RequireSecuritySignature
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Server-side: enable SMB signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: EnableSecuritySignature
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Client-side: require SMB signing on outbound sessions."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters'
+        name: RequireSecuritySignature
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_service
+      description: "Restart Server + Workstation services to apply."
+      role_vars:
+        name: LanmanServer
+        state: restarted
+  verify:
+    probe: |
+      $svr = Get-SmbServerConfiguration
+      $cli = Get-SmbClientConfiguration
+      if ($svr.RequireSecuritySignature -and $svr.EnableSecuritySignature -and $cli.RequireSecuritySignature) {
+        exit 0
+      } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/smb_signing_check.sh"
+
+patch_revert:
+  description: "Disable SMB signing again — server accepts unsigned + opportunistic sessions, relay path open."
+  estimated_time_seconds: 25
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Server-side: disable required signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: RequireSecuritySignature
+        data: 0
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Server-side: disable opportunistic signing."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        name: EnableSecuritySignature
+        data: 0
+        type: dword
+        state: present
+    - ansible_role: ansible.windows.win_service
+      description: "Restart Server service."
+      role_vars:
+        name: LanmanServer
+        state: restarted
+  verify:
+    probe: |
+      $cfg = Get-SmbServerConfiguration
+      if (-not $cfg.RequireSecuritySignature) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  warning: "SMB signing OFF — host is a valid NTLM-relay landing pad. ntlmrelayx -t smb://<this-host> works."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: quiet
+
+status: stable

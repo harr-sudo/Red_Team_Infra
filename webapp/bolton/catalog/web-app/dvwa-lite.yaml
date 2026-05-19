@@ -1,0 +1,240 @@
+# Bolt-on: DVWA-Lite — Vulnerable Web App
+# ----------------------------------------
+# Drops a small Docker-Compose-deployed DVWA-style web application on the
+# jumpbox (or any Linux host running Docker). The container exposes
+# port 8080 and ships three deliberately vulnerable endpoints:
+#   /sqli   — classic SQL injection on a `?id=` query string
+#   /xss    — reflected XSS in a search input
+#   /rce    — command injection via a `?cmd=` parameter (filtered to
+#             $(uname),$(id),$(hostname) only, but the wrapper is broken)
+#
+# The intent is to give operators a public-facing-application target for
+# T1190 walkthroughs (sqlmap, XSStrike, manual RCE) without standing up
+# the full DVWA / OWASP Juice Shop stack.
+#
+# Detection coverage is realistically `no-rule`: no Elastic detection rule
+# in the public repo fires on generic SQLi/XSS HTTP traffic — application
+# WAF and audit logs handle that. The descriptor declares a fallback
+# template at webapp/bolton/rule_templates/web-app-exploit.j2.yml.
+
+id: bolton.web-app.dvwa-lite
+slug: dvwa-lite
+name: "DVWA-Lite — Vulnerable Web App"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: web-app
+subcategory: damn-vulnerable-web-app
+tags:
+  - web-app
+  - sqli
+  - xss
+  - rce
+  - t1190
+  - docker
+  - public-facing
+description: >
+  Deploys a small Docker-Compose-managed web application on a Linux host
+  (jumpbox by default) with three deliberately vulnerable endpoints:
+  reflected XSS, error-based SQL injection, and parameterised RCE. Exposes
+  TCP port 8080 on the host's security group via the deployment_storage
+  helper. Designed for operator training in exploiting public-facing apps
+  (MITRE T1190) — payloads land as a reverse shell inside the container,
+  not on the host (unless paired with docker-socket-exposed).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1190/"
+  - "https://github.com/digininja/DVWA"
+  - "https://owasp.org/www-project-top-ten/"
+  - "https://portswigger.net/web-security/sql-injection"
+
+mitre:
+  tactic:
+    id: TA0001
+    name: "Initial Access"
+  technique:
+    id: T1190
+    name: "Exploit Public-Facing Application"
+
+detection:
+  # SQLi, XSS, and command-injection HTTP exploitation against a custom web
+  # app is detected at the WAF / application layer, not endpoint EDR. The
+  # public detection-rules repo has no UUID that maps cleanly to generic
+  # web-app vuln exploitation. Phase 4 will materialise a Sigma-style HTTP
+  # log pattern in the fallback template.
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/web-app-exploit.j2.yml"
+  signal_sources:
+    - "Nginx / app HTTP access logs — anomalous query string lengths, UNION SELECT, ../"
+    - "Container stdout — error stack traces matching SQL syntax errors"
+    - "Container egress connections to non-DNS IPs (suspicious for a static web app)"
+    - "Auditd execve traces — /bin/sh spawned from the web container's PHP-FPM"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+    - family: windows
+      min_version: "2019"
+      max_version: "2022"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - linux_member
+    - member_server
+  required_services:
+    - docker
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true   # opens TCP/8080 on the host SG
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 180
+  steps:
+    - ansible_role: community.docker.docker_compose_v2
+      description: "Pull and launch the dvwa-lite stack via docker compose."
+      role_vars:
+        project_src: "/opt/bolton/dvwa-lite"
+        state: present
+        pull: always
+    - ansible_role: ansible.builtin.template
+      description: "Write the docker-compose.yml that wires PHP-FPM + Nginx + MariaDB."
+      role_vars:
+        src: "templates/dvwa-lite/docker-compose.yml.j2"
+        dest: "/opt/bolton/dvwa-lite/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+    - script: "scripts/bolton/dvwa_lite_seed.sh"
+      engine: bash
+      description: "Seed the MariaDB users table with the demo accounts."
+      args:
+        compose_dir: "/opt/bolton/dvwa-lite"
+  verify:
+    probe: |
+      curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/login.php
+    timeout_seconds: 60
+    expect_stdout_contains: "200"
+
+uninstall:
+  description: "Tear down the docker compose stack and remove the on-disk project tree."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: community.docker.docker_compose_v2
+      description: "Stop and remove all containers + volumes for the stack."
+      role_vars:
+        project_src: "/opt/bolton/dvwa-lite"
+        state: absent
+        remove_volumes: true
+    - ansible_role: ansible.builtin.file
+      description: "Remove the project directory."
+      role_vars:
+        path: "/opt/bolton/dvwa-lite"
+        state: absent
+  verify:
+    probe: |
+      curl -sf -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:8080/login.php || echo "down"
+    timeout_seconds: 30
+    expect_stdout_contains: "down"
+
+patch:
+  description: >
+    Apply hardened parameterised-query patches to the SQLi endpoint,
+    htmlspecialchars-encode all reflected output (XSS mitigation), and
+    remove the `cmd` parameter handler entirely from the RCE endpoint.
+    The application stays running but the three documented vulnerabilities
+    are closed. Adds a baseline ModSecurity-style WAF in front via the
+    Nginx config (OWASP CRS-lite ruleset).
+  patch_reference:
+    - "https://owasp.org/www-community/Source_Code_Analysis_Tools"
+    - "https://github.com/coreruleset/coreruleset"
+    - "https://www.php.net/manual/en/security.database.sql-injection.php"
+  complexity: low
+  side_effects:
+    - "Replaces vulnerable PHP files with parameterised-query variants"
+    - "Adds Nginx CRS-lite rules in front of the upstream PHP-FPM"
+    - "Removes the /rce endpoint entirely (HTTP 410 Gone going forward)"
+    - "Restart of the Nginx + PHP-FPM containers — ~5 second downtime"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.builtin.template
+      description: "Drop in the hardened PHP source files."
+      role_vars:
+        src: "templates/dvwa-lite/app-hardened/"
+        dest: "/opt/bolton/dvwa-lite/app/"
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: ansible.builtin.template
+      description: "Replace Nginx config with the CRS-lite WAF profile."
+      role_vars:
+        src: "templates/dvwa-lite/nginx-waf.conf.j2"
+        dest: "/opt/bolton/dvwa-lite/nginx.conf"
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: community.docker.docker_compose_v2
+      description: "Restart the stack so new code + config take effect."
+      role_vars:
+        project_src: "/opt/bolton/dvwa-lite"
+        state: present
+        restarted: true
+  verify:
+    probe: |
+      # SQLi endpoint should now return literal value, not error
+      code=$(curl -sf -o /dev/null -w "%{http_code}" "http://127.0.0.1:8080/sqli?id=1%27")
+      rce=$(curl -sf -o /dev/null -w "%{http_code}" --max-time 3 "http://127.0.0.1:8080/rce?cmd=id")
+      if [ "$code" = "200" ] && [ "$rce" = "410" ]; then exit 0; else exit 1; fi
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/dvwa_lite_check.sh"
+
+patch_revert:
+  description: "Restore the original vulnerable PHP source + remove the WAF config — endpoints exploitable again."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: ansible.builtin.template
+      description: "Restore vulnerable PHP source files from the original template tree."
+      role_vars:
+        src: "templates/dvwa-lite/app-vulnerable/"
+        dest: "/opt/bolton/dvwa-lite/app/"
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: ansible.builtin.template
+      description: "Restore the bare Nginx config (no WAF)."
+      role_vars:
+        src: "templates/dvwa-lite/nginx.conf.j2"
+        dest: "/opt/bolton/dvwa-lite/nginx.conf"
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: community.docker.docker_compose_v2
+      description: "Restart the stack."
+      role_vars:
+        project_src: "/opt/bolton/dvwa-lite"
+        state: present
+        restarted: true
+  verify:
+    probe: |
+      rce=$(curl -sf -o /dev/null -w "%{http_code}" "http://127.0.0.1:8080/rce?cmd=id")
+      if [ "$rce" = "200" ]; then exit 0; else exit 1; fi
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "DVWA-lite is exploitable via SQLi/XSS/RCE again. sqlmap finds /sqli within 30 seconds."
+
+cost:
+  storage_mb: 250
+  cpu_pct: 5
+  detectability: loud
+
+status: stable

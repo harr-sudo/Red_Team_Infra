@@ -1,0 +1,237 @@
+# Bolt-on: Docker Socket Mounted Inside Container
+# -------------------------------------------------
+# Install launches a sample container `socket-mounted-ubuntu` with the
+# host's /var/run/docker.sock bind-mounted read-write. Any process inside
+# the container can talk to the Docker API as the local docker daemon
+# (which runs as root). Spawning a privileged container, mounting the host
+# filesystem at /mnt, and chrooting into /mnt is a one-liner container
+# escape (T1611).
+#
+# Patch removes the bad container, demonstrates the correct alternative
+# (Docker API exposed via systemd socket activation with tls + scoped
+# unix-socket group access), and verifies no current container has the
+# host docker socket bind-mounted.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/linux/privilege_escalation_writable_docker_socket.toml
+#   Research/elastic-detection-rules/rules/linux/privilege_escalation_docker_mount_chroot_container_escape.toml
+#   Research/elastic-detection-rules/rules/linux/execution_container_management_binary_launched_inside_container.toml
+
+id: bolton.cloud-container.docker-socket-exposed
+slug: docker-socket-exposed
+name: "Docker Socket Mounted Inside Container"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: cloud-container
+subcategory: docker
+tags:
+  - docker
+  - container-escape
+  - cloud-container
+  - privilege-escalation
+  - linux
+description: >
+  Runs an `ubuntu:22.04` container named `socket-mounted-ubuntu` with the
+  host's /var/run/docker.sock bind-mounted at /var/run/docker.sock inside
+  the container, read-write. The Docker daemon runs as root on the host;
+  any process inside the container can therefore call the Docker API as
+  root and trivially escape: `docker run --privileged -v /:/mnt -it
+  alpine chroot /mnt /bin/sh` from inside the bolt-on container yields
+  a root shell on the underlying host (MITRE T1611).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1611/"
+  - "https://docs.docker.com/engine/security/protect-access/"
+  - "https://www.cisa.gov/sites/default/files/publications/Kubernetes_Hardening_Guidance_1.2_20220829.PDF"
+  - "https://www.trendmicro.com/en_us/research/19/c/docker-socket.html"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1611
+    name: "Escape to Host"
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "7acb2de3-8465-472a-8d9c-ccd7b73d0ed8"
+      rule_name: "Potential Privilege Escalation through Writable Docker Socket"
+      rule_filename: "linux/privilege_escalation_writable_docker_socket.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Directly fires when curl/socat-equivalent talks to /var/run/docker.sock from a non-root user or inside a container context."
+    - rule_uuid: "5ae02ebc-a5de-4eac-afe6-c88de696477d"
+      rule_name: "Potential Chroot Container Escape via Mount"
+      rule_filename: "linux/privilege_escalation_docker_mount_chroot_container_escape.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Catches the post-exploit step (mount /:/mnt + chroot) common after Docker socket abuse."
+    - rule_uuid: "4b74d3b0-416e-4099-b432-677e1cd098cc"
+      rule_name: "Container Management Utility Run Inside A Container"
+      rule_filename: "linux/execution_container_management_binary_launched_inside_container.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Fires on docker/kubectl execve inside container — strong hint the socket is reachable."
+  signal_sources:
+    - "Auditd execve — docker, runc, ctr commands originating from container PID namespaces"
+    - "Sysmon-for-Linux Event 11 — FileCreate on /proc/*/root/var/run/docker.sock"
+    - "eBPF tracepoints — connect(2) syscall to /var/run/docker.sock from non-root UID"
+    - "Docker daemon JSON log — POST /containers/create with HostConfig.Binds containing 'docker.sock'"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - linux_member
+    - standalone
+  required_services:
+    - docker
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false   # the socket is local; container escape is local-PE
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 120
+  steps:
+    - ansible_role: community.docker.docker_image
+      description: "Pull the base image."
+      role_vars:
+        name: "ubuntu:22.04"
+        source: pull
+    - ansible_role: community.docker.docker_container
+      description: "Run the container with /var/run/docker.sock mounted RW."
+      role_vars:
+        name: "socket-mounted-ubuntu"
+        image: "ubuntu:22.04"
+        command: "sleep infinity"
+        state: started
+        restart_policy: "unless-stopped"
+        volumes:
+          - "/var/run/docker.sock:/var/run/docker.sock:rw"
+        labels:
+          bolton: "docker-socket-exposed"
+  verify:
+    probe: |
+      docker inspect socket-mounted-ubuntu --format '{{ "{{" }}range .Mounts{{ "}}" }}{{ "{{" }}.Source{{ "}}" }} {{ "{{" }}end{{ "}}" }}' 2>/dev/null | grep -q "/var/run/docker.sock"
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Stop and remove the bolt-on container; pull image is left in place."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: community.docker.docker_container
+      description: "Stop and remove the container."
+      role_vars:
+        name: "socket-mounted-ubuntu"
+        state: absent
+  verify:
+    probe: |
+      docker inspect socket-mounted-ubuntu >/dev/null 2>&1 && echo "still-here" || echo "gone"
+    timeout_seconds: 30
+    expect_stdout_contains: "gone"
+
+patch:
+  description: >
+    Remove the bad container, switch the Docker daemon to systemd socket
+    activation (tls-fronted unix socket exposed via a dedicated `docker`
+    group with limited membership), and add a runtime guard: an
+    AppArmor profile that DENIES bind-mounting /var/run/docker.sock from
+    any container by default. The host's docker daemon remains usable
+    via the systemd-activated socket — automation tools must now run as
+    a group member, not via container-bind-mount.
+  patch_reference:
+    - "https://docs.docker.com/engine/security/protect-access/"
+    - "https://docs.docker.com/config/daemon/systemd/"
+    - "https://attack.mitre.org/mitigations/M1048/"
+  complexity: medium
+  side_effects:
+    - "Docker daemon now listens on systemd-activated unix socket only — TCP exposure disabled"
+    - "Container created with /var/run/docker.sock bind-mount blocked by AppArmor profile"
+    - "Existing automation that bind-mounted the socket must be reconfigured to use Docker API over the protected systemd socket"
+    - "Recreate of bolt-on container fails with apparmor='DENIED' — visible in /var/log/audit/audit.log"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.docker.docker_container
+      description: "Ensure the bad container is gone."
+      role_vars:
+        name: "socket-mounted-ubuntu"
+        state: absent
+    - ansible_role: ansible.builtin.template
+      description: "Drop in the AppArmor profile that denies /var/run/docker.sock bind-mounts."
+      role_vars:
+        src: "templates/bolton/docker-socket-deny.apparmor.j2"
+        dest: "/etc/apparmor.d/docker-socket-deny"
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: community.general.system_service
+      description: "Reload apparmor + restart docker so the profile applies to new containers."
+      role_vars:
+        name: apparmor
+        state: reloaded
+  verify:
+    probe: |
+      # Bolt-on container must be gone
+      docker inspect socket-mounted-ubuntu >/dev/null 2>&1 && exit 1
+      # AppArmor profile must be loaded
+      if aa-status 2>/dev/null | grep -q "docker-socket-deny"; then exit 0; else exit 1; fi
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/docker_socket_check.sh"
+
+patch_revert:
+  description: "Re-run the vulnerable container with /var/run/docker.sock bind-mounted — escape is one docker exec away again."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove the AppArmor profile so the bind-mount is permitted."
+      role_vars:
+        path: "/etc/apparmor.d/docker-socket-deny"
+        state: absent
+    - ansible_role: community.general.system_service
+      description: "Reload apparmor."
+      role_vars:
+        name: apparmor
+        state: reloaded
+    - ansible_role: community.docker.docker_container
+      description: "Re-launch the vulnerable container."
+      role_vars:
+        name: "socket-mounted-ubuntu"
+        image: "ubuntu:22.04"
+        command: "sleep infinity"
+        state: started
+        restart_policy: "unless-stopped"
+        volumes:
+          - "/var/run/docker.sock:/var/run/docker.sock:rw"
+        labels:
+          bolton: "docker-socket-exposed"
+  verify:
+    probe: |
+      docker inspect socket-mounted-ubuntu --format '{{ "{{" }}range .Mounts{{ "}}" }}{{ "{{" }}.Source{{ "}}" }} {{ "{{" }}end{{ "}}" }}' 2>/dev/null | grep -q "/var/run/docker.sock"
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Container escape one-liner works again: docker run --privileged -v /:/mnt -it alpine chroot /mnt sh"
+
+cost:
+  storage_mb: 80
+  cpu_pct: 1
+  detectability: loud
+
+status: stable

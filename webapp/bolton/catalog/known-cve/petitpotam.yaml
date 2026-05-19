@@ -1,0 +1,272 @@
+# Bolt-on: PetitPotam — MS-EFSRPC Coercion (CVE-2021-36942)
+# ----------------------------------------------------------
+# Install reverts the mitigation registry changes that block anonymous
+# EFSRPC access (RestrictReceiveAuthenticationPackages cleared, EFSRPC
+# allowed for unauthenticated callers). An attacker can then call
+# EfsRpcOpenFileRaw against a DC and coerce its machine account into
+# authenticating to an attacker-controlled host — combined with NTLM
+# relay to ADCS Web Enrollment (ESC8) this yields a DC certificate
+# and full domain compromise.
+#
+# Patch installs KB5005413 (August 2021 OOB) and enables Extended
+# Protection for Authentication on AD CS Web Enrollment +
+# EnforceChannelBinding = 2 on the LSA so relayed authentications are
+# rejected.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/windows/credential_access_relay_ntlm_auth_via_http_spoolss.toml
+#   Research/elastic-detection-rules/rules/windows/credential_access_dollar_account_relay.toml
+#   Research/elastic-detection-rules/rules/windows/credential_access_dollar_account_relay_ntlm.toml
+
+id: bolton.known-cve.petitpotam
+slug: petitpotam
+name: "PetitPotam — MS-EFSRPC Coercion (CVE-2021-36942)"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: known-cve
+subcategory: efsrpc
+tags:
+  - cve-2021-36942
+  - efsrpc
+  - ntlm-relay
+  - forced-authentication
+  - adcs-esc8-pair
+description: >
+  Re-exposes the MS-EFSRPC unauthenticated coercion primitive on a domain
+  controller. The August 2021 mitigation added EFSRPC to
+  RestrictReceiveAuthenticationPackages and required authentication on the
+  EFSRPC interface; this bolt-on clears those keys so EfsRpcOpenFileRaw is
+  callable without credentials. Any network-reachable attacker can coerce
+  the DC machine account to NTLM-authenticate to an arbitrary host. Paired
+  with ADCS ESC8 (Web Enrollment HTTP NTLM endpoint), the relayed credential
+  is exchanged for a domain-controller-class certificate.
+
+cve:
+  - "CVE-2021-36942"
+references:
+  - "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2021-36942"
+  - "https://support.microsoft.com/en-us/topic/kb5005413"
+  - "https://attack.mitre.org/techniques/T1187/"
+  - "https://github.com/topotam/PetitPotam"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1187
+    name: "Forced Authentication"
+  notes: >
+    Pairs with T1557.001 (LLMNR/NBT-NS Poisoning and SMB Relay) — PetitPotam
+    is the coercion half; the cred-access payoff comes from the NTLM relay
+    half that catches the coerced auth.
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "4682fd2c-cfae-47ed-a543-9bed37657aa6"
+      rule_name: "Potential Relay Attack against a Domain Controller"
+      rule_filename: "windows/credential_access_relay_ntlm_auth_via_http_spoolss.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Catches the HTTP-NTLM relay endpoint side that PetitPotam typically targets via ADCS ESC8."
+    - rule_uuid: "263481c8-1e9b-492e-912d-d1760707f810"
+      rule_name: "Potential Computer Account NTLM Relay Activity"
+      rule_filename: "windows/credential_access_dollar_account_relay.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Fires on the relayed machine-account authentication, not the EFSRPC coercion itself."
+    - rule_uuid: "23e5407a-b696-4433-9297-087645f2726c"
+      rule_name: "Potential NTLM Relay Attack against a Computer Account"
+      rule_filename: "windows/credential_access_dollar_account_relay_ntlm.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Sibling rule to the relay-activity detection; correlates coercion + auth."
+  signal_sources:
+    - "Windows Event 4624 logon type 3 with computer account ($) source"
+    - "Windows Event 4768 (Kerberos TGT) — unusual computer-account TGT request"
+    - "Sysmon Event 3 (Network connection) — DC machine account connecting outbound 445"
+    - "Windows Event 5805 (NETLOGON secure channel failure)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2012"
+      max_version: "2022"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+  required_services: []
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Remove EFSRPC from RestrictReceiveAuthenticationPackages so anonymous callers are accepted."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0'
+        name: RestrictReceiveAuthenticationPackages
+        state: absent
+    - ansible_role: community.windows.win_regedit
+      description: "Clear LsaEnforceChannelBinding so relayed channel-bound auth still succeeds."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'
+        name: SuppressExtendedProtection
+        data: 1
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_powershell
+      description: "Force the EFS service into auto-start so the EFSRPC named pipe is exposed."
+      role_vars:
+        script: |
+          Set-Service -Name EFS -StartupType Automatic -ErrorAction SilentlyContinue
+          Start-Service -Name EFS -ErrorAction SilentlyContinue
+  verify:
+    probe: |
+      $r = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' `
+            -Name RestrictReceiveAuthenticationPackages -ErrorAction SilentlyContinue
+      $sup = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' `
+              -Name SuppressExtendedProtection -ErrorAction SilentlyContinue
+      if ($null -eq $r -and $sup.SuppressExtendedProtection -eq 1) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Restore the mitigation registry baseline; KB state is left untouched."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Re-add EFSRPC to RestrictReceiveAuthenticationPackages."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0'
+        name: RestrictReceiveAuthenticationPackages
+        data: ["efsrpc"]
+        type: multistring
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Remove the SuppressExtendedProtection override."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'
+        name: SuppressExtendedProtection
+        state: absent
+  verify:
+    probe: |
+      $r = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' `
+            -Name RestrictReceiveAuthenticationPackages).RestrictReceiveAuthenticationPackages
+      if ($r -contains 'efsrpc') { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Install KB5005413 (August 2021 out-of-band rollup) and enable Extended
+    Protection for Authentication on the LSA + AD CS Web Enrollment IIS
+    site. Disables NTLM on the EFSRPC interface and sets
+    EnforceChannelBinding = 2 so relayed NTLM authentications are rejected
+    at the receiving endpoint.
+  patch_reference:
+    - "https://support.microsoft.com/en-us/topic/kb5005413"
+    - "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2021-36942"
+  complexity: medium
+  side_effects:
+    - "Installs KB5005413 (Aug 2021 out-of-band rollup)"
+    - "Adds EFSRPC to RestrictReceiveAuthenticationPackages — anonymous EFSRPC blocked"
+    - "Sets LmCompatibilityLevel = 5 (Send NTLMv2 response only / refuse LM & NTLM)"
+    - "Sets LSA EnforceChannelBinding = 2 — relayed channel-bound NTLM rejected"
+    - "Anonymous SMB clients that depend on EFSRPC will lose functionality"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.windows.win_updates
+      description: "Install KB5005413 (or current cumulative successor)."
+      role_vars:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+        accept_list:
+          - "KB5005413"
+        reboot: false
+    - ansible_role: community.windows.win_regedit
+      description: "Block anonymous EFSRPC authentication explicitly."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0'
+        name: RestrictReceiveAuthenticationPackages
+        data: ["efsrpc"]
+        type: multistring
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Enforce channel binding on receiving endpoints."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'
+        name: LdapEnforceChannelBinding
+        data: 2
+        type: dword
+        state: present
+    - ansible_role: community.windows.win_regedit
+      description: "Force LmCompatibilityLevel = 5 (refuse LM & NTLMv1)."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'
+        name: LmCompatibilityLevel
+        data: 5
+        type: dword
+        state: present
+  verify:
+    probe: |
+      $kb = Get-HotFix -Id KB5005413 -ErrorAction SilentlyContinue
+      $rcv = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' `
+              -Name RestrictReceiveAuthenticationPackages).RestrictReceiveAuthenticationPackages
+      $cb = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters' `
+              -Name LdapEnforceChannelBinding).LdapEnforceChannelBinding
+      if ($kb -and $rcv -contains 'efsrpc' -and $cb -eq 2) { exit 0 } else { exit 1 }
+    timeout_seconds: 180
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/petitpotam_check.sh"
+
+patch_revert:
+  description: "Clear the EFSRPC mitigation + drop channel binding back to opportunistic so the coercion is exploitable again."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_regedit
+      description: "Remove EFSRPC from RestrictReceiveAuthenticationPackages."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0'
+        name: RestrictReceiveAuthenticationPackages
+        state: absent
+    - ansible_role: community.windows.win_regedit
+      description: "Disable channel binding enforcement."
+      role_vars:
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'
+        name: LdapEnforceChannelBinding
+        data: 0
+        type: dword
+        state: present
+  verify:
+    probe: |
+      $rcv = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' `
+              -Name RestrictReceiveAuthenticationPackages -ErrorAction SilentlyContinue
+      $cb = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters' `
+              -Name LdapEnforceChannelBinding).LdapEnforceChannelBinding
+      if ($null -eq $rcv -and $cb -eq 0) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "DC is PetitPotam-coercible again. Pair with NTLM relay (impacket-ntlmrelayx) to reach DC compromise."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: medium
+
+status: stable

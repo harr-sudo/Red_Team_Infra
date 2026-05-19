@@ -1,0 +1,281 @@
+# Bolt-on: Writable SMB Share — Everyone:Full
+# --------------------------------------------
+# Install creates C:\PublicShare on a member server, exposes it as the SMB
+# share `PublicShare`, grants Everyone:Full at the share level, and sets
+# NTFS perms to Everyone:Modify. Any authenticated user (or anonymous
+# guest, if guest is enabled — left to a separate bolt-on) can drop files
+# anywhere in the share. Combined with scheduled-task XML drops, startup
+# folder writes from impersonated user, or DLL planting, this is a generic
+# lateral-movement surface.
+#
+# Patch reduces share + NTFS perms to Administrators:Full, removes
+# Everyone, and audit-flags subsequent ACL changes.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/windows/lateral_movement_remote_file_copy_hidden_share.toml
+#   Research/elastic-detection-rules/rules/windows/lateral_movement_execution_via_file_shares_sequence.toml
+#   Research/elastic-detection-rules/rules/windows/lateral_movement_mount_hidden_or_webdav_share_net.toml
+
+id: bolton.service-misconfig.writable-share-everyone
+slug: writable-share-everyone
+name: "Writable SMB Share — Everyone:Full"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: service-misconfig
+subcategory: smb-share
+tags:
+  - smb
+  - share-permissions
+  - lateral-movement
+  - everyone
+  - writable
+description: >
+  Creates a wide-open SMB share `PublicShare` on a member server, backed
+  by C:\PublicShare. Share-level ACL: Everyone has Full Control. NTFS
+  ACL: Everyone:Modify. Any authenticated principal (including the
+  Domain Users group via the implicit "Authenticated Users" of Everyone)
+  can read, write, modify, and delete arbitrary files. The descriptor's
+  primary use is as a lateral-movement landing pad for operator training
+  (drop a scheduled-task XML, a startup-folder shortcut, or a DLL planted
+  next to a search-path-vulnerable host EXE).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1021/002/"
+  - "https://attack.mitre.org/techniques/T1136/"
+  - "https://learn.microsoft.com/en-us/windows-server/storage/file-server/file-server-smb-overview"
+  - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa20-006a"
+
+mitre:
+  tactic:
+    id: TA0008
+    name: "Lateral Movement"
+  technique:
+    id: T1021
+    name: "Remote Services"
+  subtechnique:
+    id: T1021.002
+    name: "SMB/Windows Admin Shares"
+  notes: >
+    The misconfig itself is closer to T1136 (Create Account) when paired
+    with a write-Run-key payload; T1021.002 captures the lateral-movement
+    primitive the share enables. Operator-training scenarios usually
+    walk a chain: write payload to share -> trigger remote execution via
+    schtask/wmic/PsExec.
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "fa01341d-6662-426b-9d0c-6d81e33c8a9d"
+      rule_name: "Remote File Copy to a Hidden Share"
+      rule_filename: "windows/lateral_movement_remote_file_copy_hidden_share.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Detects write activity to admin shares (C$/ADMIN$); generic writable shares share much of the same telemetry."
+    - rule_uuid: "ab75c24b-2502-43a0-bf7c-e60e662c811e"
+      rule_name: "Remote Execution via File Shares"
+      rule_filename: "windows/lateral_movement_execution_via_file_shares_sequence.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Catches the canonical SMB write -> remote execute chain — exactly the bolt-on's purpose."
+    - rule_uuid: "c4210e1c-64f2-4f48-b67e-b5a8ffe3aa14"
+      rule_name: "Mounting Hidden or WebDav Remote Shares"
+      rule_filename: "windows/lateral_movement_mount_hidden_or_webdav_share_net.toml"
+      coverage: indirect
+      confidence: low
+      last_validated: 2026-04-15
+      notes: "Fires on net use / New-PSDrive to suspicious shares — partial overlap with adversary recon of the writable share."
+  signal_sources:
+    - "Windows Event 5142 (network share created)"
+    - "Windows Event 5145 (network share object accessed — file create / write)"
+    - "Sysmon Event 11 (FileCreate) under C:\\PublicShare from a remote user"
+    - "Windows Event 4663 (SACL — Write Data on \\\\<host>\\PublicShare)"
+    - "Sysmon Event 1 — process create child of services.exe right after a Scheduled-Tasks XML drop"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - member_server
+  required_services:
+    - smb
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.windows.win_file
+      description: "Create the backing directory."
+      role_vars:
+        path: 'C:\PublicShare'
+        state: directory
+    - ansible_role: ansible.windows.win_share
+      description: "Create the SMB share with Everyone:Full at the share level."
+      role_vars:
+        name: PublicShare
+        path: 'C:\PublicShare'
+        full: "Everyone"
+        description: "Lab bolt-on writable share — DO NOT USE IN PROD"
+        state: present
+    - ansible_role: ansible.windows.win_acl
+      description: "Grant NTFS Modify rights to Everyone on the backing folder."
+      role_vars:
+        path: 'C:\PublicShare'
+        user: "Everyone"
+        rights: "Modify"
+        type: allow
+        inherit: "ContainerInherit,ObjectInherit"
+        propagation: "None"
+        state: present
+  verify:
+    probe: |
+      $share = Get-SmbShare -Name 'PublicShare' -ErrorAction SilentlyContinue
+      $shareAcl = Get-SmbShareAccess -Name 'PublicShare' -ErrorAction SilentlyContinue |
+        Where-Object { $_.AccountName -eq 'Everyone' -and $_.AccessRight -eq 'Full' }
+      if ($share -and $shareAcl) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Remove the SMB share and delete the backing directory + ACL state."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.windows.win_share
+      description: "Remove the share."
+      role_vars:
+        name: PublicShare
+        state: absent
+    - ansible_role: ansible.windows.win_file
+      description: "Delete the backing directory tree."
+      role_vars:
+        path: 'C:\PublicShare'
+        state: absent
+  verify:
+    probe: |
+      $share = Get-SmbShare -Name 'PublicShare' -ErrorAction SilentlyContinue
+      if (-not $share -and -not (Test-Path 'C:\PublicShare')) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Tighten share + NTFS permissions to Administrators-only and audit
+    all subsequent ACL changes. Replaces share-level Everyone:Full with
+    Administrators:Full + Authenticated Users:Read. Removes Everyone
+    from the NTFS ACL entirely; grants Administrators:FullControl with
+    inherited propagation. Sets a SACL on the directory to audit Write
+    Data + Change Permissions writes by anyone.
+  patch_reference:
+    - "https://www.cisecurity.org/benchmark/microsoft_windows_server"
+    - "https://learn.microsoft.com/en-us/windows-server/storage/file-server/file-server-smb-overview"
+    - "https://attack.mitre.org/mitigations/M1027/"
+  complexity: low
+  side_effects:
+    - "Share-level ACL: Everyone removed, Administrators:Full + Authenticated Users:Read added"
+    - "NTFS ACL: Everyone removed, Administrators:FullControl with inheritance"
+    - "Audit SACL on C:\\PublicShare — Write Data + Change Permissions audited for Everyone"
+    - "Existing user-owned files retain their ownership but are no longer writable by non-admins"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.windows.win_share
+      description: "Replace share-level ACL with Administrators:Full + AuthenticatedUsers:Read."
+      role_vars:
+        name: PublicShare
+        path: 'C:\PublicShare'
+        full: "Administrators"
+        read: "Authenticated Users"
+        state: present
+    - ansible_role: ansible.windows.win_acl
+      description: "Remove the Everyone ACE from the backing folder."
+      role_vars:
+        path: 'C:\PublicShare'
+        user: "Everyone"
+        rights: "Modify"
+        type: allow
+        state: absent
+    - ansible_role: ansible.windows.win_acl
+      description: "Grant Administrators FullControl with inheritance."
+      role_vars:
+        path: 'C:\PublicShare'
+        user: "Administrators"
+        rights: "FullControl"
+        type: allow
+        inherit: "ContainerInherit,ObjectInherit"
+        propagation: "None"
+        state: present
+    - ansible_role: community.windows.win_powershell
+      description: "Add audit SACL — Write Data and Change Permissions by Everyone."
+      role_vars:
+        script: |
+          $path = 'C:\PublicShare'
+          $acl  = Get-Acl -Path $path -Audit
+          $rule = New-Object System.Security.AccessControl.FileSystemAuditRule(
+            "Everyone",
+            "WriteData,ChangePermissions",
+            "ContainerInherit,ObjectInherit",
+            "None",
+            "Success,Failure")
+          $acl.AddAuditRule($rule)
+          Set-Acl -Path $path -AclObject $acl
+  verify:
+    probe: |
+      $shareAcl = Get-SmbShareAccess -Name 'PublicShare' |
+        Where-Object { $_.AccountName -eq 'Everyone' -and $_.AccessRight -eq 'Full' }
+      $ntfsEveryone = (Get-Acl 'C:\PublicShare').Access |
+        Where-Object { $_.IdentityReference.Value -eq 'Everyone' -and $_.FileSystemRights -match 'Modify|FullControl' }
+      if (-not $shareAcl -and -not $ntfsEveryone) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/writable_share_check.sh"
+
+patch_revert:
+  description: "Re-grant Everyone:Full at share + NTFS layers — share is writable again."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.windows.win_share
+      description: "Restore Everyone:Full share-level ACL."
+      role_vars:
+        name: PublicShare
+        path: 'C:\PublicShare'
+        full: "Everyone"
+        state: present
+    - ansible_role: ansible.windows.win_acl
+      description: "Re-grant Everyone:Modify on NTFS."
+      role_vars:
+        path: 'C:\PublicShare'
+        user: "Everyone"
+        rights: "Modify"
+        type: allow
+        inherit: "ContainerInherit,ObjectInherit"
+        propagation: "None"
+        state: present
+  verify:
+    probe: |
+      $shareAcl = Get-SmbShareAccess -Name 'PublicShare' |
+        Where-Object { $_.AccountName -eq 'Everyone' -and $_.AccessRight -eq 'Full' }
+      if ($shareAcl) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "PublicShare is world-writable again. Any Domain User can drop scheduled-task XMLs or planted DLLs."
+
+cost:
+  storage_mb: 5
+  cpu_pct: 0
+  detectability: medium
+
+status: stable

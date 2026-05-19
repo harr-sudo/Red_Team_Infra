@@ -305,9 +305,6 @@
                 </button>
             </nav>
 
-            <div class="app-rail__footer">
-                <span class="app-rail__footer-version" id="app-rail-footer-version">v? (unknown)</span>
-            </div>
         </aside>
 
         <!-- ── MAIN CONTENT AREA ────────────────────────────────────────
@@ -641,6 +638,46 @@
                         </button>
                         <span class="t-muted" id="configure-context-hint" data-empty="Or edit the deployment currently selected in the header.">Or edit the deployment currently selected in the header.</span>
                     </div>
+
+                    <!-- Task 51 Item 4 — V3 TASTE redesign of Configure (Composition A
+                         spec-list mirror). Same primitives as the Deploy summary view:
+                         hero strip → status pill → spec-list of 7 core rows → details
+                         sections for type-specific config (Attack Box, Malleable C2,
+                         Redirector Domain, Domain Fronting, GOAD Network) → sticky
+                         save/discard footer. Each spec-row click expands an inline
+                         editor that writes back to the legacy form inputs preserved
+                         below; saveConfig() and loadConfig() are reused as the source
+                         of truth. Class names mirror .deploy-summary__* for parity
+                         and to inherit the layer-aware contrast already certified. -->
+                    <section class="deploy-summary configure-summary" id="configure-summary-section" data-config-summary>
+                        <div class="deploy-summary__eyebrow">
+                            <span class="deploy-summary__eyebrow-label">Configuration</span>
+                            <span class="spec-pill spec-pill--draft" id="configure-summary-status">
+                                <span class="spec-pill__dot" aria-hidden="true"></span>
+                                <span id="configure-summary-status-label">DRAFT</span>
+                            </span>
+                        </div>
+                        <section class="deploy-summary__hero" aria-label="Deployment identity">
+                            <span class="deploy-summary__hero-caption">project</span>
+                            <h3 class="deploy-summary__hero-name" id="configure-summary-hero-name" tabindex="-1">—</h3>
+                            <p class="deploy-summary__hero-type">
+                                <strong id="configure-summary-hero-type">—</strong>
+                                <span class="t-muted"> · click any row to edit</span>
+                            </p>
+                        </section>
+                        <dl class="spec-list" id="configure-summary-spec-list"></dl>
+                    </section>
+
+                    <!-- Task 51 Item 3 — Group the legacy "Configuration Editor"
+                         h2 + deploy-selector dropdown under a single
+                         `.configuration-editor` wrapper so they can be
+                         hidden together when the wizard inline-mode is
+                         active. The wizard's step 1 already asks "What
+                         do you want to deploy?", and step 4 review shows
+                         the type as a spec-row; surfacing this dropdown
+                         in parallel is redundant. The CSS rule lives in
+                         style.css alongside the .journey-inline block. -->
+                    <div class="configuration-editor">
                     <h2 class="page-title">Configuration Editor</h2>
 
                     <!-- What to Deploy Section -->
@@ -668,6 +705,25 @@
                         </select>
                         </div>
                     </div>
+                    </div><!-- /.configuration-editor -->
+
+                    <!-- Task 51 Item 4 — Advanced settings: wrap the legacy form
+                         fields (Environment, Project Name, CIDR, type-specific
+                         sections) in a collapsible <details> so the new spec-list
+                         at the top serves as the primary TASTE view. Operators
+                         expand this to access raw inputs that the spec-list editors
+                         delegate to. All existing input IDs are preserved — every
+                         field below is still loaded/saved by loadConfig()/saveConfig().
+                         TODO_TASTE_REDESIGN: full per-section conversion of the
+                         deeply-nested type-specific blocks (SSL OPSEC table,
+                         malleable C2 profile previews, file portal options, etc.)
+                         to spec-row primitives — pushed to a follow-up task. -->
+                    <details id="configure-advanced-details" class="details-card details-card--v3 configure-advanced-details" open>
+                        <summary>
+                            <svg class="details-card__chevron icon" aria-hidden="true"><use href="#icon-chevron-down"/></svg>
+                            <span class="details-card__eyebrow">ADVANCED</span>
+                            <span class="details-card__title">All settings &amp; type-specific configuration</span>
+                        </summary>
 
                     <!-- Deployment Overview Section -->
                     <div id="deployment-overview" class="deployment-overview" style="display: none;">
@@ -1393,8 +1449,13 @@ ns-143.awsdns-17.org
                             Applies to Adhoc and Purple Team. Full Red Team uses per-phase instance types (default: t3.medium).
                         </small>
                     </div>
+                    </details><!-- /#configure-advanced-details -->
 
-                    <div class="form-actions">
+                    <!-- Task 51 Item 4 — Sticky save / discard footer mirrors the
+                         Deploy summary's action strip. Buttons preserve their legacy
+                         IDs and onclick handlers so saveConfig() / validateConfig() /
+                         clearConfig() remain the source of truth. -->
+                    <div class="form-actions configure-form-actions configure-form-actions--sticky">
                         <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
                         <button class="btn btn-secondary" onclick="validateConfig()">Validate</button>
                         <button class="btn btn-danger" onclick="clearConfig()" style="margin-left: auto;">Clear All</button>

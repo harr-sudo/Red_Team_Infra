@@ -6599,6 +6599,65 @@ body { padding-top: 64px; }
     transform: translate(-50%, -50%);
 }
 
+/* Task 51 Item 3 — Hide the legacy "Configuration Editor" + "What do you
+   want to deploy?" dropdown whenever the wizard is mounted inline. The
+   wizard already collects this in step 1 and surfaces it as a spec-row
+   in step 4 review; rendering both in parallel is the visual bug operators
+   reported. Belt-and-braces: #configure-edit-pane is already set to
+   hidden=true via APP.journey._showNewMode(), but this CSS rule is a
+   defensive net (a) for the case where a future code path forgets to flip
+   the hidden attribute, and (b) so the deep-link `?new=1` first paint never
+   flashes the editor before the JS runs. */
+#configure-new-pane:not([hidden]) ~ #configure-edit-pane .configuration-editor {
+    display: none;
+}
+
+/* Task 51 Item 4 — Configure V3 TASTE redesign.
+   .configure-summary scopes the spec-list mirror at the top of Configure.
+   .configure-advanced-details collapses the legacy form fields beneath it.
+   .configure-form-actions--sticky pins Save / Validate / Clear at the bottom
+   of the visible viewport while editing. All tokens are layer-aware. */
+.configure-summary {
+    margin-bottom: 24px;
+}
+.configure-summary #configure-summary-spec-list {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+}
+.configure-advanced-details {
+    margin-top: 4px;
+    margin-bottom: 96px; /* leave runway for the sticky action strip */
+}
+.configure-advanced-details > .deployment-overview,
+.configure-advanced-details > div,
+.configure-advanced-details > .form-group {
+    /* allow the legacy form-groups to occupy the .details body */
+}
+details.configure-advanced-details[open] {
+    /* Avoid the global details[open] background — keep the legacy form
+       sitting on --bg-body so embedded section-cards keep their relief. */
+    background: transparent;
+}
+details.configure-advanced-details[open] > summary {
+    background: var(--bg-card);
+}
+details.configure-advanced-details > *:not(summary) {
+    padding: 0 18px 18px;
+}
+.configure-form-actions--sticky {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    background: var(--bg-body);
+    border-top: 1px solid var(--border-subtle);
+    padding: 12px 0;
+    margin-top: 12px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
 /* 2026-05-19 flow-stitching — Inline journey container inside Configure.
    The wizard is no longer a scrim takeover; it mounts into
    #configure-new-pane as a normal block. Same card surface as
@@ -7206,6 +7265,21 @@ body[data-journey-open="true"] .container > main {
 }
 .journey-review__breadcrumb-link:hover {
     text-decoration-color: var(--brand-light);
+}
+
+/* Task 51 Item 1 — hint below "Save & continue" CTA explaining what
+ * happens next. Sits below .journey-foot (which itself has a top
+ * border). Uses --text-secondary (AA-safe on every layer the review
+ * mounts on) and the same mono caps treatment as other review meta. */
+.journey-review__cta-hint {
+    margin: 8px 0 0;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    align-self: flex-end;
+    max-width: 480px;
+    text-align: right;
 }
 
 /* Type-grid radio cards used in the "Deployment Type" inline editor */
@@ -10050,21 +10124,9 @@ body:has(.app-shell) {
     background: var(--brand-light);
 }
 
-.app-rail__footer {
-    margin-top: auto;
-    padding: 12px 8px 4px;
-    border-top: 1px solid var(--border-subtle);
-    font-family: var(--font-family-mono);
-    font-size: 9.5px;
-    color: var(--text-secondary);
-    letter-spacing: 0.08em;
-}
-
-.app-rail__footer-version {
-    /* Layer baseline: .app-rail sits on bg-container. --text-secondary
-       passes >=4.5:1 in both themes. */
-    color: var(--text-secondary);
-}
+/* Rail footer rules removed — the rail version chip was a duplicate of
+   #app-version-footer (bottom-right, clickable, opens version modal).
+   Consolidated to one version surface per user request 2026-05-19. */
 
 /* ── MAIN CONTENT AREA ───────────────────────────────────────────────── */
 .app-content {
@@ -10942,12 +11004,109 @@ body:has(.app-shell) {
 }
 
 .bolton-live .bt-row__why {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    font: inherit;
     font-size: 11.5px;
     color: var(--text-secondary);
     text-decoration: underline dotted;
-    cursor: help;
+    cursor: pointer;
 }
 .bolton-live .bt-row__why:hover { color: var(--text-primary); }
+.bolton-live .bt-row__why:focus-visible {
+    outline: none;
+    color: var(--text-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+    border-radius: var(--radius-xs);
+}
+
+/* Task 51 Item 2 — popover for "Why?" / "View conflict" on incompatible
+ * bolt-on rows. Anchored below the trigger via getBoundingClientRect()
+ * + position:fixed. Phase 2b primitives: monospaced caps eyebrow + body
+ * copy in --text-primary on --bg-card. Both themes pass AA — body sits
+ * on --bg-card (layer 2) and uses --text-primary which is the highest-
+ * contrast text token on every theme. */
+.bolton-why-tooltip {
+    position: fixed;
+    z-index: 1300;
+    width: 320px;
+    max-width: calc(100vw - 16px);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+    color: var(--text-primary);
+    font-size: 12.5px;
+    line-height: 1.5;
+    animation: spec-edit-in 180ms var(--motion-easing-standard) both;
+}
+.bolton-why-tooltip__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.bolton-why-tooltip__eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 10px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    word-break: break-all;
+}
+.bolton-why-tooltip__close {
+    appearance: none;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-secondary);
+    padding: 2px;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.bolton-why-tooltip__close:hover {
+    color: var(--text-primary);
+    border-color: var(--border-subtle);
+    background: var(--bg-card-hover);
+}
+.bolton-why-tooltip__body {
+    padding: 10px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.bolton-why-tooltip__reason {
+    margin: 0;
+    color: var(--text-primary);
+}
+.bolton-why-tooltip__suggested {
+    padding: 8px 10px;
+    background: var(--bg-input);
+    border-left: 2px solid var(--brand-light);
+    border-radius: var(--radius-xs);
+}
+.bolton-why-tooltip__suggested-label {
+    display: block;
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+.bolton-why-tooltip__suggested p {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 12px;
+}
 
 /* RESPONSIVE ------------------------------------------------------------ */
 @media (max-width: 900px) {
