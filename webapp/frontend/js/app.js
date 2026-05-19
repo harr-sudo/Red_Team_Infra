@@ -3081,9 +3081,9 @@ APP.journey = (function () {
                         </div>
                         <div class="journey-field">
                             <label class="journey-field__label" for="journey-cidr">Management CIDR</label>
-                            <div class="journey-field__input-row">
-                                <input class="journey-field__input" id="journey-cidr" type="text" value="${esc(state.cidr)}" placeholder="82.35.149.127/32" autocomplete="off" spellcheck="false">
-                                <button type="button" class="journey-field__use-my-ip" id="journey-use-my-ip" data-action="my-ip">Use my IP</button>
+                            <div style="display: flex; gap: 10px; align-items: flex-start;">
+                                <input class="journey-field__input" id="journey-cidr" type="text" value="${esc(state.cidr)}" placeholder="82.35.149.127/32" autocomplete="off" spellcheck="false" style="flex: 1;">
+                                <button type="button" class="btn btn-secondary" id="journey-use-my-ip" data-action="my-ip" style="white-space: nowrap;">Use my IP</button>
                             </div>
                             <span class="journey-field__hint" id="journey-use-my-ip-hint">Your laptop's IP. /32 = exact host.</span>
                         </div>

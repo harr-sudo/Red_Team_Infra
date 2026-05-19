@@ -290,6 +290,11 @@ def update_elastic_rules():
             cwd=str(project_root)
         )
         if gen.returncode != 0:
+            audit_service.write(
+                _audit_actor(),
+                "config.update_elastic_rules",
+                details={"status": "failed", "error": (gen.stderr or "").strip()[:500]},
+            )
             return jsonify({
                 "success": False,
                 "error": gen.stderr.strip() or "Script failed",
@@ -297,7 +302,17 @@ def update_elastic_rules():
             }), 500
         results["generate"] = gen.stdout.strip()
     except Exception as e:
+        audit_service.write(
+            _audit_actor(),
+            "config.update_elastic_rules",
+            details={"status": "error", "error": str(e)[:500]},
+        )
         return jsonify({"success": False, "error": str(e), "results": results}), 500
 
+    audit_service.write(
+        _audit_actor(),
+        "config.update_elastic_rules",
+        details={"status": "ok"},
+    )
     return jsonify({"success": True, "results": results})
 

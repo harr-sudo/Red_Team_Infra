@@ -45,7 +45,25 @@ except Exception:  # pragma: no cover
 
 # webapp/backend/services/presence_service.py → parents[3] is the repo root.
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
-STATE_DIR = _PROJECT_ROOT / "webapp" / "state" / "presence"
+
+
+def _resolve_state_dir() -> Path:
+    """Honor DASHBOARD_STATE_DIR for test isolation; default to the
+    in-tree webapp/state/presence directory.
+
+    Unlike operator/audit services (which live under ~/.dashboard),
+    presence files live in the working tree. When DASHBOARD_STATE_DIR is
+    set we redirect presence YAML files under that root too — Playwright
+    runs against the live Flask server and would otherwise dirty
+    webapp/state/presence/ on every spec. See task #54.
+    """
+    env = os.environ.get("DASHBOARD_STATE_DIR")
+    if env:
+        return Path(env) / "presence"
+    return _PROJECT_ROOT / "webapp" / "state" / "presence"
+
+
+STATE_DIR = _resolve_state_dir()
 
 # Allowed page identifiers. Heartbeats with other values are still stored
 # (the frontend is the source of truth for valid pages) but the service

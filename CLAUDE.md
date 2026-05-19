@@ -239,6 +239,8 @@ No automated test suite. Validation is done via:
 - `scripts/utilities/health-check.sh` for post-deployment verification
 - Manual verification of deployment outputs
 
+**Dashboard test isolation (task #54):** Before running Playwright (`make test-browser`), start Flask with `DASHBOARD_STATE_DIR=/tmp/playwright-dashboard-state` set. This redirects `operator_service._STORE_PATH`, `audit_service._LOG_PATH`, and `presence_service.STATE_DIR` away from `~/.dashboard/` and the in-tree `webapp/state/presence/` so test runs never pollute the real operator's profile/audit/presence state. See `tests/README.md` for the full invocation. Use `scripts/utilities/reset-dashboard-state.sh` to clean residue from previous unisolated runs.
+
 ## Prerequisites
 
 - AWS account with appropriate IAM permissions

@@ -1075,6 +1075,8 @@ When destroy of a lab is initiated, the destroy flow first lists outstanding bol
 
 The existing Elastic Rules integration (see MEMORY: `project_elastic_rules_integration.md`) is the natural pair for `detection.elastic_rules_suggested`. After a bolt-on is verified, a button "Show suggested detections" links to the Elastic Rules UI pre-filtered to the suggested rule names. Purple-team feedback loop.
 
+**Validation (task #55, 2026-05-19):** the corpus-refresh flow has been end-to-end validated. `scripts/utilities/update-elastic-rules.py` parses 469 Windows TOMLs and regenerates `webapp/frontend/js/elastic-rules.js` (128 unique rules mapped across 31 commands / 19 tools / 19 keywords, exit 0). The `POST /api/config/update-elastic-rules` endpoint returns `{success: true, results: {git_pull, generate}}` and now writes a `config.update_elastic_rules` row to the audit log on every invocation (success + failure paths both audited). All 29 `rule_uuid` references across the 12 descriptors that declare `detection.elastic_rules` were cross-checked against the 1,739-rule corpus and 100% resolved — no stale UUIDs. Re-run `scripts/utilities/audit-bolton-rule-uuids.py` whenever the corpus is refreshed; exit code 1 signals at least one descriptor needs its UUID list updated.
+
 ---
 
 ## 11. Implementation phases

@@ -19,7 +19,20 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-_LOG_PATH = Path.home() / ".dashboard" / "audit.log"
+
+def _resolve_dashboard_home() -> Path:
+    """Honor DASHBOARD_STATE_DIR for test isolation; default to ~/.dashboard.
+
+    Mirrors operator_service._resolve_dashboard_home — kept duplicated to
+    avoid an import cycle between these peer modules. See task #54.
+    """
+    env = os.environ.get("DASHBOARD_STATE_DIR")
+    if env:
+        return Path(env)
+    return Path.home() / ".dashboard"
+
+
+_LOG_PATH = _resolve_dashboard_home() / "audit.log"
 _LOCK = threading.RLock()
 _MAX_READ_BYTES = 2 * 1024 * 1024  # cap reads at 2 MiB
 _ROTATION_THRESHOLD_BYTES = 10 * 1024 * 1024  # 10 MiB — rotate when log exceeds this

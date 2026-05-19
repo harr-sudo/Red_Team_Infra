@@ -32,6 +32,23 @@ from webapp.backend.services import operator_service
 
 _logger = logging.getLogger(__name__)
 
+# Task #54 — guard against misconfigured test-isolation env var. If an
+# operator sets DASHBOARD_STATE_DIR to a path that contains the real
+# ~/.dashboard segment they've defeated the isolation we wanted. Emit a
+# warning at startup so the misconfiguration is visible — never a hard
+# error, since some debug loops legitimately point at the live store.
+_dashboard_state_dir = os.environ.get("DASHBOARD_STATE_DIR")
+if _dashboard_state_dir:
+    _real_home = str(Path.home() / ".dashboard")
+    if _real_home in _dashboard_state_dir:
+        _logger.warning(
+            "DASHBOARD_STATE_DIR=%s overlaps the live operator store at %s — "
+            "test runs will pollute production data. Use /tmp/playwright-dashboard-state "
+            "or similar.",
+            _dashboard_state_dir,
+            _real_home,
+        )
+
 # --- Versioning helpers (P1 #7.6) -----------------------------------------
 # Resolve the VERSION file at repo root. Works whether the app is run from
 # the venv locally or from systemd on the dashboard EC2 — both cases reach

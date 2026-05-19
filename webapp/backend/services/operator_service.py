@@ -14,7 +14,22 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-_STORE_PATH = Path.home() / ".dashboard" / "operators.json"
+
+def _resolve_dashboard_home() -> Path:
+    """Honor DASHBOARD_STATE_DIR for test isolation; default to ~/.dashboard.
+
+    Set DASHBOARD_STATE_DIR (e.g. /tmp/playwright-dashboard-state) when
+    starting Flask for Playwright / e2e runs so the live operator store
+    at ~/.dashboard/operators.json is never written to. See task #54 and
+    tests/browser/README.md.
+    """
+    env = os.environ.get("DASHBOARD_STATE_DIR")
+    if env:
+        return Path(env)
+    return Path.home() / ".dashboard"
+
+
+_STORE_PATH = _resolve_dashboard_home() / "operators.json"
 _LOCK = threading.RLock()
 
 DEFAULT_COLORS = ["#a31621", "#3b82f6", "#0d9488", "#7c3aed", "#ea580c", "#65a30d"]
