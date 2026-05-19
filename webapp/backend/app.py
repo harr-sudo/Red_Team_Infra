@@ -26,6 +26,7 @@ from webapp.backend.routes import operators as operators_routes
 from webapp.backend.routes import audit as audit_routes
 from webapp.backend.routes import bolton as bolton_routes
 from webapp.backend.routes import palette as palette_routes
+from webapp.backend.routes import presence as presence_routes
 from webapp.backend.middleware import identity
 from webapp.backend.services import operator_service
 
@@ -127,6 +128,7 @@ app.register_blueprint(operators_routes.bp)
 app.register_blueprint(audit_routes.bp)
 app.register_blueprint(bolton_routes.bp)  # Vulnerable-lab bolt-on feature
 app.register_blueprint(palette_routes.bp)  # v3 — ⌘K command palette (Agent B)
+app.register_blueprint(presence_routes.bp)  # task #33 — soft presence banner
 
 # Initialize WebSocket support for terminal
 terminal.init_sock(app)

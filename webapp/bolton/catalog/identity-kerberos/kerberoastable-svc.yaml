@@ -100,22 +100,12 @@ side_effects:
 install:
   estimated_time_seconds: 30
   steps:
-    - ansible_role: community.windows.win_domain_user
-      description: "Create the service account with a weak password."
+    - ansible_role: bolton_kerberoastable_svc
+      description: "Create weak service account, register SPN, force RC4-allowed enc types."
       role_vars:
-        name: "svc_kerb_lab"
-        password: "Summer2025!"
-        password_never_expires: true
-        state: present
-        groups:
-          - "Domain Users"
-    - ansible_role: microsoft.ad.user
-      description: "Register an SPN on the new account so it is Kerberoastable."
-      role_vars:
-        identity: "svc_kerb_lab"
-        spn:
-          add:
-            - "HTTP/kerb-target.{{ domain_fqdn }}"
+        bolton_kerb_account_name: "svc_kerb_lab"
+        bolton_kerb_weak_password: "Summer2025!"
+        bolton_kerb_spn: "HTTP/kerb-target.{{ domain_fqdn | default('lab.local') }}"
   verify:
     probe: |
       Get-ADUser -Identity 'svc_kerb_lab' -Properties ServicePrincipalName |

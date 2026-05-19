@@ -1,0 +1,69 @@
+---
+# bolton_kerberoastable_svc — PATCH entrypoint.
+#
+# Hardens the account in place: rotates the password to a 32+ char
+# random string and clears RC4 from msDS-SupportedEncryptionTypes so any
+# TGS issued for the SPN is AES-only and effectively uncrackable.
+#
+# The SPN intentionally remains so the underlying lab service workload
+# keeps authenticating; the patch closes the *cracking* path, not the
+# enumeration path. This matches real-world remediation guidance from
+# Microsoft (rotate + restrict enc types) for hardening service accounts
+# that cannot easily be retired.
+
+- name: "Bolton kerberoast | patch | generate a 32-char random password if none supplied"
+  ansible.builtin.set_fact:
+    bolton_kerb_effective_password: >-
+      {{ bolton_kerb_patched_password
+         if bolton_kerb_patched_password | length > 0
+         else (lookup('community.general.random_string',
+                      length=32,
+                      special=true,
+                      override_special='!@#$%^&*()-_=+',
+                      min_lower=4,
+                      min_upper=4,
+                      min_numeric=4,
+                      min_special=2)) }}
+  no_log: true
+
+- name: "Bolton kerberoast | patch | assert effective password meets minimum length"
+  ansible.builtin.assert:
+    that:
+      - bolton_kerb_effective_password | length >= bolton_kerb_min_patched_password_length
+    fail_msg: >-
+      Patched password length {{ bolton_kerb_effective_password | length }}
+      is below the required minimum of {{ bolton_kerb_min_patched_password_length }}.
+
+- name: "Bolton kerberoast | patch | rotate the account password"
+  community.windows.win_domain_user:
+    name: "{{ bolton_kerb_account_name }}"
+    password: "{{ bolton_kerb_effective_password }}"
+    update_password: always
+    state: present
+    password_never_expires: true
+  no_log: true
+
+- name: "Bolton kerberoast | patch | force AES-only encryption types (clear RC4)"
+  ansible.windows.win_shell: |
+    Set-ADUser -Identity '{{ bolton_kerb_account_name }}' -Replace @{
+      'msDS-SupportedEncryptionTypes' = {{ bolton_kerb_enctypes_patched }}
+    }
+
+- name: "Bolton kerberoast | patch | ensure account is NOT trusted for delegation"
+  ansible.windows.win_shell: |
+    $u = Get-ADUser -Identity '{{ bolton_kerb_account_name }}' -Properties userAccountControl
+    $uac = [int]$u.userAccountControl
+    $TRUSTED_FOR_DELEGATION = 0x80000
+    $TRUSTED_TO_AUTH_FOR_DELEGATION = 0x1000000
+    $clear = $TRUSTED_FOR_DELEGATION -bor $TRUSTED_TO_AUTH_FOR_DELEGATION
+    if (($uac -band $clear) -ne 0) {
+      $newUac = $uac -band (-bnot $clear)
+      Set-ADUser -Identity '{{ bolton_kerb_account_name }}' -Replace @{
+        userAccountControl = $newUac
+      }
+    }
+
+- name: "Bolton kerberoast | patch | run verify probe"
+  ansible.builtin.import_tasks: verify.yml
+  vars:
+    bolton_kerb_verify_mode: patch

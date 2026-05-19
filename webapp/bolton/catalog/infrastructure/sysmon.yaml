@@ -1,0 +1,97 @@
+# Bolt-on: Sysmon with SwiftOnSecurity Config (Phase 3b — §14.6)
+# ----------------------------------------------------------------
+# Installs Sysinternals Sysmon on a Windows lab host using the
+# community-curated SwiftOnSecurity config for high-signal endpoint
+# telemetry. Pairs with Winlogbeat — Sysmon writes to a Windows event
+# channel that Winlogbeat ships to the Elastic stack.
+
+id: bolton.infrastructure.sysmon
+slug: sysmon
+name: "Sysmon (SwiftOnSecurity config)"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: infrastructure
+subcategory: shipper
+tags:
+  - sysmon
+  - windows
+  - observability
+  - endpoint-telemetry
+
+description: >
+  Installs Sysinternals Sysmon on a Windows lab host with the
+  community-maintained SwiftOnSecurity configuration. Sysmon emits rich
+  process / network / driver-load events into a dedicated Windows event
+  channel which Winlogbeat then forwards to the Elastic Detection Stack.
+
+cve: []
+references:
+  - "https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon"
+  - "https://github.com/SwiftOnSecurity/sysmon-config"
+
+mitre: null
+
+detection:
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/_infrastructure-noop.j2.yml"
+  signal_sources: []
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+  required_roles:
+    - domain_controller
+    - member_server
+    - workstation
+  required_services: []
+
+depends_on:
+  - bolton.infrastructure.elastic-detection-stack
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 90
+  steps:
+    - ansible_role: bolton_elastic_stack
+      description: "Install Sysmon + apply SwiftOnSecurity config."
+      role_vars:
+        state: installed
+        shipper_component: sysmon
+        sysmon_config_url: "https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml"
+  verify:
+    probe: |
+      Get-Service Sysmon64 | Select-Object -ExpandProperty Status
+    timeout_seconds: 30
+    expect_stdout_contains: "Running"
+
+uninstall:
+  description: "Uninstall Sysmon driver + service."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: bolton_elastic_stack
+      description: "Remove Sysmon."
+      role_vars:
+        state: uninstalled
+        shipper_component: sysmon
+  verify:
+    probe: |
+      if (Get-Service Sysmon64 -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+cost:
+  storage_mb: 64
+  cpu_pct: 2
+  detectability: quiet
+
+status: beta

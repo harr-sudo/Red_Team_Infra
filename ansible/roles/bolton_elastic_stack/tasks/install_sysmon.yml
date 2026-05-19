@@ -1,0 +1,25 @@
+---
+# Install Sysmon with SwiftOnSecurity config on a Windows lab host.
+# SCAFFOLDED — Phase 3c will replace the inline curl with a verified
+# checksum download.
+
+- name: "install_sysmon | download Sysmon zip"
+  ansible.windows.win_get_url:
+    url: "https://download.sysinternals.com/files/Sysmon.zip"
+    dest: 'C:\Windows\Temp\Sysmon.zip'
+
+- name: "install_sysmon | extract Sysmon"
+  community.windows.win_unzip:
+    src: 'C:\Windows\Temp\Sysmon.zip'
+    dest: 'C:\Tools\Sysmon'
+
+- name: "install_sysmon | download SwiftOnSecurity config"
+  ansible.windows.win_get_url:
+    url: "{{ sysmon_config_url }}"
+    dest: 'C:\Tools\Sysmon\sysmonconfig.xml'
+
+- name: "install_sysmon | install Sysmon with the SwiftOnSecurity config"
+  ansible.windows.win_command: >
+    'C:\Tools\Sysmon\Sysmon64.exe' -accepteula -i 'C:\Tools\Sysmon\sysmonconfig.xml'
+  args:
+    creates: 'C:\Windows\Sysmon64.exe'

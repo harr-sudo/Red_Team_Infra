@@ -2072,6 +2072,15 @@ APP.setActiveSubPill = function (parentTabName, subPillName) {
 
     // D3.5 — Run init hook for the newly-active sub-pill
     APP._runSubPillInit(parentTabName, subPillName);
+
+    // task #33 — refresh presence banner on sub-pill changes so the banner
+    // appears/disappears as the operator moves between Configure/Manage
+    // and other panes. The reset clears any prior dismissal — switching
+    // panes is a clear "I'm engaged with this project" signal.
+    if (APP.presence && typeof APP.presence.tickNow === 'function') {
+        APP.presence._resetDismissedForTesting();
+        APP.presence.tickNow();
+    }
 };
 
 // D6.2 — Re-render the URL whenever the active deployment changes (via the
@@ -4545,9 +4554,38 @@ async function _renderDashboardCostWidget() {
 
 /**
  * Architecture widget — pulls deployment_type for the active deployment via
- * /api/deploy/status?project=NAME, then loads /api/architecture/diagram/<type>.
- * Modal opens on thumbnail or "Browse all" click.
+ * /api/deploy/status?project=NAME, then loads the matching diagram via
+ * /api/architecture/diagram/<file>.png. Modal opens on thumbnail or
+ * "Browse all" click.
+ *
+ * 2026-05-19 fix: the on-disk filenames don't match deployment_type 1:1
+ * (e.g. `goad-mini` → `goad-mini-architecture.png`, `combined-adhoc-mini`
+ * → `combined-c2-goad-mini.png`). Resolve via the existing `architectures`
+ * map declared in architecture.js (window-global since the file is loaded
+ * as a classic script), with a small alias table for combined types and a
+ * convention-based fallback. Without the lookup the <img> 404s, fires its
+ * onerror handler, and the "Pick a deployment to see..." placeholder
+ * persists even though a deployment IS selected — which is the user
+ * report.
  */
+function _resolveArchitectureDiagramUrl(deploymentType) {
+    if (!deploymentType) return null;
+    // Combined deployment_types in terraform/variables.tf don't match the
+    // `architectures` map keys in architecture.js — bridge them here. Keep
+    // this short list inline rather than mutating the shared map.
+    const COMBINED_ALIAS = {
+        'combined-adhoc-mini': 'combined-mini',
+        'combined-adhoc-light': 'combined-light',
+        'combined-full-full': 'combined-full',
+    };
+    const archKey = COMBINED_ALIAS[deploymentType] || deploymentType;
+    if (typeof architectures !== 'undefined' && architectures[archKey] && architectures[archKey].diagram) {
+        return architectures[archKey].diagram;
+    }
+    // Convention fallback for any new type that's not yet in the map.
+    return `/api/architecture/diagram/${encodeURIComponent(deploymentType)}-architecture.png`;
+}
+
 async function _renderDashboardArchitectureWidget() {
     const active = (APP.activeDeployment && APP.activeDeployment.current) || null;
     const currentEl = document.getElementById('dashboard-architecture-current');
@@ -4569,18 +4607,27 @@ async function _renderDashboardArchitectureWidget() {
             if (currentEl) currentEl.textContent = active;
             return;
         }
-        if (currentEl) currentEl.textContent = dtype;
-        if (imgEl) {
-            // Diagram filenames live under generated-diagrams/ keyed by type.
-            imgEl.src = `/api/architecture/diagram/${encodeURIComponent(dtype)}.png`;
+        // Show project name alongside the deployment_type so the operator
+        // can see WHICH project's architecture is being rendered.
+        if (currentEl) currentEl.textContent = `${active} (${dtype})`;
+        const diagramUrl = _resolveArchitectureDiagramUrl(dtype);
+        if (imgEl && diagramUrl) {
+            imgEl.src = diagramUrl;
             imgEl.onerror = () => {
                 imgEl.style.display = 'none';
                 if (placeholderEl) placeholderEl.style.display = '';
             };
             imgEl.style.display = '';
+            if (placeholderEl) placeholderEl.style.display = 'none';
+        } else {
+            if (placeholderEl) placeholderEl.style.display = '';
+            if (imgEl) imgEl.style.display = 'none';
         }
-        if (placeholderEl) placeholderEl.style.display = 'none';
-    } catch (e) { /* placeholder remains */ }
+    } catch (e) {
+        console.warn('Architecture widget render failed:', e);
+        if (placeholderEl) placeholderEl.style.display = '';
+        if (imgEl) imgEl.style.display = 'none';
+    }
 }
 
 /**
@@ -4646,7 +4693,12 @@ if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function'
         try {
             if (typeof _renderDashboardArchitectureWidget === 'function') _renderDashboardArchitectureWidget();
             if (typeof _renderDashboardCostWidget === 'function') _renderDashboardCostWidget();
-        } catch (e) { /* ignore — widgets re-render on next dashboard load */ }
+        } catch (e) {
+            // 2026-05-19 — surface render failures so the placeholder-persistence
+            // bug is debuggable in the wild instead of silently swallowed.
+            // Widgets still re-render on the next dashboard load.
+            console.warn('Dashboard widget refresh failed on activeDeployment change:', e);
+        }
     });
 }
 
@@ -25558,6 +25610,224 @@ APP.operator = {
 };
 
 // ──────────────────────────────────────────────────────────────────────
+// task #33 — APP.presence: soft "who else is here" banner.
+//
+// Per Decision #23: NO locking, NO blocking. When two operators land on
+// the same project's Configure or Manage view, both see a small banner
+// "Alice is also viewing this project." That's it.
+//
+// Architecture
+//   - Single setInterval started by APP.presence.start() on shell init.
+//   - Each tick: if we're on Configure/Manage AND there's an active
+//     project, POST /api/presence/heartbeat and re-render the banner
+//     from response.others. Otherwise tick is a cheap no-op.
+//   - The banner element is created lazily and injected at the top of
+//     #subpill-pane-configure / #subpill-pane-manage (whichever is
+//     visible). It's a thin info strip — never a scrim.
+//   - Dismissals are remembered by the SET of operator ids in the
+//     current `others` payload. If a new operator joins (id not in the
+//     dismissed set) the banner reappears so the operator isn't kept in
+//     the dark about a fresh collision.
+// ──────────────────────────────────────────────────────────────────────
+APP.presence = (function () {
+    const HEARTBEAT_MS = 30000;          // 30s — matches backend freshness window
+    const BANNER_ID = 'presence-banner';
+    const PRESENCE_PAGES = { configure: 'subpill-pane-configure', manage: 'subpill-pane-manage' };
+
+    let _timerId = null;
+    let _dismissedSig = null;  // signature of the dismissed `others` set, e.g. "alice,bob"
+
+    function _currentPage() {
+        // Presence only fires on Configure + Manage. Both live inside the
+        // 'deployments-tab' parent — read APP.currentSubPill to disambiguate.
+        if (APP.currentPage !== 'deployments-tab') return null;
+        const sub = APP.currentSubPill;
+        if (sub && PRESENCE_PAGES[sub]) return sub;
+        return null;
+    }
+
+    function _project() {
+        return (APP.activeDeployment && APP.activeDeployment.current) || null;
+    }
+
+    function _opLookup(id) {
+        if (!id) return null;
+        const all = (APP.operator && Array.isArray(APP.operator.all)) ? APP.operator.all : [];
+        return all.find(o => o.id === id) || null;
+    }
+
+    function _relativeTime(iso) {
+        if (!iso) return '';
+        const ts = Date.parse(iso);
+        if (!ts || Number.isNaN(ts)) return '';
+        const delta = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+        if (delta < 60) return `${delta}s ago`;
+        if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+        return `${Math.floor(delta / 3600)}h ago`;
+    }
+
+    function _ensureBanner(parent) {
+        if (!parent) return null;
+        let banner = parent.querySelector(`#${BANNER_ID}`);
+        if (banner) return banner;
+        banner = document.createElement('div');
+        banner.id = BANNER_ID;
+        banner.className = 'presence-banner';
+        banner.setAttribute('role', 'status');
+        banner.setAttribute('aria-live', 'polite');
+        // Slot at the top of the pane, ahead of any existing children.
+        parent.insertBefore(banner, parent.firstChild);
+        return banner;
+    }
+
+    function _hideBanner() {
+        const banner = document.getElementById(BANNER_ID);
+        if (banner) banner.hidden = true;
+    }
+
+    function _signature(others) {
+        return (others || []).map(o => o.operator_id).sort().join(',');
+    }
+
+    function _render(others) {
+        const pageKey = _currentPage();
+        if (!pageKey) { _hideBanner(); return; }
+        const paneId = PRESENCE_PAGES[pageKey];
+        const pane = document.getElementById(paneId);
+        if (!pane) { _hideBanner(); return; }
+
+        const sig = _signature(others);
+        if (!others || others.length === 0) {
+            _hideBanner();
+            _dismissedSig = null;  // nothing left to dismiss — reset
+            return;
+        }
+        // Dismissed for THIS exact set? Stay hidden. A new operator joining
+        // changes the signature → banner reappears.
+        if (_dismissedSig === sig) {
+            _hideBanner();
+            return;
+        }
+        _dismissedSig = null;
+
+        const banner = _ensureBanner(pane);
+        if (!banner) return;
+
+        // Build operator chips (dot + display name) — one per other.
+        const escapeAttr = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        const chips = others.map(o => {
+            const profile = _opLookup(o.operator_id);
+            const color = profile ? (profile.color || '#7A849E') : '#7A849E';
+            const display = profile ? (profile.display || profile.id) : o.operator_id;
+            return `<span class="presence-banner__op">
+                <span class="operator-dot operator-dot--sm" style="background: ${escapeAttr(color)}" aria-hidden="true"></span>
+                <span class="presence-banner__op-name">${escapeAttr(display)}</span>
+            </span>`;
+        }).join('');
+
+        // Sentence form: "alice and harris are also viewing" vs "alice is also viewing"
+        let sentence;
+        if (others.length === 1) {
+            const profile = _opLookup(others[0].operator_id);
+            const display = profile ? (profile.display || profile.id) : others[0].operator_id;
+            sentence = `${escapeAttr(display)} is also viewing this project`;
+        } else {
+            const names = others.map(o => {
+                const profile = _opLookup(o.operator_id);
+                return profile ? (profile.display || profile.id) : o.operator_id;
+            });
+            const last = names.pop();
+            const list = `${names.join(', ')} and ${last}`;
+            sentence = `${escapeAttr(list)} are also viewing this project`;
+        }
+        const newest = others[0];
+        const seenAgo = _relativeTime(newest.last_heartbeat);
+
+        banner.innerHTML = `
+            <span class="presence-banner__chips">${chips}</span>
+            <span class="presence-banner__text">${sentence}</span>
+            ${seenAgo ? `<span class="presence-banner__time"> · last seen ${escapeAttr(seenAgo)}</span>` : ''}
+            <button class="presence-banner__dismiss" type="button" aria-label="Dismiss presence banner" title="Dismiss">&times;</button>
+        `;
+        banner.hidden = false;
+        banner.dataset.signature = sig;
+
+        const dismissBtn = banner.querySelector('.presence-banner__dismiss');
+        if (dismissBtn) {
+            dismissBtn.onclick = () => {
+                _dismissedSig = sig;
+                _hideBanner();
+            };
+        }
+    }
+
+    async function tick() {
+        const project = _project();
+        const pageKey = _currentPage();
+        if (!project || !pageKey) {
+            // Not on a presence-aware view → tear down any lingering banner.
+            _hideBanner();
+            return;
+        }
+        try {
+            const res = await fetch('/api/presence/heartbeat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ project, page: pageKey }),
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!data || data.success !== true) return;
+            _render(data.others || []);
+        } catch (e) {
+            // Network blip — leave the banner state as-is and try again next tick.
+            console.warn('Presence heartbeat failed:', e);
+        }
+    }
+
+    return {
+        start() {
+            if (_timerId) return;
+            // Tick once immediately so the banner appears within milliseconds
+            // of arriving on the page, not at the 30s mark.
+            tick();
+            _timerId = setInterval(tick, HEARTBEAT_MS);
+        },
+        stop() {
+            if (_timerId) { clearInterval(_timerId); _timerId = null; }
+            _hideBanner();
+        },
+        tickNow: tick,
+        // Test hook — drive a render without hitting the network.
+        _renderForTesting: _render,
+        _resetDismissedForTesting() { _dismissedSig = null; },
+    };
+})();
+
+// Boot the presence loop once the DOM is ready. Lifecycle is idempotent —
+// .start() short-circuits if a timer is already armed.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => APP.presence.start());
+} else {
+    APP.presence.start();
+}
+
+// Tick on every active-deployment change OR sub-pill change so the banner
+// reflects the new context within ~100ms instead of waiting for the next
+// 30s mark. _initialFire guards against the fire-immediate subscribe
+// behavior in APP.activeDeployment.subscribe.
+if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function') {
+    let _initialFire = true;
+    APP.activeDeployment.subscribe(() => {
+        if (_initialFire) { _initialFire = false; return; }
+        // Reset dismissal whenever the project changes — a banner that was
+        // dismissed on project A shouldn't carry over to project B.
+        APP.presence._resetDismissedForTesting();
+        APP.presence.tickNow();
+    });
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // Phase 3B — Operations sub-pill namespaces. Thin wrappers on top of the
 // existing BEACON / TERMINAL globals + the legacy tools-upload helpers.
 // These exist so tests and future modules have a stable APP.* surface to
@@ -27945,17 +28215,160 @@ APP.bolton = APP.bolton || {
     patch(vulnId, host)        { this._dispatchOp('patch',         vulnId, host, { run_probe: false }); },
     patchRevert(vulnId, host)  { this._dispatchOp('patch-revert',  vulnId, host, {}); },
 
+    // ──────────────────────────────────────────────────────────────────
+    // Phase 3a — agentic fallback. Invoked when a job hits STUCK.
+    // The agent service returns an AgentProposal we render inline; the
+    // operator approves (→ retry) or rejects (→ no state change).
+    // ──────────────────────────────────────────────────────────────────
+
+    /** Show the agent invocation panel for a stuck job. Idempotent. */
+    _showAgentPanel(jobId) {
+        const body = document.getElementById('bolton-progress-body');
+        if (!body) return;
+        if (document.querySelector('.bolton-agent-panel')) return;  // already there
+        const html = `
+            <div class="bolton-agent-panel" data-job-id="${jobId}">
+              <div class="bolton-agent-panel__header">
+                <h4 style="margin:0;font-size:13px;color:var(--text-primary)">Job stuck — invoke agent?</h4>
+                <p style="margin:4px 0 12px;color:var(--text-secondary);font-size:12px">
+                  Claude will read the failure context + last 200 log lines and propose a remediation.
+                  Read-only diagnostics only; you approve before any retry runs.
+                </p>
+              </div>
+              <div class="bolton-agent-panel__body">
+                <button class="btn btn-primary" data-bolton-agent-action="invoke">Invoke agent</button>
+                <button class="btn btn-secondary" data-bolton-agent-action="dismiss">Dismiss</button>
+              </div>
+              <div class="bolton-agent-panel__proposal" hidden>
+                <hr style="margin:12px 0;border:none;border-top:1px solid var(--border-default)">
+                <p class="bolton-agent-panel__diagnosis" style="margin:0 0 8px;color:var(--text-primary);font-size:13px"></p>
+                <p class="bolton-agent-panel__reasoning" style="margin:0 0 8px;color:var(--text-secondary);font-size:12px"></p>
+                <details style="margin:0 0 12px">
+                  <summary style="cursor:pointer;color:var(--text-secondary);font-size:12px">Tool calls</summary>
+                  <ul class="bolton-agent-panel__tool-calls" style="margin:8px 0 0;padding-left:18px;font-size:12px"></ul>
+                </details>
+                <div class="bolton-agent-panel__action">
+                  <button class="btn btn-primary" data-bolton-agent-action="approve">Approve retry</button>
+                  <button class="btn btn-secondary" data-bolton-agent-action="reject">Reject</button>
+                </div>
+              </div>
+            </div>
+        `;
+        body.insertAdjacentHTML('beforeend', html);
+        const panel = body.querySelector('.bolton-agent-panel');
+        panel.addEventListener('click', (ev) => {
+            const target = ev.target.closest('[data-bolton-agent-action]');
+            if (!target) return;
+            const act = target.dataset.boltonAgentAction;
+            if (act === 'invoke') this._invokeAgent(jobId, panel);
+            else if (act === 'dismiss') panel.remove();
+            else if (act === 'approve') this._approveAgentProposal(jobId, panel);
+            else if (act === 'reject') this._rejectAgentProposal(jobId, panel);
+        });
+    },
+
+    /** Public: dispatch the agent intervention for a stuck job. */
     invokeAgent(jobId) {
-        if (!jobId) return;
+        const panel = document.querySelector(`.bolton-agent-panel[data-job-id="${jobId}"]`);
+        if (panel) {
+            this._invokeAgent(jobId, panel);
+        } else {
+            this._showAgentPanel(jobId);
+        }
+    },
+
+    /** Internal: POST /agent-intervene, render the returned proposal. */
+    _invokeAgent(jobId, panel) {
+        const invokeBtn = panel.querySelector('[data-bolton-agent-action="invoke"]');
+        if (invokeBtn) {
+            invokeBtn.disabled = true;
+            invokeBtn.textContent = 'Diagnosing…';
+        }
         fetch(`/api/bolton/jobs/${encodeURIComponent(jobId)}/agent-intervene`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
-        }).then(r => r.json()).then(payload => {
-            this._setProgressStatus(`Agent invocation queued (${payload && payload.status})`);
+        }).then(r => r.json().then(body => ({ ok: r.ok, status: r.status, body })))
+        .then(({ ok, status, body }) => {
+            if (!ok || !body || body.success === false) {
+                const msg = (body && body.error) || `agent invocation failed (HTTP ${status})`;
+                this._setProgressStatus(`[agent] ${msg}`);
+                if (invokeBtn) { invokeBtn.disabled = false; invokeBtn.textContent = 'Retry invoke'; }
+                return;
+            }
+            this._renderAgentProposal(panel, body.proposal || {});
         }).catch(err => {
-            this._setProgressStatus(String(err));
+            this._setProgressStatus(`[agent] ${String(err)}`);
+            if (invokeBtn) { invokeBtn.disabled = false; invokeBtn.textContent = 'Retry invoke'; }
         });
+    },
+
+    _renderAgentProposal(panel, proposal) {
+        panel.dataset.proposal = JSON.stringify(proposal);
+        const propEl = panel.querySelector('.bolton-agent-panel__proposal');
+        const diagEl = panel.querySelector('.bolton-agent-panel__diagnosis');
+        const reasonEl = panel.querySelector('.bolton-agent-panel__reasoning');
+        const toolsEl = panel.querySelector('.bolton-agent-panel__tool-calls');
+        const approveBtn = panel.querySelector('[data-bolton-agent-action="approve"]');
+        const invokeBody = panel.querySelector('.bolton-agent-panel__body');
+        if (invokeBody) invokeBody.hidden = true;
+        if (diagEl) diagEl.textContent = proposal.diagnosis || '(no diagnosis returned)';
+        if (reasonEl) {
+            const action = proposal.proposed_action || 'mark_failed';
+            const detail = action === 'request_operator_input' && proposal.operator_question
+                ? ` — Question: ${proposal.operator_question}`
+                : '';
+            reasonEl.textContent = `Proposed action: ${action}${detail}. ${proposal.reasoning || ''}`;
+        }
+        if (toolsEl) {
+            toolsEl.innerHTML = '';
+            (proposal.diagnostic_outputs || []).forEach(d => {
+                const li = document.createElement('li');
+                const ok = d.ok ? 'ok' : 'err';
+                li.innerHTML = `<code>${d.tool}</code> [${ok}] — ${(d.command || '').slice(0, 120)}`;
+                toolsEl.appendChild(li);
+            });
+        }
+        if (approveBtn) {
+            // Only enable approve when the agent actually proposed a retry.
+            const canApprove = proposal.proposed_action === 'retry_with_inputs';
+            approveBtn.disabled = !canApprove;
+            approveBtn.title = canApprove ? '' : 'Agent did not propose a retry — nothing to approve';
+        }
+        if (propEl) propEl.hidden = false;
+    },
+
+    _approveAgentProposal(jobId, panel) {
+        let proposal = {};
+        try { proposal = JSON.parse(panel.dataset.proposal || '{}'); } catch (_) {}
+        const modifications = proposal.retry_inputs || {};
+        fetch(`/api/bolton/jobs/${encodeURIComponent(jobId)}/agent-approve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ proposal_id: jobId, modifications }),
+        }).then(r => r.json()).then(body => {
+            if (!body || body.success === false) {
+                this._setProgressStatus(`[agent] approve failed: ${body && body.error}`);
+                return;
+            }
+            this._setProgressStatus(`[agent] retry dispatched as ${body.new_job_id}`);
+            panel.remove();
+            if (body.new_job_id) {
+                this.state.activeJob = body.new_job_id;
+                this._pollJob(body.new_job_id);
+            }
+        }).catch(err => this._setProgressStatus(`[agent] ${String(err)}`));
+    },
+
+    _rejectAgentProposal(jobId, panel) {
+        fetch(`/api/bolton/jobs/${encodeURIComponent(jobId)}/agent-reject`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ proposal_id: jobId, reason: 'operator rejected' }),
+        }).then(r => r.json()).then(() => {
+            this._setProgressStatus('[agent] proposal rejected — job stays in STUCK');
+            panel.remove();
+        }).catch(err => this._setProgressStatus(`[agent] ${String(err)}`));
     },
 
     /** Open the progress overlay using Agent C's APP.overlay if available;
@@ -28024,6 +28437,10 @@ APP.bolton = APP.bolton || {
                 const status = String(payload.status || '').toUpperCase();
                 this._setProgressStatus(`[${status}] ${payload.log_tail ? payload.log_tail.slice(-200) : ''}`);
                 if (['SUCCEEDED', 'FAILED', 'STUCK', 'AS_PATCHED_BUT_VULN'].includes(status)) {
+                    // Phase 3a — stuck jobs get the agent invocation panel.
+                    if (status === 'STUCK') {
+                        try { this._showAgentPanel(jobId); } catch (_) { /* noop */ }
+                    }
                     if (this.state.host && this.state.lab) {
                         this.selectHost(this.state.lab, this.state.host);
                     }

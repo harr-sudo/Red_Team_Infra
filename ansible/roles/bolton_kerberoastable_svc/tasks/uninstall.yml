@@ -1,0 +1,32 @@
+---
+# bolton_kerberoastable_svc — UNINSTALL entrypoint.
+#
+# Removes the SPN first (so any in-flight probe sees a consistent state)
+# and then deletes the service account.
+
+- name: "Bolton kerberoast | uninstall | unregister the SPN if present"
+  ansible.windows.win_shell: |
+    $u = Get-ADUser -Identity '{{ bolton_kerb_account_name }}' -Properties servicePrincipalName `
+      -ErrorAction SilentlyContinue
+    if ($u) {
+      $existing = @($u.servicePrincipalName)
+      if ($existing -contains '{{ bolton_kerb_spn }}') {
+        Set-ADUser -Identity '{{ bolton_kerb_account_name }}' `
+                   -ServicePrincipalNames @{Remove='{{ bolton_kerb_spn }}'}
+      }
+    }
+  changed_when: false
+
+- name: "Bolton kerberoast | uninstall | delete the service account"
+  community.windows.win_domain_user:
+    name: "{{ bolton_kerb_account_name }}"
+    state: absent
+
+- name: "Bolton kerberoast | uninstall | verify removal"
+  ansible.windows.win_shell: |
+    $u = Get-ADUser -Filter "sAMAccountName -eq '{{ bolton_kerb_account_name }}'" `
+      -ErrorAction SilentlyContinue
+    if ($u) { exit 1 } else { exit 0 }
+  register: uninstall_check
+  failed_when: uninstall_check.rc != 0
+  changed_when: false

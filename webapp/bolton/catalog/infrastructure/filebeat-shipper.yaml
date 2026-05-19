@@ -1,0 +1,96 @@
+# Bolt-on: Filebeat Shipper (Phase 3b — §14.6)
+# ----------------------------------------------
+# Installs Filebeat on a Linux lab host (jumpbox, redirector, Linux
+# member) and configures it to ship syslog + auditd journal to the
+# Elastic Detection Stack bolt-on.
+
+id: bolton.infrastructure.filebeat-shipper
+slug: filebeat-shipper
+name: "Filebeat Log Shipper"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: infrastructure
+subcategory: shipper
+tags:
+  - shipper
+  - filebeat
+  - linux
+  - observability
+
+description: >
+  Installs Elastic Filebeat on a Linux lab host (jumpbox, redirector, or
+  Linux member) and configures it to forward syslog, auth.log and the
+  systemd journal to the Elastic Detection Stack bolt-on. Once installed,
+  Linux events flow into Kibana where Linux-family rules can fire on them.
+
+cve: []
+references:
+  - "https://www.elastic.co/guide/en/beats/filebeat/8.15/filebeat-installation-configuration.html"
+
+mitre: null
+
+detection:
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/_infrastructure-noop.j2.yml"
+  signal_sources: []
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - standalone
+    - linux_member
+  required_services: []
+
+depends_on:
+  - bolton.infrastructure.elastic-detection-stack
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 90
+  steps:
+    - ansible_role: bolton_elastic_stack
+      description: "Install + enroll Filebeat (sub-task of the stack role)."
+      role_vars:
+        state: installed
+        shipper_component: filebeat
+        kibana_endpoint: "{{ bolton_facts.kibana_endpoint }}"
+        fleet_endpoint: "{{ bolton_facts.fleet_endpoint }}"
+        enroll_token: "{{ bolton_facts.fleet_enroll_token }}"
+  verify:
+    probe: |
+      systemctl is-active filebeat
+    timeout_seconds: 30
+    expect_stdout_contains: "active"
+
+uninstall:
+  description: "Stop and remove Filebeat package + config."
+  estimated_time_seconds: 45
+  steps:
+    - ansible_role: bolton_elastic_stack
+      description: "Remove Filebeat."
+      role_vars:
+        state: uninstalled
+        shipper_component: filebeat
+  verify:
+    probe: |
+      ! systemctl is-active filebeat 2>/dev/null
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+cost:
+  storage_mb: 128
+  cpu_pct: 3
+  detectability: quiet
+
+status: beta

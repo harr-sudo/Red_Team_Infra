@@ -574,9 +574,17 @@ class BoltOnDescriptor(BaseModel):
     side_effects: SideEffects = Field(default_factory=SideEffects)
 
     # Install / Uninstall / Patch
+    #
+    # ``patch`` is REQUIRED for vulnerability-class descriptors (every
+    # category except ``infrastructure``). Phase 3b widened the schema to
+    # allow ``patch: null`` for ``category: infrastructure`` because
+    # infrastructure components (e.g. Elastic detection stack, log shippers)
+    # don't represent vulnerabilities and have nothing to "patch" — they
+    # only have install + uninstall lifecycles. The cross-field validator
+    # ``_patch_required_unless_infrastructure`` enforces this.
     install: InstallBlock
     uninstall: UninstallBlock
-    patch: PatchBlock
+    patch: PatchBlock | None = None
     patch_revert: PatchRevertBlock | None = None
 
     # Cost
@@ -641,7 +649,34 @@ class BoltOnDescriptor(BaseModel):
     # -----------------------------------------------------------------
 
     @model_validator(mode="after")
+    def _patch_required_unless_infrastructure(self) -> "BoltOnDescriptor":
+        """Vulnerability-class descriptors MUST declare a patch block;
+        infrastructure-class descriptors MUST NOT (they have no vuln to fix).
+        """
+        if self.category == "infrastructure":
+            if self.patch is not None:
+                raise ValueError(
+                    "descriptors with category='infrastructure' must NOT "
+                    "declare a patch block (no vuln to remediate)"
+                )
+            if self.patch_revert is not None:
+                raise ValueError(
+                    "descriptors with category='infrastructure' must NOT "
+                    "declare a patch_revert block (no patch to revert)"
+                )
+        else:
+            if self.patch is None:
+                raise ValueError(
+                    f"descriptors with category={self.category!r} must declare "
+                    "a patch block; only category='infrastructure' may omit it"
+                )
+        return self
+
+    @model_validator(mode="after")
     def _patch_revert_iff_rollback_supported(self) -> "BoltOnDescriptor":
+        # Infrastructure descriptors have no patch block; skip this check.
+        if self.patch is None:
+            return self
         if self.patch.rollback_supported and self.patch_revert is None:
             raise ValueError(
                 "patch.rollback_supported is True but patch_revert is missing — "

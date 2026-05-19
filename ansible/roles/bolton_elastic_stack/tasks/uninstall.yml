@@ -1,0 +1,96 @@
+---
+# Uninstall — branches on shipper_component. Wipes the stack OR a single
+# shipper depending on which descriptor invoked the role.
+
+# ── Full stack uninstall ──────────────────────────────────────────────
+
+- name: "uninstall | stop Fleet Server agent"
+  ansible.builtin.command: /usr/bin/elastic-agent uninstall --force
+  args:
+    removes: "/etc/elastic-agent/elastic-agent.yml"
+  become: true
+  ignore_errors: true   # never fail uninstall on agent already-gone
+  when:
+    - shipper_component == ''
+    - ansible_facts.os_family | default('Linux') == 'Linux'
+
+- name: "uninstall | stop services"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - kibana
+    - elasticsearch
+  become: true
+  ignore_errors: true
+  when:
+    - shipper_component == ''
+    - ansible_facts.os_family | default('Linux') == 'Linux'
+
+- name: "uninstall | purge packages"
+  ansible.builtin.apt:
+    name:
+      - kibana
+      - elasticsearch
+      - elastic-agent
+    state: absent
+    purge: true
+    autoremove: true
+  become: true
+  when:
+    - shipper_component == ''
+    - ansible_facts.os_family | default('Linux') == 'Linux'
+
+- name: "uninstall | wipe data dir"
+  ansible.builtin.file:
+    path: "{{ elastic_data_dir }}"
+    state: absent
+  become: true
+  when:
+    - shipper_component == ''
+    - ansible_facts.os_family | default('Linux') == 'Linux'
+
+# ── Shipper uninstalls ────────────────────────────────────────────────
+
+- name: "uninstall | remove Winlogbeat"
+  block:
+    - name: "uninstall | stop Winlogbeat service"
+      ansible.windows.win_service:
+        name: winlogbeat
+        state: stopped
+      ignore_errors: true
+
+    - name: "uninstall | uninstall Winlogbeat MSI"
+      ansible.windows.win_package:
+        path: 'C:\Windows\Temp\winlogbeat.msi'
+        state: absent
+      ignore_errors: true
+  when:
+    - shipper_component == 'winlogbeat'
+
+- name: "uninstall | remove Filebeat"
+  block:
+    - name: "uninstall | stop Filebeat service"
+      ansible.builtin.systemd:
+        name: filebeat
+        state: stopped
+        enabled: false
+      ignore_errors: true
+
+    - name: "uninstall | purge Filebeat package"
+      ansible.builtin.apt:
+        name: filebeat
+        state: absent
+        purge: true
+  become: true
+  when:
+    - shipper_component == 'filebeat'
+
+- name: "uninstall | remove Sysmon"
+  ansible.windows.win_command: 'C:\Windows\Sysmon64.exe -u force'
+  args:
+    removes: 'C:\Windows\Sysmon64.exe'
+  ignore_errors: true
+  when:
+    - shipper_component == 'sysmon'

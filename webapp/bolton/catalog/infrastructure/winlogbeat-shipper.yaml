@@ -1,0 +1,101 @@
+# Bolt-on: Winlogbeat Shipper (Phase 3b — §14.6)
+# ------------------------------------------------
+# Installs Winlogbeat on a Windows lab host and configures it to ship
+# Windows Security / Sysmon / PowerShell channels to the Elastic
+# Detection Stack bolt-on.
+#
+# Depends on `bolton.infrastructure.elastic-detection-stack` — the
+# resolver auto-installs the stack first.
+
+id: bolton.infrastructure.winlogbeat-shipper
+slug: winlogbeat-shipper
+name: "Winlogbeat Log Shipper"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: infrastructure
+subcategory: shipper
+tags:
+  - shipper
+  - winlogbeat
+  - windows
+  - observability
+
+description: >
+  Installs Elastic Winlogbeat on a Windows lab host (DC, member server, or
+  workstation) and configures it to forward Windows Security, Sysmon, and
+  PowerShell event channels to the Elastic Detection Stack bolt-on. Once
+  installed, the host's events flow into Kibana where the detection rule
+  corpus can fire on them.
+
+cve: []
+references:
+  - "https://www.elastic.co/guide/en/beats/winlogbeat/8.15/winlogbeat-installation-configuration.html"
+
+mitre: null
+
+detection:
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/_infrastructure-noop.j2.yml"
+  signal_sources: []
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+  required_roles:
+    - domain_controller
+    - member_server
+    - workstation
+  required_services: []
+
+depends_on:
+  - bolton.infrastructure.elastic-detection-stack
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true     # opens an outbound TCP/9200 (or fleet/8220) session
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 120
+  steps:
+    - ansible_role: bolton_elastic_stack
+      description: "Install + enroll Winlogbeat (sub-task of the stack role)."
+      role_vars:
+        state: installed
+        shipper_component: winlogbeat
+        kibana_endpoint: "{{ bolton_facts.kibana_endpoint }}"
+        fleet_endpoint: "{{ bolton_facts.fleet_endpoint }}"
+        enroll_token: "{{ bolton_facts.fleet_enroll_token }}"
+  verify:
+    probe: |
+      Get-Service Winlogbeat | Select-Object -ExpandProperty Status
+    timeout_seconds: 30
+    expect_stdout_contains: "Running"
+
+uninstall:
+  description: "Stop and uninstall Winlogbeat; remove config."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: bolton_elastic_stack
+      description: "Remove Winlogbeat."
+      role_vars:
+        state: uninstalled
+        shipper_component: winlogbeat
+  verify:
+    probe: |
+      if (Get-Service Winlogbeat -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+cost:
+  storage_mb: 256
+  cpu_pct: 5
+  detectability: quiet
+
+status: beta

@@ -1,0 +1,224 @@
+# Bolt-on: ADCS ESC2 — Any Purpose EKU
+# -------------------------------------
+# Publishes a certificate template with the Any Purpose EKU
+# (OID 2.5.29.37.0) and Domain Users enrollment rights. Because Any Purpose
+# subsumes Client Authentication, the issued cert can be used for PKINIT
+# regardless of explicit Client Auth EKU presence. ENROLLEE_SUPPLIES_SUBJECT
+# is NOT required for ESC2 — the cert is usable as-is by the requesting
+# principal but escalates if the principal can request on behalf of others
+# or if the cert is later relayed.
+#
+# Patch replaces the Any Purpose EKU with a tightly scoped EKU list and adds
+# Manager Approval (PEND_ALL_REQUESTS).
+#
+# Elastic detection coverage is thin — no published rule fires directly on
+# pKIExtendedKeyUsage misconfiguration. Coverage_status = no-rule.
+
+id: bolton.adcs.esc2-any-purpose-eku
+slug: esc2-any-purpose-eku
+name: "ADCS ESC2 — Any Purpose EKU"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: adcs
+subcategory: esc2
+tags:
+  - adcs
+  - certificate-template
+  - any-purpose-eku
+  - privilege-escalation
+description: >
+  Publishes a certificate template "ESC2-AnyPurpose" on the lab CA whose
+  pKIExtendedKeyUsage contains the Any Purpose OID (2.5.29.37.0) and grants
+  Domain Users Enroll + Autoenroll permissions. Any Purpose subsumes every
+  named EKU including Client Authentication and Server Authentication, so
+  the resulting certificate can PKINIT-authenticate. Combined with NTLM
+  relay or coercion primitives, this becomes a domain takeover path. This
+  is the canonical Certified Pre-Owned ESC2 misconfiguration.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1649/"
+  - "https://specterops.io/wp-content/uploads/sites/3/2022/06/Certified_Pre-Owned.pdf"
+  - "https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/manage-certificate-templates"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1649
+    name: "Steal or Forge Authentication Certificates"
+  notes: "ESC2 — Any Purpose EKU is a superset of Client Authentication."
+
+detection:
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/adcs-esc2-anypurpose-eku.j2.yml"
+  signal_sources:
+    - "Windows Event 4886 (Certificate Services received a certificate request)"
+    - "Windows Event 4887 (Certificate Services approved a certificate request)"
+    - "Windows Event 5136 (Directory Service object modified — pKIExtendedKeyUsage)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - ca_host
+  required_services:
+    - adcs
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # template published to forest config NC
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 90
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Duplicate the User template and set Any Purpose EKU."
+      role_vars:
+        script: |
+          $sourceTpl = "User"
+          $newTpl    = "ESC2-AnyPurpose"
+          $configNc  = (Get-ADRootDSE).configurationNamingContext
+          $tplPath   = "CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+
+          $source = Get-ADObject -Identity "CN=$sourceTpl,$tplPath" -Properties *
+          $attrs = @{
+            'displayName'                          = $newTpl
+            'flags'                                = $source.flags
+            'pKIExtendedKeyUsage'                  = @('2.5.29.37.0')   # Any Purpose
+            'msPKI-Certificate-Application-Policy' = @('2.5.29.37.0')
+            'msPKI-Certificate-Name-Flag'          = 0
+            'msPKI-Enrollment-Flag'                = 0
+            'msPKI-RA-Signature'                   = 0
+            'pKIDefaultKeySpec'                    = 1
+            'pKIExpirationPeriod'                  = $source.pKIExpirationPeriod
+            'pKIKeyUsage'                          = $source.pKIKeyUsage
+          }
+          New-ADObject -Name $newTpl -Type pKICertificateTemplate `
+                       -Path $tplPath -OtherAttributes $attrs
+
+          $acl = Get-Acl "AD:CN=$newTpl,$tplPath"
+          $sid = (Get-ADGroup "Domain Users").SID
+          $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid, 'ExtendedRight', 'Allow', [Guid]'0e10c968-78fb-11d2-90d4-00c04f79dc55')
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:CN=$newTpl,$tplPath" -AclObject $acl
+
+          $ca = (Get-CertificationAuthority).Name
+          Add-CATemplate -Name $newTpl -Force -Confirm:$false -CertificationAuthority $ca
+  verify:
+    probe: |
+      $configNc = (Get-ADRootDSE).configurationNamingContext
+      $tpl = Get-ADObject -SearchBase "CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc" `
+        -Filter "name -eq 'ESC2-AnyPurpose'" -Properties pKIExtendedKeyUsage
+      if ($tpl -and $tpl.pKIExtendedKeyUsage -contains '2.5.29.37.0') { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Unpublish from CA and delete the template AD object."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Remove from CA + delete the template object."
+      role_vars:
+        script: |
+          $ca = (Get-CertificationAuthority).Name
+          Remove-CATemplate -Name "ESC2-AnyPurpose" -Force -Confirm:$false -CertificationAuthority $ca
+          $configNc = (Get-ADRootDSE).configurationNamingContext
+          $dn = "CN=ESC2-AnyPurpose,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+          Remove-ADObject -Identity $dn -Confirm:$false
+  verify:
+    probe: |
+      $configNc = (Get-ADRootDSE).configurationNamingContext
+      Get-ADObject -SearchBase "CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc" `
+        -Filter "name -eq 'ESC2-AnyPurpose'" | Measure-Object | Select-Object -ExpandProperty Count
+    timeout_seconds: 30
+    expect_stdout_contains: "0"
+
+patch:
+  description: >
+    Remove Any Purpose (2.5.29.37.0) from pKIExtendedKeyUsage and
+    msPKI-Certificate-Application-Policy, replace with a tight EKU list
+    (Encrypting File System 1.3.6.1.4.1.311.10.3.4 only — the original
+    purpose of the User template), and add Manager Approval
+    (msPKI-Enrollment-Flag bit 0x2 — PEND_ALL_REQUESTS).
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/manage-certificate-templates"
+    - "https://specterops.io/wp-content/uploads/sites/3/2022/06/Certified_Pre-Owned.pdf"
+  complexity: low
+  side_effects:
+    - "Any Purpose EKU (2.5.29.37.0) removed from pKIExtendedKeyUsage"
+    - "EKU restricted to Encrypting File System (1.3.6.1.4.1.311.10.3.4)"
+    - "msPKI-Enrollment-Flag bit 0x2 (Manager Approval) set"
+    - "Existing certificates already issued remain valid until expiry"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Strip Any Purpose EKU and add Manager Approval gate."
+      role_vars:
+        script: |
+          $configNc = (Get-ADRootDSE).configurationNamingContext
+          $dn = "CN=ESC2-AnyPurpose,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+          $tpl = Get-ADObject -Identity $dn -Properties msPKI-Enrollment-Flag
+          $newEnr = $tpl.'msPKI-Enrollment-Flag' -bor 0x2
+          Set-ADObject -Identity $dn -Replace @{
+            'pKIExtendedKeyUsage'                  = @('1.3.6.1.4.1.311.10.3.4')
+            'msPKI-Certificate-Application-Policy' = @('1.3.6.1.4.1.311.10.3.4')
+            'msPKI-Enrollment-Flag'                = $newEnr
+          }
+  verify:
+    probe: |
+      $configNc = (Get-ADRootDSE).configurationNamingContext
+      $dn = "CN=ESC2-AnyPurpose,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+      $tpl = Get-ADObject -Identity $dn -Properties pKIExtendedKeyUsage, msPKI-Enrollment-Flag
+      $any_gone = -not ($tpl.pKIExtendedKeyUsage -contains '2.5.29.37.0')
+      $mgr_set  = ($tpl.'msPKI-Enrollment-Flag' -band 0x2) -ne 0
+      if ($any_gone -and $mgr_set) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/adcs_esc2_certipy_check.sh"
+
+patch_revert:
+  description: "Restore Any Purpose EKU and clear Manager Approval — template is ESC2-vulnerable again."
+  estimated_time_seconds: 20
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Re-add Any Purpose and remove approval gate."
+      role_vars:
+        script: |
+          $configNc = (Get-ADRootDSE).configurationNamingContext
+          $dn = "CN=ESC2-AnyPurpose,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+          Set-ADObject -Identity $dn -Replace @{
+            'pKIExtendedKeyUsage'                  = @('2.5.29.37.0')
+            'msPKI-Certificate-Application-Policy' = @('2.5.29.37.0')
+            'msPKI-Enrollment-Flag'                = 0
+          }
+  verify:
+    probe: |
+      $configNc = (Get-ADRootDSE).configurationNamingContext
+      $dn = "CN=ESC2-AnyPurpose,CN=Certificate Templates,CN=Public Key Services,CN=Services,$configNc"
+      $tpl = Get-ADObject -Identity $dn -Properties pKIExtendedKeyUsage
+      if ($tpl.pKIExtendedKeyUsage -contains '2.5.29.37.0') { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Template is ESC2-vulnerable again. Certipy can request certs usable for PKINIT."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: quiet
+
+status: stable

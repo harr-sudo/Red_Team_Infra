@@ -4500,6 +4500,70 @@ body { padding-top: 64px; }
     color: var(--text-muted);
 }
 
+/* ============================================================================
+   === task #33 — Presence banner ===
+   Soft info strip injected at the top of Configure / Manage panes when
+   another operator is also viewing the same project. Theme-aware:
+   --bg-card + --text-primary + --border-subtle resolve correctly in both
+   light and dark modes (palette.css). NOT a scrim, NOT a toast — just an
+   inline strip.
+   ============================================================================ */
+.presence-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    margin-bottom: 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+.presence-banner[hidden] { display: none; }
+.presence-banner__chips {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.presence-banner__op {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+.presence-banner__op-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.presence-banner__text {
+    color: var(--text-primary);
+}
+.presence-banner__time {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+.presence-banner__dismiss {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+    padding: 2px 6px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 120ms ease, color 120ms ease;
+}
+.presence-banner__dismiss:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+.presence-banner__dismiss:focus-visible {
+    outline: 2px solid var(--focus-ring, var(--brand-light));
+    outline-offset: 2px;
+}
+
 /* D4.6 — The legacy `.tab-btn[data-legacy="true"]` rule was deleted along
    with the 3 legacy Beacon / Terminal / Tools nav buttons. Legacy
    navigateTo('beacon'|'terminal'|'tools') callers continue to work via

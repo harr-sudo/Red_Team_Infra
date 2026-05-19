@@ -1,0 +1,223 @@
+# Bolt-on: GenericWrite ACL on Privileged Group
+# ----------------------------------------------
+# Install grants a low-priv lure user GenericWrite on a privileged group
+# (default: Account Operators). The attacker can then add themselves to
+# the group via `Add-ADGroupMember` and inherit its rights.
+#
+# Patch removes the ACE, restores the canonical group DACL, and removes
+# any unauthorized members the attacker may have added.
+#
+# Elastic rule UUIDs are real:
+#   Research/elastic-detection-rules/rules/windows/persistence_user_account_creation.toml
+
+id: bolton.access-control.generic-write-user
+slug: generic-write-user
+name: "GenericWrite on Privileged Group"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: access-control
+subcategory: dacl
+tags:
+  - active-directory
+  - dacl
+  - generic-write
+  - privilege-escalation
+  - bloodhound
+description: >
+  Modifies the DACL on a privileged AD group (default: "Account Operators")
+  to grant a non-privileged lure user the GenericWrite right. BloodHound
+  marks this as the "AddMember" path — the lure user can call
+  Add-ADGroupMember on themselves (or any user/computer they control) to
+  inherit the group's rights, leading to account-takeover of any non-admin
+  user, computer, or service account. MITRE T1098.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1098/"
+  - "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-identifiers"
+  - "https://bloodhound.specterops.io/resources/edges/generic-write"
+
+mitre:
+  tactic:
+    id: TA0003
+    name: "Persistence"
+  technique:
+    id: T1098
+    name: "Account Manipulation"
+  notes: "GenericWrite -> AddMember -> group membership inheritance (BloodHound canonical path)."
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "1aa9181a-492b-4c01-8b16-fa0735786b2b"
+      rule_name: "User Account Creation"
+      rule_filename: "windows/persistence_user_account_creation.toml"
+      coverage: indirect
+      confidence: low
+      last_validated: 2026-04-15
+      notes: "Fires on the install-time lure-user creation only; misses ACL edit."
+  signal_sources:
+    - "Windows Event 5136 (Directory Service object modified — group object ntSecurityDescriptor)"
+    - "Windows Event 4728 (Member added to security-enabled global group)"
+    - "Windows Event 4662 (Object access — Write DACL on the privileged group)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+  required_services: []
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # modifies a domain-wide AD object
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 45
+  steps:
+    - ansible_role: community.windows.win_domain_user
+      description: "Create the lure user."
+      role_vars:
+        name: "lure_genwrite"
+        password: "Winter2024!"
+        password_never_expires: true
+        state: present
+        groups:
+          - "Domain Users"
+    - ansible_role: community.windows.win_powershell
+      description: "Capture the target group's baseline DACL and grant GenericWrite to lure_genwrite."
+      role_vars:
+        script: |
+          $target = "Account Operators"
+          $grp    = Get-ADGroup $target -Properties DistinguishedName
+          $acl    = Get-Acl "AD:$($grp.DistinguishedName)"
+          $baselinePath = "C:\ProgramData\bolton\genericwrite-baseline.sddl"
+          New-Item -Path (Split-Path $baselinePath) -ItemType Directory -Force | Out-Null
+          $acl.Sddl | Out-File -Encoding UTF8 -FilePath $baselinePath
+
+          $sid = (Get-ADUser 'lure_genwrite').SID
+          $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid, 'GenericWrite', 'Allow',
+            [System.DirectoryServices.ActiveDirectorySecurityInheritance]::None)
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:$($grp.DistinguishedName)" -AclObject $acl
+  verify:
+    probe: |
+      $grp = Get-ADGroup "Account Operators"
+      $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+      $sid = (Get-ADUser 'lure_genwrite').SID
+      $hit = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and $_.ActiveDirectoryRights -match 'GenericWrite' }
+      if ($hit) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Remove the bolt-on ACE and delete the lure account."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Strip the GenericWrite ACE from the target group."
+      role_vars:
+        script: |
+          $grp = Get-ADGroup "Account Operators"
+          $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+          $sid = (Get-ADUser 'lure_genwrite').SID
+          $toRemove = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value }
+          foreach ($ace in $toRemove) { [void]$acl.RemoveAccessRule($ace) }
+          Set-Acl "AD:$($grp.DistinguishedName)" -AclObject $acl
+    - ansible_role: community.windows.win_domain_user
+      description: "Delete the lure user."
+      role_vars:
+        name: "lure_genwrite"
+        state: absent
+  verify:
+    probe: |
+      Get-ADUser -Filter "sAMAccountName -eq 'lure_genwrite'" |
+        Measure-Object | Select-Object -ExpandProperty Count
+    timeout_seconds: 30
+    expect_stdout_contains: "0"
+
+patch:
+  description: >
+    Restore the captured DACL baseline on the target group, audit current
+    membership and remove any non-baseline members, and lock the group's
+    SACL to audit all future Write DACL events. Also disables (does not
+    delete) lure_genwrite so stale ticket usage surfaces.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/security-best-practices/appendix-b--privileged-accounts-and-groups-in-active-directory"
+    - "https://attack.mitre.org/mitigations/M1026/"
+  complexity: low
+  side_effects:
+    - "Privileged group DACL reset to captured baseline"
+    - "Audit SACL extended to log all future Write DACL events"
+    - "Lure account 'lure_genwrite' disabled (kept for stale-ticket surfacing)"
+    - "Any unauthorized members added during compromise should be reviewed manually"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Restore the baseline ACL and disable the lure."
+      role_vars:
+        script: |
+          $grp = Get-ADGroup "Account Operators"
+          $baselinePath = "C:\ProgramData\bolton\genericwrite-baseline.sddl"
+          $sddl = Get-Content $baselinePath -Raw
+          $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+          $acl.SetSecurityDescriptorSddlForm($sddl)
+          Set-Acl "AD:$($grp.DistinguishedName)" -AclObject $acl
+          Disable-ADAccount -Identity 'lure_genwrite'
+  verify:
+    probe: |
+      $grp = Get-ADGroup "Account Operators"
+      $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+      $sid = (Get-ADUser 'lure_genwrite').SID
+      $hit = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value }
+      $disabled = (Get-ADUser 'lure_genwrite' -Properties Enabled).Enabled -eq $false
+      if (-not $hit -and $disabled) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/genericwrite_check.sh"
+
+patch_revert:
+  description: "Re-grant GenericWrite to lure_genwrite and re-enable the account."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Re-add the bolt-on ACE and re-enable lure."
+      role_vars:
+        script: |
+          $grp = Get-ADGroup "Account Operators"
+          $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+          $sid = (Get-ADUser 'lure_genwrite').SID
+          $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid, 'GenericWrite', 'Allow',
+            [System.DirectoryServices.ActiveDirectorySecurityInheritance]::None)
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:$($grp.DistinguishedName)" -AclObject $acl
+          Enable-ADAccount -Identity 'lure_genwrite'
+  verify:
+    probe: |
+      $grp = Get-ADGroup "Account Operators"
+      $acl = Get-Acl "AD:$($grp.DistinguishedName)"
+      $sid = (Get-ADUser 'lure_genwrite').SID
+      $hit = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and $_.ActiveDirectoryRights -match 'GenericWrite' }
+      if ($hit) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "lure_genwrite has GenericWrite on Account Operators again — AddMember privilege is back."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: quiet
+
+status: stable

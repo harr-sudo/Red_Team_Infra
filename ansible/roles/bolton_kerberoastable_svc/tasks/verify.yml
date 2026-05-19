@@ -1,0 +1,60 @@
+---
+# bolton_kerberoastable_svc — VERIFY probe.
+#
+# Used by both install + patch entrypoints; the caller sets
+# `bolton_kerb_verify_mode` to either `install` or `patch`. Behaviour:
+#
+#   install  — confirm the account exists, the SPN is registered, RC4 is
+#              still allowed in msDS-SupportedEncryptionTypes (so the
+#              account is roastable).
+#   patch    — confirm RC4 is gone (AES-only flag), the password rotated
+#              within the last 5 min, and the SPN still exists (so a
+#              kerberoast attempt would still get a ticket — but the
+#              hash is now uncrackable).
+
+- name: "Bolton kerberoast | verify | fetch account state"
+  ansible.windows.win_shell: |
+    $u = Get-ADUser -Identity '{{ bolton_kerb_account_name }}' `
+           -Properties servicePrincipalName, msDS-SupportedEncryptionTypes, PasswordLastSet
+    [pscustomobject]@{
+      Exists       = ($u -ne $null)
+      HasSpn       = (@($u.servicePrincipalName) -contains '{{ bolton_kerb_spn }}')
+      EncTypes     = [int]($u.'msDS-SupportedEncryptionTypes' | ForEach-Object { $_ })
+      RC4Allowed   = (([int]$u.'msDS-SupportedEncryptionTypes' -band 0x4) -ne 0)
+      PwLastSet    = $u.PasswordLastSet.ToString('o')
+      PwRecent     = ($u.PasswordLastSet -gt (Get-Date).AddMinutes(-5))
+    } | ConvertTo-Json -Compress
+  register: kerb_verify_raw
+  changed_when: false
+
+- name: "Bolton kerberoast | verify | parse probe output"
+  ansible.builtin.set_fact:
+    kerb_verify: "{{ kerb_verify_raw.stdout | from_json }}"
+
+- name: "Bolton kerberoast | verify | install-mode assertions"
+  when: bolton_kerb_verify_mode == 'install'
+  ansible.builtin.assert:
+    that:
+      - kerb_verify.Exists | bool
+      - kerb_verify.HasSpn | bool
+      - kerb_verify.RC4Allowed | bool
+    fail_msg: >-
+      Install verify failed: account exists={{ kerb_verify.Exists }},
+      SPN registered={{ kerb_verify.HasSpn }},
+      RC4 allowed={{ kerb_verify.RC4Allowed }} (expected all true).
+    success_msg: "Install verify passed — host is Kerberoastable."
+
+- name: "Bolton kerberoast | verify | patch-mode assertions"
+  when: bolton_kerb_verify_mode == 'patch'
+  ansible.builtin.assert:
+    that:
+      - kerb_verify.Exists | bool
+      - kerb_verify.HasSpn | bool
+      - not (kerb_verify.RC4Allowed | bool)
+      - kerb_verify.PwRecent | bool
+    fail_msg: >-
+      Patch verify failed: account exists={{ kerb_verify.Exists }},
+      SPN registered={{ kerb_verify.HasSpn }} (must remain),
+      RC4 allowed={{ kerb_verify.RC4Allowed }} (must be false),
+      password rotated recently={{ kerb_verify.PwRecent }}.
+    success_msg: "Patch verify passed — AES-only enforced, password rotated."

@@ -148,10 +148,14 @@ def test_catalog_root_exists():
     assert CATALOG_ROOT.is_dir(), f"catalog root missing: {CATALOG_ROOT}"
 
 
-def test_catalog_has_five_descriptors(all_descriptor_paths):
-    """Phase 1 ships exactly five worked descriptors."""
-    assert len(all_descriptor_paths) == 5, (
-        f"Expected 5 descriptors; found {len(all_descriptor_paths)}: "
+def test_catalog_has_expected_descriptors(all_descriptor_paths):
+    """Phase 1 ships 5 worked vuln descriptors; Phase 3b adds 4
+    infrastructure-class descriptors (Elastic stack + 3 shippers);
+    catalog expansion (task #50) adds 5 more vuln descriptors. The
+    catalog grows organically — this test asserts a floor, not a
+    ceiling, so adding new descriptors doesn't break the suite."""
+    assert len(all_descriptor_paths) >= 14, (
+        f"Expected >=14 descriptors; found {len(all_descriptor_paths)}: "
         f"{[p.relative_to(CATALOG_ROOT) for p in all_descriptor_paths]}"
     )
 
@@ -176,14 +180,25 @@ def test_each_descriptor_validates(rel_path):
 
 
 def test_catalog_loads_keyed_by_id(loaded_catalog):
-    expected_ids = {
+    """Asserts the core Phase 1 + Phase 3b descriptors are present.
+    Subsequent catalog expansion (task #50) is checked separately
+    via len() floors so adding descriptors doesn't break this."""
+    required_ids = {
+        # Phase 1 vulnerability descriptors
         "bolton.identity-kerberos.kerberoastable-svc",
         "bolton.adcs.esc1-misconfigured-template",
         "bolton.known-cve.printnightmare",
         "bolton.known-cve.zerologon",
         "bolton.protocol-network.llmnr-nbtns-enabled",
+        # Phase 3b infrastructure descriptors
+        "bolton.infrastructure.elastic-detection-stack",
+        "bolton.infrastructure.winlogbeat-shipper",
+        "bolton.infrastructure.filebeat-shipper",
+        "bolton.infrastructure.sysmon",
     }
-    assert set(loaded_catalog.keys()) == expected_ids
+    assert required_ids.issubset(set(loaded_catalog.keys())), (
+        f"Required IDs missing: {required_ids - set(loaded_catalog.keys())}"
+    )
 
 
 # ---------------------------------------------------------------------------

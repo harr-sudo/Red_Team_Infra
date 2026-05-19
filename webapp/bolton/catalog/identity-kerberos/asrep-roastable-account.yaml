@@ -1,0 +1,206 @@
+# Bolt-on: AS-REP Roastable Account
+# ----------------------------------
+# Creates an AD user with the DONT_REQ_PREAUTH flag set
+# (userAccountControl bit 0x400000) and a weak password. Anyone with network
+# reach to the KDC can request an AS-REP for the account and crack the
+# resulting encrypted timestamp offline. MITRE T1558.004.
+#
+# Patch clears the DONT_REQ_PREAUTH bit and rotates the password; the account
+# stays usable but pre-auth is once again required.
+#
+# Elastic rule UUIDs are real, sampled from:
+#   Research/elastic-detection-rules/rules/windows/credential_access_disable_kerberos_preauth.toml
+#   Research/elastic-detection-rules/rules/windows/persistence_user_account_creation.toml
+
+id: bolton.identity-kerberos.asrep-roastable-account
+slug: asrep-roastable-account
+name: "AS-REP Roastable Account"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: identity-kerberos
+subcategory: asrep-roasting
+tags:
+  - kerberos
+  - asrep-roasting
+  - dont-req-preauth
+  - credential-access
+description: >
+  Creates an Active Directory user account with the DONT_REQ_PREAUTH flag set
+  on userAccountControl (bit 0x400000) and a deliberately weak password. Any
+  unauthenticated attacker with network reach to a KDC can issue an AS-REQ
+  for the account and receive an AS-REP whose encrypted-timestamp portion is
+  derived from the account's password hash — crackable offline with hashcat
+  mode 18200. Canonical MITRE T1558.004 setup.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1558/004/"
+  - "https://learn.microsoft.com/en-us/windows/win32/adschema/a-useraccountcontrol"
+  - "https://www.thehacker.recipes/ad/movement/kerberos/asreproast"
+
+mitre:
+  tactic:
+    id: TA0006
+    name: "Credential Access"
+  technique:
+    id: T1558
+    name: "Steal or Forge Kerberos Tickets"
+  subtechnique:
+    id: T1558.004
+    name: "AS-REP Roasting"
+  notes: "Account is missing Kerberos pre-authentication — direct AS-REP extraction."
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "e514d8cd-ed15-4011-84e2-d15147e059f1"
+      rule_name: "Kerberos Pre-authentication Disabled for User"
+      rule_filename: "windows/credential_access_disable_kerberos_preauth.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Fires on the userAccountControl write that enables DONT_REQ_PREAUTH."
+    - rule_uuid: "1aa9181a-492b-4c01-8b16-fa0735786b2b"
+      rule_name: "User Account Creation"
+      rule_filename: "windows/persistence_user_account_creation.toml"
+      coverage: indirect
+      confidence: low
+      last_validated: 2026-04-15
+      notes: "Generic 4720 — fires on the install-time account creation only."
+  signal_sources:
+    - "Windows Event 4738 (User account changed — UAC bit flip)"
+    - "Windows Event 4768 (Kerberos TGT requested — encryption type 0x17 from anonymous source)"
+    - "Windows Event 5136 (Directory Service object modified — userAccountControl)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+  required_services: []
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # creates an AD user — visible domain-wide
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: community.windows.win_domain_user
+      description: "Create the AS-REP roastable account with a weak password."
+      role_vars:
+        name: "svc_asrep_lab"
+        password: "Autumn2024!"
+        password_never_expires: true
+        state: present
+        groups:
+          - "Domain Users"
+    - ansible_role: microsoft.ad.user
+      description: "Set DONT_REQ_PREAUTH (0x400000) on userAccountControl."
+      role_vars:
+        identity: "svc_asrep_lab"
+        account_control:
+          set:
+            - DONT_REQ_PREAUTH
+  verify:
+    probe: |
+      $u = Get-ADUser -Identity 'svc_asrep_lab' -Properties UserAccountControl
+      if (($u.UserAccountControl -band 0x400000) -eq 0x400000) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Delete the bolt-on AS-REP roastable account."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: community.windows.win_domain_user
+      description: "Remove the bolt-on account."
+      role_vars:
+        name: "svc_asrep_lab"
+        state: absent
+  verify:
+    probe: |
+      Get-ADUser -Filter "sAMAccountName -eq 'svc_asrep_lab'" |
+        Measure-Object | Select-Object -ExpandProperty Count
+    timeout_seconds: 20
+    expect_stdout_contains: "0"
+
+patch:
+  description: >
+    Clear the DONT_REQ_PREAUTH bit (userAccountControl &= ~0x400000) so the
+    KDC requires pre-authentication for AS-REQ. Also rotate the password to
+    a 32-character random string and persist it to AWS Secrets Manager. The
+    account stays present so any service depending on it continues to run,
+    but it is no longer AS-REP roastable.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/component-updates/kerberos-protocol-changes"
+    - "https://attack.mitre.org/mitigations/M1041/"
+  complexity: low
+  side_effects:
+    - "DONT_REQ_PREAUTH bit cleared on userAccountControl"
+    - "Password rotated to 32-char cryptographically random string"
+    - "Rotated password written to AWS Secrets Manager at 'bolton/<lab>/svc_asrep_lab-rotated'"
+    - "Any service authenticating as this account must update its credential store"
+  rollback_supported: true
+  steps:
+    - ansible_role: microsoft.ad.user
+      description: "Clear DONT_REQ_PREAUTH and rotate password."
+      role_vars:
+        identity: "svc_asrep_lab"
+        password: "{{ lookup('community.general.random_string', length=32, special=true) }}"
+        update_password: always
+        account_control:
+          remove:
+            - DONT_REQ_PREAUTH
+    - script: "scripts/bolton/store_rotated_password.sh"
+      engine: bash
+      description: "Persist the rotated password to AWS Secrets Manager."
+      args:
+        secret_name: "bolton/{{ lab_name }}/svc_asrep_lab-rotated"
+  verify:
+    probe: |
+      $u = Get-ADUser -Identity 'svc_asrep_lab' -Properties UserAccountControl, PasswordLastSet
+      $preauth_required = ($u.UserAccountControl -band 0x400000) -eq 0
+      $recent = $u.PasswordLastSet -gt (Get-Date).AddMinutes(-5)
+      if ($preauth_required -and $recent) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/asreproast_check.sh"
+
+patch_revert:
+  description: "Re-set DONT_REQ_PREAUTH and reset weak password — account is AS-REP roastable again."
+  estimated_time_seconds: 20
+  steps:
+    - ansible_role: microsoft.ad.user
+      description: "Restore the bad flags + weak password."
+      role_vars:
+        identity: "svc_asrep_lab"
+        password: "Autumn2024!"
+        update_password: always
+        account_control:
+          set:
+            - DONT_REQ_PREAUTH
+  verify:
+    probe: |
+      $u = Get-ADUser -Identity 'svc_asrep_lab' -Properties UserAccountControl
+      if (($u.UserAccountControl -band 0x400000) -eq 0x400000) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Account is AS-REP roastable again. Impacket GetNPUsers.py will return a crackable hash."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: quiet
+
+status: stable

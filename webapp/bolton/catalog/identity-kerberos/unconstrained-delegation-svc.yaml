@@ -1,0 +1,217 @@
+# Bolt-on: Unconstrained Delegation Service Account
+# --------------------------------------------------
+# Creates a member-server computer-class delegation surface by setting
+# TRUSTED_FOR_DELEGATION (userAccountControl bit 0x80000) on a service host.
+# Combined with a coercion primitive (PetitPotam, PrinterBug), an attacker
+# can cache a DC's TGT in LSASS and escalate to domain admin.
+#
+# Patch clears TRUSTED_FOR_DELEGATION and adds the host to the
+# "Protected Users" group, which forbids unconstrained delegation.
+#
+# Elastic rule UUIDs are real:
+#   Research/elastic-detection-rules/rules/windows/credential_access_seenabledelegationprivilege_assigned_to_user.toml
+#   Research/elastic-detection-rules/rules/windows/credential_access_kerberos_coerce.toml
+
+id: bolton.identity-kerberos.unconstrained-delegation-svc
+slug: unconstrained-delegation-svc
+name: "Unconstrained Delegation Service Account"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: identity-kerberos
+subcategory: delegation
+tags:
+  - kerberos
+  - delegation
+  - unconstrained
+  - privilege-escalation
+  - token-impersonation
+description: >
+  Marks an existing member-server computer account as "Trust this computer
+  for delegation to any service (Kerberos only)" by setting the
+  TRUSTED_FOR_DELEGATION flag (userAccountControl bit 0x80000). Any
+  authenticated principal coerced into authenticating to this host (via
+  PetitPotam, PrinterBug, or DFS coercion) caches a forwardable TGT in
+  LSASS. An attacker with local admin on the host can extract that TGT
+  (Rubeus dump / mimikatz) and impersonate the principal — including a DC
+  machine account, which leads to DCSync.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1558/003/"
+  - "https://attack.mitre.org/techniques/T1134/001/"
+  - "https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/c75ac99b-9c1d-481b-9c12-2a3f1da08c80"
+  - "https://www.thehacker.recipes/ad/movement/kerberos/delegations/unconstrained"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1134
+    name: "Access Token Manipulation"
+  subtechnique:
+    id: T1134.001
+    name: "Token Impersonation/Theft"
+  notes: >
+    Pairs with T1558.003 — captured TGTs are forged or extracted. Coercion
+    primitives (PetitPotam, PrinterBug) typically drive auth to this host.
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "f494c678-3c33-43aa-b169-bb3d5198c41d"
+      rule_name: "Sensitive Privilege SeEnableDelegationPrivilege assigned to a User"
+      rule_filename: "windows/credential_access_seenabledelegationprivilege_assigned_to_user.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Catches the privilege-assignment side; doesn't fire on direct UAC bit flips."
+    - rule_uuid: "f701be14-0a36-4e9a-a851-b3e20ae55f09"
+      rule_name: "Potential Kerberos Coercion via DNS-Based SPN Spoofing"
+      rule_filename: "windows/credential_access_kerberos_coerce.toml"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-04-15
+      notes: "Fires on the coercion phase that drives auth toward the delegation surface."
+  signal_sources:
+    - "Windows Event 4738 (User account changed — UAC bit flip)"
+    - "Windows Event 5136 (Directory Service object modified — userAccountControl)"
+    - "Windows Event 4624 logon type 3 — forwardable TGT used for delegated access"
+    - "Sysmon Event 10 (LSASS handle open from non-standard process)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - member_server
+  required_services: []
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # modifies AD computer object — visible domain-wide
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: microsoft.ad.computer
+      description: "Set TRUSTED_FOR_DELEGATION (0x80000) on the target computer account."
+      role_vars:
+        identity: "{{ bolton_target_host | upper }}$"
+        account_control:
+          set:
+            - TRUSTED_FOR_DELEGATION
+  verify:
+    probe: |
+      $c = Get-ADComputer -Identity '{{ bolton_target_host }}' -Properties UserAccountControl, TrustedForDelegation
+      if ($c.TrustedForDelegation -eq $true) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Clear TRUSTED_FOR_DELEGATION on the target computer account."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: microsoft.ad.computer
+      description: "Remove the delegation flag."
+      role_vars:
+        identity: "{{ bolton_target_host | upper }}$"
+        account_control:
+          remove:
+            - TRUSTED_FOR_DELEGATION
+  verify:
+    probe: |
+      $c = Get-ADComputer -Identity '{{ bolton_target_host }}' -Properties TrustedForDelegation
+      if ($c.TrustedForDelegation -eq $false) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Clear TRUSTED_FOR_DELEGATION AND add the host to the "Protected Users"
+    group, which categorically forbids unconstrained delegation regardless
+    of UAC flags. Also marks the host's high-value service principals as
+    "Account is sensitive and cannot be delegated" (UAC bit
+    NOT_DELEGATED = 0x100000).
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows-server/security/credentials-protection-and-management/protected-users-security-group"
+    - "https://attack.mitre.org/mitigations/M1041/"
+    - "https://attack.mitre.org/mitigations/M1026/"
+  complexity: low
+  side_effects:
+    - "TRUSTED_FOR_DELEGATION bit cleared on userAccountControl"
+    - "Computer account added to 'Protected Users' group"
+    - "NOT_DELEGATED (0x100000) flag set — account cannot be delegated by anyone"
+    - "Any legitimate service relying on Kerberos delegation will fail on this host — migrate to RBCD before enforcing in production"
+  rollback_supported: true
+  steps:
+    - ansible_role: microsoft.ad.computer
+      description: "Clear delegation flag and set NOT_DELEGATED."
+      role_vars:
+        identity: "{{ bolton_target_host | upper }}$"
+        account_control:
+          remove:
+            - TRUSTED_FOR_DELEGATION
+          set:
+            - NOT_DELEGATED
+    - ansible_role: microsoft.ad.group
+      description: "Add host to Protected Users."
+      role_vars:
+        identity: "Protected Users"
+        members:
+          add:
+            - "{{ bolton_target_host | upper }}$"
+  verify:
+    probe: |
+      $c = Get-ADComputer -Identity '{{ bolton_target_host }}' -Properties TrustedForDelegation, UserAccountControl, MemberOf
+      $delegated = $c.TrustedForDelegation
+      $not_deleg = ($c.UserAccountControl -band 0x100000) -eq 0x100000
+      $protected = $c.MemberOf -match 'CN=Protected Users'
+      if (-not $delegated -and $not_deleg -and $protected) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/unconstrained_deleg_check.sh"
+
+patch_revert:
+  description: "Remove from Protected Users, clear NOT_DELEGATED, re-set TRUSTED_FOR_DELEGATION."
+  estimated_time_seconds: 25
+  steps:
+    - ansible_role: microsoft.ad.group
+      description: "Remove from Protected Users."
+      role_vars:
+        identity: "Protected Users"
+        members:
+          remove:
+            - "{{ bolton_target_host | upper }}$"
+    - ansible_role: microsoft.ad.computer
+      description: "Restore delegation flags."
+      role_vars:
+        identity: "{{ bolton_target_host | upper }}$"
+        account_control:
+          set:
+            - TRUSTED_FOR_DELEGATION
+          remove:
+            - NOT_DELEGATED
+  verify:
+    probe: |
+      $c = Get-ADComputer -Identity '{{ bolton_target_host }}' -Properties TrustedForDelegation
+      if ($c.TrustedForDelegation -eq $true) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Host is unconstrained-delegation enabled again. Coerce + Rubeus dump will yield TGTs."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: quiet
+
+status: stable

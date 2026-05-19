@@ -1,0 +1,62 @@
+---
+# Walk the rule corpus and POST each .toml rule via the Kibana Detection
+# Engine API. SCAFFOLDED — Phase 3c next-step pointer:
+#
+# The current implementation:
+#   1. Finds .toml rule files in {{ rule_corpus_path }}
+#   2. For each, converts the rule TOML to the API payload shape
+#      (POST /api/detection_engine/rules expects a different schema than
+#      the .toml — the detection-rules project ships a CLI for this
+#      conversion at:
+#         Research/elastic-detection-rules/detection_rules/main.py kibana upload-rule
+#      We should shell out to that CLI rather than re-implementing the
+#      conversion in Ansible.)
+#   3. POSTs each rule
+#
+# This file currently runs the upload-rule CLI when present and otherwise
+# logs a TODO. Real wiring is Phase 3c.
+
+- name: "import_rules | check rule corpus exists"
+  ansible.builtin.stat:
+    path: "{{ rule_corpus_path }}"
+  register: _rule_corpus
+
+- name: "import_rules | warn if corpus is missing"
+  ansible.builtin.debug:
+    msg: |
+      [bolton_elastic_stack] Rule corpus path {{ rule_corpus_path }} not
+      found on the target. Skipping rule import. Sync the corpus from
+      Research/elastic-detection-rules/ before installing the stack to
+      get detection rules in Kibana.
+  when: not _rule_corpus.stat.exists
+
+- name: "import_rules | find every TOML rule under the corpus"
+  ansible.builtin.find:
+    paths: "{{ rule_corpus_path }}/rules"
+    patterns: "*.toml"
+    recurse: true
+  register: _rule_files
+  when: _rule_corpus.stat.exists
+
+- name: "import_rules | upload rules via detection-rules CLI"
+  ansible.builtin.command: >
+    python3 -m detection_rules
+      --kibana-url=https://127.0.0.1:{{ kibana_port }}
+      --kibana-user=elastic
+      --kibana-password={{ es_password }}
+      kibana
+      upload-rule
+      "{{ item.path }}"
+  loop: "{{ _rule_files.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when:
+    - _rule_corpus.stat.exists
+    - _rule_files.files | default([]) | length > 0
+  register: _rule_upload
+  failed_when: false   # Don't fail the whole role if one rule has a malformed TOML
+  changed_when: _rule_upload.rc == 0
+  no_log: true
+  # TODO (Phase 3c): replace this loop with a single CLI invocation —
+  # the detection-rules CLI supports `kibana upload-rule --directory` which
+  # uploads the entire tree in one batch and prints per-rule results.

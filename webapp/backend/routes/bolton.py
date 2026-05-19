@@ -32,6 +32,8 @@ its three refinement docs):
     GET    /api/bolton/jobs/<job_id>/log
     POST   /api/bolton/jobs/<job_id>/cancel
     POST   /api/bolton/jobs/<job_id>/agent-intervene
+    POST   /api/bolton/jobs/<job_id>/agent-approve
+    POST   /api/bolton/jobs/<job_id>/agent-reject
 
   Detection coverage + probe (ttp/elastic refinement)
     POST   /api/bolton/vulns/<vuln_id>/probe
@@ -83,6 +85,11 @@ _AUDIT_ACTIONS = (
     "bolton.bulk",
     "bolton.job.cancel",
     "bolton.job.agent_intervene",
+    "bolton.agent.invoke",
+    "bolton.agent.tool_call",
+    "bolton.agent.approve",
+    "bolton.agent.reject",
+    "bolton.agent.retry",
     "bolton.probe",
     "bolton.generate_rule",
 )
@@ -766,35 +773,163 @@ def cancel_job(job_id: str):
 
 @bp.route("/jobs/<job_id>/agent-intervene", methods=["POST"])
 def agent_intervene(job_id: str):
-    """Invoke the agentic fallback on a stuck job (Phase 1 stub).
+    """Invoke the Claude-powered agentic fallback on a stuck job.
 
-    Phase 1 ships a placeholder — Agent C (the LLM coordinator) is wired
-    in Phase 5. Returns a 202-style envelope acknowledging the request.
+    Calls into ``bolton_agent_service.invoke_agent`` which builds a
+    bounded context, runs at most ``MAX_TOOL_INVOCATIONS`` read-only
+    diagnostic tools, and returns an ``AgentProposal`` for the operator
+    to review. Hard limits (tool count, wall-clock) are enforced inside
+    the service; this route is a thin adapter.
 
     ---
-    summary: Invoke agentic fallback on a stuck job. (Phase 1 stub.)
+    summary: Invoke agentic fallback on a stuck job.
     parameters:
       - in: path
         name: job_id
         required: true
     responses:
-      202: { description: "Agent invocation queued (stub)." }
+      200: { description: "{proposal: AgentProposal}" }
       404: { description: "Unknown job." }
+      409: { description: "Job is not in STUCK state." }
+      503: { description: "ANTHROPIC_API_KEY not configured." }
     """
-    svc = _svc("webapp.backend.services.bolton_jobs_service")
-    if not svc.job_exists(job_id):
+    jobs_svc = _svc("webapp.backend.services.bolton_jobs_service")
+    if not jobs_svc.job_exists(job_id):
         return _err(f"job '{job_id}' not found", 404)
+
+    agent_svc = _svc("webapp.backend.services.bolton_agent_service")
+    try:
+        proposal = agent_svc.invoke_agent(job_id, _operator_id())
+    except RuntimeError as e:
+        # API key missing OR wall-clock exceeded — both surface as 503.
+        return _err(str(e), 503)
+    except KeyError as e:
+        return _err(str(e), 404)
+    except ValueError as e:
+        # Job not in STUCK state.
+        return _err(str(e), 409)
+    except Exception as e:  # noqa: BLE001
+        _log.exception("agent invocation crashed for job=%s", job_id)
+        return _err(f"agent invocation failed: {e}", 500)
 
     _audit("bolton.job.agent_intervene",
            target=job_id,
-           details={"phase": 1, "stubbed": True})
+           details={
+               "proposed_action": getattr(proposal, "proposed_action", None),
+               "tool_calls": len(getattr(proposal, "diagnostic_outputs", []) or []),
+           })
 
     return jsonify({
         "success": True,
-        "status": "AGENT_INVOCATION_QUEUED",
         "job_id": job_id,
-        "message": "agent invocation queued (Phase 1 stub - LLM coordinator wired in Phase 5)",
-    }), 202
+        "proposal": agent_svc.proposal_to_dict(proposal),
+    })
+
+
+@bp.route("/jobs/<job_id>/agent-approve", methods=["POST"])
+def agent_approve(job_id: str):
+    """Operator approves an agent proposal — dispatch the retry.
+
+    Body: ``{modifications: {input_name: value, ...}}``. The
+    install service re-queues the job with the modified inputs; the
+    audit log gets a ``bolton.agent.approve`` + ``bolton.agent.retry``
+    pair.
+
+    ---
+    summary: Approve a stuck-job agent retry proposal.
+    parameters:
+      - in: path
+        name: job_id
+        required: true
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              modifications: { type: object }
+              proposal_id: { type: string }
+    responses:
+      200: { description: "{new_job_id, status: 'queued'}" }
+      404: { description: "Unknown job." }
+      409: { description: "Job not in STUCK state." }
+    """
+    body = request.get_json(silent=True) or {}
+    modifications = body.get("modifications") or {}
+    proposal_id = body.get("proposal_id")
+
+    if not isinstance(modifications, dict):
+        return _err("modifications must be an object", 400)
+
+    install_svc = _svc("webapp.backend.services.bolton_install_service")
+    try:
+        new_job = install_svc.retry_with_modifications(
+            job_id, modifications, operator=_operator_id()
+        )
+    except KeyError as e:
+        return _err(str(e), 404)
+    except ValueError as e:
+        return _err(str(e), 409)
+
+    _audit("bolton.agent.approve",
+           target=job_id,
+           details={
+               "proposal_id": proposal_id,
+               "new_job_id": getattr(new_job, "id", None),
+               "modifications": modifications,
+           })
+
+    return jsonify({
+        "success": True,
+        "new_job_id": getattr(new_job, "id", None),
+        "status": "queued",
+        "modifications": modifications,
+    })
+
+
+@bp.route("/jobs/<job_id>/agent-reject", methods=["POST"])
+def agent_reject(job_id: str):
+    """Operator rejects an agent proposal — audit only, no state change.
+
+    The job stays in STUCK so the operator can either invoke the agent
+    again, mark it failed manually via the existing cancel path, or
+    apply a manual fix outside the dashboard.
+
+    ---
+    summary: Reject a stuck-job agent retry proposal.
+    parameters:
+      - in: path
+        name: job_id
+        required: true
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              proposal_id: { type: string }
+              reason: { type: string }
+    responses:
+      200: { description: "{status: 'rejected'}" }
+      404: { description: "Unknown job." }
+    """
+    body = request.get_json(silent=True) or {}
+    proposal_id = body.get("proposal_id")
+    reason = body.get("reason")
+
+    jobs_svc = _svc("webapp.backend.services.bolton_jobs_service")
+    if not jobs_svc.job_exists(job_id):
+        return _err(f"job '{job_id}' not found", 404)
+
+    _audit("bolton.agent.reject",
+           target=job_id,
+           details={"proposal_id": proposal_id, "reason": reason})
+
+    return jsonify({
+        "success": True,
+        "status": "rejected",
+        "job_id": job_id,
+    })
 
 
 # ─── Detection probe / generate-rule / gaps / Navigator ────────────────────

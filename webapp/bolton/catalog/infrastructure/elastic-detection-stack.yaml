@@ -1,0 +1,136 @@
+# Bolt-on: Elastic Detection Stack (Phase 3b — §14.6)
+# ------------------------------------------------------
+# Lab infrastructure component (NOT a vulnerability).
+#
+# Spins up a single-node Elasticsearch + Kibana + Fleet Server on a Linux
+# host inside the lab and imports the project's Elastic detection rule
+# corpus. Once installed, the bolton probe service upgrades from
+# `degraded` (probe-only) mode to `full` mode — it can query the lab's
+# Kibana alerts API to verify that the rule we mapped to a vuln actually
+# fired when the synthetic exploit ran.
+#
+# Distinct descriptor *class* (`category: infrastructure`) — uses the
+# same schema, but Phase 3b widened the schema to allow `patch: null` for
+# this class (no vuln to remediate). See:
+#   docs/internal/VULNERABLE_LAB_BOLTON_PLAN.md §14.6
+#   webapp/bolton/schema.py — _patch_required_unless_infrastructure
+#
+# Hosting topology is selected via the `topology` role var:
+#   - `inline` (default): role provisions on a dedicated EC2 instance in
+#     the lab's management subnet (t3.large)
+#   - `shared`: role runs against the existing dashboard server (no new
+#     EC2 cost). Operator picks at install time.
+
+id: bolton.infrastructure.elastic-detection-stack
+slug: elastic-detection-stack
+name: "Elastic Detection Stack"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: infrastructure
+subcategory: detection
+tags:
+  - detection
+  - observability
+  - purple-team
+  - elastic
+  - kibana
+
+description: >
+  Single-node Elasticsearch + Kibana + Fleet Server. Imports the project's
+  Elastic detection rule corpus from Research/elastic-detection-rules. Once
+  installed, post-install exploit probes for every vuln bolt-on can query
+  the Kibana alerts API to verify the matching rule actually fires, which
+  upgrades the bolton probe service from degraded to full mode.
+
+cve: []
+references:
+  - "https://www.elastic.co/guide/en/elasticsearch/reference/8.15/install-elasticsearch.html"
+  - "https://www.elastic.co/guide/en/kibana/8.15/install.html"
+  - "https://www.elastic.co/guide/en/fleet/8.15/fleet-server.html"
+
+# Infrastructure components don't map to a MITRE technique — this IS the
+# detection layer, not an attacker behavior. Schema allows mitre: null.
+mitre: null
+
+detection:
+  # The stack itself is what does the detecting; it does not have rules
+  # that fire ON it. We mark it as `covered` with no rule references — the
+  # schema requires at least one rule for `covered` so we use `partial`
+  # with an empty list... actually the schema forbids covered/partial with
+  # an empty list. The honest answer is no-rule with no fallback... but
+  # that's also rejected.
+  #
+  # Pragmatic choice: no-rule with an explicit fallback template path
+  # documenting that infrastructure stack has no detection of its own.
+  coverage_status: no-rule
+  elastic_rules: []
+  fallback_rule_template: "webapp/bolton/rule_templates/_infrastructure-noop.j2.yml"
+  signal_sources: []
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "22.04"
+      max_version: "24.04"
+  required_roles:
+    - standalone
+  required_services: []
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true       # Kibana port reachable from lab
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 600
+  steps:
+    - ansible_role: bolton_elastic_stack
+      description: "Install Elasticsearch + Kibana + Fleet + import rule corpus."
+      role_vars:
+        state: installed
+        es_version: "8.15.0"
+        kibana_admin_password: "{{ vault_kibana_password | default('changeme-set-via-vault') }}"
+        rule_corpus_path: "/srv/elastic-rules-corpus"
+        topology: "inline"
+        kibana_port: 5601
+        elasticsearch_port: 9200
+        fleet_port: 8220
+  verify:
+    probe: |
+      curl -sf -u elastic:${es_password} https://${kibana_endpoint}/api/status \
+        | jq -r .status.overall.level
+    timeout_seconds: 30
+    expect_exit_code: 0
+    expect_stdout_contains: "available"
+
+uninstall:
+  description: "Stop ES/Kibana/Fleet services, remove packages, delete data directory."
+  estimated_time_seconds: 180
+  steps:
+    - ansible_role: bolton_elastic_stack
+      description: "Tear down the Elastic stack."
+      role_vars:
+        state: uninstalled
+  verify:
+    probe: |
+      ! curl -sf https://${kibana_endpoint}/api/status 2>/dev/null
+    timeout_seconds: 10
+    expect_exit_code: 0
+
+# Infrastructure descriptors omit patch / patch_revert blocks entirely
+# (schema requires patch: null for category=infrastructure). See:
+#   webapp/bolton/schema.py — _patch_required_unless_infrastructure
+# patch: null
+# patch_revert: null
+
+cost:
+  storage_mb: 30720       # ~30 GB for ES indices
+  cpu_pct: 40
+  detectability: quiet
+
+status: beta

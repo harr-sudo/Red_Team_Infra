@@ -40,6 +40,7 @@ _SERVICE_NAMES = [
     "bolton_jobs_service",
     "bolton_probe_service",
     "bolton_coverage_service",
+    "bolton_agent_service",
 ]
 _BASE = "webapp.backend.services."
 
@@ -117,6 +118,10 @@ def services(monkeypatch):
                 "estimated_time_seconds": 30,
                 "message": "queued",
             })
+            # Phase 3a — agent-approved retries.
+            mod.retry_with_modifications = MagicMock(return_value=type(
+                "FakeJob", (), {"id": "j_retry_001", "lab": "L", "host": "H"}
+            )())
         elif short == "bolton_jobs_service":
             mod.list_jobs = MagicMock(return_value=[
                 {"job_id": "j_a", "status": "RUNNING"},
@@ -136,6 +141,35 @@ def services(monkeypatch):
                 "status": "DONE",
                 "result": "verified",
                 "alerts_received": [],
+            })
+        elif short == "bolton_agent_service":
+            # Phase 3a — Claude-powered agentic fallback for STUCK jobs.
+            _fake_proposal = type("AP", (), {
+                "diagnosis": "template name conflict",
+                "proposed_action": "retry_with_inputs",
+                "retry_inputs": {"force": True},
+                "operator_question": None,
+                "reasoning": "evidence",
+                "diagnostic_outputs": [
+                    {"tool": "check_service_status", "ok": True},
+                ],
+                "iterations_used": 2,
+                "wall_clock_seconds": 1.23,
+                "model": "claude-sonnet-4-6",
+            })()
+            mod.invoke_agent = MagicMock(return_value=_fake_proposal)
+            mod.proposal_to_dict = MagicMock(return_value={
+                "diagnosis": "template name conflict",
+                "proposed_action": "retry_with_inputs",
+                "retry_inputs": {"force": True},
+                "operator_question": None,
+                "reasoning": "evidence",
+                "diagnostic_outputs": [
+                    {"tool": "check_service_status", "ok": True},
+                ],
+                "iterations_used": 2,
+                "wall_clock_seconds": 1.23,
+                "model": "claude-sonnet-4-6",
             })
         elif short == "bolton_coverage_service":
             mod.get_for_vuln = MagicMock(return_value={
@@ -691,12 +725,15 @@ def test_cancel_job_not_cancellable_409(authed_client, services):
     assert r.status_code == 409
 
 
-def test_agent_intervene_returns_202_stub(authed_client, services, audit_spy):
+def test_agent_intervene_returns_proposal(authed_client, services, audit_spy):
+    """Phase 3a — agent-intervene now returns a real AgentProposal."""
     r = authed_client.post("/api/bolton/jobs/j_a/agent-intervene")
-    assert r.status_code == 202
+    assert r.status_code == 200
     body = r.get_json()
-    assert body["status"] == "AGENT_INVOCATION_QUEUED"
+    assert body["success"] is True
     assert body["job_id"] == "j_a"
+    assert "proposal" in body
+    assert body["proposal"]["proposed_action"] == "retry_with_inputs"
     actions = [a["action"] for a in audit_spy]
     assert "bolton.job.agent_intervene" in actions
 
@@ -704,6 +741,84 @@ def test_agent_intervene_returns_202_stub(authed_client, services, audit_spy):
 def test_agent_intervene_unknown_job_404(authed_client, services):
     services["jobs"].job_exists.return_value = False
     r = authed_client.post("/api/bolton/jobs/j_nope/agent-intervene")
+    assert r.status_code == 404
+
+
+def test_agent_intervene_503_when_api_key_missing(authed_client, services):
+    """RuntimeError from the service (e.g. missing API key) → 503."""
+    services["agent"].invoke_agent.side_effect = RuntimeError(
+        "ANTHROPIC_API_KEY not configured"
+    )
+    r = authed_client.post("/api/bolton/jobs/j_a/agent-intervene")
+    assert r.status_code == 503
+    assert "ANTHROPIC_API_KEY" in r.get_json()["error"]
+
+
+def test_agent_intervene_409_when_job_not_stuck(authed_client, services):
+    """Job in non-STUCK state → 409."""
+    services["agent"].invoke_agent.side_effect = ValueError(
+        "job 'j_a' is in state 'running', not 'stuck'"
+    )
+    r = authed_client.post("/api/bolton/jobs/j_a/agent-intervene")
+    assert r.status_code == 409
+
+
+def test_agent_approve_dispatches_retry(authed_client, services, audit_spy):
+    r = authed_client.post(
+        "/api/bolton/jobs/j_a/agent-approve",
+        json={"proposal_id": "j_a", "modifications": {"force": True}},
+    )
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["new_job_id"] == "j_retry_001"
+    assert body["modifications"] == {"force": True}
+    services["install"].retry_with_modifications.assert_called_once()
+    actions = [a["action"] for a in audit_spy]
+    assert "bolton.agent.approve" in actions
+
+
+def test_agent_approve_404_when_job_missing(authed_client, services):
+    services["install"].retry_with_modifications.side_effect = KeyError(
+        "job 'j_nope' not found"
+    )
+    r = authed_client.post(
+        "/api/bolton/jobs/j_nope/agent-approve",
+        json={"modifications": {}},
+    )
+    assert r.status_code == 404
+
+
+def test_agent_approve_409_when_job_not_stuck(authed_client, services):
+    services["install"].retry_with_modifications.side_effect = ValueError(
+        "job 'j_a' is in state 'succeeded', not 'stuck'"
+    )
+    r = authed_client.post(
+        "/api/bolton/jobs/j_a/agent-approve",
+        json={"modifications": {}},
+    )
+    assert r.status_code == 409
+
+
+def test_agent_reject_audits_only(authed_client, services, audit_spy):
+    r = authed_client.post(
+        "/api/bolton/jobs/j_a/agent-reject",
+        json={"proposal_id": "j_a", "reason": "not confident in fix"},
+    )
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["status"] == "rejected"
+    # No state change — install service must not be called.
+    services["install"].retry_with_modifications.assert_not_called()
+    actions = [a["action"] for a in audit_spy]
+    assert "bolton.agent.reject" in actions
+
+
+def test_agent_reject_404_when_job_missing(authed_client, services):
+    services["jobs"].job_exists.return_value = False
+    r = authed_client.post(
+        "/api/bolton/jobs/j_nope/agent-reject",
+        json={},
+    )
     assert r.status_code == 404
 
 

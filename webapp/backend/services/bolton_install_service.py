@@ -1,17 +1,37 @@
-"""Bolt-on install dispatcher — Phase 1 (Agent B).
+"""Bolt-on install dispatcher.
 
 Owns the install / uninstall / patch / patch_revert job lifecycle. Jobs
 are persisted as YAML under ``webapp/state/bolton/jobs/`` and run on a
 background thread.
 
-STUB / Phase 1 disclaimer
--------------------------
-**Real Ansible playbook execution is OUT OF SCOPE for Phase 1.** The
-dispatcher here simulates execution: it sleeps 2 s, writes a few fake log
-lines, then transitions the job to ``SUCCEEDED`` (or ``FAILED`` if the
-bolton id ends with ``-fail``, a test hook). Phase 2 replaces the
-simulation with SSH-to-jumpbox + nohup + ``ansible-playbook``, mirroring
-``webapp/backend/routes/goad.py::provision_goad``.
+Execution model
+---------------
+The dispatcher generates a playbook from the descriptor's ``steps`` block
+and shells out to ``ansible-playbook`` (real execution path,
+``_run_ansible_job``). The playbook is written to ``/tmp`` per-job and
+includes each step's ``ansible_role`` invocation or ``script`` exec. On
+exit the verify probe runs as a final play; success/failure drives the
+terminal job status.
+
+The simulation path (``_run_simulated_job``) is preserved as a fallback
+for environments where ``ansible-playbook`` is not on PATH (e.g. CI
+runners) or when ``BOLTON_SIMULATE_ANSIBLE=1`` is exported. Tests rely on
+this path; production operators never see it once Ansible is installed
+on the dashboard host.
+
+Operator configuration
+----------------------
+- ``ansible-playbook`` must be on the dashboard host's PATH (it already
+  is for GOAD provisioning — see ``ansible/playbooks/``).
+- Inventory location: ``ansible/inventory/<lab>/hosts`` (per-lab YAML or
+  INI). If the file is absent, the service falls back to writing a
+  minimal in-memory inventory from cached ``HostFacts``.
+- Environment variables:
+
+    BOLTON_SIMULATE_ANSIBLE=1   force the simulation path (CI safety)
+    BOLTON_ANSIBLE_BIN=...      override ``ansible-playbook`` path
+    BOLTON_ANSIBLE_TIMEOUT_X=3  multiplier on descriptor estimated_time;
+                                hard kill threshold. Default = 3.
 
 State machine
 -------------
@@ -19,7 +39,8 @@ State machine
 
     QUEUED ─▶ RUNNING ─▶ SUCCEEDED                (happy path)
                    │
-                   ├─▶ FAILED                      (Ansible exit != 0)
+                   ├─▶ FAILED                      (Ansible exit != 0 OR
+                   │                                hard timeout SIGTERM)
                    │
                    ├─▶ STUCK                       (verify probe failed,
                    │                                agent intervention)
@@ -39,6 +60,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import signal
+import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -263,13 +288,474 @@ def _transition(job: Job, new_status: JobStatus, *, error: str | None = None) ->
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Stubbed execution
+# Real Ansible execution
 # ──────────────────────────────────────────────────────────────────────
+
+_PROJECT_ANSIBLE_ROOT = _PROJECT_ROOT / "ansible"
+_PROJECT_BOLTON_ROLES = _PROJECT_ANSIBLE_ROOT / "roles"
+
+# Minimum hard-timeout floor (seconds). Avoids a 5-second descriptor
+# being killed before Ansible even finishes booting. Tests may patch
+# this to a smaller value to exercise the timeout codepath quickly.
+_HARD_TIMEOUT_FLOOR_SECONDS = 30
+
+# Running subprocess.Popen handles, keyed by job_id. Populated by
+# ``_run_ansible_job`` and consulted by ``cancel_job`` to deliver SIGTERM.
+_RUNNING_PROCS: dict[str, subprocess.Popen[str]] = {}
+_RUNNING_PROCS_LOCK = threading.Lock()
+
 
 def _write_log_line(path: Path, line: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as f:
         f.write(f"{datetime.now(timezone.utc).isoformat()}  {line}\n")
+
+
+def _fail(job: Job, message: str) -> None:
+    """Helper: write the message to the job log + flip status to FAILED."""
+    log = _log_path(job.id)
+    job.log_path = log
+    _write_log_line(log, f"[ERROR] {message}")
+    _transition(job, JobStatus.FAILED, error=message)
+
+
+def _ansible_bin() -> str | None:
+    """Resolve the ansible-playbook binary, honouring BOLTON_ANSIBLE_BIN."""
+    override = os.environ.get("BOLTON_ANSIBLE_BIN")
+    if override:
+        return override if Path(override).exists() else None
+    return shutil.which("ansible-playbook")
+
+
+def _should_simulate() -> bool:
+    """Choose between simulation and real ansible-playbook.
+
+    Returns True when:
+      - BOLTON_SIMULATE_ANSIBLE=1 (explicit operator/test opt-in), or
+      - ansible-playbook is not on PATH (CI / dev environment safety).
+    """
+    if os.environ.get("BOLTON_SIMULATE_ANSIBLE") == "1":
+        return True
+    return _ansible_bin() is None
+
+
+def _load_descriptor(bolton_id: str) -> Any:
+    """Best-effort descriptor lookup. Returns ``None`` on any failure."""
+    try:
+        from webapp.backend.services import bolton_catalog_service
+        return bolton_catalog_service.get_descriptor(bolton_id)
+    except Exception:
+        return None
+
+
+def _step_to_task(step: Any) -> dict[str, Any]:
+    """Translate one descriptor step (AnsibleStep or ScriptStep, or a dict
+    representation thereof) into a single Ansible task dict."""
+    # Normalize to dict form (descriptor may give us Pydantic models).
+    if hasattr(step, "model_dump"):
+        sd = step.model_dump()
+    elif isinstance(step, dict):
+        sd = dict(step)
+    else:
+        sd = {}
+
+    name = sd.get("description") or sd.get("ansible_role") or sd.get("script") or "step"
+
+    if "ansible_role" in sd and sd.get("ansible_role"):
+        # Generic Ansible module invocation: the descriptor's "ansible_role"
+        # field is the module FQCN (e.g. community.windows.win_domain_user),
+        # and "role_vars" become the module args. For project-local roles
+        # (e.g. bolton_kerberoastable_svc) we use the include_role form so
+        # operators can author full roles under ansible/roles/.
+        role = sd["ansible_role"]
+        role_vars = sd.get("role_vars") or {}
+
+        if "." not in role:
+            # Local role under ansible/roles/ — use include_role.
+            return {
+                "name": name,
+                "include_role": {"name": role},
+                "vars": role_vars,
+            }
+        return {
+            "name": name,
+            role: role_vars,
+        }
+
+    if "script" in sd and sd.get("script"):
+        # Inline script / path-to-script. Engine hint maps to module.
+        engine = (sd.get("engine") or "bash").lower()
+        body = sd["script"]
+        if engine == "powershell":
+            return {"name": name, "ansible.windows.win_shell": body}
+        # Default: POSIX shell on the target.
+        return {"name": name, "ansible.builtin.shell": body}
+
+    return {"name": name, "ansible.builtin.debug": {"msg": f"empty step: {sd!r}"}}
+
+
+def _generate_playbook(job: Job, block: Any) -> Path:
+    """Write a YAML playbook to ``/tmp/bolton-playbook-<job_id>.yml``.
+
+    Each step is translated into one task. Project-local roles are picked
+    up via the default Ansible roles search path; the generated playbook
+    also adds ``ansible/roles/`` explicitly via ``roles_path`` in the
+    accompanying ``ansible.cfg`` env (set by the caller).
+    """
+    if yaml is None:
+        raise RuntimeError("PyYAML is required to generate bolt-on playbooks")
+
+    steps = list(getattr(block, "steps", None) or [])
+    tasks = [_step_to_task(s) for s in steps]
+
+    play = {
+        "name": f"bolton {job.action.value} {job.bolton_id}",
+        "hosts": job.host,
+        "gather_facts": False,
+        "any_errors_fatal": True,
+        "tasks": tasks,
+    }
+    playbook_path = Path(tempfile.gettempdir()) / f"bolton-playbook-{job.id}.yml"
+    playbook_path.write_text(yaml.safe_dump([play], sort_keys=False))
+    return playbook_path
+
+
+def _inventory_path(lab: str, host: str) -> Path:
+    """Return a usable inventory path for the lab.
+
+    Resolution order:
+      1. ``ansible/inventory/<lab>/hosts`` (operator-managed)
+      2. ``ansible/inventory/<lab>.yml``
+      3. Dynamically-generated minimal inventory under
+         ``/tmp/bolton-inventory-<lab>.yml`` derived from
+         ``bolton_facts_service.get_cached_facts``.
+    """
+    candidates = [
+        _PROJECT_ANSIBLE_ROOT / "inventory" / lab / "hosts",
+        _PROJECT_ANSIBLE_ROOT / "inventory" / f"{lab}.yml",
+        _PROJECT_ANSIBLE_ROOT / "inventory" / lab / "hosts.yml",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    # Fallback: synthesize from cached facts.
+    return _generate_dynamic_inventory(lab, host)
+
+
+def _generate_dynamic_inventory(lab: str, host: str) -> Path:
+    """Build a minimal inventory file from cached facts for `host`.
+
+    Used when the operator hasn't pre-staged ``ansible/inventory/<lab>/``.
+    The generated inventory groups the host by OS family so Windows hosts
+    get the ``ansible_connection: winrm`` defaults.
+    """
+    if yaml is None:
+        raise RuntimeError("PyYAML is required for dynamic inventory")
+
+    os_family = "linux"
+    try:
+        from webapp.backend.services import bolton_facts_service
+        facts = bolton_facts_service.get_cached_facts(lab, host)
+        if facts is not None:
+            os_family = facts.os_family or "linux"
+    except Exception:
+        pass
+
+    if os_family == "windows":
+        group_vars = {
+            "ansible_connection": "winrm",
+            "ansible_winrm_transport": "kerberos",
+            "ansible_port": 5985,
+        }
+    else:
+        group_vars = {
+            "ansible_connection": "ssh",
+            "ansible_user": "ubuntu",
+        }
+
+    inv = {
+        "all": {
+            "children": {
+                f"{os_family}_hosts": {
+                    "hosts": {host: {}},
+                    "vars": group_vars,
+                }
+            }
+        }
+    }
+    path = Path(tempfile.gettempdir()) / f"bolton-inventory-{lab}-{job_safe_id(host)}.yml"
+    path.write_text(yaml.safe_dump(inv, sort_keys=False))
+    return path
+
+
+def job_safe_id(s: str) -> str:
+    """Sanitise a string for use in a tmpfile name."""
+    return "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in s)
+
+
+def _run_verify_probe(job: Job, block: Any) -> bool:
+    """Execute the verify probe attached to the descriptor block.
+
+    Returns True on success (matching expectations), False otherwise.
+    The probe is wrapped in a tiny ad-hoc playbook so it inherits the
+    same inventory + connection settings as the install steps.
+    """
+    verify = getattr(block, "verify", None)
+    if verify is None:
+        # No probe defined — treat as a pass (descriptor's choice).
+        _write_log_line(job.log_path, "[verify] no probe declared; skipping")
+        return True
+
+    probe = getattr(verify, "probe", None) or ""
+    timeout = int(getattr(verify, "timeout_seconds", 60) or 60)
+    expected_rc = getattr(verify, "expect_exit_code", 0)
+    expect_contains = getattr(verify, "expect_stdout_contains", None)
+
+    if not probe.strip():
+        return True
+
+    if _should_simulate():
+        # No ansible binary — emit a friendly log line and pass-through.
+        _write_log_line(job.log_path, "[verify] simulated probe (no ansible-playbook on PATH)")
+        return True
+
+    # Decide shell module from the descriptor's OS family hint (re-use
+    # facts). PowerShell scripts get win_shell; everything else gets shell.
+    os_family = "linux"
+    try:
+        from webapp.backend.services import bolton_facts_service
+        facts = bolton_facts_service.get_cached_facts(job.lab, job.host)
+        if facts is not None:
+            os_family = facts.os_family or "linux"
+    except Exception:
+        pass
+    shell_mod = "ansible.windows.win_shell" if os_family == "windows" else "ansible.builtin.shell"
+
+    play = [{
+        "name": f"bolton verify {job.bolton_id}",
+        "hosts": job.host,
+        "gather_facts": False,
+        "tasks": [
+            {
+                "name": "verify probe",
+                shell_mod: probe,
+                "register": "probe_result",
+                "ignore_errors": True,
+            },
+        ],
+    }]
+    probe_pb = Path(tempfile.gettempdir()) / f"bolton-probe-{job.id}.yml"
+    probe_pb.write_text(yaml.safe_dump(play, sort_keys=False))
+
+    cmd = [
+        _ansible_bin() or "ansible-playbook",
+        str(probe_pb),
+        "-i", str(_inventory_path(job.lab, job.host)),
+        "--limit", job.host,
+    ]
+    try:
+        completed = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 30,
+        )
+    except subprocess.TimeoutExpired:
+        _write_log_line(job.log_path, f"[verify] probe timed out after {timeout}s")
+        return False
+    finally:
+        try:
+            probe_pb.unlink()
+        except OSError:
+            pass
+
+    out = (completed.stdout or "") + (completed.stderr or "")
+    _write_log_line(job.log_path, f"[verify] rc={completed.returncode}")
+    if completed.returncode != 0:
+        return False
+    if expected_rc is not None and completed.returncode != expected_rc:
+        return False
+    if expect_contains and expect_contains not in out:
+        return False
+    return True
+
+
+def _run_ansible_job(job: Job) -> None:
+    """Execute the descriptor's steps via real ansible-playbook.
+
+    Captures stdout/stderr to the job's log file; transitions the job
+    status based on exit code, hard timeout, and the verify probe.
+    """
+    log = _log_path(job.id)
+    job.log_path = log
+    log.parent.mkdir(parents=True, exist_ok=True)
+    _transition(job, JobStatus.RUNNING)
+
+    descriptor = _load_descriptor(job.bolton_id)
+    if descriptor is None:
+        _fail(job, f"descriptor not found for bolton_id={job.bolton_id}")
+        return
+
+    block_name = {
+        JobAction.INSTALL.value: "install",
+        JobAction.UNINSTALL.value: "uninstall",
+        JobAction.PATCH.value: "patch",
+        JobAction.PATCH_REVERT.value: "patch_revert",
+    }[job.action.value]
+    block = getattr(descriptor, block_name, None)
+    if block is None:
+        _fail(job, f"descriptor has no {block_name} block")
+        return
+
+    try:
+        playbook_path = _generate_playbook(job, block)
+    except Exception as exc:
+        _fail(job, f"failed to generate playbook: {exc!r}")
+        return
+
+    inventory = _inventory_path(job.lab, job.host)
+    bin_path = _ansible_bin() or "ansible-playbook"
+
+    cmd = [
+        bin_path,
+        str(playbook_path),
+        "-i", str(inventory),
+        "--limit", job.host,
+        "-e", f"target_host={job.host}",
+        "-e", f"bolton_op={job.action.value}",
+        "-e", f"lab_name={job.lab}",
+        "-e", f"bolton_id={job.bolton_id}",
+    ]
+
+    # Hard timeout: estimated_time × multiplier (default 3).
+    estimated = int(getattr(block, "estimated_time_seconds", 60) or 60)
+    multiplier = float(os.environ.get("BOLTON_ANSIBLE_TIMEOUT_X", "3") or 3)
+    hard_timeout = max(int(estimated * multiplier), _HARD_TIMEOUT_FLOOR_SECONDS)
+
+    env = os.environ.copy()
+    # Make project-local roles discoverable.
+    existing_roles_path = env.get("ANSIBLE_ROLES_PATH", "")
+    env["ANSIBLE_ROLES_PATH"] = (
+        f"{_PROJECT_BOLTON_ROLES}:{existing_roles_path}".rstrip(":")
+    )
+
+    with open(log, "a") as logf:
+        logf.write(
+            f"[{datetime.now(timezone.utc).isoformat()}] Executing: {' '.join(cmd)}\n"
+        )
+        logf.write(f"[{datetime.now(timezone.utc).isoformat()}] hard_timeout={hard_timeout}s\n")
+        logf.flush()
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
+        except FileNotFoundError as exc:
+            _fail(job, f"ansible-playbook not found: {exc}")
+            return
+
+        with _RUNNING_PROCS_LOCK:
+            _RUNNING_PROCS[job.id] = proc
+
+        # Watchdog: enforce hard_timeout regardless of stdout cadence. The
+        # main thread's stdout iteration can block on a silent subprocess,
+        # so we use a daemon timer to deliver SIGTERM then SIGKILL.
+        timed_out = {"flag": False}
+
+        def _watchdog_kill() -> None:
+            timed_out["flag"] = True
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+
+        watchdog = threading.Timer(hard_timeout, _watchdog_kill)
+        watchdog.daemon = True
+        watchdog.start()
+
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                logf.write(line)
+                logf.flush()
+            rc = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            rc = proc.wait()
+        finally:
+            watchdog.cancel()
+            with _RUNNING_PROCS_LOCK:
+                _RUNNING_PROCS.pop(job.id, None)
+            try:
+                playbook_path.unlink()
+            except OSError:
+                pass
+
+        if timed_out["flag"]:
+            logf.write(
+                f"[{datetime.now(timezone.utc).isoformat()}] HARD TIMEOUT "
+                f"({hard_timeout}s) — subprocess SIGTERMed\n"
+            )
+            logf.flush()
+
+    if rc != 0:
+        msg = (
+            f"hard timeout ({hard_timeout}s) — subprocess killed"
+            if timed_out["flag"]
+            else f"ansible exited with code {rc}"
+        )
+        _transition(job, JobStatus.FAILED, error=msg)
+        _post_run_invalidate(job, success=False)
+        return
+
+    # Verify probe — install/uninstall/patch_revert -> STUCK on probe fail.
+    # PATCH treats probe-failure as AS_PATCHED_BUT_VULN to surface the
+    # exploit-still-works case to the operator distinctly.
+    try:
+        probe_ok = _run_verify_probe(job, block)
+    except Exception as exc:
+        _fail(job, f"verify probe crashed: {exc!r}")
+        _post_run_invalidate(job, success=False)
+        return
+
+    if not probe_ok:
+        if job.action is JobAction.PATCH:
+            _transition(
+                job,
+                JobStatus.AS_PATCHED_BUT_VULN,
+                error="patch applied but exploit probe still succeeded.",
+            )
+        else:
+            _transition(
+                job,
+                JobStatus.STUCK,
+                error="verify probe failed.",
+            )
+        _post_run_invalidate(job, success=False)
+        return
+
+    _transition(job, JobStatus.SUCCEEDED)
+    _post_run_invalidate(job, success=True)
+
+
+def _run_job(job: Job) -> None:
+    """Top-level job runner. Dispatches to real or simulated execution
+    based on environment + ansible availability."""
+    if _should_simulate():
+        _run_simulated_job(job)
+    else:
+        _run_ansible_job(job)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Simulated execution (CI / no-ansible fallback)
+# ──────────────────────────────────────────────────────────────────────
 
 
 def _run_simulated_job(job: Job) -> None:
@@ -433,11 +919,12 @@ def dispatch_job(
     # Audit the QUEUED creation explicitly.
     _audit_transition(job, JobStatus.QUEUED, JobStatus.QUEUED)
 
-    # Kick off the simulated executor.
+    # Kick off the executor — real Ansible by default, simulation when
+    # BOLTON_SIMULATE_ANSIBLE=1 or ansible-playbook isn't on PATH.
     if run_inline:
-        _run_simulated_job(job)
+        _run_job(job)
     else:
-        threading.Thread(target=_run_simulated_job, args=(job,), daemon=True).start()
+        threading.Thread(target=_run_job, args=(job,), daemon=True).start()
     return job
 
 
@@ -469,39 +956,147 @@ def list_jobs(
 
 
 def cancel_job(job_id: str, operator: str) -> Job | None:
-    """Cancel a queued/running job (Phase 1: best-effort).
+    """Cancel a queued or running job.
 
-    The simulator can't be safely interrupted, so cancellation only
-    succeeds when the job is still ``QUEUED``. In Phase 2 this will send
-    a remote SIGTERM to the nohup'd ansible PID on the jumpbox.
+    QUEUED jobs are flipped to FAILED with a 'cancelled' audit marker.
+    RUNNING jobs that have a live ``ansible-playbook`` subprocess get a
+    SIGTERM; the runner loop observes the rc and writes the terminal
+    transition. Simulated runs (no subprocess) cannot be interrupted —
+    they finish naturally and the cancellation is recorded as a
+    best-effort attempt.
     """
     _ensure_registry_loaded()
     with _JOBS_LOCK:
         job = _JOBS.get(job_id)
         if job is None:
             return None
-        if job.status is not JobStatus.QUEUED:
+        if job.status is JobStatus.QUEUED:
+            old = job.status
+            job.status = JobStatus.FAILED
+            job.error_summary = f"Cancelled by {operator}"
+            job.finished_at = datetime.now(timezone.utc)
+            _persist_job(job)
+            audit_service.write(
+                operator,
+                f"bolton.{job.action.value}",
+                target=job.bolton_id,
+                project=job.lab,
+                details={
+                    "job_id": job.id,
+                    "lab": job.lab,
+                    "host": job.host,
+                    "status_from": old.value,
+                    "status_to": JobStatus.FAILED.value,
+                    "cancelled": True,
+                },
+            )
             return job
-        old = job.status
-        job.status = JobStatus.FAILED
-        job.error_summary = f"Cancelled by {operator}"
-        job.finished_at = datetime.now(timezone.utc)
-        _persist_job(job)
+        if job.status is JobStatus.RUNNING:
+            # Real-Ansible path: SIGTERM the subprocess if we have one.
+            proc = None
+            with _RUNNING_PROCS_LOCK:
+                proc = _RUNNING_PROCS.get(job.id)
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.send_signal(signal.SIGTERM)
+                except OSError:
+                    pass
+                _write_log_line(
+                    job.log_path,
+                    f"[cancel] SIGTERM sent by {operator}",
+                )
+                audit_service.write(
+                    operator,
+                    f"bolton.{job.action.value}",
+                    target=job.bolton_id,
+                    project=job.lab,
+                    details={
+                        "job_id": job.id,
+                        "lab": job.lab,
+                        "host": job.host,
+                        "status_from": JobStatus.RUNNING.value,
+                        "status_to": JobStatus.RUNNING.value,
+                        "cancelled": True,
+                    },
+                )
+            return job
+        return job
+
+
+def retry_with_modifications(
+    job_id: str,
+    modifications: dict[str, Any] | None,
+    operator: str = "agent",
+) -> Job:
+    """Re-dispatch a stuck job with modified role_vars (agent retry path).
+
+    The agent loop (``bolton_agent_service``) produces an
+    ``AgentProposal`` whose ``retry_inputs`` describes which descriptor
+    inputs to override. The operator approves, the route calls this
+    function, and we re-queue the job. Compatibility backstop is
+    skipped because the original dispatch already passed it.
+
+    Phase 3a contract: ``modifications`` is a dict of input name → value
+    pairs. The Phase 2 install runner will pass them as Ansible
+    role_vars (descriptor input overrides) when the playbook is
+    re-generated. Until that's wired, modifications travel through the
+    audit log as breadcrumbs so a retry can always be traced back to
+    the agent proposal that suggested it.
+
+    Args:
+        job_id: the stuck job to retry.
+        modifications: dict of descriptor inputs to override.
+        operator: who approved the retry (audit attribution).
+
+    Returns:
+        The newly-created Job (status QUEUED).
+
+    Raises:
+        KeyError: unknown job id.
+        ValueError: job is not in STUCK state.
+    """
+    _ensure_registry_loaded()
+    with _JOBS_LOCK:
+        original = _JOBS.get(job_id)
+    if original is None:
+        raise KeyError(f"job '{job_id}' not found")
+    if original.status is not JobStatus.STUCK:
+        raise ValueError(
+            f"job '{job_id}' is in state '{original.status.value}', "
+            f"not 'stuck' — cannot retry"
+        )
+
+    # Look up the descriptor for the new dispatch.
+    descriptor = None
+    try:
+        from webapp.backend.services import bolton_catalog_service
+        descriptor = bolton_catalog_service.get_descriptor(original.bolton_id)
+    except Exception:
+        descriptor = None
+
+    new_job = dispatch_job(
+        action=original.action,
+        bolton_id=original.bolton_id,
+        lab=original.lab,
+        host=original.host,
+        operator=operator,
+        descriptor=descriptor,
+        skip_compat_check=True,  # original passed; we're re-trying.
+    )
+
     audit_service.write(
         operator,
-        f"bolton.{job.action.value}",
-        target=job.bolton_id,
-        project=job.lab,
+        "bolton.agent.retry",
+        target=new_job.id,
+        project=new_job.lab,
         details={
-            "job_id": job.id,
-            "lab": job.lab,
-            "host": job.host,
-            "status_from": old.value,
-            "status_to": JobStatus.FAILED.value,
-            "cancelled": True,
+            "previous_job_id": job_id,
+            "bolton_id": new_job.bolton_id,
+            "host": new_job.host,
+            "modifications": modifications or {},
         },
     )
-    return job
+    return new_job
 
 
 def wait_for_job(job_id: str, timeout: float = 10.0, poll: float = 0.05) -> Job | None:

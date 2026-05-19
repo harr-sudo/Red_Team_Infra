@@ -1,0 +1,20 @@
+---
+- name: restart elasticsearch
+  ansible.builtin.systemd:
+    name: elasticsearch
+    state: restarted
+    daemon_reload: true
+  become: true
+
+- name: restart kibana
+  ansible.builtin.systemd:
+    name: kibana
+    state: restarted
+    daemon_reload: true
+  become: true
+
+- name: restart filebeat
+  ansible.builtin.systemd:
+    name: filebeat
+    state: restarted
+  become: true

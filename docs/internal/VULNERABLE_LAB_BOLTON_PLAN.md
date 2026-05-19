@@ -798,6 +798,101 @@ Claude API (project already uses Anthropic SDK, see CLAUDE.md `claude-api` skill
 
 Prompt caching enabled on the static portion (descriptor YAML + tool definitions) so iteration 2 and 3 only pay for delta tokens.
 
+### 7.8 Phase 3a implementation status
+
+Phase 3a (this revision) ships the real agent invocation end-to-end:
+
+- `webapp/backend/services/bolton_agent_service.py` — `invoke_agent(job_id, operator) -> AgentProposal`.
+- Bounded tool surface: 9 read-only diagnostics (`read_event_log`, `check_service_status`, `list_installed_kbs`, `check_ad_object`, `check_ad_ca_template`, `list_certificate_templates`, `check_kerberos_tickets`, `check_domain_trusts`, `test_network_path`). Tool dispatch is a single Python dict that maps tool name → `(ansible_module, command_template)`.
+- Hard limits enforced server-side: `MAX_TOOL_INVOCATIONS = 3`, `MAX_WALL_CLOCK_SECONDS = 300`. The agent loop checks both every iteration — the model cannot self-regulate past them.
+- Routes: `POST /api/bolton/jobs/<job_id>/agent-intervene` returns the proposal; `POST /agent-approve` dispatches the retry; `POST /agent-reject` audits the rejection. Job stays STUCK on reject — no implicit state transition.
+- `bolton_install_service.retry_with_modifications(job_id, modifications, operator)` re-queues a STUCK job with descriptor input overrides, skipping the compatibility backstop (the original dispatch already cleared it).
+- Frontend: `APP.bolton._showAgentPanel(jobId)` appends a panel inside the install progress overlay when a job hits STUCK. Operator approves → retry dispatch; rejects → panel closes, audit-only.
+
+### 7.9 Operator configuration
+
+The agent requires an Anthropic API key. **It is never bundled with the dashboard image** — operators wire their own key per deployment.
+
+#### Obtaining a key
+
+1. Sign in at <https://console.anthropic.com>.
+2. **Settings → API Keys → Create Key**.
+3. Scope: workspace-level, role `developer`. Name it after the operator (audit trail).
+4. Copy the `sk-ant-...` literal — Anthropic only displays it once.
+
+#### Setting `ANTHROPIC_API_KEY`
+
+Three supported deployment patterns, in order of preference:
+
+**A — Dashboard server systemd drop-in (preferred for production):**
+
+```bash
+# On the dashboard EC2:
+sudo systemctl edit dashboard.service
+# Add:
+[Service]
+Environment="ANTHROPIC_API_KEY=sk-ant-..."
+sudo systemctl restart dashboard.service
+```
+
+The override lives at `/etc/systemd/system/dashboard.service.d/override.conf` — readable only by root. Survives reboots; rotates without code changes.
+
+**B — AWS Secrets Manager (preferred for multi-operator deployments):**
+
+```bash
+aws secretsmanager create-secret \
+  --name red-team/dashboard/anthropic-api-key \
+  --secret-string "sk-ant-..."
+```
+
+Then in the dashboard server's IAM role attach `secretsmanager:GetSecretValue` for that ARN, and have `dashboard-manage.sh start` pull the secret + export it before exec'ing the Flask process (existing pattern from the bastion-secret path).
+
+**C — Local development `.env` (NOT for production):**
+
+```bash
+# In the project root, never committed (already in .gitignore):
+echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> .env
+source .env
+python -m webapp.backend.app
+```
+
+#### Optional: model override
+
+`BOLTON_AGENT_MODEL` overrides the default Claude model. The default tracks the current Sonnet snapshot suitable for diagnostic reasoning (~$3/M input, $15/M output as of this writing). Stick with Sonnet — Haiku does not have strong enough reasoning for failure diagnosis, Opus is overkill.
+
+#### Verifying configuration
+
+After setting the key:
+
+```bash
+# 1. Confirm the env var is visible to the Flask process:
+ps auxe | grep -i 'webapp.backend.app' | grep -o 'ANTHROPIC_API_KEY=[^ ]*' | head -1
+
+# 2. Trigger a STUCK job (the install simulator has a `-stuck` test hook):
+curl -X POST http://localhost:5050/api/bolton/labs/test/hosts/h1/install/bolton-stuck \
+  -H "Content-Type: application/json" -d '{}'
+
+# 3. Wait for STUCK, then invoke the agent:
+JOB_ID=...  # from the response above
+curl -X POST http://localhost:5050/api/bolton/jobs/$JOB_ID/agent-intervene
+# Expect: 200 + a `proposal` object. If 503 with "ANTHROPIC_API_KEY not
+# configured" → the env var didn't propagate to the Flask process.
+```
+
+#### Audit verification
+
+Every agent invocation writes three audit-log action types you can grep for:
+
+```bash
+grep '"action":"bolton.agent.invoke"'    ~/.dashboard/audit.log
+grep '"action":"bolton.agent.tool_call"' ~/.dashboard/audit.log
+grep '"action":"bolton.agent.approve"'   ~/.dashboard/audit.log
+grep '"action":"bolton.agent.reject"'    ~/.dashboard/audit.log
+grep '"action":"bolton.agent.retry"'     ~/.dashboard/audit.log
+```
+
+The `bolton.agent.invoke` entry records the budget limits (`limit_tool_calls`, `limit_wall_clock_s`) at the moment of invocation, so future audits can reconstruct exactly what the agent was allowed to do.
+
 ---
 
 ## 8. UI / UX design
@@ -1014,6 +1109,40 @@ Six phases. Sizing in "developer-weeks" assuming one engineer.
 - Tests: pytest suite covering resolver, schema validation, conflict detection, cycle detection.
 
 **Risks:** SSE infrastructure compatibility with existing reverse proxy on dashboard server. Mitigation: long-poll fallback.
+
+#### Phase 2 status (2026-05-19)
+
+Real Ansible execution machinery is wired into
+`bolton_install_service._run_ansible_job` and replaces the Phase 1
+simulator. Key bits:
+
+- Per-job playbook materialised under `/tmp/bolton-playbook-<job_id>.yml`,
+  one task per descriptor step (`include_role` for project-local roles,
+  module-FQCN invocations for collection roles, `win_shell` / `shell`
+  for inline `script` steps).
+- Inventory resolution: prefers `ansible/inventory/<lab>/hosts`; falls
+  back to a dynamic inventory synthesised from cached `HostFacts`.
+- Hard timeout = `block.estimated_time_seconds × BOLTON_ANSIBLE_TIMEOUT_X`
+  (default 3×) with a configurable floor (`_HARD_TIMEOUT_FLOOR_SECONDS`).
+  A daemon watchdog SIGTERMs the subprocess on expiry.
+- `cancel_job` SIGTERMs the live subprocess via the in-process registry;
+  audit log records the cancellation.
+- Verify probe runs as a second ad-hoc playbook; install / uninstall /
+  patch_revert transition to **STUCK** on probe failure, PATCH transitions
+  to **AS_PATCHED_BUT_VULN**.
+- Simulation fallback preserved when `BOLTON_SIMULATE_ANSIBLE=1` is set
+  *or* `ansible-playbook` is not on PATH — keeps CI green.
+
+**1 of 5 descriptors has a working role; remaining 4 need role-authoring
+work.**
+
+| Descriptor                                     | Role under `ansible/roles/` | Status |
+|------------------------------------------------|-----------------------------|--------|
+| `bolton.identity-kerberos.kerberoastable-svc`  | `bolton_kerberoastable_svc` | shipped (install / uninstall / patch / patch_revert / verify) |
+| `bolton.adcs.esc1-misconfigured-template`      | `bolton_esc1_template` (TBD) | inline PowerShell in descriptor only |
+| `bolton.windows.printnightmare` (planned)      | `bolton_printnightmare` (TBD) | pending |
+| `bolton.windows.zerologon` (planned)           | `bolton_zerologon` (TBD)    | pending |
+| `bolton.network.llmnr-enabled` (planned)       | `bolton_llmnr_enabled` (TBD) | pending |
 
 ### Phase 3 — Catalog UI + lab topology view (2–3 dev-weeks)
 
@@ -1242,6 +1371,8 @@ The three refinements compose cleanly. Recommended implementation order:
 
 ### 14.6 Elastic-stack bolt-on lab component (resolves OQ-C)
 
+**Status (2026-05-19): Phase 3b IMPLEMENTED.** See "Phase 3b implementation status" at the end of this section for the audit of what landed, what is scaffolded, and what is deferred to Phase 3c.
+
 User decision 2026-05-18: ship an optional Elastic stack as a **lab infrastructure component** that operators can bolt onto any GOAD or C2 lab. This makes the TTP/Elastic refinement's post-install rule-firing verification fully operational rather than degraded-mode.
 
 **Distinct from vulnerability bolt-ons.** This is a new descriptor *class* — `infrastructure` — used for installing detection/observability infrastructure into a lab, not for installing vulnerabilities. Same descriptor schema, same install/uninstall machinery, same Ansible engine — different `category: infrastructure` tag and slightly different UI surface.
@@ -1302,3 +1433,31 @@ Total dev-time impact: +5-7 days to Phase 5. The detection probe loop value is s
 - Should we maintain the rule pack in-tree, or pull fresh from `Research/elastic-detection-rules/` (which is already monthly-updated by the existing integration)? Lean: pull fresh.
 - Multi-lab Elastic — should one inline Elastic instance be reusable across multiple labs in the same VPC? Likely no — keep one-stack-per-lab for blast-radius isolation, matching the user's "all labs are isolated" architectural principle.
 - License — Elastic Basic is free for this use, but the rule corpus is licensed Elastic-2.0; document that operators can fork/modify rules but uploading them to commercial Elastic offerings requires checking the license.
+
+#### Phase 3b implementation status (2026-05-19)
+
+What landed in this Phase:
+
+| Surface | File(s) | Status |
+|---|---|---|
+| Schema widening for `infrastructure` class | `webapp/bolton/schema.py` | **Implemented.** `BoltOnDescriptor.patch` is now `PatchBlock | None`. New `_patch_required_unless_infrastructure` validator forbids `patch:` for `category: infrastructure` and requires it for every other category. The existing `_patch_revert_iff_rollback_supported` validator short-circuits when `patch is None`. |
+| Stack descriptor | `webapp/bolton/catalog/infrastructure/elastic-detection-stack.yaml` | **Implemented.** Validates against the schema. `mitre: null`, `patch: null`. Carries install + uninstall blocks + cost (`storage_mb: 30720`). |
+| Shipper descriptors (3) | `webapp/bolton/catalog/infrastructure/{winlogbeat-shipper,filebeat-shipper,sysmon}.yaml` | **Implemented.** Each declares `depends_on: [bolton.infrastructure.elastic-detection-stack]` so the resolver auto-installs the stack first. |
+| Ansible role — entry + dispatch | `ansible/roles/bolton_elastic_stack/tasks/main.yml` | **Implemented.** Branches on `state` + `shipper_component` so one role serves all four descriptors. |
+| Ansible role — Elasticsearch install | `tasks/install_es.yml` + `templates/elasticsearch.yml.j2` | **Implemented end-to-end** (subject to a live Ubuntu run). Adds Elastic APT repo, installs the package, renders single-node config, resets the `elastic` user password, registers `es_password` as a host fact. |
+| Ansible role — Kibana install | `tasks/install_kibana.yml` + `templates/kibana.yml.j2` | **Implemented end-to-end.** Installs Kibana, waits for it to come up, registers `kibana_endpoint` as a cacheable fact, writes `/etc/bolton/elastic-stack.facts`. |
+| Ansible role — Fleet Server | `tasks/install_fleet.yml` | **Scaffolded.** Service-token POST + agent enroll command are written but un-tested. Phase 3c will add Fleet agent policies + integration assignment. |
+| Ansible role — rule import | `tasks/import_rules.yml` | **Scaffolded.** Calls `python3 -m detection_rules kibana upload-rule` against every TOML in the corpus. Per-rule loop should be replaced with a single `--directory` invocation in Phase 3c. |
+| Ansible role — shipper installs | `tasks/install_{winlogbeat,filebeat,sysmon}.yml` | **Scaffolded.** Each installs the package + drops a minimal config. Full Fleet-managed enrollment + module-specific configs (Security/Sysmon/PowerShell channels, Filebeat modules) are Phase 3c. |
+| Ansible role — uninstall | `tasks/uninstall.yml` | **Implemented.** Branches on `shipper_component` and tears down the full stack OR a single shipper. |
+| Probe service upgrade | `webapp/backend/services/bolton_probe_service.py` | **Implemented.** New `_discover_elastic_endpoint(lab)` walks the facts service's installed_boltons map looking for the stack id, reads `kibana_endpoint` / `es_password` off the cached HostFacts. New `correlate_alerts(...)` POSTs to `/api/detection_engine/signals/search` with the descriptor's rule UUIDs + target host + probe-start timestamp. `run_probe()` records full or degraded mode + fired/alert_id shape in the probe JSON. |
+| Tests | `tests/backend/test_bolton_elastic_stack.py` | **Implemented.** Covers schema widening (infrastructure descriptor accepts `patch: null`, rejects `patch:` set), all four descriptor files validate + shippers depend on the stack, resolver auto-includes the stack, probe service full-mode + three degraded-mode fallback paths. Kibana is mocked via `monkeypatch.setattr(bolton_probe_service, "requests", SimpleNamespace(post=...))`. |
+
+Follow-up work tagged in code with `TODO (Phase 3c)`:
+
+- Full rule corpus upload via `detection_rules kibana upload-rule --directory` rather than per-rule loop (`tasks/import_rules.yml`).
+- Fleet agent policy POST + per-integration assignment (`tasks/install_fleet.yml`).
+- Winlogbeat / Filebeat / Sysmon module configs beyond the minimal placeholder (`tasks/install_{winlogbeat,filebeat,sysmon}.yml`).
+- Real Kibana auth flow — currently the probe service reads `es_password` off a HostFacts cache. Production should retrieve it from AWS Secrets Manager instead (`webapp/backend/services/bolton_probe_service.py`).
+- Front-end "Lab Infrastructure" tab + Installed lab infrastructure section in the Cleanup tab (master plan §14.6).
+- Cost-aware install confirmation modal exposing the `inline` vs `shared` topology choice (currently the descriptor pins `topology: inline`).

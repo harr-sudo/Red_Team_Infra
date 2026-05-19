@@ -27,10 +27,12 @@ function loadAppJsSource() {
 }
 
 // Pull just the named function bodies out of the monolith so we can eval
-// them in isolation. Regex matches `function name(...) { ... }` up to the
-// closing brace at column 0 (matches the file's actual formatting).
+// them in isolation. Regex anchors on `^function ${name}` (column 0) so
+// it picks the module-scope definition, not any inner copies introduced
+// by later agents inside IIFEs. Matches up to the closing brace at
+// column 0 (matches the file's actual formatting).
 function extractFn(src, name) {
-    const re = new RegExp(`function ${name}\\b[\\s\\S]*?^\\}`, 'm');
+    const re = new RegExp(`^function ${name}\\b[\\s\\S]*?^\\}`, 'm');
     const m = src.match(re);
     if (!m) throw new Error(`Could not extract function ${name} from app.js`);
     return m[0];

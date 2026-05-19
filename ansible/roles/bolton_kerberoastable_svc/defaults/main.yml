@@ -1,0 +1,35 @@
+---
+# Defaults for the bolton_kerberoastable_svc role.
+#
+# These mirror the role_vars referenced from
+# webapp/bolton/catalog/identity-kerberos/kerberoastable-svc.yaml.
+# Anything the caller does not override falls back to these values.
+
+# Identity of the deliberately-weak service account.
+bolton_kerb_account_name: "svc_kerb_lab"
+bolton_kerb_account_display: "Bolt-on Kerberoastable Lab Service"
+bolton_kerb_account_description: >-
+  Lab-only Kerberoastable service account installed by the
+  Red Team Infrastructure bolt-on framework. DO NOT use in production.
+
+# The known-weak password used on install + patch_revert.
+bolton_kerb_weak_password: "Summer2025!"
+
+# Patch-time password: rotated to a 32-char cryptographically-random
+# string. Callers may override; the role generates one if left empty.
+bolton_kerb_patched_password: ""
+
+# SPN registered on the account so that anyone holding a TGT can request
+# a TGS encrypted with the account's password hash.
+bolton_kerb_spn: "HTTP/kerb-target.{{ ansible_domain | default('lab.local') }}"
+
+# msDS-SupportedEncryptionTypes bitmask:
+#   0x4 = RC4_HMAC_MD5     (weak — required for classic kerberoasting)
+#   0x8 = AES128_CTS_HMAC_SHA1_96
+#  0x10 = AES256_CTS_HMAC_SHA1_96
+# install/revert leave RC4 on; patch turns it off (AES-only).
+bolton_kerb_enctypes_vulnerable: 28   # 0x1C = RC4 + AES128 + AES256
+bolton_kerb_enctypes_patched: 24      # 0x18 = AES128 + AES256 only
+
+# Minimum acceptable patched-password length, asserted by the verify task.
+bolton_kerb_min_patched_password_length: 30
