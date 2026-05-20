@@ -35,14 +35,27 @@ async function gotoDraft(page) {
     await page.waitForTimeout(500);
 }
 
+// 2026-05-20 (UX audit Batch C) — Identity now lands on stage 'family'
+// (only the family seg-control + type-tile grid are visible). The rest of
+// Identity — project_name / env / region — materialises only after the
+// operator clicks a type tile. Most tests below need to drive that click
+// before they can assert on Identity inputs or the Confirm button.
+async function pickType(page, typeId = 'c2-adhoc') {
+    await page.waitForSelector(`#cfg-type-grid [data-cfg-type="${typeId}"]`, { state: 'visible' });
+    await page.click(`#cfg-type-grid [data-cfg-type="${typeId}"]`);
+    await page.waitForSelector('#cfg-project-name', { state: 'visible' });
+    await page.waitForTimeout(200);
+}
+
 test.describe('V3 Configure Progressive — surface mounts', () => {
     test('draft URL renders V2 surface inside Configure', async ({ page }) => {
         await gotoDraft(page);
         const v2 = page.locator('#configure-v2-pane');
         await expect(v2).toBeVisible({ timeout: 5000 });
-        // TOC rail exists with 8 items
+        // TOC rail exists with 9 items (identity, network, ssh, domain, ssl,
+        // c2, testlab, attackbox, cost — Test Lab added 2026-05-20 / Batch B · C6).
         const railItems = page.locator('#configure-v2-pane .cfg-rail__item');
-        await expect(railItems).toHaveCount(8);
+        await expect(railItems).toHaveCount(9);
         // First section (Identity) is active on first paint
         await expect(page.locator('.cfg-section[data-cfg-section="identity"]')).toHaveClass(/is-active/);
     });
@@ -64,6 +77,9 @@ test.describe('V3 Configure Progressive — state machine', () => {
     test('confirming Identity activates Network', async ({ page }) => {
         await gotoDraft(page);
         await expect(page.locator('#configure-v2-pane')).toBeVisible();
+        // 2026-05-20 (Batch C) — pick a type tile to materialise the
+        // Identity sub-fields + Confirm button.
+        await pickType(page);
         // Identity confirm
         await page.click('.cfg-section[data-cfg-section="identity"] [data-cfg-confirm="identity"]:not([data-cfg-skip])');
         await page.waitForTimeout(400);
@@ -75,9 +91,12 @@ test.describe('V3 Configure Progressive — state machine', () => {
         await gotoDraft(page);
         const validate = page.locator('#cfg-validate-btn');
         await expect(validate).toBeHidden();
+        // 2026-05-20 (Batch C) — pick a type tile so Identity Confirm exists
+        // in the DOM as a visible button; testlab was added in Batch B · C6.
+        await pickType(page);
         // Confirm everything via the API
         await page.evaluate(() => {
-            const order = ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'attackbox', 'cost'];
+            const order = ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'testlab', 'attackbox', 'cost'];
             for (const id of order) {
                 const btn = document.querySelector(`.cfg-section[data-cfg-section="${id}"] [data-cfg-confirm="${id}"]:not([data-cfg-skip])`);
                 if (btn) btn.click();
@@ -92,6 +111,10 @@ test.describe('V3 Configure Progressive — smart defaults', () => {
     test('Save button is disabled until all sections confirmed; defaults pre-filled', async ({ page }) => {
         await gotoDraft(page);
         await page.waitForTimeout(400);
+        // 2026-05-20 (Batch C) — In identityStage='family', project_name /
+        // env / region inputs are hidden until the operator picks a type
+        // tile. Drive that click first so the auto-fill engages.
+        await pickType(page);
         // Defaults that should be pre-populated:
         await expect(page.locator('#cfg-env-select')).toHaveValue('dev');
         await expect(page.locator('#cfg-region-select')).toHaveValue('eu-central-1');
@@ -146,6 +169,9 @@ test.describe('V3 Configure Progressive — profile catalog', () => {
 test.describe('V3 Configure Progressive — reset', () => {
     test('Reset returns all sections to pending', async ({ page }) => {
         await gotoDraft(page);
+        // 2026-05-20 (Batch C) — pick a type tile so Identity Confirm is
+        // present in the DOM.
+        await pickType(page);
         // Confirm a few sections
         await page.evaluate(() => {
             ['identity', 'network'].forEach(id => {
@@ -174,11 +200,14 @@ test.describe('V3 Configure Progressive — per-project pipeline (Configure → 
     test('V2 save syncs legacy #project-name + #deployment-type inputs', async ({ page }) => {
         await gotoDraft(page);
         await page.waitForTimeout(400);
+        // 2026-05-20 (Batch C) — pick a type tile to expose the Identity
+        // Confirm button + sub-fields; testlab was added in Batch B · C6.
+        await pickType(page);
         // Confirm every section so Save is enabled, then save by directly
         // invoking the V2 save() — bypasses the prereq panel which would
         // need backend state we don't want to set up here.
         await page.evaluate(async () => {
-            const order = ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'attackbox', 'cost'];
+            const order = ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'testlab', 'attackbox', 'cost'];
             for (const id of order) {
                 const btn = document.querySelector(`.cfg-section[data-cfg-section="${id}"] [data-cfg-confirm="${id}"]:not([data-cfg-skip])`);
                 if (btn) btn.click();
@@ -217,8 +246,11 @@ test.describe('V3 Configure Progressive — per-project pipeline (Configure → 
     test('Save stays in draft mode with draftProject; Apply-success flips to existing', async ({ page }) => {
         await gotoDraft(page);
         await page.waitForTimeout(400);
+        // 2026-05-20 (Batch C) — pick a type tile to materialise Identity
+        // sub-fields + Confirm button; testlab was added in Batch B · C6.
+        await pickType(page);
         await page.evaluate(async () => {
-            const order = ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'attackbox', 'cost'];
+            const order = ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'testlab', 'attackbox', 'cost'];
             for (const id of order) {
                 const btn = document.querySelector(`.cfg-section[data-cfg-section="${id}"] [data-cfg-confirm="${id}"]:not([data-cfg-skip])`);
                 if (btn) btn.click();
@@ -367,6 +399,9 @@ test.describe('V3 Configure Progressive — dual-theme contrast', () => {
             await setTheme(page, theme);
             const v2 = page.locator('#configure-v2-pane');
             await expect(v2).toBeVisible();
+            // 2026-05-20 (Batch C) — pick a type tile to expose the
+            // Identity Confirm button (hidden in stage 'family').
+            await pickType(page);
             // Confirm a section to engage the confirmed state pill which uses success colors
             await page.click('.cfg-section[data-cfg-section="identity"] [data-cfg-confirm="identity"]:not([data-cfg-skip])');
             await page.waitForTimeout(300);

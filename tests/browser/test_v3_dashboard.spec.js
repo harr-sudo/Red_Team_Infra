@@ -288,21 +288,31 @@ test('dashboard: + New Deployment hero invokes APP.startNewDeployment (no regres
     expect(activeTab).toBe('deployments-tab');
 });
 
-test('dashboard: global header + New navigates to Configure with inline wizard (2026-05-19 flow-stitching)', async ({ page }) => {
+test('dashboard: global header + New navigates to Configure with progressive draft mode (2026-05-20)', async ({ page }) => {
     await gotoDashboard(page);
     await page.evaluate(() => { window.confirm = () => true; });
     const headerBtn = page.locator('#global-new-deployment-btn');
     await expect(headerBtn).toBeVisible();
     await headerBtn.click();
     await page.waitForTimeout(450);
-    // Post-2026-05-19: no scrim takeover. The wizard mounts inline in Configure.
-    const wizardInline = page.locator('#configure-new-pane #journey-takeover');
-    await expect(wizardInline).toBeVisible();
-    // The legacy body[data-journey-open] flag is NOT set.
+    // 2026-05-20: the inline #journey-takeover wizard was retired as the
+    // default flow. The "+ New" header button now drops the operator into
+    // Configure V2 (progressive unraveling) — Configure sub-pill active,
+    // draft sentinel set on activeDeployment, V2 pane visible. The
+    // journey wizard is still mountable behind ?wizard=1 for legacy tests
+    // but is no longer the default.
+    const tabPage = page.locator('.tab-page[data-page="deployments-tab"]');
+    await expect(tabPage).toBeVisible({ timeout: 5000 });
+    const v2Pane = page.locator('#configure-v2-pane');
+    await expect(v2Pane).toBeVisible({ timeout: 5000 });
+    // The legacy body[data-journey-open] flag is NOT set (no scrim takeover).
     const journeyOpen = await page.evaluate(() => document.body.getAttribute('data-journey-open'));
     expect(journeyOpen).toBeNull();
-    // URL has the ?new=1 query.
-    expect(page.url()).toMatch(/new=1/);
+    // Draft sentinel pinned on activeDeployment.
+    const isDraft = await page.evaluate(() => {
+        try { return APP.activeDeployment.isDraft(); } catch (_) { return false; }
+    });
+    expect(isDraft).toBe(true);
 });
 
 // ─────────────────────────────────────────────────────────────────────

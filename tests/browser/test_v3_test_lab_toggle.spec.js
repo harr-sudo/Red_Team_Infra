@@ -39,6 +39,36 @@ async function pickFamily(page, family) {
     await page.waitForTimeout(200);
 }
 
+// 2026-05-20 (Batch C) — `.cfg-section.is-pending` collapses its body via
+// `grid-template-rows: 0fr` so the checkbox inside is unclickable until the
+// state machine advances. For tests that just exercise the test-lab toggle
+// (not the state machine itself), force every section to `is-active` so the
+// inputs are reachable. This is a test-only escape hatch; production keeps
+// the progressive reveal.
+async function unlockAllSections(page) {
+    await page.evaluate(() => {
+        document.querySelectorAll('.cfg-section').forEach(s => {
+            s.classList.remove('is-pending', 'is-confirmed');
+            s.classList.add('is-active');
+        });
+    });
+    await page.waitForTimeout(80);
+}
+
+// Click the test-lab checkbox in a way that survives the section being in
+// `.is-pending` state (which intercepts pointer events). The bound change
+// handler is what calls updateTestLabVisibility() — toggling .checked alone
+// is not enough.
+async function toggleTestLab(page) {
+    await page.evaluate(() => {
+        const cb = document.getElementById('cfg-enable-test-lab');
+        if (!cb) return;
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForTimeout(80);
+}
+
 test('Test Lab section visible for c2-* family', async ({ page }) => {
     await openDraftConfigure(page);
     await pickFamily(page, 'c2');
@@ -75,6 +105,7 @@ test('Test Lab section visible for combined-* family + shows explainer note', as
 test('Toggle reveals subnet field + updates cost table', async ({ page }) => {
     await openDraftConfigure(page);
     await pickFamily(page, 'c2');
+    await unlockAllSections(page);
 
     const fields = page.locator('#cfg-test-lab-fields');
     await expect(fields).toBeHidden();
@@ -83,7 +114,7 @@ test('Toggle reveals subnet field + updates cost table', async ({ page }) => {
     // count grows by 4 after the toggle flips on.
     const beforeRows = await page.locator('#cfg-cost-body tr').count();
 
-    await page.click('#cfg-enable-test-lab');
+    await toggleTestLab(page);
     await expect(fields).toBeVisible();
 
     const subnet = page.locator('#cfg-test-lab-subnet-cidr');
@@ -94,7 +125,7 @@ test('Toggle reveals subnet field + updates cost table', async ({ page }) => {
     expect(afterRows - beforeRows).toBeGreaterThanOrEqual(4);
 
     // Toggle off — fields hide, row count returns to baseline.
-    await page.click('#cfg-enable-test-lab');
+    await toggleTestLab(page);
     await expect(fields).toBeHidden();
     const offRows = await page.locator('#cfg-cost-body tr').count();
     expect(offRows).toBe(beforeRows);
@@ -103,7 +134,8 @@ test('Toggle reveals subnet field + updates cost table', async ({ page }) => {
 test('assembleConfig() writes enable_test_lab=true + subnet cidr', async ({ page }) => {
     await openDraftConfigure(page);
     await pickFamily(page, 'c2');
-    await page.click('#cfg-enable-test-lab');
+    await unlockAllSections(page);
+    await toggleTestLab(page);
 
     const config = await page.evaluate(() => window.APP.configureV2.assembleConfig());
     expect(config.enable_test_lab).toBe(true);
@@ -113,7 +145,8 @@ test('assembleConfig() writes enable_test_lab=true + subnet cidr', async ({ page
 test('Family switch c2 → goad force-clears the test lab toggle', async ({ page }) => {
     await openDraftConfigure(page);
     await pickFamily(page, 'c2');
-    await page.click('#cfg-enable-test-lab');
+    await unlockAllSections(page);
+    await toggleTestLab(page);
     await expect(page.locator('#cfg-test-lab-fields')).toBeVisible();
 
     await pickFamily(page, 'goad');

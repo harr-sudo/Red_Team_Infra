@@ -1087,7 +1087,7 @@ const APP = {
         if (autoStatus) {
             autoStatus.style.display = 'block';
             const profileLabels = { default: 'jQuery CDN', amazon: 'Amazon CDN', google: 'Google APIs', microsoft: 'Microsoft Azure', wikipedia: 'Wikipedia' };
-            autoStatus.className = 'callout callout--success';
+            autoStatus.className = 'cfg-callout cfg-callout--success';
             autoStatus.innerHTML = `<p style="margin: 0; font-size: 0.9em;">
                 <strong>Fully automated.</strong> The <strong>${profileLabels[profileType] || profileType}</strong> profile will be loaded on the team server at startup
                 and nginx redirector URI patterns will be auto-configured to match. No manual setup required.
@@ -1202,7 +1202,7 @@ const APP = {
         if (!container) return;
         if (!validation.errors.length && !validation.warnings.length) {
             container.style.display = 'block';
-            container.innerHTML = `<div class="callout callout--success" style="margin: 0;"><p style="margin: 0; font-size: 0.88em;">
+            container.innerHTML = `<div class="cfg-callout cfg-callout--success" style="margin: 0;"><p style="font-size: 0.88em;">
                 <strong>Profile validation passed.</strong> Required blocks found, URIs valid.
             </p></div>`;
             return;
@@ -1210,13 +1210,13 @@ const APP = {
 
         let html = '';
         if (validation.errors.length) {
-            html += `<div class="callout callout--danger" style="margin: 0 0 8px 0;"><p style="margin: 0; font-size: 0.88em;">
+            html += `<div class="cfg-callout cfg-callout--danger" style="margin: 0 0 8px 0;"><p style="font-size: 0.88em;">
                 <strong>Errors:</strong></p><ul style="margin: 4px 0 0 0; padding-left: 20px; font-size: 0.85em;">
                 ${validation.errors.map(e => `<li>${e}</li>`).join('')}
             </ul></div>`;
         }
         if (validation.warnings.length) {
-            html += `<div class="callout callout--warning" style="margin: 0;"><p style="margin: 0; font-size: 0.88em;">
+            html += `<div class="cfg-callout cfg-callout--warning" style="margin: 0;"><p style="font-size: 0.88em;">
                 <strong>Warnings:</strong></p><ul style="margin: 4px 0 0 0; padding-left: 20px; font-size: 0.85em;">
                 ${validation.warnings.map(w => `<li>${w}</li>`).join('')}
             </ul></div>`;
@@ -19458,7 +19458,7 @@ async function checkSystemDeps() {
         const data = await resp.json();
 
         if (!data.success) {
-            container.innerHTML = `<div class="callout callout--danger" style="margin: 0;"><p style="margin: 0;">Failed to check dependencies</p></div>`;
+            container.innerHTML = `<div class="cfg-callout cfg-callout--danger" style="margin: 0;"><p>Failed to check dependencies</p></div>`;
             return;
         }
 
@@ -19496,17 +19496,17 @@ async function checkSystemDeps() {
         html += `</tbody></table>`;
 
         if (allRequiredInstalled) {
-            html = `<div class="callout callout--success" style="margin: 0 0 12px 0;"><p style="margin: 0;">All required dependencies installed.</p></div>` + html;
+            html = `<div class="cfg-callout cfg-callout--success" style="margin: 0 0 12px 0;"><p>All required dependencies installed.</p></div>` + html;
             // D2.3 — Record that a prereq check has passed (dismisses dashboard banner).
             try { localStorage.setItem('prereqs-verified-at', new Date().toISOString()); } catch (e) { /* ignore */ }
         } else {
             const missing = required.filter(d => !d.installed).map(d => d.name).join(', ');
-            html = `<div class="callout callout--danger" style="margin: 0 0 12px 0;"><p style="margin: 0;"><strong>Missing required:</strong> ${missing}</p></div>` + html;
+            html = `<div class="cfg-callout cfg-callout--danger" style="margin: 0 0 12px 0;"><p><strong>Missing required:</strong> ${missing}</p></div>` + html;
         }
 
         container.innerHTML = html;
     } catch (e) {
-        container.innerHTML = `<div class="callout callout--danger" style="margin: 0;"><p style="margin: 0;">Error: ${e.message}</p></div>`;
+        container.innerHTML = `<div class="cfg-callout cfg-callout--danger" style="margin: 0;"><p>Error: ${e.message}</p></div>`;
     }
 }
 
@@ -25370,7 +25370,7 @@ async function loadCostProjectSelector() {
             const container = document.getElementById('cost-summary-cards');
             if (container && !container.innerHTML.trim()) {
                 container.innerHTML = `
-                    <div class="callout callout--warning" style="margin: 0; grid-column: 1 / -1;">
+                    <div class="cfg-callout cfg-callout--warning" style="margin: 0; grid-column: 1 / -1;">
                         <strong>Awaiting cost data from AWS Cost Explorer.</strong><br>
                         Cost data typically takes 24-48 hours to appear after deployment. Click "Refresh Costs" to check for updates.
                     </div>
@@ -25472,7 +25472,7 @@ function renderCostSummaryCards(data) {
     // If no actual Cost Explorer data, show a waiting state instead of estimates
     if (!actualHasData) {
         container.innerHTML = `
-            <div class="callout callout--warning" style="margin: 0;">
+            <div class="cfg-callout cfg-callout--warning" style="margin: 0;">
                 <strong>Awaiting cost data from AWS Cost Explorer.</strong><br>
                 Cost data typically takes 24-48 hours to appear after deployment. Click "Refresh Costs" to check for updates.
             </div>
@@ -25652,16 +25652,16 @@ function renderCostErrors(data) {
 
     let html = '';
     if (actual.error === 'cost_explorer_not_enabled') {
-        html = `<div id="cost-error-callout" class="callout callout--warning" style="margin-top: 15px;">
+        html = `<div id="cost-error-callout" class="cfg-callout cfg-callout--warning" style="margin-top: 15px;">
             <strong>AWS Cost Explorer not enabled.</strong> ${actual.error_message || ''}
             <br><a href="https://console.aws.amazon.com/cost-management/home#/cost-explorer" target="_blank" style="color: inherit;">Enable Cost Explorer in AWS Console</a> — data appears after 24 hours. Showing estimates only.
         </div>`;
     } else if (actual.error === 'access_denied') {
-        html = `<div id="cost-error-callout" class="callout callout--warning" style="margin-top: 15px;">
+        html = `<div id="cost-error-callout" class="cfg-callout cfg-callout--warning" style="margin-top: 15px;">
             <strong>Missing IAM permission.</strong> Add <code>ce:GetCostAndUsage</code> to your IAM policy. Showing estimates only.
         </div>`;
     } else if (actual.stale) {
-        html = `<div id="cost-error-callout" class="callout callout--info" style="margin-top: 15px;">
+        html = `<div id="cost-error-callout" class="cfg-callout cfg-callout--info" style="margin-top: 15px;">
             <strong>Stale data</strong> — cached from ${actual.cache_age_minutes} minutes ago. ${actual.error || ''}
         </div>`;
     } else if (actual.available && (!actual.daily_costs || actual.daily_costs.every(d => d.total === 0))) {
@@ -25671,17 +25671,17 @@ function renderCostErrors(data) {
 
         if (!isActive && hoursRunning > 0) {
             // Destroyed project with no Cost Explorer data — likely deployed before tagging was added
-            html = `<div id="cost-error-callout" class="callout callout--info" style="margin-top: 15px;">
+            html = `<div id="cost-error-callout" class="cfg-callout cfg-callout--info" style="margin-top: 15px;">
                 <strong>No Cost Explorer data for this project.</strong> Resources may not have been tagged with the <code>Project</code> tag during this engagement. Showing estimates calculated from instance types and uptime.
             </div>`;
         } else if (isActive && hoursRunning < 48) {
             // New active deployment — Cost Explorer has 24-48h delay
-            html = `<div id="cost-error-callout" class="callout callout--info" style="margin-top: 15px;">
+            html = `<div id="cost-error-callout" class="cfg-callout cfg-callout--info" style="margin-top: 15px;">
                 <strong>No actual cost data yet.</strong> AWS Cost Explorer data typically takes 24-48 hours to appear for new deployments. Showing estimates below.
             </div>`;
         } else if (isActive) {
             // Active deployment past 48h with no data — tag mismatch
-            html = `<div id="cost-error-callout" class="callout callout--warning" style="margin-top: 15px;">
+            html = `<div id="cost-error-callout" class="cfg-callout cfg-callout--warning" style="margin-top: 15px;">
                 <strong>No Cost Explorer data found.</strong> Verify that deployed resources have the <code>Project</code> tag matching this project name. Showing estimates below.
             </div>`;
         }
@@ -25737,13 +25737,13 @@ async function loadBudgetAlert() {
         }
 
         const isOver = data.level === 'danger';
-        const cls = isOver ? 'callout--danger' : 'callout--warning';
+        const cls = isOver ? 'cfg-callout--danger' : 'cfg-callout--warning';
         const msg = isOver
             ? `Budget Exceeded: Spending ($${data.total_spend.toFixed(2)}) has exceeded your $${data.threshold} monthly budget by $${Math.abs(data.remaining).toFixed(2)}.`
             : `Budget Warning: ${data.used_percent.toFixed(0)}% of your $${data.threshold} monthly budget used ($${data.total_spend.toFixed(2)}).`;
 
         alertDiv.innerHTML = `
-            <div class="callout ${cls}">
+            <div class="cfg-callout ${cls}">
                 <strong>${isOver ? 'Budget Exceeded' : 'Budget Warning'}</strong> — ${msg}
                 <a href="#" onclick="APP.navigateTo('settings'); return false;" style="color: inherit; text-decoration: underline; margin-left: 8px;">View details in Settings</a>
             </div>
@@ -28379,7 +28379,7 @@ async function loadCleanupResources(forceRefresh = false) {
         list.innerHTML = _renderCleanupGroups(orphans, known);
         if (APP && typeof APP._staggerOnce === 'function') APP._staggerOnce(list);
     } catch (e) {
-        list.innerHTML = '<div class="callout callout--warning">Failed to load resources. Check AWS credentials.</div>';
+        list.innerHTML = '<div class="cfg-callout cfg-callout--warning">Failed to load resources. Check AWS credentials.</div>';
     } finally {
         if (refreshBtn) refreshBtn.removeAttribute('data-loading');
     }
@@ -32517,10 +32517,10 @@ APP.bolton = APP.bolton || {
                 <button class="btn btn-secondary" data-bolton-agent-action="dismiss">Dismiss</button>
               </div>
               <div class="bolton-agent-panel__unavailable" hidden>
-                <div class="callout callout--warning" data-bolton-agent-unavailable="true" style="margin:0">
+                <div class="cfg-callout cfg-callout--warning" data-bolton-agent-unavailable="true" style="margin:0">
                     <strong data-agent-unavailable-headline></strong>
-                    <p style="margin:6px 0 0;font-size:12px;color:inherit" data-agent-unavailable-body></p>
-                    <p style="margin:8px 0 0;font-size:12px">
+                    <p style="font-size:12px;color:inherit" data-agent-unavailable-body></p>
+                    <p style="font-size:12px">
                         <a href="#settings-prereqs"
                            class="btn btn-link"
                            data-bolton-agent-action="goto-settings"

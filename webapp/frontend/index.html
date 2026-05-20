@@ -1467,7 +1467,7 @@
                         </div>
 
                         <!-- Domain Setup Instructions -->
-                        <div class="callout callout--warning" style="margin-top: 20px;">
+                        <div class="cfg-callout cfg-callout--warning" style="margin-top: 20px;">
                             <h4 style="margin: 0 0 10px 0;">Domain Setup Steps</h4>
                             <details open>
                                 <summary>Before deployment</summary>
@@ -1508,7 +1508,7 @@ ns-143.awsdns-17.org
                         </p>
 
                         <!-- Domain Fronting SSL Override Banner -->
-                        <div id="ssl-domain-fronting-override" class="callout callout--info" style="display: none;">
+                        <div id="ssl-domain-fronting-override" class="cfg-callout cfg-callout--info" style="display: none;">
                             <h4 style="margin: 0 0 10px 0;">SSL Handled by CloudFront + ACM</h4>
                             <p style="margin: 0 0 10px 0; font-size: 0.9em;">
                                 Domain fronting is enabled — SSL is handled automatically at two levels:
@@ -1541,7 +1541,7 @@ ns-143.awsdns-17.org
                                 </div>
 
                                 <!-- OPSEC warning for self-signed (collapsed by default) -->
-                                <div id="ssl-opsec-warning" class="callout callout--danger collapsed">
+                                <div id="ssl-opsec-warning" class="cfg-callout cfg-callout--danger collapsed">
                                     <h4 style="margin: 0; cursor: pointer; display: flex; align-items: center; justify-content: space-between;" onclick="this.parentElement.classList.toggle('collapsed'); this.querySelector('.collapse-icon').textContent = this.parentElement.classList.contains('collapsed') ? '+' : '-';">
                                         OPSEC: Self-Signed vs Let's Encrypt
                                         <span class="collapse-icon" style="font-size: 1.2em; font-weight: bold; color: inherit;">+</span>
@@ -1607,7 +1607,7 @@ ns-143.awsdns-17.org
                                 </div>
 
                                 <!-- How it works -->
-                                <div class="callout callout--success">
+                                <div class="cfg-callout cfg-callout--success">
                                     <h4 style="margin: 0 0 10px 0;">How it works</h4>
                                     <ol style="margin: 0; padding-left: 20px; font-size: 0.9em;">
                                         <li>On deploy, the redirector boots with a temporary self-signed cert so nginx can start immediately</li>
@@ -1677,7 +1677,7 @@ ns-143.awsdns-17.org
 
                         <div id="domain-fronting-options" style="margin-left: 28px; opacity: 0.5; pointer-events: none;">
                             <!-- How Domain Fronting Works -->
-                            <div class="callout callout--warning">
+                            <div class="cfg-callout cfg-callout--warning">
                                 <h4 style="margin: 0 0 10px 0;">How Domain Fronting Works</h4>
                                 <ol style="margin: 0; padding-left: 20px; font-size: 0.9em;">
                                     <li><strong>Your domains</strong> (primary + backups) become aliases on a CloudFront distribution</li>
@@ -1699,7 +1699,7 @@ ns-143.awsdns-17.org
                             </div>
 
                             <!-- Domain Rotation -->
-                            <div class="callout callout--success">
+                            <div class="cfg-callout cfg-callout--success">
                                 <h4 style="margin: 0 0 10px 0;">Domain Rotation</h4>
                                 <p style="margin: 0 0 10px 0; font-size: 0.9em;">
                                     Backup domains (configured in Domain Configuration above) are pre-loaded as CloudFront aliases with valid SSL certificates.
@@ -1711,7 +1711,7 @@ ns-143.awsdns-17.org
                             </div>
 
                             <!-- Technical Details -->
-                            <div class="callout callout--info">
+                            <div class="cfg-callout cfg-callout--info">
                                 <h4 style="margin: 0 0 10px 0;">Technical Details</h4>
                                 <ul style="margin: 0; padding-left: 20px; font-size: 0.9em;">
                                     <li><strong>SSL:</strong> ACM auto-provisions certificates (free, no Let's Encrypt needed)</li>
@@ -1883,7 +1883,7 @@ ns-143.awsdns-17.org
                                 <label for="front-domain">Front Domain (optional):</label>
                                 <input type="text" id="front-domain" placeholder="e.g. grid.crowdstrike.com">
                             </div>
-                            <div class="callout callout--warning">
+                            <div class="cfg-callout cfg-callout--warning">
                                 <p style="margin: 0 0 8px 0; font-size: 0.9em;">
                                     <strong>This is NOT part of your infrastructure.</strong> The front domain is a legitimate third-party domain
                                     (e.g. <code>grid.crowdstrike.com</code>) that shares the same CDN as your CloudFront distribution. You do not own or control it.
@@ -1901,7 +1901,7 @@ ns-143.awsdns-17.org
                         </div>
 
                         <!-- Auto-configured status banner (shown for preset profiles) -->
-                        <div id="profile-auto-status" class="callout callout--success" style="margin-bottom: 15px;">
+                        <div id="profile-auto-status" class="cfg-callout cfg-callout--success" style="margin-bottom: 15px;">
                             <p style="margin: 0; font-size: 0.9em;">
                                 <strong>Fully automated.</strong> The selected profile will be loaded on the team server at startup and nginx redirector
                                 URI patterns will be auto-configured to match. No manual setup required.
@@ -1909,7 +1909,7 @@ ns-143.awsdns-17.org
                         </div>
 
                         <!-- Catalog profile info (shown for BC-SECURITY catalog profiles) -->
-                        <div id="profile-catalog-status" class="callout callout--info" style="margin-bottom: 15px; display: none;">
+                        <div id="profile-catalog-status" class="cfg-callout cfg-callout--info" style="margin-bottom: 15px; display: none;">
                             <p style="margin: 0 0 8px 0; font-size: 0.9em;">
                                 <strong>Catalog profile selected.</strong> This profile is from the
                                 <a href="https://github.com/BC-SECURITY/Malleable-C2-Profiles" target="_blank" style="color: var(--accent-muted);">BC-SECURITY Malleable C2 Profiles</a> collection.
@@ -1922,7 +1922,7 @@ ns-143.awsdns-17.org
                         </div>
 
                         <!-- Custom profile info (shown only for custom) -->
-                        <div id="profile-custom-status" class="callout callout--info" style="margin-bottom: 15px; display: none;">
+                        <div id="profile-custom-status" class="cfg-callout cfg-callout--info" style="margin-bottom: 15px; display: none;">
                             <p style="margin: 0 0 8px 0; font-size: 0.9em;">
                                 <strong>Automated deployment.</strong> Paste your Malleable C2 profile below. During deployment:
                             </p>
@@ -2181,7 +2181,7 @@ ns-143.awsdns-17.org
                                 <p>Checking domain configuration...</p>
                             </div>
 
-                            <div id="domain-info" class="callout callout--info" style="display: none;">
+                            <div id="domain-info" class="cfg-callout cfg-callout--info" style="display: none;">
                                 <h5>Domain Configuration:</h5>
                                 <p id="domain-details"></p>
                             </div>
@@ -2461,7 +2461,7 @@ ns-143.awsdns-17.org
                             <p>Ready to deploy</p>
                         </div>
 
-                    <div class="callout callout--info" style="margin-top: 15px;">
+                    <div class="cfg-callout cfg-callout--info" style="margin-top: 15px;">
                         <p style="margin: 0; font-size: 0.9em;">
                             <strong>Tip:</strong> Run Plan shows a preview of what will be created without making changes.
                             To destroy existing infrastructure, go to the <a href="#" onclick="APP.navigateTo('deployments'); return false;">Deployments</a> page.
@@ -2535,7 +2535,7 @@ ns-143.awsdns-17.org
                             </p>
                         </div>
 
-                        <div class="callout callout--warning" style="margin-top: 15px;">
+                        <div class="cfg-callout cfg-callout--warning" style="margin-top: 15px;">
                             <p style="margin: 0; font-size: 0.88em;">
                                 <strong>Tip:</strong> Go to the <strong>Deployment Manager</strong> page for connection details, IPs, and SSL status.
                             </p>
@@ -4232,7 +4232,7 @@ ns-143.awsdns-17.org
                         </div>
 
                         <!-- Untracked costs disclosure — shown after cost data loads -->
-                        <div id="cost-untracked-callout" class="callout callout--info" style="margin-top: 15px; display: none;">
+                        <div id="cost-untracked-callout" class="cfg-callout cfg-callout--info" style="margin-top: 15px; display: none;">
                             <strong>Costs not tracked:</strong> Domain registration (varies by TLD), Cobalt Strike license,
                             data transfer (varies with beacon frequency), CloudFront usage (if domain fronting enabled),
                             CloudWatch logs/metrics, Secrets Manager ($0.40/secret/month),
@@ -4490,7 +4490,7 @@ ns-143.awsdns-17.org
                             <!-- populated by JS — 6 swatches -->
                         </div>
                     </div>
-                    <div id="add-op-error" class="callout callout--warning" style="display: none; margin-top: 12px;"></div>
+                    <div id="add-op-error" class="cfg-callout cfg-callout--warning" style="display: none; margin-top: 12px;"></div>
                     <div class="modal__footer" style="margin-top: 20px; padding: 0; border: 0;">
                         <button class="btn btn-secondary" type="button" data-modal-close>Cancel</button>
                         <button class="btn btn-primary" type="submit">Add operator</button>

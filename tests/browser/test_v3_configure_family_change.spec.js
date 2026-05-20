@@ -28,20 +28,73 @@ async function openDraftConfigure(page) {
 }
 
 async function pickFamily(page, family) {
+    // 2026-05-20 (Batch C) — When Identity is confirmed, its body collapses
+    // (grid-template-rows: 0fr) so the family seg-control is hidden. The
+    // pencil button on the confirmed chip row re-opens Identity into stage
+    // 'family'. Re-edit Identity first if it's confirmed.
+    await page.evaluate(() => {
+        const sec = document.querySelector('.cfg-section[data-cfg-section="identity"]');
+        if (sec && sec.classList.contains('is-confirmed')) {
+            const editBtn = document.getElementById('cfg-identity-edit-btn');
+            if (editBtn) editBtn.click();
+        }
+    });
+    await page.waitForTimeout(120);
     await page.click(`#cfg-family-row [data-cfg-family="${family}"]`);
     await page.waitForTimeout(200);
+}
+
+// 2026-05-20 (Batch C) — Identity now lands on stage 'family'. To expose
+// the Confirm button + project_name input, the operator must click a type
+// tile first.
+async function pickType(page, typeId) {
+    if (!typeId) {
+        // Read the first tile in the current grid.
+        typeId = await page.locator('#cfg-type-grid .cfg-type-btn').first().getAttribute('data-cfg-type');
+    }
+    await page.waitForSelector(`#cfg-type-grid [data-cfg-type="${typeId}"]`, { state: 'visible' });
+    await page.click(`#cfg-type-grid [data-cfg-type="${typeId}"]`);
+    await page.waitForSelector('#cfg-project-name', { state: 'visible' });
+    await page.waitForTimeout(150);
+}
+
+// Unlock every section so checkboxes/inputs inside pending bodies become
+// reachable. Production-grade gating preserves the progressive reveal; this
+// is a test-only escape hatch.
+async function unlockAllSections(page) {
+    await page.evaluate(() => {
+        document.querySelectorAll('.cfg-section').forEach(s => {
+            s.classList.remove('is-pending', 'is-confirmed');
+            s.classList.add('is-active');
+        });
+    });
+    await page.waitForTimeout(80);
+}
+
+// Toggle the test-lab checkbox via the change-event dispatch so it survives
+// pointer-event interception from a `.is-pending` section wrapper.
+async function toggleTestLab(page) {
+    await page.evaluate(() => {
+        const cb = document.getElementById('cfg-enable-test-lab');
+        if (!cb) return;
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForTimeout(80);
 }
 
 test('Family switch c2 → goad resets Identity AND re-paints rail with 5-section GOAD layout', async ({ page }) => {
     await openDraftConfigure(page);
     await pickFamily(page, 'c2');
 
-    // Fill the absolute minimum for Identity then confirm it.
-    await page.locator('#cfg-project-name').waitFor({ timeout: 3000 });
+    // 2026-05-20 (Batch C) — pick a type tile so Identity moves into stage
+    // 'sub', materialising the project_name input + Confirm button.
+    await pickType(page);
     // Project name auto-fills from machine suffix; mgmt CIDR is optional for
     // Identity confirm (it lives in Network). Click the Identity Confirm
-    // button — `data-cfg-confirm="identity"`.
-    await page.click('[data-cfg-confirm="identity"]');
+    // button — `data-cfg-confirm="identity"` (exclude the Skip variant which
+    // also matches the attribute selector).
+    await page.click('[data-cfg-confirm="identity"]:not([data-cfg-skip])');
     await page.waitForTimeout(200);
 
     // Identity should be confirmed.
@@ -90,9 +143,12 @@ test('Test Lab toggle in c2-adhoc adds 4 cost rows', async ({ page }) => {
     await pickFamily(page, 'c2');
     // Default type for c2 family is c2-adhoc per TYPES_BY_FAMILY[0].
 
+    // 2026-05-20 (Batch C) — unlock so the test-lab section body is
+    // reachable; dispatch the change event directly to survive section-level
+    // pointer interception.
+    await unlockAllSections(page);
     const beforeRows = await page.locator('#cfg-cost-body tr').count();
-    await page.click('#cfg-enable-test-lab');
-    await page.waitForTimeout(100);
+    await toggleTestLab(page);
     const afterRows = await page.locator('#cfg-cost-body tr').count();
     expect(afterRows - beforeRows).toBe(4);
 
@@ -105,9 +161,9 @@ test('Test Lab toggle in combined-* also adds 4 cost rows (Batch B · C6)', asyn
     await openDraftConfigure(page);
     await pickFamily(page, 'combined');
 
+    await unlockAllSections(page);
     const beforeRows = await page.locator('#cfg-cost-body tr').count();
-    await page.click('#cfg-enable-test-lab');
-    await page.waitForTimeout(100);
+    await toggleTestLab(page);
     const afterRows = await page.locator('#cfg-cost-body tr').count();
     expect(afterRows - beforeRows).toBe(4);
 

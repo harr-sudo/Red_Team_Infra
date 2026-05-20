@@ -28,8 +28,41 @@ async function setTheme(page, theme) {
     await page.waitForTimeout(280);
 }
 
+// Mock /api/deploy/active so a c2-* deployment is in the cache. Without
+// this, APP.computeOperationsVisible() returns false (no existing C2 /
+// combined deployment) and the Operations top-tab button is hidden via
+// the `hidden` attribute (2026-05-20 — deployment-type-aware visibility
+// gates rolled out; see CLAUDE.md / UX_AUDIT). Tests that exercise
+// Operations sub-pills must seed an active C2 deployment first.
+async function mockC2Deployment(page) {
+    await page.route('**/api/deploy/active**', async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                success: true,
+                deployments: [
+                    { project_name: 'ops_lab', _filename: 'ops_lab',
+                      deployment_type: 'c2-adhoc', status: 'success',
+                      output: { cs_connection_info: { value: { rest_api_enabled: true, host: '10.0.0.5' } } } },
+                ],
+            }),
+        });
+    });
+}
+
 async function gotoOperations(page, subpill = 'beacons') {
+    await mockC2Deployment(page);
     await page.goto('/');
+    // Wait for the global header dropdown to populate so deployment_type
+    // is cached and Operations top-tab can compute visible.
+    await page.waitForFunction(() => {
+        const lb = document.getElementById('global-deploy-listbox');
+        return lb && lb.children.length > 0;
+    }, null, { timeout: 5000 });
+    // Pick ops_lab so APP.activeDeployment becomes isExisting() + c2-*.
+    await page.evaluate(() => APP.activeDeployment.set('ops_lab'));
+    await page.waitForTimeout(120);
     await page.locator('button.tab-btn[data-target="operations-tab"]').waitFor({ timeout: 5000 });
     await page.click('button.tab-btn[data-target="operations-tab"]');
     await page.waitForTimeout(150);

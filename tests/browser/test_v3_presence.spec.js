@@ -87,17 +87,45 @@ async function stubHeartbeat(page, others) {
     return handle;
 }
 
-async function gotoConfigureWithProject(page, projectName) {
+// 2026-05-20 — In the post-restructure Deployments nav, the Configure
+// sub-pill is hidden when the active deployment is an EXISTING project
+// (it surfaces only in draft mode via "+ New Deployment"). Manage is
+// the visible default for existing projects and is also a presence-aware
+// view (PRESENCE_PAGES = { configure, manage }), so we route through
+// Manage here. Mock /api/deploy/active so the project lands in the
+// global cache and APP.activeDeployment.isExisting() resolves true.
+async function gotoManageWithProject(page, projectName) {
+    await page.route('**/api/deploy/active**', async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                success: true,
+                deployments: [
+                    { project_name: projectName, _filename: projectName,
+                      deployment_type: 'c2-adhoc', status: 'success' },
+                    { project_name: 'demo-project-2', _filename: 'demo-project-2',
+                      deployment_type: 'c2-adhoc', status: 'success' },
+                ],
+            }),
+        });
+    });
     await page.goto('/');
+    await page.waitForFunction(() => {
+        const lb = document.getElementById('global-deploy-listbox');
+        return lb && lb.children.length > 0;
+    }, null, { timeout: 5000 });
     await page.evaluate((p) => {
         if (window.APP && window.APP.activeDeployment) window.APP.activeDeployment.set(p);
     }, projectName);
     await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
     await page.click('button.tab-btn[data-target="deployments-tab"]');
     await page.waitForTimeout(120);
-    await page.locator('#subpill-configure').click();
+    await page.locator('#subpill-manage').click();
     await page.waitForTimeout(400);
 }
+// Back-compat alias — older test callsites still use the old name.
+const gotoConfigureWithProject = gotoManageWithProject;
 
 // ──────────────────────────────────────────────────────────────────────
 // Tests

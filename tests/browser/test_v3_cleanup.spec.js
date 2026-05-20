@@ -121,8 +121,12 @@ test.describe('Cleanup sub-pill (Phase 3c V3-native)', () => {
                     ],
                     total_projects: 2,
                     eips: [
-                        // All attached — no orphans
-                        { allocation_id: 'eipalloc-1', public_ip: '1.2.3.4', instance_id: 'i-aaa', region: 'eu-central-1' },
+                        // All attached + Project-tagged — no orphans.
+                        // 2026-05-20: _detectOrphans was tightened to flag
+                        // untagged bindings (instance attached but no Project
+                        // tag) — see commit covering NAT EIP detection.
+                        // The stub now sets project_tag so this stays non-orphan.
+                        { allocation_id: 'eipalloc-1', public_ip: '1.2.3.4', instance_id: 'i-aaa', project_tag: 'c2_adhoc_test', region: 'eu-central-1' },
                     ],
                     acm_certs: [
                         { arn: 'arn:aws:acm:eu-central-1:1:certificate/aaa', domain: 'example.com', status: 'ISSUED', in_use: true, region: 'eu-central-1' },
@@ -291,9 +295,24 @@ test.describe('Cleanup sub-pill (Phase 3c V3-native)', () => {
         // Exercise the marked-state render path WITHOUT depending on real
         // orphan resources. Calls _renderCleanupGroups() directly with a
         // synthetic dataset + a pre-seeded known map.
+        //
+        // 2026-05-20: stub the all-projects endpoint to return EMPTY so the
+        // auto-fired loadCleanupResources (or any later poll) does not
+        // overwrite our synthetic innerHTML injection with real backend data.
+        await page.route('**/api/deploy/resources/all-projects*', async (route) => {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({
+                    success: true, region: 'eu-central-1', scanned_at: '2026-05-19T12:00:00Z',
+                    projects: [], total_projects: 0,
+                    eips: [], acm_certs: [], s3_buckets: [], snapshots: [], acm_us_east_1: [],
+                }),
+            });
+        });
         await navigateToCleanupSubPill(page);
-        // Wait for any auto-fired loadCleanupResources to settle (empty-state
-        // or error) so it doesn't race with our synthetic innerHTML injection.
+        // Wait for the stubbed auto-load to settle (empty state) so it doesn't
+        // race with our synthetic innerHTML injection.
         await page.waitForTimeout(1200);
         // Sanity: confirm the renderer is reachable from window scope.
         const rendererAvailable = await page.evaluate(() => typeof window._renderCleanupGroups);

@@ -168,7 +168,7 @@ async function renderArchitecture(selectedArch) {
     } catch (error) {
         console.error('Error rendering architecture:', error);
         contentDiv.innerHTML = html + `
-            <div class="callout callout--warning">
+            <div class="cfg-callout cfg-callout--warning">
                 <strong>Error Loading Documentation</strong>
                 <p>Unable to load the documentation content. ${error.message}</p>
             </div>

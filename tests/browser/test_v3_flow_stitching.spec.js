@@ -63,8 +63,21 @@ test.describe('Task 1 — "+ New Deployment" mounts V2 progressive surface', () 
     });
 
     test('wizard step navigation works when ?wizard=1 opt-in is passed', async ({ page }) => {
-        await page.goto('/#deployments-tab/configure?new=1&wizard=1');
+        // 2026-05-20 (Batch C) — `+ New Deployment` now lands on Configure V2
+        // by default. The legacy journey wizard is opt-in via APP.journey.open()
+        // (which `?wizard=1` triggers via startDraftFlow). Because the URL
+        // rewriter strips `wizard=1` before startDraftFlow can read it back
+        // (the global-combobox subscriber writes `?dep=` over the search
+        // params on boot), the most reliable opt-in path is to first pin a
+        // draft + then invoke APP.journey.open() directly.
+        await page.goto('/');
         await acceptDirtyConfirm(page);
+        await page.locator('#global-new-deployment-btn').waitFor({ timeout: 5000 });
+        await page.evaluate(() => {
+            window.APP.activeDeployment.set(window.APP.activeDeployment.DRAFT_SENTINEL);
+            window.APP.subPills.setActive('configure');
+            window.APP.journey.open({ trigger: document.getElementById('global-new-deployment-btn') });
+        });
         // Wait for inline wizard to mount.
         await page.locator('#configure-new-pane #journey-takeover').waitFor({ timeout: 5000 });
 
@@ -89,8 +102,16 @@ test.describe('Task 1 — "+ New Deployment" mounts V2 progressive surface', () 
     });
 
     test('cancel returns Configure to edit mode + strips ?new=1', async ({ page }) => {
-        await page.goto('/#deployments-tab/configure?new=1&wizard=1');
+        // 2026-05-20 (Batch C) — invoke APP.journey.open() directly (see
+        // wizard-nav test above for why the ?wizard=1 URL path is unreliable).
+        await page.goto('/');
         await acceptDirtyConfirm(page);
+        await page.locator('#global-new-deployment-btn').waitFor({ timeout: 5000 });
+        await page.evaluate(() => {
+            window.APP.activeDeployment.set(window.APP.activeDeployment.DRAFT_SENTINEL);
+            window.APP.subPills.setActive('configure');
+            window.APP.journey.open({ trigger: document.getElementById('global-new-deployment-btn') });
+        });
         await page.locator('#configure-new-pane #journey-takeover').waitFor({ timeout: 5000 });
 
         // Press Escape — should close the wizard, no scrim to wait for.
@@ -108,10 +129,41 @@ test.describe('Task 1 — "+ New Deployment" mounts V2 progressive surface', () 
 
 // ─── Task 2 — Configure gating ─────────────────────────────────────────────
 
+// 2026-05-20 (Batch C) — Configure sub-pill visibility is now mode-gated by
+// APP.computeVisibleSubPills(): when the live backend exposes an existing
+// deployment, the Configure pane gets `hidden` on boot (only Manage / Bolt-ons
+// / Cleanup remain for existing). To keep the legacy gating tests focused on
+// applyGating() (the unit-of-test), we mock /api/deploy/active to return zero
+// deployments — this lands the app in "empty" state with no auto-snap, then
+// we force-show the configure subpill pane and run applyGating().
+async function mockNoDeploymentsAndOpenConfigure(page) {
+    await page.route('**/api/deploy/active', async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ success: true, deployments: [] }),
+        });
+    });
+    await page.goto('/#deployments-tab/configure');
+    await page.locator('#subpill-pane-configure').waitFor({ timeout: 5000 });
+    // Force-show the configure pane + legacy editor — the V3 mode logic
+    // hides them when no draft / no existing deployment is selected, but we
+    // are pinpoint-testing applyGating()'s effect on section display rules.
+    await page.evaluate(() => {
+        const pane = document.getElementById('subpill-pane-configure');
+        if (pane) pane.removeAttribute('hidden');
+        const editPane = document.getElementById('configure-edit-pane');
+        if (editPane) editPane.hidden = false;
+        const editor = document.querySelector('#configure-edit-pane .configuration-editor');
+        if (editor) editor.style.display = '';
+        const adv = document.getElementById('configure-advanced-details');
+        if (adv) adv.style.display = '';
+    });
+}
+
 test.describe('Task 2 — Configure content gating by deployment type', () => {
     test('c2-adhoc shows Malleable / Domain Fronting / Redirector Domain Config; hides GOAD Network', async ({ page }) => {
-        await page.goto('/#deployments-tab/configure');
-        await page.locator('#subpill-pane-configure').waitFor({ timeout: 5000 });
+        await mockNoDeploymentsAndOpenConfigure(page);
 
         // Apply gating directly via APP.config.applyGating to skip the
         // legacy onchange overlap with other side-effects.
@@ -136,8 +188,7 @@ test.describe('Task 2 — Configure content gating by deployment type', () => {
     });
 
     test('goad-mini hides Malleable / Domain Fronting / Redirector; shows GOAD Network + Attack Box', async ({ page }) => {
-        await page.goto('/#deployments-tab/configure');
-        await page.locator('#subpill-pane-configure').waitFor({ timeout: 5000 });
+        await mockNoDeploymentsAndOpenConfigure(page);
 
         await page.evaluate(() => {
             document.getElementById('deployment-type').value = 'goad-mini';
@@ -160,8 +211,7 @@ test.describe('Task 2 — Configure content gating by deployment type', () => {
     });
 
     test('combined-adhoc-mini shows ALL gated sections', async ({ page }) => {
-        await page.goto('/#deployments-tab/configure');
-        await page.locator('#subpill-pane-configure').waitFor({ timeout: 5000 });
+        await mockNoDeploymentsAndOpenConfigure(page);
 
         await page.evaluate(() => {
             document.getElementById('deployment-type').value = 'combined-adhoc-mini';
@@ -183,8 +233,8 @@ test.describe('Task 2 — Configure content gating by deployment type', () => {
 
 test.describe('Task 3 — Malleable profile preview is collapsed by default', () => {
     test('preview wraps a <details> closed on first render', async ({ page }) => {
-        await page.goto('/#deployments-tab/configure');
-        await page.locator('#subpill-pane-configure').waitFor({ timeout: 5000 });
+        // 2026-05-20 (Batch C) — same flow-rebase as the gating tests above.
+        await mockNoDeploymentsAndOpenConfigure(page);
 
         // Force c2-adhoc so the malleable section is visible.
         await page.evaluate(() => {
@@ -328,8 +378,16 @@ async function auditContrast(page, rootSel) {
 
 for (const theme of ['dark', 'light']) {
     test(`inline journey passes contrast (${theme} theme)`, async ({ page }) => {
-        await page.goto('/#deployments-tab/configure?new=1');
+        // 2026-05-20 (Batch C) — invoke APP.journey.open() directly (see
+        // Task 1 tests for why the ?wizard=1 URL path is unreliable).
+        await page.goto('/');
         await acceptDirtyConfirm(page);
+        await page.locator('#global-new-deployment-btn').waitFor({ timeout: 5000 });
+        await page.evaluate(() => {
+            window.APP.activeDeployment.set(window.APP.activeDeployment.DRAFT_SENTINEL);
+            window.APP.subPills.setActive('configure');
+            window.APP.journey.open({ trigger: document.getElementById('global-new-deployment-btn') });
+        });
         await page.locator('#configure-new-pane #journey-takeover').waitFor({ timeout: 5000 });
         await setTheme(page, theme);
         const failures = await auditContrast(page, '#configure-new-pane');

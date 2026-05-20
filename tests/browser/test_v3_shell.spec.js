@@ -122,7 +122,12 @@ test.describe('v3 shell — markup', () => {
 
     test('rail footer renders a version label', async ({ page }) => {
         await page.goto('/');
-        await expect(page.locator('#app-rail-footer-version')).toBeVisible({ timeout: 5000 });
+        // 2026-05-20: The dedicated rail-footer version label was removed
+        // when the app-level #app-version-footer (separate floating footer)
+        // was introduced. The version surface now lives outside the rail in
+        // #app-version-footer / #app-version-footer-text. The brand kicker
+        // inside the rail still shows the version short-form.
+        await expect(page.locator('#app-version-footer-text')).toBeVisible({ timeout: 5000 });
     });
 });
 
@@ -245,6 +250,14 @@ test.describe('v3 shell — rail navigation', () => {
         await page.goto('/');
         // Open the Operations group, then click its Terminal sub-pill.
         await page.locator('.app-rail__item[data-rail-target="operations-tab"]').click();
+        // 2026-05-20: rail children use a grid-template-rows transition
+        // (~280ms motion-duration-base). Wait for the is-open class so the
+        // child target is stable before clicking, otherwise the still-
+        // animating nav intercepts the pointer.
+        await expect(
+            page.locator('.app-rail__group[data-rail-group="operations-tab"] .app-rail__children')
+        ).toHaveClass(/is-open/, { timeout: 5000 });
+        await page.waitForTimeout(320);
         await page.locator(
             '.app-rail__child[data-rail-target="operations-tab"][data-rail-subpill="terminal"]'
         ).click();
