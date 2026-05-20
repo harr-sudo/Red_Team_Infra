@@ -11360,6 +11360,56 @@ body:has(.app-shell) {
     padding: 16px 0;
 }
 
+/* 2026-05-20 (UX audit Batch A · C3 + L1 + P1) — spinner-animated loading
+   state for the 6 overlays that fetch async data. Two-column layout: a
+   rotating SVG-free disc + a status message. Dual-theme safe via the
+   --brand-light token (which is the same warm accent in both modes) +
+   --border for the inactive arc. Reduced-motion fallback drops the rotate
+   entirely so the disc is a static dot. */
+.app-overlay__loading {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.app-overlay__loading-text {
+    margin: 0;
+}
+.app-overlay__spinner {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--border);
+    border-top-color: var(--brand-light);
+    border-radius: 50%;
+    animation: app-overlay-spin 0.9s linear infinite;
+    flex: 0 0 auto;
+}
+@keyframes app-overlay-spin {
+    to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .app-overlay__spinner {
+        animation: none;
+        border: 2px solid var(--brand-light);
+        background: var(--brand-light);
+        opacity: 0.6;
+    }
+}
+
+/* Error card surfaced by APP.overlay._withAsyncBody() on reject or timeout. */
+.app-overlay__error {
+    padding: 14px 0;
+}
+.app-overlay__error-msg {
+    margin: 0 0 6px;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+.app-overlay__error-detail {
+    margin: 0 0 12px;
+    font-size: 12px;
+}
+
 /* ── Filter bar (audit log + rules browser) ────────────────────────────── */
 .app-overlay__filter-bar {
     display: flex;
@@ -11434,6 +11484,71 @@ body:has(.app-shell) {
     font-size: 11px;
     color: var(--text-secondary);
     letter-spacing: 0.04em;
+}
+
+/* 2026-05-20 — Cost Explorer daily API usage indicator. Surfaced on the
+   cost overlay so the operator can see how many CE requests they have
+   left today (hard limit = 10/day). Three tone variants. */
+.cost-ce-usage {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    margin: 16px 0 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.cost-ce-usage__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.cost-ce-usage__label {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-semibold);
+}
+.cost-ce-usage__count {
+    font-family: var(--font-family-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+}
+.cost-ce-usage__bar {
+    width: 100%;
+    height: 4px;
+    background: var(--bg-card);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.cost-ce-usage__bar-fill {
+    height: 100%;
+    background: var(--success-text);
+    transition: width var(--motion-duration-base) var(--motion-easing-standard);
+    border-radius: 2px;
+}
+.cost-ce-usage__hint {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    color: var(--text-muted);
+}
+.cost-ce-usage--warning .cost-ce-usage__bar-fill { background: var(--warning-text); }
+.cost-ce-usage--warning .cost-ce-usage__count    { color: var(--warning-text); }
+.cost-ce-usage--danger  .cost-ce-usage__bar-fill { background: var(--danger-text); }
+.cost-ce-usage--danger  .cost-ce-usage__count    { color: var(--danger-text); }
+.cost-ce-usage--danger {
+    border-color: var(--danger-border);
+    background: var(--danger-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cost-ce-usage__bar-fill { transition: none; }
 }
 
 /* ── Footer action row (deployment, cost, prereqs overlays) ────────────── */

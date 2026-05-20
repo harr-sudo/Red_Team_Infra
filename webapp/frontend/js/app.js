@@ -25211,6 +25211,25 @@ async function loadProjectCosts(forceRefresh = false) {
         const resp = await fetch(url);
         const data = await resp.json();
 
+        // 2026-05-20 — surface the CE daily limit error explicitly so the
+        // operator sees the rate-limit cap instead of a silent "failed".
+        const limitExceeded = data && data.actual_costs
+            && data.actual_costs.error === 'ce_daily_limit_exceeded';
+        if (limitExceeded) {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Daily limit reached';
+            }
+            if (APP && APP.toast) {
+                APP.toast(
+                    data.actual_costs.message
+                        || 'Cost Explorer daily limit reached. Refresh blocked until UTC midnight.',
+                    'danger', 8000
+                );
+            }
+            return;
+        }
+
         if (!data.success) {
             if (btn) { btn.disabled = false; btn.textContent = 'Refresh Costs — failed'; }
             return;
@@ -33315,14 +33334,19 @@ if (typeof window !== 'undefined') {
         const host = document.createElement('div');
         host.appendChild(_loadingHost('Loading cost data…'));
         try {
-            const [summaryRes, projRes, settingsRes] = await Promise.all([
+            const [summaryRes, projRes, settingsRes, ceUsageRes] = await Promise.all([
                 fetch('/api/costs/summary').catch(() => null),
                 fetch('/api/costs/projects').catch(() => null),
                 fetch('/api/costs/settings').catch(() => null),
+                // CE usage is cheap (no AWS hit) — surface it on the overlay
+                // so the operator can see how many CE requests they have left
+                // today and won't be surprised when the daily limit kicks in.
+                fetch('/api/costs/ce-usage').catch(() => null),
             ]);
             const summary = (summaryRes && summaryRes.ok) ? await summaryRes.json() : {};
             const projects = (projRes && projRes.ok) ? await projRes.json() : { projects: [] };
             const settings = (settingsRes && settingsRes.ok) ? await settingsRes.json() : {};
+            const ceUsage = (ceUsageRes && ceUsageRes.ok) ? await ceUsageRes.json() : null;
 
             while (host.firstChild) host.removeChild(host.firstChild);
 
@@ -33335,6 +33359,44 @@ if (typeof window !== 'undefined') {
                 <div class="app-overlay__cost-hero-sub">${budget ? 'Budget: $' + _esc(budget) + '/mo' : 'No budget set'}</div>
             `;
             host.appendChild(hero);
+
+            // Cost Explorer API usage indicator. Surfaces the daily call
+            // budget against the hard limit (10/day per spec). When
+            // exhausted, the indicator goes red and Refresh clicks fail
+            // gracefully with the backend's ce_daily_limit_exceeded error.
+            if (ceUsage && ceUsage.success) {
+                const used = ceUsage.used || 0;
+                const limit = ceUsage.limit || 10;
+                const remaining = ceUsage.remaining || 0;
+                const pct = Math.min(100, (used / limit) * 100);
+                const tone = ceUsage.exhausted
+                    ? 'danger'
+                    : (remaining <= 2 ? 'warning' : 'ok');
+                const toneCopy = ceUsage.exhausted
+                    ? `Daily limit reached — refresh blocked until UTC midnight`
+                    : (remaining <= 2
+                        ? `${remaining} of ${limit} CE requests left today`
+                        : `${used} / ${limit} CE requests used today`);
+                const usage = document.createElement('div');
+                usage.className = `cost-ce-usage cost-ce-usage--${tone}`;
+                usage.innerHTML = `
+                    <div class="cost-ce-usage__head">
+                        <span class="cost-ce-usage__label">COST EXPLORER · DAILY API USAGE</span>
+                        <span class="cost-ce-usage__count">${_esc(toneCopy)}</span>
+                    </div>
+                    <div class="cost-ce-usage__bar" role="progressbar"
+                         aria-valuenow="${used}" aria-valuemin="0" aria-valuemax="${limit}">
+                        <div class="cost-ce-usage__bar-fill" style="width: ${pct}%;"></div>
+                    </div>
+                    <div class="cost-ce-usage__hint">
+                        Cache TTL: ${ceUsage.cache_ttl_hours || 24}h · resets at UTC midnight ·
+                        ${ceUsage.exhausted
+                            ? 'Cached data is still served. Hit the limit? Look at logs/cost_cache/_ce_call_counter.json'
+                            : '$0.01 per request (AWS Cost Explorer pricing)'}
+                    </div>
+                `;
+                host.appendChild(usage);
+            }
 
             // 2026-05-20 (UX audit Batch A · P2) — never let a sentinel
             // ride into the per-project cost list. Cost backend keys by

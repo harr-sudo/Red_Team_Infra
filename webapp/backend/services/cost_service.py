@@ -124,7 +124,7 @@ class CostService:
     #      Surfaces an error to the caller; protects against a future
     #      regression silently burning money.
     CE_CACHE_TTL_MINUTES = 24 * 60   # 24h
-    CE_DAILY_HARD_LIMIT = 50         # belt-and-braces guardrail
+    CE_DAILY_HARD_LIMIT = 10         # belt-and-braces guardrail (≈ $0.10/day max)
 
     # Process-level call counter (resets at UTC midnight). Persisted to
     # disk so process restarts don't reset it within the day.
@@ -153,6 +153,25 @@ class CostService:
         # Keep only today's bucket — drop older keys so the file stays small.
         data = {today: data.get(today, 0) + 1}
         path.write_text(json.dumps(data))
+
+    def get_ce_usage(self) -> dict:
+        """Surface today's CE call usage for the dashboard UI."""
+        used = self._ce_calls_today()
+        limit = self.CE_DAILY_HARD_LIMIT
+        remaining = max(0, limit - used)
+        # Resets at next UTC midnight.
+        now = datetime.utcnow()
+        next_midnight = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        return {
+            "used": used,
+            "limit": limit,
+            "remaining": remaining,
+            "exhausted": used >= limit,
+            "resets_at": next_midnight.isoformat() + "Z",
+            "cache_ttl_hours": self.CE_CACHE_TTL_MINUTES // 60,
+        }
 
     def get_aws_costs(self, project_name: str, force_refresh: bool = False, region: Optional[str] = None) -> dict:
         """Query AWS Cost Explorer for costs.

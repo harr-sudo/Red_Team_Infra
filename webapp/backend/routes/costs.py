@@ -113,3 +113,14 @@ def update_settings():
     data = request.get_json(silent=True) or {}
     saved = _service.save_settings(data)
     return jsonify({"success": True, "message": "Cost settings saved", **saved})
+
+
+@bp.route('/ce-usage', methods=['GET'])
+def ce_usage():
+    """Today's Cost Explorer call usage vs the daily hard limit.
+
+    Surfaced on the cost overlay so the operator can see how many CE
+    requests they've burned today + how many remain. Cheap to call — no
+    AWS hit, just reads logs/cost_cache/_ce_call_counter.json.
+    """
+    return jsonify({"success": True, **_service.get_ce_usage()})
