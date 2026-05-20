@@ -211,6 +211,107 @@ test.describe('V3 Configure Progressive — per-project pipeline (Configure → 
         expect(legacyTypeVal.length).toBeGreaterThan(0); // populated from V2's deployment_type
     });
 
+    // 2026-05-20 — Save stays in DRAFT mode until Apply succeeds. Verifies
+    // the operator can still reach Configure + Deploy after Save and the
+    // dropdown surfaces "Draft: <name>" so the in-progress work is visible.
+    test('Save stays in draft mode with draftProject; Apply-success flips to existing', async ({ page }) => {
+        await gotoDraft(page);
+        await page.waitForTimeout(400);
+        await page.evaluate(async () => {
+            const order = ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'attackbox', 'cost'];
+            for (const id of order) {
+                const btn = document.querySelector(`.cfg-section[data-cfg-section="${id}"] [data-cfg-confirm="${id}"]:not([data-cfg-skip])`);
+                if (btn) btn.click();
+            }
+        });
+        await page.waitForTimeout(400);
+        await page.route('**/api/config/?project=*', async (route) => {
+            const req = route.request();
+            if (req.method() === 'POST') {
+                await route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify({ success: true, tfvars_path: 'configs/staging_lab.tfvars' })
+                });
+            } else {
+                await route.continue();
+            }
+        });
+        await page.fill('#cfg-project-name', 'staging_lab');
+        await page.click('#cfg-save-btn');
+        await page.waitForTimeout(400);
+
+        // After Save: stays in draft, draftProject staged, Deploy still reachable.
+        const afterSave = await page.evaluate(() => ({
+            current: window.APP.activeDeployment.current,
+            draftProject: window.APP.activeDeployment.draftProject,
+            isDraft: window.APP.activeDeployment.isDraft(),
+            displayName: window.APP.activeDeployment.displayName(),
+            effective: window.APP.activeDeployment.effectiveProject(),
+        }));
+        expect(afterSave.current).toBe('__draft__');
+        expect(afterSave.draftProject).toBe('staging_lab');
+        expect(afterSave.isDraft).toBe(true);
+        expect(afterSave.displayName).toBe('Draft: staging_lab');
+        expect(afterSave.effective).toBe('staging_lab');
+
+        // Deploy sub-pill must still be visible (operator needs to Apply).
+        const deployPill = page.locator('.tab-page[data-page="deployments-tab"] .subpill-nav__pill[data-subpill="deploy"]');
+        await expect(deployPill).not.toHaveAttribute('hidden', '');
+        const configurePill = page.locator('.tab-page[data-page="deployments-tab"] .subpill-nav__pill[data-subpill="configure"]');
+        await expect(configurePill).not.toHaveAttribute('hidden', '');
+
+        // Simulate Apply-success: directly invoke the promotion path that
+        // pollDeploymentStatus runs when status flips to 'success'.
+        await page.evaluate(() => {
+            const promoted = window.APP.activeDeployment.draftProject;
+            window.APP.activeDeployment.draftProject = null;
+            window.APP.activeDeployment.set(promoted);
+        });
+        await page.waitForTimeout(300);
+
+        const afterApply = await page.evaluate(() => ({
+            current: window.APP.activeDeployment.current,
+            draftProject: window.APP.activeDeployment.draftProject,
+            isDraft: window.APP.activeDeployment.isDraft(),
+            isExisting: window.APP.activeDeployment.isExisting(),
+        }));
+        expect(afterApply.current).toBe('staging_lab');
+        expect(afterApply.draftProject).toBe(null);
+        expect(afterApply.isDraft).toBe(false);
+        expect(afterApply.isExisting).toBe(true);
+
+        // With deployment_type unknown (cache hasn't refreshed), Deploy
+        // should be hidden but Manage should be visible.
+        await expect(deployPill).toHaveAttribute('hidden', '');
+        const managePill = page.locator('.tab-page[data-page="deployments-tab"] .subpill-nav__pill[data-subpill="manage"]');
+        await expect(managePill).not.toHaveAttribute('hidden', '');
+    });
+
+    // 2026-05-20 — runPlan() must accept a saved draft via effectiveProject().
+    test('runPlan accepts saved-draft via effectiveProject (draftProject set)', async ({ page }) => {
+        await page.goto('/');
+        await acceptDirtyConfirm(page);
+        await page.waitForTimeout(500);
+        await page.evaluate(() => {
+            window.APP.activeDeployment.set(window.APP.activeDeployment.DRAFT_SENTINEL);
+            window.APP.activeDeployment.draftProject = 'staged_lab';
+        });
+        let interceptedURL = null;
+        await page.route('**/api/deploy/plan*', async (route) => {
+            interceptedURL = route.request().url();
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ success: true, stdout: 'No changes.', stderr: '', plan: {} })
+            });
+        });
+        await page.evaluate(() => window.runPlan());
+        await page.waitForTimeout(400);
+        expect(interceptedURL).toBeTruthy();
+        expect(interceptedURL).toContain('project=staged_lab');
+    });
+
     test('Deploy sub-pill Plan button calls /api/deploy/plan?project=<active>', async ({ page }) => {
         await page.goto('/');
         await acceptDirtyConfirm(page);

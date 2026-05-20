@@ -2043,6 +2043,18 @@ APP.activeDeployment = (function () {
     // Visibility logic via APP.computeVisibleSubPills() reads .isDraft().
     const DRAFT_SENTINEL = '__draft__';
     let _current = null;
+    // 2026-05-20 — Deployment type cache (e.g. "c2-adhoc", "goad-mini",
+    // "combined-full-full"). Populated by APP._setActiveDeploymentType()
+    // from the global deployments cache (_globalHeaderDeployments) whenever
+    // the active project changes. Drives deployment-type-aware sub-pill
+    // visibility (Bolt-ons hidden for c2-*, Operations hidden for goad-*).
+    let _deploymentType = null;
+    // 2026-05-20 — draftProject is the project_name of an in-progress draft
+    // the operator has saved-but-not-yet-Applied. Lives ONLY while
+    // _current === DRAFT_SENTINEL. Clears on a real .set() (operator picks
+    // a different option), on the Apply-success flip, or on a Reset in
+    // Configure V2. Surfaced via displayName() as "Draft: <name>".
+    let _draftProject = null;
     try {
         const raw = localStorage.getItem(STORAGE_KEY) || null;
         // Defensive: a stale `__draft__` left in storage by a prior session
@@ -2060,10 +2072,38 @@ APP.activeDeployment = (function () {
         ALL_SENTINEL,
         DRAFT_SENTINEL,
         get current() { return _current; },
+        // 2026-05-20 — deployment_type accessor + setter. Tracks the
+        // active deployment's terraform type (c2-*/goad-*/combined-*).
+        // Drives APP.computeVisibleSubPills() + APP.computeOperationsVisible().
+        get deployment_type() { return _deploymentType; },
+        set deployment_type(v) {
+            const next = (typeof v === 'string' && v) ? v : null;
+            if (_deploymentType === next) return;
+            _deploymentType = next;
+            _subscribers.forEach(fn => {
+                try { fn(_current); } catch (e) { console.error('activeDeployment type subscriber error', e); }
+            });
+        },
+        // 2026-05-20 — Draft staging slot (in-memory only). Holds the
+        // project_name the operator has saved but not yet Applied.
+        get draftProject() { return _draftProject; },
+        set draftProject(v) { _draftProject = (typeof v === 'string' && v) ? v : null; },
         isAll() { return _current === ALL_SENTINEL; },
         isDraft() { return _current === DRAFT_SENTINEL; },
         isExisting() {
             return !!_current && _current !== DRAFT_SENTINEL && _current !== ALL_SENTINEL;
+        },
+        /**
+         * 2026-05-20 — resolve a target project name for write-side
+         * operations (Plan / Apply / Destroy). Drafts that have already
+         * been saved expose `draftProject` so the Deploy pipeline can keep
+         * working while the operator stays in draft mode. Returns null
+         * when there's nothing actionable (true empty draft, no selection).
+         */
+        effectiveProject() {
+            if (this.isDraft() && _draftProject) return _draftProject;
+            if (this.isExisting()) return _current;
+            return null;
         },
         /**
          * Friendly label for the current value. Sentinels (`__draft__`,
@@ -2071,19 +2111,35 @@ APP.activeDeployment = (function () {
          * surfaces the active deployment name should route through this
          * helper instead of reading `.current` directly.
          *
-         * - `__draft__` → "Draft (unnamed)"
-         * - `__all__`   → "All deployments"
-         * - real name   → the name itself
-         * - null/empty  → ""
+         * - `__draft__` with draftProject → "Draft: <name>"
+         * - `__draft__` (no name yet)     → "Draft (unnamed)"
+         * - `__all__`                     → "All deployments"
+         * - real name                     → the name itself
+         * - null/empty                    → ""
          */
         displayName(value) {
             const v = arguments.length > 0 ? value : _current;
-            if (v === DRAFT_SENTINEL) return 'Draft (unnamed)';
+            if (v === DRAFT_SENTINEL) {
+                return _draftProject ? `Draft: ${_draftProject}` : 'Draft (unnamed)';
+            }
             if (v === ALL_SENTINEL)   return 'All deployments';
             return v || '';
         },
         set(name) {
             if (_current === name) return;
+            // 2026-05-20 — When the operator picks a different option
+            // (real project, All, or null) the in-progress draft is
+            // implicitly discarded. Only re-entering draft sentinel via
+            // "+ New Deployment" should preserve any draftProject — but
+            // even then a brand-new draft starts fresh, so we clear it
+            // unconditionally on every non-no-op .set().
+            if (name !== DRAFT_SENTINEL) {
+                _draftProject = null;
+            }
+            // Deployment type is invalidated on any switch — _refreshGlobalDeployments
+            // / APP._setActiveDeploymentType() will repopulate from the cache
+            // when the new project lands in the dropdown.
+            _deploymentType = null;
             _current = name;
             _persist(name);
             _subscribers.forEach(fn => {
@@ -2133,17 +2189,49 @@ APP.computeVisibleSubPills = function (active) {
     const isDraft    = active.isDraft();
     const isAll      = active.isAll();
     const isExisting = active.isExisting();
+    // 2026-05-20 — deployment-type-aware visibility. Bolt-ons configure
+    // the AD lab, so they're only relevant when the active deployment
+    // has a GOAD component (goad-* or combined-*). For pure c2-* the
+    // pill is hidden because there's no AD lab to bolt onto.
+    const type = (active.deployment_type || '').toLowerCase();
+    const isC2only   = isExisting && type.startsWith('c2-');
+    const isGoadOnly = isExisting && type.startsWith('goad-');
+    const isCombined = isExisting && type.startsWith('combined-');
     // Cleanup is an orphan-resource viewer that's relevant in every mode —
     // it scans the whole account, not a specific deployment. Always append.
     const base = isDraft
         ? ['configure', 'deploy']
         : isAll
             ? ['manage']
-            : isExisting
-                ? ['manage', 'bolt-ons']
-                : ['manage']; // empty — Manage with "Pick or create" CTA
+            : isC2only
+                ? ['manage']
+                : (isGoadOnly || isCombined)
+                    ? ['manage', 'bolt-ons']
+                    : ['manage']; // empty / unknown — Manage with CTA
     base.push('cleanup');
     return base;
+};
+
+/**
+ * 2026-05-20 — Decide whether the top-level Operations rail item + tab
+ * should be visible at all. Operations (Beacons / Terminal / Payloads)
+ * only makes sense when there's a Cobalt Strike team server in play —
+ * c2-* and combined-* deployments. goad-* labs have no C2 to beacon
+ * against, so Operations is hidden entirely (rail group + legacy shim
+ * tab button get `hidden`).
+ *
+ * Returns true only when the active deployment is an existing C2 or
+ * combined deployment. Draft / All / empty / GOAD all return false.
+ *
+ * @param {object} active - APP.activeDeployment
+ * @returns {boolean}
+ */
+APP.computeOperationsVisible = function (active) {
+    if (!active || !active.isExisting || !active.isExisting()) return false;
+    const type = (active.deployment_type || '').toLowerCase();
+    const isC2only   = type.startsWith('c2-');
+    const isCombined = type.startsWith('combined-');
+    return isC2only || isCombined;
 };
 
 /**
@@ -2223,6 +2311,35 @@ APP.subPills = APP.subPills || {
             if (fallback && visibleSet.has(fallback)) {
                 APP.setActiveSubPill('deployments-tab', fallback);
             }
+        }
+
+        // 2026-05-20 — Operations top-level visibility. The whole rail
+        // group + legacy shim tab button get `hidden` when the active
+        // deployment has no C2 component (goad-* / draft / empty / All).
+        // If the operator was viewing Operations and it just became
+        // hidden, snap them back to Deployments → Manage so they're not
+        // stranded on an invisible pane.
+        const opsVisible = APP.computeOperationsVisible(APP.activeDeployment);
+        const opsRailGroup = document.querySelector('.app-rail__group[data-rail-group="operations-tab"]');
+        const opsLegacyTab = document.querySelector('.tab-btn[data-target="operations-tab"]');
+        if (opsRailGroup) {
+            if (opsVisible) {
+                opsRailGroup.removeAttribute('hidden');
+                opsRailGroup.removeAttribute('aria-hidden');
+            } else {
+                opsRailGroup.setAttribute('hidden', '');
+                opsRailGroup.setAttribute('aria-hidden', 'true');
+            }
+        }
+        if (opsLegacyTab) {
+            if (opsVisible) {
+                opsLegacyTab.removeAttribute('hidden');
+            } else {
+                opsLegacyTab.setAttribute('hidden', '');
+            }
+        }
+        if (snap && !opsVisible && APP.currentPage === 'operations-tab') {
+            try { APP.navigateTo('deployments-tab', 'manage'); } catch (_) { /* noop */ }
         }
 
         // Toggle scoped/all-mode containers in each sub-pill pane so the
@@ -2422,6 +2539,11 @@ APP.activeDeployment.subscribe(() => {
 // active pill is no longer in the visible set we MUST snap to the mode
 // default — otherwise the operator is stranded on a hidden pane.
 APP.activeDeployment.subscribe(() => {
+    // 2026-05-20 — refresh the deployment_type from the global cache
+    // BEFORE the sub-pill visibility recompute. Without this the first
+    // computeVisibleSubPills() call after .set() would always see
+    // deployment_type === null and fall through to the "unknown" branch.
+    try { APP._setActiveDeploymentType(); } catch (_) { /* noop */ }
     if (APP.subPills && typeof APP.subPills.applyFromState === 'function') {
         try { APP.subPills.applyFromState({ snap: true }); }
         catch (e) { console.error('[subPills] applyFromState error', e); }
@@ -3100,6 +3222,41 @@ document.addEventListener('DOMContentLoaded', () => {
 let _globalHeaderDeployments = [];
 
 /**
+ * 2026-05-20 — Sync APP.activeDeployment.deployment_type from the global
+ * deployments cache. Called whenever the active project changes (via the
+ * activeDeployment subscriber) AND whenever the cache itself refreshes
+ * (so a project that lands AFTER it became active still gets its type
+ * populated — covers the "just-Applied, dropdown hasn't refreshed yet"
+ * gap).
+ *
+ * Sentinels (`__draft__`, `__all__`) and null clear the type to null.
+ * Unknown project names (not in the cache yet) also clear — Bolt-ons and
+ * Operations stay hidden until the cache catches up rather than guessing
+ * the wrong visibility (fail-closed).
+ */
+APP._setActiveDeploymentType = function _setActiveDeploymentType() {
+    const active = APP.activeDeployment;
+    if (!active || !active.isExisting || !active.isExisting()) {
+        active.deployment_type = null;
+        return;
+    }
+    const name = active.current;
+    const match = Array.isArray(_globalHeaderDeployments)
+        ? _globalHeaderDeployments.find(d => d && d.project_name === name)
+        : null;
+    if (!match) {
+        // Cache miss — leave whatever was already there if it's the same
+        // project we're tracking; otherwise null. This handles the gap
+        // between Apply-success (flips current → draftProject) and the
+        // next /api/deploy/active refresh that adds it to the cache.
+        active.deployment_type = active.deployment_type || null;
+        return;
+    }
+    const type = match.deployment_type || match.engagement_type || null;
+    active.deployment_type = type;
+};
+
+/**
  * D1.3 — Initialise the global header: combobox + cost chip + click handlers.
  * Idempotent — safe to call multiple times (e.g. on hot-reload).
  */
@@ -3152,6 +3309,12 @@ function initGlobalHeader() {
     // APP.journey.open(). The journey opens against draft state — no
     // existing deployment is referenced.
     const startDraftFlow = (trigger) => {
+        // 2026-05-20 — clear any lingering draftProject from a previous
+        // "+ New" click so the new draft starts fresh. .set() guards
+        // against a no-op when current is already DRAFT_SENTINEL — so we
+        // must wipe explicitly here in case the operator clicks "+ New"
+        // while already mid-draft.
+        if (APP.activeDeployment) APP.activeDeployment.draftProject = null;
         // 1) Pin draft sentinel — drops the operator into "creating a new
         //    one" mode. Subscribers (sub-pill visibility, URL) re-fire.
         APP.activeDeployment.set(APP.activeDeployment.DRAFT_SENTINEL);
@@ -4292,6 +4455,10 @@ async function _refreshGlobalDeployments() {
         // Endpoint unreachable — render empty state below.
     }
     _globalHeaderDeployments = deployments;
+    // 2026-05-20 — populate deployment_type now that the cache is fresh.
+    // Covers the "current was set BEFORE the cache loaded" race (e.g. on
+    // initial boot, or just after an Apply-success flip from draftProject).
+    try { APP._setActiveDeploymentType(); } catch (_) { /* noop */ }
 
     listbox.innerHTML = '';
 
@@ -4311,11 +4478,14 @@ async function _refreshGlobalDeployments() {
         draftOption.setAttribute('aria-selected', 'true');
         const nameSpan = document.createElement('span');
         nameSpan.className = 'global-header__combobox-option-name';
-        nameSpan.textContent = 'Draft (unnamed)';
+        // 2026-05-20 — surface "Draft: <project>" when the operator has
+        // saved a draft (but not yet Applied) so the dropdown matches the
+        // hero pill + breadcrumbs everywhere else.
+        nameSpan.textContent = APP.activeDeployment.displayName();
         draftOption.appendChild(nameSpan);
         const badge = document.createElement('span');
         badge.className = 'global-header__combobox-option-status global-header__combobox-option-status--draft';
-        badge.textContent = 'new';
+        badge.textContent = APP.activeDeployment.draftProject ? 'saved' : 'new';
         draftOption.appendChild(badge);
         draftOption.addEventListener('mouseenter', () => _setActiveOption(draftOption));
         draftOption.addEventListener('click', (e) => {
@@ -4426,8 +4596,10 @@ async function _refreshGlobalDeployments() {
 
     // 2026-05-19 — Render a human-readable label for sentinels in the
     // trigger button. Real project names render as-is.
+    // 2026-05-20 — use displayName() so draftProject surfaces as
+    // "Draft: <name>" instead of the bare "Draft (unnamed)".
     if (selected === APP.activeDeployment.DRAFT_SENTINEL) {
-        valueEl.textContent = 'Draft (unnamed)';
+        valueEl.textContent = APP.activeDeployment.displayName(APP.activeDeployment.DRAFT_SENTINEL);
     } else if (selected === APP.activeDeployment.ALL_SENTINEL) {
         valueEl.textContent = 'All deployments';
     } else {
@@ -4578,8 +4750,10 @@ function _selectGlobalOption(li) {
     });
     const value = li.dataset.value || '';
     // 2026-05-19 — Human label for sentinels.
+    // 2026-05-20 — Use displayName() so the draft "Draft: <name>" label
+    // stays consistent across the dropdown trigger and listbox items.
     if (value === APP.activeDeployment.DRAFT_SENTINEL) {
-        valueEl.textContent = 'Draft (unnamed)';
+        valueEl.textContent = APP.activeDeployment.displayName(APP.activeDeployment.DRAFT_SENTINEL);
     } else if (value === APP.activeDeployment.ALL_SENTINEL) {
         valueEl.textContent = 'All deployments';
     } else {
@@ -12441,6 +12615,18 @@ APP.configureV2 = (function () {
         state.ssh = DEFAULTS.ssh;
         state.confirmed.clear();
         state.mode = 'draft';
+        // 2026-05-20 — clear any in-progress draftProject so the dropdown
+        // label reverts to "Draft (unnamed)" and Deploy stops finding a
+        // target. The operator is explicitly throwing away their work.
+        if (APP.activeDeployment) {
+            APP.activeDeployment.draftProject = null;
+            try {
+                const valueEl = document.getElementById('global-deploy-value');
+                if (valueEl && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft()) {
+                    valueEl.textContent = 'Draft (unnamed)';
+                }
+            } catch (_) { /* noop */ }
+        }
 
         $$('#cfg-family-row .cfg-family-btn').forEach(b => {
             b.classList.toggle('is-active', b.dataset.cfgFamily === DEFAULTS.family);
@@ -12935,14 +13121,18 @@ HTTP/1.1 200 OK
                 const heroPill = $('#cfg-hero-pill');
                 if (hero) hero.classList.remove('is-placeholder');
                 if (heroText) heroText.textContent = config.project_name;
+                // 2026-05-20 — Save stays in DRAFT mode until Apply succeeds.
+                // The pill stays "Draft" so the operator can see they still
+                // need to Apply; flipping to LIVE pre-Apply would lie about
+                // what's actually deployed in AWS.
                 if (heroPill) {
-                    heroPill.textContent = 'LIVE';
-                    heroPill.classList.remove('cfg-hero__pill--draft');
-                    heroPill.classList.add('cfg-hero__pill--live');
+                    heroPill.textContent = 'Draft';
+                    heroPill.classList.remove('cfg-hero__pill--live');
+                    heroPill.classList.add('cfg-hero__pill--draft');
                 }
                 const modeEl = $('#cfg-mode');
-                if (modeEl) modeEl.textContent = 'Saved · edit via Manage';
-                if (APP && APP.toast) APP.toast('Configuration saved — switching to Manage.', 'success');
+                if (modeEl) modeEl.textContent = 'Saved · go to Deploy';
+                if (APP && APP.toast) APP.toast('Configuration saved — head to Deploy to Apply.', 'success');
                 // Defence in depth — legacy code paths (startDeployment fallback,
                 // legacy edit form) still read these hidden inputs. Sync them so
                 // any path that bypasses APP.activeDeployment still sees the
@@ -12953,9 +13143,30 @@ HTTP/1.1 200 OK
                     const legacyType = document.getElementById('deployment-type');
                     if (legacyType && config.deployment_type) legacyType.value = config.deployment_type;
                 } catch (_) { /* DOM may be missing during tests */ }
-                // Transition activeDeployment so sub-pill nav flips.
-                if (APP.activeDeployment && APP.activeDeployment.set) {
-                    APP.activeDeployment.set(config.project_name);
+                // 2026-05-20 — Do NOT flip to existing-mode here. Instead
+                // stash the project_name in `draftProject` so the Deploy
+                // pipeline can target it via effectiveProject() while the
+                // operator stays in draft mode. The activeDeployment.set()
+                // flip happens only on Apply-success (in pollDeploymentStatus).
+                if (APP.activeDeployment) {
+                    APP.activeDeployment.draftProject = config.project_name;
+                    // Re-fire subscribers so the global header label + sub-pill
+                    // hiding logic re-renders with the new draftProject. We're
+                    // already in draft sentinel so .set() would no-op; manually
+                    // poke the visibility helpers instead.
+                    try {
+                        if (APP.subPills && typeof APP.subPills.applyFromState === 'function') {
+                            APP.subPills.applyFromState();
+                        }
+                    } catch (_) { /* noop */ }
+                    // Refresh the global header dropdown label so it reads
+                    // "Draft: <project>" instead of "Draft (unnamed)".
+                    try {
+                        const valueEl = document.getElementById('global-deploy-value');
+                        if (valueEl && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft()) {
+                            valueEl.textContent = APP.activeDeployment.displayName();
+                        }
+                    } catch (_) { /* noop */ }
                 }
             } else {
                 if (APP && APP.toast) APP.toast('Save failed: ' + (data.error || 'unknown error'), 'danger', 8000);
@@ -13401,17 +13612,17 @@ async function validateAndUnlockDeploy() {
     if (!btn) return;
 
     // V3 per-project gate — Validate must read configs/<project>.tfvars,
-    // not the legacy global tfvars. Drafts have nothing saved yet; the
-    // "All" sentinel is a fleet view. Both should prompt the operator to
-    // pick a saved deployment first.
-    const active = APP.activeDeployment && APP.activeDeployment.current;
-    const isDraft = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+    // not the legacy global tfvars. effectiveProject() returns `current`
+    // for existing deployments, or `draftProject` for saved drafts; null
+    // for empty drafts / All / nothing picked.
+    const active = APP.activeDeployment && APP.activeDeployment.effectiveProject
+        ? APP.activeDeployment.effectiveProject() : null;
     const isAll = APP.activeDeployment && APP.activeDeployment.isAll && APP.activeDeployment.isAll();
-    if (!active || isDraft || isAll) {
+    if (!active || isAll) {
         if (hint) {
             hint.classList.remove('deploy-action-hint--success');
             hint.classList.add('deploy-action-hint--error');
-            hint.textContent = 'Pick a saved deployment from the top bar first (or Save your draft in Configure).';
+            hint.textContent = 'Save your draft first (Configure → Save), or pick a saved deployment from the top bar.';
         }
         _setDeployActionsEnabled(false);
         return;
@@ -15364,6 +15575,24 @@ async function fetchAndUpdateDeploymentStatus() {
             sessionStorage.setItem('activeDeploymentProjects', JSON.stringify([...window.activeDeploymentProjects]));
             if (!window.currentDeploymentProject) sessionStorage.removeItem('activeDeploymentProject');
 
+            // 2026-05-20 — Apply-success flips draft → existing mode. The
+            // operator's saved draft (project_name in `draftProject`) now
+            // has real infrastructure backing it, so promote it to
+            // `current` and clear the staging slot. Sub-pill nav
+            // re-renders via the activeDeployment subscriber.
+            if (status.status === 'success' && APP.activeDeployment
+                && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft()
+                && APP.activeDeployment.draftProject
+                && APP.activeDeployment.draftProject === finishedProject) {
+                const promoted = APP.activeDeployment.draftProject;
+                APP.activeDeployment.draftProject = null;
+                APP.activeDeployment.set(promoted);
+                // Refresh the dropdown so the new project shows up under
+                // its real name (not "Draft: ...") and its deployment_type
+                // gets populated from /api/deploy/active.
+                try { _refreshGlobalDeployments(); } catch (_) { /* noop */ }
+            }
+
             // Auto-trigger setup check 3 minutes after successful deploy
             if (status.status === 'success' && !window._setupCheckScheduled) {
                 window._setupCheckScheduled = true;
@@ -16043,14 +16272,16 @@ async function cancelDeployment() {
 }
 
 async function startDeployment() {
-    // V3 per-project gate — Apply must target the dashboard's currently
-    // active deployment. Drafts have no on-disk tfvars (Save first), and
-    // the "All deployments" sentinel is a fleet view with no single target.
-    const active = APP.activeDeployment && APP.activeDeployment.current;
-    const isDraft = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+    // V3 per-project gate — Apply must target either an existing deployment
+    // (real project_name in `current`) OR a saved-but-not-yet-Applied draft
+    // (project_name stashed in `draftProject`). effectiveProject() returns
+    // the right one. "All deployments" sentinel is a fleet view with no
+    // single target. Empty drafts (no Save yet) bail out with a hint.
+    const active = APP.activeDeployment && APP.activeDeployment.effectiveProject
+        ? APP.activeDeployment.effectiveProject() : null;
     const isAll = APP.activeDeployment && APP.activeDeployment.isAll && APP.activeDeployment.isAll();
-    if (!active || isDraft || isAll) {
-        if (APP && APP.toast) APP.toast('Pick a saved deployment from the top bar first (or Save your draft in Configure).', 'danger', 6000);
+    if (!active || isAll) {
+        if (APP && APP.toast) APP.toast('Save your draft first (Configure → Save), or pick a saved deployment from the top bar.', 'danger', 6000);
         return;
     }
 
@@ -16295,11 +16526,13 @@ function resetPlanAndRetry() {
 async function runPlan() {
     // V3 per-project gate — Plan must target a real saved deployment so
     // the backend reads configs/<project>.tfvars (not the stale global one).
-    const active = APP.activeDeployment && APP.activeDeployment.current;
-    const isDraft = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+    // effectiveProject() returns `current` for existing deployments, or
+    // `draftProject` for saved-but-not-yet-Applied drafts.
+    const active = APP.activeDeployment && APP.activeDeployment.effectiveProject
+        ? APP.activeDeployment.effectiveProject() : null;
     const isAll = APP.activeDeployment && APP.activeDeployment.isAll && APP.activeDeployment.isAll();
-    if (!active || isDraft || isAll) {
-        if (APP && APP.toast) APP.toast('Pick a saved deployment from the top bar first (or Save your draft in Configure).', 'danger', 6000);
+    if (!active || isAll) {
+        if (APP && APP.toast) APP.toast('Save your draft first (Configure → Save), or pick a saved deployment from the top bar.', 'danger', 6000);
         return;
     }
 

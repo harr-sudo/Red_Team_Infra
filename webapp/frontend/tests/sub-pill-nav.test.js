@@ -14,42 +14,76 @@ const APP = {};
 APP.activeDeployment = (function() {
     const DRAFT_SENTINEL = '__draft__';
     const ALL_SENTINEL = '__all__';
-    const state = { current: null };
+    const state = { current: null, deployment_type: null, draftProject: null };
     return {
         DRAFT_SENTINEL, ALL_SENTINEL,
         get current() { return state.current; },
+        get deployment_type() { return state.deployment_type; },
+        set deployment_type(v) { state.deployment_type = v || null; },
+        get draftProject() { return state.draftProject; },
+        set draftProject(v) { state.draftProject = v || null; },
         isDraft() { return state.current === DRAFT_SENTINEL; },
         isAll() { return state.current === ALL_SENTINEL; },
         isExisting() {
             return !!state.current && state.current !== DRAFT_SENTINEL && state.current !== ALL_SENTINEL;
         },
+        effectiveProject() {
+            if (this.isDraft() && state.draftProject) return state.draftProject;
+            if (this.isExisting()) return state.current;
+            return null;
+        },
         // 2026-05-19 — Sentinel filter for any code that renders the
         // active deployment name. Sentinels (`__draft__`, `__all__`) must
         // NEVER leak into UI text.
+        // 2026-05-20 — "Draft: <name>" when draftProject is set.
         displayName(value) {
             const v = arguments.length > 0 ? value : state.current;
-            if (v === DRAFT_SENTINEL) return 'Draft (unnamed)';
+            if (v === DRAFT_SENTINEL) {
+                return state.draftProject ? `Draft: ${state.draftProject}` : 'Draft (unnamed)';
+            }
             if (v === ALL_SENTINEL)   return 'All deployments';
             return v || '';
         },
-        set(v) { state.current = v || null; },
+        set(v) {
+            // Mirror the live module's reset semantics: any non-no-op .set()
+            // that lands on a value other than the draft sentinel clears
+            // draftProject. deployment_type is invalidated on every switch.
+            if (state.current === v) return;
+            if (v !== DRAFT_SENTINEL) state.draftProject = null;
+            state.deployment_type = null;
+            state.current = v || null;
+        },
     };
 })();
 
-APP.computeVisibleSubPills = function(activeDeployment) {
-    const isDraft    = activeDeployment.isDraft();
-    const isAll      = activeDeployment.isAll();
-    const isExisting = activeDeployment.isExisting();
+APP.computeVisibleSubPills = function(active) {
+    const isDraft    = active.isDraft();
+    const isAll      = active.isAll();
+    const isExisting = active.isExisting();
+    // 2026-05-20 — deployment-type-aware visibility. Bolt-ons hide for
+    // c2-* (no AD lab to configure); Operations hides for goad-* (no C2).
+    const type = (active.deployment_type || '').toLowerCase();
+    const isC2only   = isExisting && type.startsWith('c2-');
+    const isGoadOnly = isExisting && type.startsWith('goad-');
+    const isCombined = isExisting && type.startsWith('combined-');
     // Cleanup is universal — always available regardless of mode.
     const base = isDraft
         ? ['configure', 'deploy']
         : isAll
             ? ['manage']
-            : isExisting
-                ? ['manage', 'bolt-ons']
-                : ['manage'];
+            : isC2only
+                ? ['manage']
+                : (isGoadOnly || isCombined)
+                    ? ['manage', 'bolt-ons']
+                    : ['manage'];
     base.push('cleanup');
     return base;
+};
+
+APP.computeOperationsVisible = function(active) {
+    if (!active.isExisting()) return false;
+    const type = (active.deployment_type || '').toLowerCase();
+    return type.startsWith('c2-') || type.startsWith('combined-');
 };
 
 APP.parseDeploymentsHash = function(hash) {
@@ -99,7 +133,60 @@ eq('all → [manage, cleanup]', APP.computeVisibleSubPills(APP.activeDeployment)
 
 APP.activeDeployment.set('c2_adhoc_dev_harriss_macbook_pro_01');
 ok('existing → isExisting', APP.activeDeployment.isExisting());
-eq('existing → [manage, bolt-ons, cleanup]', APP.computeVisibleSubPills(APP.activeDeployment), ['manage', 'bolt-ons', 'cleanup']);
+// 2026-05-20 — without a known deployment_type we fall through to the
+// "unknown" branch (Manage + Cleanup only). Bolt-ons stay hidden until
+// the deployment_type cache resolves to goad-* or combined-*.
+eq('existing (no type) → [manage, cleanup]', APP.computeVisibleSubPills(APP.activeDeployment), ['manage', 'cleanup']);
+
+// 2026-05-20 — deployment-type-aware visibility cases.
+console.log('\n=== Deployment-type-aware sub-pill visibility ===');
+APP.activeDeployment.set('proj_c2');
+APP.activeDeployment.deployment_type = 'c2-adhoc';
+eq('existing c2-* → [manage, cleanup]', APP.computeVisibleSubPills(APP.activeDeployment), ['manage', 'cleanup']);
+ok('existing c2-* → Operations visible', APP.computeOperationsVisible(APP.activeDeployment) === true);
+
+APP.activeDeployment.set('proj_goad');
+APP.activeDeployment.deployment_type = 'goad-mini';
+eq('existing goad-* → [manage, bolt-ons, cleanup]', APP.computeVisibleSubPills(APP.activeDeployment), ['manage', 'bolt-ons', 'cleanup']);
+ok('existing goad-* → Operations hidden', APP.computeOperationsVisible(APP.activeDeployment) === false);
+
+APP.activeDeployment.set('proj_combined');
+APP.activeDeployment.deployment_type = 'combined-adhoc-mini';
+eq('existing combined-* → [manage, bolt-ons, cleanup]', APP.computeVisibleSubPills(APP.activeDeployment), ['manage', 'bolt-ons', 'cleanup']);
+ok('existing combined-* → Operations visible', APP.computeOperationsVisible(APP.activeDeployment) === true);
+
+// Sentinels never expose Operations regardless of any stale type.
+APP.activeDeployment.set('__draft__');
+ok('draft → Operations hidden', APP.computeOperationsVisible(APP.activeDeployment) === false);
+APP.activeDeployment.set('__all__');
+ok('all → Operations hidden', APP.computeOperationsVisible(APP.activeDeployment) === false);
+APP.activeDeployment.set(null);
+ok('empty → Operations hidden', APP.computeOperationsVisible(APP.activeDeployment) === false);
+
+console.log('\n=== Draft-with-draftProject (saved-but-not-yet-Applied) ===');
+APP.activeDeployment.set('__draft__');
+APP.activeDeployment.draftProject = 'my_pending_lab';
+ok('draft with draftProject → still isDraft', APP.activeDeployment.isDraft());
+eq('draft with draftProject → [configure, deploy, cleanup]',
+   APP.computeVisibleSubPills(APP.activeDeployment),
+   ['configure', 'deploy', 'cleanup']);
+eq('effectiveProject() returns draftProject', APP.activeDeployment.effectiveProject(), 'my_pending_lab');
+eq('displayName surfaces "Draft: <name>"', APP.activeDeployment.displayName(), 'Draft: my_pending_lab');
+
+// Picking a different dropdown option must wipe the draftProject.
+APP.activeDeployment.set('other_real_project');
+ok('picking real project → draftProject cleared', APP.activeDeployment.draftProject === null);
+ok('picking real project → !isDraft', !APP.activeDeployment.isDraft());
+
+// Picking All also wipes the draft.
+APP.activeDeployment.set('__draft__');
+APP.activeDeployment.draftProject = 'will_be_lost';
+APP.activeDeployment.set('__all__');
+ok('picking All → draftProject cleared', APP.activeDeployment.draftProject === null);
+
+// effectiveProject() returns null when the operator is in an empty draft.
+APP.activeDeployment.set('__draft__');
+ok('empty draft → effectiveProject null', APP.activeDeployment.effectiveProject() === null);
 
 console.log('\n=== Draft state lifecycle ===');
 APP.activeDeployment.set('__draft__');
@@ -118,6 +205,9 @@ APP.activeDeployment.set(null);
 eq('null → ""', APP.activeDeployment.displayName(), '');
 APP.activeDeployment.set('__draft__');
 eq('draft → "Draft (unnamed)"', APP.activeDeployment.displayName(), 'Draft (unnamed)');
+APP.activeDeployment.draftProject = 'pending_lab';
+eq('draft with draftProject → "Draft: pending_lab"', APP.activeDeployment.displayName(), 'Draft: pending_lab');
+APP.activeDeployment.draftProject = null;
 APP.activeDeployment.set('__all__');
 eq('all → "All deployments"', APP.activeDeployment.displayName(), 'All deployments');
 APP.activeDeployment.set('myproj');
@@ -169,14 +259,23 @@ ok('draft: manage hidden', draftPills[2].hasAttribute('hidden'));
 ok('draft: cleanup visible (no [hidden])', !draftPills[3].hasAttribute('hidden'));
 ok('draft: bolt-ons hidden', draftPills[4].hasAttribute('hidden'));
 
-APP.activeDeployment.set('myproj');
-const existingPills = ['configure', 'deploy', 'manage', 'cleanup', 'bolt-ons'].map(makePillStub);
-applyVisibility(new Set(APP.computeVisibleSubPills(APP.activeDeployment)), existingPills);
-ok('existing: configure hidden', existingPills[0].hasAttribute('hidden'));
-ok('existing: deploy hidden', existingPills[1].hasAttribute('hidden'));
-ok('existing: manage visible', !existingPills[2].hasAttribute('hidden'));
-ok('existing: cleanup visible', !existingPills[3].hasAttribute('hidden'));
-ok('existing: bolt-ons visible', !existingPills[4].hasAttribute('hidden'));
+// 2026-05-20 — existing c2-* deployment hides Bolt-ons too.
+APP.activeDeployment.set('myproj_c2');
+APP.activeDeployment.deployment_type = 'c2-adhoc';
+const existingC2Pills = ['configure', 'deploy', 'manage', 'cleanup', 'bolt-ons'].map(makePillStub);
+applyVisibility(new Set(APP.computeVisibleSubPills(APP.activeDeployment)), existingC2Pills);
+ok('existing c2: configure hidden', existingC2Pills[0].hasAttribute('hidden'));
+ok('existing c2: deploy hidden', existingC2Pills[1].hasAttribute('hidden'));
+ok('existing c2: manage visible', !existingC2Pills[2].hasAttribute('hidden'));
+ok('existing c2: cleanup visible', !existingC2Pills[3].hasAttribute('hidden'));
+ok('existing c2: bolt-ons hidden', existingC2Pills[4].hasAttribute('hidden'));
+
+APP.activeDeployment.set('myproj_goad');
+APP.activeDeployment.deployment_type = 'goad-mini';
+const existingGoadPills = ['configure', 'deploy', 'manage', 'cleanup', 'bolt-ons'].map(makePillStub);
+applyVisibility(new Set(APP.computeVisibleSubPills(APP.activeDeployment)), existingGoadPills);
+ok('existing goad: manage visible', !existingGoadPills[2].hasAttribute('hidden'));
+ok('existing goad: bolt-ons visible', !existingGoadPills[4].hasAttribute('hidden'));
 
 APP.activeDeployment.set('__all__');
 const allPills = ['configure', 'deploy', 'manage', 'cleanup', 'bolt-ons'].map(makePillStub);
