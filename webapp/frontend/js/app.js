@@ -2115,6 +2115,23 @@ APP.activeDeployment = (function () {
             return !!_current && _current !== DRAFT_SENTINEL && _current !== ALL_SENTINEL;
         },
         /**
+         * 2026-05-20 (UX audit Batch A · P2) — sentinel filter helper.
+         * Returns true when the given string is a real, user-visible project
+         * name; false for null/empty/undefined and for the two sentinels
+         * (`__draft__`, `__all__`). Use at every renderer that iterates the
+         * deployment list and writes user-visible UI:
+         *
+         *   if (!APP.activeDeployment.isUserVisibleProject(name)) continue;
+         *
+         * Single source of truth for "is this safe to render as a project name".
+         */
+        isUserVisibleProject(name) {
+            return !!name
+                && typeof name === 'string'
+                && name !== DRAFT_SENTINEL
+                && name !== ALL_SENTINEL;
+        },
+        /**
          * 2026-05-20 — resolve a target project name for write-side
          * operations (Plan / Apply / Destroy). Drafts that have already
          * been saved expose `draftProject` so the Deploy pipeline can keep
@@ -3334,8 +3351,15 @@ function initGlobalHeader() {
         brandMark.dataset.ghWired = '1';
     }
 
-    // Refresh cost whenever the active deployment changes.
-    APP.activeDeployment.subscribe(_refreshGlobalCost);
+    // Cost chip renders FROM CACHE ONLY on deployment change. Never hits
+    // the backend on a subscriber event — Cost Explorer is billed per
+    // request and the operator's cost-tracker is a daily-updated read,
+    // not a real-time signal. The chip refreshes only when:
+    //   - operator explicitly clicks the Refresh button on the cost overlay
+    //   - the on-demand cache TTL in cost_service.py (24h) expires AND
+    //     the operator opens the cost overlay
+    // 2026-05-20 — incident response (see fix commit 0138f94).
+    APP.activeDeployment.subscribe((name) => _refreshGlobalCost(name, { cacheOnly: true }));
 
     // 2026-05-19 (deployments nav restructure) — Wire the "+ New" button.
     // Sets the draft sentinel (so the dropdown pins "Draft (unnamed)" and
@@ -3395,6 +3419,20 @@ function initGlobalHeader() {
                 try { APP.journey.close({ confirmIfDirty: false }); } catch (_) { /* noop */ }
             }
             APP.activeDeployment.set(null);
+            // 2026-05-20 (UX audit Batch A · H1 + H4) — belt-and-braces:
+            // applyFromState() via the subscriber SHOULD hide the banner
+            // and refresh the context hint, but if a re-entrant path skips
+            // the subscriber (e.g. set() short-circuits because _current
+            // was already null) the operator is left with stale UI. Call
+            // the surfaces explicitly so Discard is always a clean reset.
+            const discardBanner = document.getElementById('configure-discard-draft');
+            if (discardBanner) discardBanner.hidden = true;
+            if (typeof _refreshConfigureContextBanner === 'function') {
+                _refreshConfigureContextBanner(APP.activeDeployment.current);
+            }
+            if (APP.configureV2 && typeof APP.configureV2.applyDraftMode === 'function') {
+                APP.configureV2.applyDraftMode();
+            }
         });
         discardBtn.dataset.ghWired = '1';
     }
@@ -3408,6 +3446,17 @@ function initGlobalHeader() {
     // to "Editing: <project>" when an active deployment is set. Subscribed
     // once; the subscriber runs immediately + on every change.
     APP.activeDeployment.subscribe(_refreshConfigureContextBanner);
+    // 2026-05-20 (UX audit Batch A · H1) — dedicated reactive subscriber for
+    // the Discard draft banner. _applyPaneVisibility() already toggles this,
+    // but coupling it directly to the active deployment guarantees the banner
+    // is ALWAYS in sync regardless of which page is current. The banner
+    // should be visible ONLY when APP.activeDeployment.isDraft() is true.
+    APP.activeDeployment.subscribe(() => {
+        const discardBanner = document.getElementById('configure-discard-draft');
+        if (!discardBanner) return;
+        const isDraft = APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+        discardBanner.hidden = !isDraft;
+    });
 }
 
 /**
@@ -4600,6 +4649,11 @@ async function _refreshGlobalDeployments() {
     }
 
     deployments.forEach((d, idx) => {
+        // 2026-05-20 (UX audit Batch A · P2) — never render a sentinel as a
+        // real project entry. Draft + All are pinned above via dedicated
+        // options; if a sentinel name ever slipped into the backend payload
+        // it would shadow those pins. Single guard, single source of truth.
+        if (!APP.activeDeployment.isUserVisibleProject(d.project_name)) return;
         const li = document.createElement('li');
         li.className = 'global-header__combobox-option';
         li.setAttribute('role', 'option');
@@ -4813,7 +4867,7 @@ function _selectGlobalOption(li) {
  *
  * Defensive: any failure → "—" + a title tooltip. Never throws.
  */
-async function _refreshGlobalCost(projectName) {
+async function _refreshGlobalCost(projectName, opts = {}) {
     const amount = document.getElementById('global-cost-amount');
     const chip = document.getElementById('global-cost-chip');
     if (!amount) return;
@@ -4824,8 +4878,10 @@ async function _refreshGlobalCost(projectName) {
         return;
     }
 
-    // Cache check.
-    const CACHE_TTL_MS = 5 * 60 * 1000;
+    // 2026-05-20 — Cache TTL bumped to 24h to match the backend's daily
+    // refresh model. Cost Explorer source data updates daily anyway, so
+    // tighter values just burn $0.01/call for no operator benefit.
+    const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
     const CACHE_KEY = `globalCost:${projectName}`;
     try {
         const raw = sessionStorage.getItem(CACHE_KEY);
@@ -4838,6 +4894,17 @@ async function _refreshGlobalCost(projectName) {
             }
         }
     } catch (e) { /* ignore cache errors */ }
+
+    // 2026-05-20 — Strict on-demand model. Subscriber-driven refreshes
+    // (dropdown changes, Save success, Apply success) pass cacheOnly:true
+    // so they NEVER hit the backend — they just render whatever was last
+    // in sessionStorage. Backend hits ONLY when the operator opens the
+    // Cost overlay or clicks the Refresh button (both pass cacheOnly:false).
+    if (opts.cacheOnly) {
+        amount.textContent = '—';
+        if (chip) chip.title = `No cached cost for ${projectName}. Open Cost Tracker to refresh.`;
+        return;
+    }
 
     try {
         const resp = await fetch(`/api/costs/summary?project=${encodeURIComponent(projectName)}`);
@@ -13391,14 +13458,34 @@ HTTP/1.1 200 OK
             if (legacyAdvanced) legacyAdvanced.style.display = '';
             if (legacyActions) legacyActions.style.display = '';
         } else {
-            // Existing deployment selected — Configure is out-of-mode anyway,
-            // sub-pill nav typically routes to Manage.
+            // 2026-05-20 (UX audit Batch A · C2 fix) — Two cases collapse here:
+            //   a) Existing deployment selected — Configure is out-of-mode anyway,
+            //      sub-pill nav typically routes to Manage. The legacy form acts
+            //      as the Manage edit drawer's source-of-truth so we restore it.
+            //   b) Operator just discarded the draft — APP.activeDeployment was
+            //      set(null). NOTHING should render: the configure-banner empty
+            //      state owns the empty surface; both V2 AND the legacy form
+            //      MUST stay hidden. Previously the else branch re-showed legacy,
+            //      leaving the operator looking at a stale "+ New deployment"
+            //      form alongside the V2 pane the prior render had left up.
             pane.hidden = true;
-            if (legacyBanner) legacyBanner.style.display = '';
-            if (legacySummary) legacySummary.style.display = '';
-            if (legacyEditor) legacyEditor.style.display = '';
-            if (legacyAdvanced) legacyAdvanced.style.display = '';
-            if (legacyActions) legacyActions.style.display = '';
+            pane.classList.remove('is-out-of-mode');
+            const current = APP.activeDeployment && APP.activeDeployment.current;
+            const isExisting = APP.activeDeployment && APP.activeDeployment.isExisting && APP.activeDeployment.isExisting();
+            if (isExisting) {
+                if (legacyBanner) legacyBanner.style.display = '';
+                if (legacySummary) legacySummary.style.display = '';
+                if (legacyEditor) legacyEditor.style.display = '';
+                if (legacyAdvanced) legacyAdvanced.style.display = '';
+                if (legacyActions) legacyActions.style.display = '';
+            } else {
+                // Empty / null / post-discard — keep the surface CLEAN.
+                if (legacyBanner) legacyBanner.style.display = '';   // configure-banner empty state
+                if (legacySummary) legacySummary.style.display = 'none';
+                if (legacyEditor) legacyEditor.style.display = 'none';
+                if (legacyAdvanced) legacyAdvanced.style.display = 'none';
+                if (legacyActions) legacyActions.style.display = 'none';
+            }
         }
     }
 
@@ -29242,7 +29329,15 @@ function _renderActivityRow(e) {
     const color = (op && op.color) || '#7A849E';
     const display = (op && op.display) || e.op || 'unknown';
     const verb = _activityVerb(e.action);
-    const target = e.project || e.target || '';
+    const rawTarget = e.project || e.target || '';
+    // 2026-05-20 (UX audit Batch A · P2) — never surface sentinels as a
+    // human-readable target in the audit feed. The backend should never
+    // log them, but defensive: a misrouted helper that captured the
+    // active deployment as a string would otherwise blast `__draft__` /
+    // `__all__` into the timeline.
+    const target = (APP.activeDeployment && APP.activeDeployment.isUserVisibleProject)
+        ? (APP.activeDeployment.isUserVisibleProject(rawTarget) ? rawTarget : '')
+        : rawTarget;
     const time = _relativeTime(e.ts);
     const targetHtml = target
         ? `<span class="spec-row__value-target">${escapeHtml(target)}</span>`
@@ -30519,6 +30614,16 @@ APP.manageFleet = APP.manageFleet || {
                 ...d,
                 project_name: d.project_name || d._filename || d.name || 'unknown',
             }));
+            // 2026-05-20 (UX audit Batch A · C4) — strip the `__draft__` /
+            // `__all__` sentinels before rendering. The backend never writes
+            // sentinel names to disk, but defensive-in-depth: if a stale or
+            // hand-edited tfvars ever carried one through, the fleet table
+            // would render a row with empty type/cost. Filter once here so
+            // every downstream computation (row, cost, status totals) is safe.
+            const isVis = (APP.activeDeployment && APP.activeDeployment.isUserVisibleProject)
+                ? APP.activeDeployment.isUserVisibleProject.bind(APP.activeDeployment)
+                : (n => !!n && n !== '__draft__' && n !== '__all__');
+            deployments = deployments.filter(d => isVis(d.project_name));
             if (costRes && Array.isArray(costRes.deployments)) {
                 costRes.deployments.forEach(c => {
                     if (c && c.project_name) costs[c.project_name] = c.monthly;
@@ -32833,11 +32938,110 @@ if (typeof window !== 'undefined') {
     }
 
     function _loadingHost(message) {
+        // 2026-05-20 (UX audit Batch A · C3 + L1) — spinner-animated loading
+        // state. .app-overlay__spinner runs a 1s rotate; the CSS
+        // prefers-reduced-motion override falls back to a static dot so the
+        // animation never plays for operators who opt out of motion. The
+        // message column carries the load context ("Loading beacons…", etc).
         const wrap = document.createElement('div');
         wrap.className = 'app-overlay__loading';
-        wrap.innerHTML = `<p class="t-muted" style="margin: 0;">${_esc(message || 'Loading…')}</p>`;
+        wrap.setAttribute('role', 'status');
+        wrap.setAttribute('aria-live', 'polite');
+        wrap.innerHTML = `
+            <span class="app-overlay__spinner" aria-hidden="true"></span>
+            <p class="t-muted app-overlay__loading-text">${_esc(message || 'Loading…')}</p>
+        `;
         return wrap;
     }
+
+    /**
+     * 2026-05-20 (UX audit Batch A · P1 + H5 + C3) — Unified async-body helper.
+     *
+     * Mounts a spinner-animated loading state immediately, awaits the promise
+     * returned by `promiseFactory()`, then swaps in either the resolved content
+     * or an error card (with a retry button) on reject / timeout. Default
+     * timeout is 12000ms so the operator never stares at a stalled spinner.
+     *
+     * Example:
+     *   APP.overlay.openFoo = function () {
+     *       const handle = APP.overlay.open('foo', _loadingHost('Loading…'), { ... });
+     *       APP.overlay._withAsyncBody(handle, () => renderFoo(), {
+     *           loadingMessage: 'Loading foo…',
+     *           errorMessage:   'Could not load foo.',
+     *           timeoutMs: 8000,
+     *       });
+     *       return handle;
+     *   };
+     *
+     * @param {object} handle   - Overlay handle returned by APP.overlay.open()
+     * @param {Function} promiseFactory - () => Promise<Node|string> — called
+     *                                    once on mount and again on Retry.
+     * @param {object} [opts]
+     * @param {number}  [opts.timeoutMs=12000]
+     * @param {string}  [opts.loadingMessage='Loading…']
+     * @param {string}  [opts.errorMessage='Unable to load content.']
+     * @param {string}  [opts.onErrorRetryLabel='Retry']
+     */
+    function _withAsyncBody(handle, promiseFactory, opts) {
+        const o = opts || {};
+        const timeoutMs = (typeof o.timeoutMs === 'number' && o.timeoutMs > 0) ? o.timeoutMs : 12000;
+        const loadingMessage = o.loadingMessage || 'Loading…';
+        const errorMessage = o.errorMessage || 'Unable to load content.';
+        const retryLabel = o.onErrorRetryLabel || 'Retry';
+        if (!handle || typeof handle.update !== 'function') return;
+
+        const run = () => {
+            handle.update(_loadingHost(loadingMessage));
+            let settled = false;
+            let timer = null;
+
+            const swap = (node) => {
+                if (settled) return;
+                settled = true;
+                if (timer) { clearTimeout(timer); timer = null; }
+                handle.update(node);
+            };
+
+            const showError = (reason) => {
+                const card = document.createElement('div');
+                card.className = 'app-overlay__error';
+                card.setAttribute('role', 'alert');
+                const reasonText = reason && reason.message ? reason.message :
+                                   (reason && typeof reason === 'string' ? reason : 'timeout or network error');
+                card.innerHTML = `
+                    <p class="app-overlay__error-msg">${_esc(errorMessage)}</p>
+                    <p class="app-overlay__error-detail t-muted">${_esc(reasonText)}</p>
+                    <div class="app-overlay__footer-actions">
+                        <button type="button" class="btn btn-secondary btn-sm" data-overlay-retry>${_esc(retryLabel)}</button>
+                    </div>
+                `;
+                const retryBtn = card.querySelector('[data-overlay-retry]');
+                if (retryBtn) {
+                    retryBtn.addEventListener('click', () => run());
+                }
+                swap(card);
+            };
+
+            timer = setTimeout(() => {
+                showError(new Error(`Timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+
+            let p;
+            try {
+                p = Promise.resolve(promiseFactory());
+            } catch (e) {
+                showError(e);
+                return;
+            }
+            p.then(node => swap(node))
+             .catch(err => showError(err));
+        };
+
+        run();
+    }
+    // Expose on APP.overlay for cross-module callers (and tests).
+    APP_overlay._withAsyncBody = _withAsyncBody;
+    APP_overlay._loadingHost = _loadingHost;
 
     // ── 1. Active Beacons overlay ──────────────────────────────────────
     async function renderOverlay_Beacons() {
@@ -33009,10 +33213,15 @@ if (typeof window !== 'undefined') {
     }
 
     function _fallbackActivityRow(e) {
+        // 2026-05-20 (UX audit Batch A · P2) — sentinel-filter the target.
+        const rawTarget = e.project || e.target || '';
+        const target = (APP.activeDeployment && APP.activeDeployment.isUserVisibleProject)
+            ? (APP.activeDeployment.isUserVisibleProject(rawTarget) ? rawTarget : '')
+            : rawTarget;
         return `<li class="spec-row" data-readonly="true">
             <div class="spec-row__head">
                 <span class="spec-row__key">${_esc(e.op || '?')}</span>
-                <span class="spec-row__value">${_esc(e.action || '')} ${_esc(e.project || e.target || '')}</span>
+                <span class="spec-row__value">${_esc(e.action || '')} ${_esc(target)}</span>
                 <span class="spec-row__hint">${_esc(e.ts || '')}</span>
             </div>
         </li>`;
@@ -33127,7 +33336,14 @@ if (typeof window !== 'undefined') {
             `;
             host.appendChild(hero);
 
-            const projects_list = (projects && projects.projects) || [];
+            // 2026-05-20 (UX audit Batch A · P2) — never let a sentinel
+            // ride into the per-project cost list. Cost backend keys by
+            // project name, so a stray sentinel would render as a row.
+            const isVisProj = (APP.activeDeployment && APP.activeDeployment.isUserVisibleProject)
+                ? APP.activeDeployment.isUserVisibleProject.bind(APP.activeDeployment)
+                : (n => !!n && n !== '__draft__' && n !== '__all__');
+            const projects_list = ((projects && projects.projects) || [])
+                .filter(p => isVisProj(p && (p.project || p.name)));
             if (projects_list.length > 0) {
                 const list = document.createElement('dl');
                 list.className = 'spec-list';
@@ -33187,7 +33403,13 @@ if (typeof window !== 'undefined') {
         try {
             const res = await fetch('/api/deploy/active');
             const data = await res.json();
-            const failed = ((data && data.deployments) || []).filter(d => d.status === 'error' || d.status === 'failed');
+            const isVisProj = (APP.activeDeployment && APP.activeDeployment.isUserVisibleProject)
+                ? APP.activeDeployment.isUserVisibleProject.bind(APP.activeDeployment)
+                : (n => !!n && n !== '__draft__' && n !== '__all__');
+            const failed = ((data && data.deployments) || [])
+                .filter(d => d.status === 'error' || d.status === 'failed')
+                // 2026-05-20 (UX audit Batch A · P2) — sentinel filter.
+                .filter(d => isVisProj(d._filename || d.project_name));
             while (host.firstChild) host.removeChild(host.firstChild);
             if (failed.length === 0) {
                 host.appendChild(_emptyHost('No failed deployments.'));
@@ -33373,6 +33595,10 @@ if (typeof window !== 'undefined') {
     }
 
     // ── Public openers — used by the click delegation below + callers ──
+    // 2026-05-20 (UX audit Batch A · P1 + H5 + C3) — every async opener
+    // routes through _withAsyncBody so the operator always sees a spinner,
+    // and stalled / failed promises swap to an error card with Retry
+    // instead of leaving the overlay stuck on the loading state.
     APP.overlay.openBeacons = function () {
         const handle = APP.overlay.open('beacons', _loadingHost('Loading beacons…'), {
             eyebrow: 'Operations',
@@ -33381,7 +33607,10 @@ if (typeof window !== 'undefined') {
             promoteLabel: 'Open in Beacons →',
             wide: true,
         });
-        renderOverlay_Beacons().then(node => handle.update(node));
+        _withAsyncBody(handle, () => renderOverlay_Beacons(), {
+            loadingMessage: 'Loading beacons…',
+            errorMessage: 'Unable to load beacons.',
+        });
         return handle;
     };
     APP.overlay.openActivity = function () {
@@ -33390,7 +33619,10 @@ if (typeof window !== 'undefined') {
             title: 'Recent Activity',
             wide: true,
         });
-        renderOverlay_Activity().then(node => handle.update(node));
+        _withAsyncBody(handle, () => renderOverlay_Activity(), {
+            loadingMessage: 'Loading audit log…',
+            errorMessage: 'Unable to load audit log.',
+        });
         return handle;
     };
     APP.overlay.openDeployment = function (name) {
@@ -33400,7 +33632,10 @@ if (typeof window !== 'undefined') {
             promoteHref: { parent: 'deployments-tab', subPill: 'manage' },
             promoteLabel: 'Open in Manage →',
         });
-        renderOverlay_Deployment(name).then(node => handle.update(node));
+        _withAsyncBody(handle, () => renderOverlay_Deployment(name), {
+            loadingMessage: 'Loading deployment…',
+            errorMessage: 'Unable to load deployment metadata.',
+        });
         return handle;
     };
     APP.overlay.openCost = function () {
@@ -33411,7 +33646,10 @@ if (typeof window !== 'undefined') {
             promoteLabel: 'Open in Settings →',
             wide: true,
         });
-        renderOverlay_Cost().then(node => handle.update(node));
+        _withAsyncBody(handle, () => renderOverlay_Cost(), {
+            loadingMessage: 'Loading cost data…',
+            errorMessage: 'Unable to load cost data.',
+        });
         return handle;
     };
     APP.overlay.openFailed = function () {
@@ -33421,17 +33659,23 @@ if (typeof window !== 'undefined') {
             promoteHref: { parent: 'deployments-tab', subPill: 'manage' },
             promoteLabel: 'Open in Manage →',
         });
-        renderOverlay_Failed().then(node => handle.update(node));
+        _withAsyncBody(handle, () => renderOverlay_Failed(), {
+            loadingMessage: 'Loading failed deployments…',
+            errorMessage: 'Unable to load failed deployments.',
+        });
         return handle;
     };
     APP.overlay.openPrereqs = function () {
-        const handle = APP.overlay.open('prereqs', _loadingHost('Running prereqs…'), {
+        const handle = APP.overlay.open('prereqs', _loadingHost('Running prerequisite checks…'), {
             eyebrow: 'Setup',
             title: 'AWS & SSH Prerequisites',
             promoteHref: 'settings',
             promoteLabel: 'Open in Settings →',
         });
-        renderOverlay_Prereqs().then(node => handle.update(node));
+        _withAsyncBody(handle, () => renderOverlay_Prereqs(), {
+            loadingMessage: 'Running prerequisite checks…',
+            errorMessage: 'Unable to run prerequisite checks.',
+        });
         return handle;
     };
     APP.overlay.openElastic = function () {

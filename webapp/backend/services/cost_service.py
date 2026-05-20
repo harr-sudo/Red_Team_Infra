@@ -107,38 +107,90 @@ class CostService:
     # ------------------------------------------------------------------
     # AWS Cost Explorer — actual billed costs
     # ------------------------------------------------------------------
-    # Cost Explorer is BILLED PER REQUEST ($0.01 each). Default cache TTL is
-    # 6 hours — CE data is updated daily by AWS so anything tighter wastes
-    # money. Operator can override via Settings or pass force_refresh=True.
+    # Cost Explorer is BILLED PER REQUEST ($0.01 each). CE source data is
+    # updated daily by AWS so anything tighter than 24h is wasted spend.
+    #
     # 2026-05-20: incident — `force_refresh` was ignored and the cache was
     # write-only, so every /api/costs/summary hit triggered 1-2 CE calls.
-    # Over 48 hours that surfaced as ~13,800 requests against the account
-    # (~$138 in API fees). This block fixes the bug at the source.
-    CE_CACHE_TTL_MINUTES = 360  # 6h
+    # Over 48 hours that surfaced as ~13,800 requests (~$138 in API fees).
+    # Hardening this is THREE layers deep:
+    #   1. Cache TTL bumped to 24h (was 6h)
+    #   2. Account-wide fallback dropped — was doubling every call when
+    #      tag-filter returned 0 (which is common on linked accounts where
+    #      cost-allocation tags don't propagate). Operator gets a "tags
+    #      missing" hint instead of a free fallback query.
+    #   3. Process-level daily rate limiter — refuses to make a CE call if
+    #      this process has already made >= CE_DAILY_HARD_LIMIT calls today.
+    #      Surfaces an error to the caller; protects against a future
+    #      regression silently burning money.
+    CE_CACHE_TTL_MINUTES = 24 * 60   # 24h
+    CE_DAILY_HARD_LIMIT = 50         # belt-and-braces guardrail
+
+    # Process-level call counter (resets at UTC midnight). Persisted to
+    # disk so process restarts don't reset it within the day.
+    @classmethod
+    def _ce_call_counter_path(cls, cache_dir):
+        return cache_dir / "_ce_call_counter.json"
+
+    def _ce_calls_today(self) -> int:
+        path = self._ce_call_counter_path(self.cache_dir)
+        if not path.exists():
+            return 0
+        try:
+            data = json.loads(path.read_text())
+            today = datetime.utcnow().strftime("%Y-%m-%d")
+            return int(data.get(today, 0))
+        except (json.JSONDecodeError, KeyError, ValueError):
+            return 0
+
+    def _ce_record_call(self):
+        path = self._ce_call_counter_path(self.cache_dir)
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        try:
+            data = json.loads(path.read_text()) if path.exists() else {}
+        except (json.JSONDecodeError, ValueError):
+            data = {}
+        # Keep only today's bucket — drop older keys so the file stays small.
+        data = {today: data.get(today, 0) + 1}
+        path.write_text(json.dumps(data))
 
     def get_aws_costs(self, project_name: str, force_refresh: bool = False, region: Optional[str] = None) -> dict:
         """Query AWS Cost Explorer for costs.
 
-        Tries tag-filtered first, falls back to total account costs when the
-        tag returns nothing. Both branches share a single on-disk cache
-        keyed by project_name; `force_refresh=True` is the only path that
-        bypasses the cache.
+        STRICT on-demand model: the cache is the source of truth. Returns
+        cached data when fresh (24h TTL). On miss OR force_refresh=True,
+        makes ONE CE call (no account-wide fallback). A daily hard limit
+        protects against runaway loops.
 
         Args:
             project_name: project tag value to filter by.
             force_refresh: when False (default), returns cached data if it's
-                younger than CE_CACHE_TTL_MINUTES (6h). When True, hits Cost
-                Explorer unconditionally. Wire to an explicit operator action
-                (e.g. a "Refresh costs" button) — never default-true on
-                automated callers.
-            region: optional AWS region (e.g. 'eu-central-1'). When provided,
-                Cost Explorer's REGION dimension is added to the filter.
+                younger than CE_CACHE_TTL_MINUTES (24h). When True, hits
+                Cost Explorer unconditionally — wire only to explicit
+                operator action (Refresh button), never to automated
+                callers / subscribers / auto-refresh loops.
+            region: optional AWS region. When provided, Cost Explorer's
+                REGION dimension is added to the filter.
         """
         # Honour the cache first — cheap on-disk read.
         if not force_refresh:
             cached = self._read_cache(project_name, self.CE_CACHE_TTL_MINUTES)
             if cached is not None:
                 return cached
+
+        # Daily hard limit — refuse if we've already burned the budget today.
+        if self._ce_calls_today() >= self.CE_DAILY_HARD_LIMIT:
+            return {
+                "available": False,
+                "error": "ce_daily_limit_exceeded",
+                "message": f"Cost Explorer daily call limit ({self.CE_DAILY_HARD_LIMIT}) "
+                           f"hit. Refresh blocked to protect against runaway "
+                           f"spend. Resets at UTC midnight.",
+                "total": 0,
+                "daily_costs": [],
+                "cache_age_minutes": None,
+                "cached": False,
+            }
         try:
             # Cost Explorer endpoint is global, always us-east-1
             ce = boto3.client("ce", region_name="us-east-1")
@@ -153,59 +205,43 @@ class CostService:
                     "Dimensions": {"Key": "REGION", "Values": [region]}
                 }
 
-            # Try tag-filtered query first
-            tag_filtered = True
-            try:
-                tag_filter = {
-                    "Tags": {
-                        "Key": "Project",
-                        "Values": [project_name],
-                    }
+            # Single tag-filtered query. The account-wide fallback was
+            # removed 2026-05-20 — it was doubling every call when the
+            # tag filter returned 0 (common on linked accounts where
+            # cost-allocation tags don't propagate). Operator gets a
+            # "tags missing" hint instead of a free fallback query.
+            tag_filter = {
+                "Tags": {
+                    "Key": "Project",
+                    "Values": [project_name],
                 }
-                # Combine tag + region with AND when region is specified
-                combined_filter = (
-                    {"And": [tag_filter, region_dim_filter]}
-                    if region_dim_filter else tag_filter
-                )
-                response = ce.get_cost_and_usage(
-                    TimePeriod={
-                        "Start": start_date.isoformat(),
-                        "End": end_date.isoformat(),
-                    },
-                    Granularity="DAILY",
-                    Filter=combined_filter,
-                    GroupBy=[
-                        {"Type": "DIMENSION", "Key": "SERVICE"},
-                    ],
-                    Metrics=["UnblendedCost"],
-                )
-                # Check if tag filter returned any non-zero data
-                has_data = any(
-                    float(g["Metrics"]["UnblendedCost"]["Amount"]) > 0.001
-                    for r in response.get("ResultsByTime", [])
-                    for g in r.get("Groups", [])
-                )
-                if not has_data:
-                    tag_filtered = False
-            except Exception:
-                tag_filtered = False
-
-            # Fall back to total account costs (no tag filter, but keep region filter if set)
-            if not tag_filtered:
-                fallback_kwargs = dict(
-                    TimePeriod={
-                        "Start": start_date.isoformat(),
-                        "End": end_date.isoformat(),
-                    },
-                    Granularity="DAILY",
-                    GroupBy=[
-                        {"Type": "DIMENSION", "Key": "SERVICE"},
-                    ],
-                    Metrics=["UnblendedCost"],
-                )
-                if region_dim_filter:
-                    fallback_kwargs["Filter"] = region_dim_filter
-                response = ce.get_cost_and_usage(**fallback_kwargs)
+            }
+            combined_filter = (
+                {"And": [tag_filter, region_dim_filter]}
+                if region_dim_filter else tag_filter
+            )
+            response = ce.get_cost_and_usage(
+                TimePeriod={
+                    "Start": start_date.isoformat(),
+                    "End": end_date.isoformat(),
+                },
+                Granularity="DAILY",
+                Filter=combined_filter,
+                GroupBy=[
+                    {"Type": "DIMENSION", "Key": "SERVICE"},
+                ],
+                Metrics=["UnblendedCost"],
+            )
+            self._ce_record_call()
+            # Detect tag-empty result for the scope_note hint.
+            has_data = any(
+                float(g["Metrics"]["UnblendedCost"]["Amount"]) > 0.001
+                for r in response.get("ResultsByTime", [])
+                for g in r.get("Groups", [])
+            )
+            tag_filtered = True
+            if not has_data:
+                tag_filtered = False  # surface a hint, but DON'T fallback
 
             daily_costs = []
             grand_total = 0.0
@@ -237,8 +273,8 @@ class CostService:
                 "cached": False,
                 "cache_age_minutes": 0,
                 "error": None,
-                "scope": "project" if tag_filtered else "account",
-                "scope_note": None if tag_filtered else "Showing total account costs (cost allocation tags not available on linked accounts)",
+                "scope": "project" if tag_filtered else "tag-empty",
+                "scope_note": None if tag_filtered else "No cost data found for the 'Project' tag. Activate cost-allocation tags in AWS Billing → Cost allocation tags, then wait 24h for backfill.",
             }
             self._write_cache(project_name, result_data)
             return result_data
