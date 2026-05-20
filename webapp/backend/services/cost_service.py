@@ -107,18 +107,38 @@ class CostService:
     # ------------------------------------------------------------------
     # AWS Cost Explorer — actual billed costs
     # ------------------------------------------------------------------
-    def get_aws_costs(self, project_name: str, force_refresh: bool = True, region: Optional[str] = None) -> dict:
-        """Query AWS Cost Explorer for costs. Tries tag-filtered first, falls back to total account costs.
+    # Cost Explorer is BILLED PER REQUEST ($0.01 each). Default cache TTL is
+    # 6 hours — CE data is updated daily by AWS so anything tighter wastes
+    # money. Operator can override via Settings or pass force_refresh=True.
+    # 2026-05-20: incident — `force_refresh` was ignored and the cache was
+    # write-only, so every /api/costs/summary hit triggered 1-2 CE calls.
+    # Over 48 hours that surfaced as ~13,800 requests against the account
+    # (~$138 in API fees). This block fixes the bug at the source.
+    CE_CACHE_TTL_MINUTES = 360  # 6h
+
+    def get_aws_costs(self, project_name: str, force_refresh: bool = False, region: Optional[str] = None) -> dict:
+        """Query AWS Cost Explorer for costs.
+
+        Tries tag-filtered first, falls back to total account costs when the
+        tag returns nothing. Both branches share a single on-disk cache
+        keyed by project_name; `force_refresh=True` is the only path that
+        bypasses the cache.
 
         Args:
             project_name: project tag value to filter by.
-            force_refresh: ignored here; reserved for cache control by callers.
+            force_refresh: when False (default), returns cached data if it's
+                younger than CE_CACHE_TTL_MINUTES (6h). When True, hits Cost
+                Explorer unconditionally. Wire to an explicit operator action
+                (e.g. a "Refresh costs" button) — never default-true on
+                automated callers.
             region: optional AWS region (e.g. 'eu-central-1'). When provided,
-                Cost Explorer's REGION dimension is added to the filter so only
-                spend for that region is returned. Confirmed supported per
-                https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/API_GetCostAndUsage.html
-                (Dimensions key REGION).
+                Cost Explorer's REGION dimension is added to the filter.
         """
+        # Honour the cache first — cheap on-disk read.
+        if not force_refresh:
+            cached = self._read_cache(project_name, self.CE_CACHE_TTL_MINUTES)
+            if cached is not None:
+                return cached
         try:
             # Cost Explorer endpoint is global, always us-east-1
             ce = boto3.client("ce", region_name="us-east-1")
@@ -419,7 +439,7 @@ class CostService:
     # ------------------------------------------------------------------
     # Combined summary
     # ------------------------------------------------------------------
-    def get_cost_summary(self, project_name: str, force_refresh: bool = True) -> dict:
+    def get_cost_summary(self, project_name: str, force_refresh: bool = False) -> dict:
         """Orchestrator — returns actual + estimated + budget status."""
         settings = self.load_settings()
         budget = settings["budget_threshold"]
