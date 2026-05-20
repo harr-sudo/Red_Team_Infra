@@ -213,9 +213,10 @@ function _initFromUrl() {
     }
     // Resolution order for activeDeployment:
     //   1. ?draft=1 → DRAFT_SENTINEL (in-memory only, not persisted)
-    //   2. ?project=__all__ → ALL_SENTINEL
-    //   3. ?project=<name> → that name
-    //   4. ?dep=<name> (legacy) → that name
+    //   2. ?new=1 (no other deployment selector) → DRAFT_SENTINEL (test-fix sweep)
+    //   3. ?project=__all__ → ALL_SENTINEL
+    //   4. ?project=<name> → that name
+    //   5. ?dep=<name> (legacy) → that name
     // Draft mode also implies new-mode for the wizard mount.
     if (isDraft && APP.activeDeployment) {
         APP.activeDeployment.set(APP.activeDeployment.DRAFT_SENTINEL);
@@ -224,11 +225,25 @@ function _initFromUrl() {
         APP.activeDeployment.set(project);
     } else if (dep && APP.activeDeployment) {
         APP.activeDeployment.set(dep);
+    } else if (isNewMode && APP.activeDeployment) {
+        // 2026-05-20 (test-fix sweep — Bug 5) — `?new=1` alone (no project /
+        // dep / draft companion) means "open the new-deployment wizard on
+        // first paint". Pin DRAFT_SENTINEL before _refreshGlobalDeployments
+        // runs so the auto-snap below can't clobber it back to an existing
+        // project, which would hide the Configure pane and render the
+        // wizard mount into a hidden parent (= invisible).
+        APP.activeDeployment.set(APP.activeDeployment.DRAFT_SENTINEL);
     }
     // 2026-05-19 flow-stitching — Stash the new-mode flag so it survives
     // the URL rewrite that happens during navigateTo() init. The configure
     // sub-pill init reads APP._pendingNewMode and consumes it.
     APP._pendingNewMode = isNewMode;
+    // 2026-05-20 (test-fix sweep — Bug 5) — Stash the new-mode flag for
+    // _refreshGlobalDeployments so it knows to skip the persisted-project
+    // restoration entirely. Belt-and-braces alongside the DRAFT_SENTINEL
+    // pin above — covers the case where a subscriber resets _current
+    // between this function and _refreshGlobalDeployments running.
+    APP._wantsNewOnBoot = !!isNewMode;
 }
 
 /**
@@ -255,11 +270,21 @@ function _updateUrlState(parent, subPill) {
     // We only carry it forward when (a) the operator is on Configure AND
     // (b) the flag is currently in the URL (either query or hash-query).
     let preservedNew = false;
+    // 2026-05-20 (test-fix sweep) — same problem for `?wizard=1`. Without
+    // this, the legacy journey wizard never opens on a deep-link because
+    // _updateUrlState runs BEFORE the Configure activation block (line
+    // 2554 vs 2564), and the activation reads the post-rewrite URL.
+    let preservedWizard = false;
     try {
-        const inSearch = new URLSearchParams(window.location.search).get('new') === '1';
+        const searchParams = new URLSearchParams(window.location.search);
         const hashQuery = (window.location.hash || '').split('?')[1] || '';
-        const inHash = hashQuery && new URLSearchParams(hashQuery).get('new') === '1';
+        const hashParams = hashQuery ? new URLSearchParams(hashQuery) : null;
+        const inSearch = searchParams.get('new') === '1';
+        const inHash = hashParams && hashParams.get('new') === '1';
         preservedNew = (inSearch || inHash) && parent === 'deployments-tab' && subPill === 'configure';
+        const wizardInSearch = searchParams.get('wizard') === '1';
+        const wizardInHash = hashParams && hashParams.get('wizard') === '1';
+        preservedWizard = (wizardInSearch || wizardInHash) && parent === 'deployments-tab' && subPill === 'configure';
     } catch (_) { /* noop */ }
     // 2026-05-19 (deployments nav restructure) — new URL grammar:
     //   #deployments-tab/manage?project=<name>     — existing deployment
@@ -282,6 +307,7 @@ function _updateUrlState(parent, subPill) {
         params.push(`dep=${encodeURIComponent(dep)}`);
     }
     if (preservedNew) params.push('new=1');
+    if (preservedWizard) params.push('wizard=1');
     const queryPrefix = params.length ? `?${params.join('&')}` : '';
     // 2026-05-19 — preserve `#deployments-tab/<subpill>` instead of clobbering
     // with bare `#deployments` when subPill is null. The `hashBase` already
@@ -2273,7 +2299,14 @@ APP.computeVisibleSubPills = function (active) {
  * @returns {boolean}
  */
 APP.computeOperationsVisible = function (active) {
-    if (!active || !active.isExisting || !active.isExisting()) return false;
+    if (!active) return false;
+    // 2026-05-20 (test-fix sweep) — re-enable the aggregate fleet views.
+    // In All-mode, Operations top-tab stays visible so the per-sub-pill
+    // renderFleet() paths (Beacons / Payloads) can paint the cross-deployment
+    // aggregates. Terminal in All-mode keeps its per-surface empty state
+    // (sessions are per-server, can't aggregate).
+    if (active.isAll && active.isAll()) return true;
+    if (!active.isExisting || !active.isExisting()) return false;
     const type = (active.deployment_type || '').toLowerCase();
     const isC2only   = type.startsWith('c2-');
     const isCombined = type.startsWith('combined-');
@@ -4553,6 +4586,15 @@ async function _refreshGlobalDeployments() {
     // Covers the "current was set BEFORE the cache loaded" race (e.g. on
     // initial boot, or just after an Apply-success flip from draftProject).
     try { APP._setActiveDeploymentType(); } catch (_) { /* noop */ }
+    // 2026-05-20 (test-fix sweep — Bug 5) — Enforce the `?new=1`-on-boot
+    // intent BEFORE we capture isDraft below. If a subscriber cleared the
+    // DRAFT_SENTINEL pin between _initFromUrl and the async cache fetch
+    // resolving, this re-pins it so the draft option still renders, the
+    // selection logic later picks DRAFT_SENTINEL, and the Configure
+    // pane stays visible for the wizard mount.
+    if (APP._wantsNewOnBoot) {
+        APP.activeDeployment.set(APP.activeDeployment.DRAFT_SENTINEL);
+    }
 
     listbox.innerHTML = '';
 
@@ -4648,14 +4690,31 @@ async function _refreshGlobalDeployments() {
     }
 
     // Pick initial selection: respect draft / all sentinels; otherwise use
-    // persisted active OR first deployment.
+    // persisted active. 2026-05-20 (test-fix sweep — Bug 3) — do NOT auto-pick
+    // `deployments[0]` when there are multiple deployments and nothing is
+    // persisted. The first project in the backend's response is non-
+    // deterministic; auto-snapping to (e.g.) a goad-* project on a fresh
+    // dashboard load would hide Operations and confuse the operator.
+    // Single-deployment case keeps the auto-snap (no ambiguity to pick
+    // from, and it preserves the deep-link-into-Operations UX where the
+    // operator's only project becomes active on first paint).
     let selected = APP.activeDeployment.current;
-    if (isDraft) {
+    // 2026-05-20 (test-fix sweep — Bug 5) — `?new=1` on boot wins over
+    // every persisted/auto-select path. The actual pin happens above
+    // (before isDraft capture) so the draft option renders; here we just
+    // consume the flag and force the selection.
+    if (APP._wantsNewOnBoot) {
+        APP._wantsNewOnBoot = false;  // consume once
+        selected = APP.activeDeployment.DRAFT_SENTINEL;
+    } else if (isDraft) {
         selected = APP.activeDeployment.DRAFT_SENTINEL;
     } else if (selected === APP.activeDeployment.ALL_SENTINEL) {
         // keep All
     } else if (!selected || !deployments.find(d => d.project_name === selected)) {
-        selected = deployments[0].project_name;
+        // Multi-deployment with no persisted pick → leave null so Manage's
+        // empty state renders the "Pick a deployment" CTA. Single-deployment
+        // → snap to it (zero ambiguity, no risk of picking the wrong type).
+        selected = deployments.length === 1 ? deployments[0].project_name : null;
     }
 
     deployments.forEach((d, idx) => {
@@ -4697,12 +4756,16 @@ async function _refreshGlobalDeployments() {
     // trigger button. Real project names render as-is.
     // 2026-05-20 — use displayName() so draftProject surfaces as
     // "Draft: <name>" instead of the bare "Draft (unnamed)".
+    // 2026-05-20 (test-fix sweep) — null = no auto-pick fallback; render
+    // the "Pick a deployment" prompt instead of stamping `null` text.
     if (selected === APP.activeDeployment.DRAFT_SENTINEL) {
         valueEl.textContent = APP.activeDeployment.displayName(APP.activeDeployment.DRAFT_SENTINEL);
     } else if (selected === APP.activeDeployment.ALL_SENTINEL) {
         valueEl.textContent = 'All deployments';
-    } else {
+    } else if (selected) {
         valueEl.textContent = selected;
+    } else {
+        valueEl.textContent = 'Pick a deployment';
     }
     APP.activeDeployment.set(selected);
 }
@@ -21045,9 +21108,9 @@ function updateResourceScopeInfo(data, isCached) {
     const timeStr = formatResourceTimestamp(data.timestamp);
 
     if (isCached) {
-        scopeDiv.innerHTML = `<span style="background: var(--warning); color: var(--text-inverse); padding: 2px 8px; border-radius: 4px; font-size: 0.88em; font-weight: 600;">CACHED</span> Account <strong>${maskedAcct}</strong> &middot; eu-central-1 &middot; Last checked <strong>${timeStr}</strong> &middot; <span class="t-muted">Refreshing...</span>`;
+        scopeDiv.innerHTML = `<span class="resource-scope-badge resource-scope-badge--cached">CACHED</span> Account <strong>${maskedAcct}</strong> &middot; eu-central-1 &middot; Last checked <strong>${timeStr}</strong> &middot; <span class="t-muted">Refreshing...</span>`;
     } else {
-        scopeDiv.innerHTML = `<span style="background: var(--success); color: var(--text-inverse); padding: 2px 8px; border-radius: 4px; font-size: 0.88em; font-weight: 600;">LIVE</span> Account <strong>${maskedAcct}</strong> &middot; eu-central-1 &middot; Updated <strong>${timeStr}</strong>`;
+        scopeDiv.innerHTML = `<span class="resource-scope-badge resource-scope-badge--live">LIVE</span> Account <strong>${maskedAcct}</strong> &middot; eu-central-1 &middot; Updated <strong>${timeStr}</strong>`;
     }
 }
 

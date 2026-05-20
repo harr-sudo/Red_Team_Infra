@@ -8435,6 +8435,32 @@ details.details-card--v3 > .resource-list-v3__body {
     font-family: var(--font-family-mono);
     letter-spacing: 0.02em;
 }
+/* 2026-05-20 (test-fix sweep) — LIVE/CACHED pill badges inside the
+   scope info bar. Previously inline-styled with
+   `background: var(--success); color: var(--text-inverse);` which resolved
+   to dark text on saturated green in dark mode (3.89:1 — fails WCAG AA).
+   Both modifiers use the canonical `--success-bg` + `--success-text`
+   (and `--warning-bg` + `--warning-text`) pairs from palette.css — those
+   pairs are contrast-tuned per theme. */
+.resource-scope-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.88em;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border: 1px solid transparent;
+}
+.resource-scope-badge--live {
+    background: var(--success-bg);
+    color: var(--success-text);
+    border-color: var(--success-border);
+}
+.resource-scope-badge--cached {
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    border-color: var(--warning-border);
+}
 .resource-list-v3__btn-group {
     display: inline-flex;
     gap: 8px;

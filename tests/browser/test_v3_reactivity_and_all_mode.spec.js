@@ -248,17 +248,12 @@ test.describe('v3 — "All deployments" sentinel + fleet view', () => {
         expect(isAll).toBe(true);
     });
 
-    // 2026-05-20 — In the post-restructure Deployments nav,
-    // computeOperationsVisible(active) returns false when active.isAll()
-    // (Operations only makes sense for an EXISTING c2-* / combined-*
-    // project — see app.js:2275-2281). The Operations top-tab + every
-    // sub-pill pane (Beacons / Terminal / Payloads) are hidden in
-    // All-mode, so the per-surface empty-state inside #beacons-all-mode-empty
-    // is unreachable from the UI even though the renderFleet() code still
-    // exists in app.js. The Operations All-mode UX is effectively dead
-    // until/unless the visibility gate is relaxed.
-    // TODO: re-enable if Operations becomes reachable in All-mode again.
-    test.skip('All mode on Beacons → renders per-surface empty state', async ({ page }) => {
+    // 2026-05-20 (test-fix sweep) — Bug 1: computeOperationsVisible was
+    // relaxed to return true for isAll(), so the Operations top-tab + its
+    // sub-pills are reachable in All-mode again. renderFleet() paints into
+    // #beacons-all-mode-empty / #payloads-all-mode-empty. Terminal in
+    // All-mode keeps its per-surface empty state (sessions per-server).
+    test('All mode on Beacons → renders per-surface empty state', async ({ page }) => {
         await gotoRoot(page);
         await gotoSubpill(page, 'operations-tab', 'beacons');
         await page.evaluate(() => APP.activeDeployment.set('__all__'));
@@ -270,8 +265,8 @@ test.describe('v3 — "All deployments" sentinel + fleet view', () => {
         await expect(scoped).toBeHidden();
     });
 
-    // TODO: see note above — Terminal sub-pill unreachable in All-mode.
-    test.skip('All mode on Terminal → renders per-surface empty state', async ({ page }) => {
+    // 2026-05-20 (test-fix sweep) — Bug 1: now reachable in All-mode.
+    test('All mode on Terminal → renders per-surface empty state', async ({ page }) => {
         await gotoRoot(page);
         await gotoSubpill(page, 'operations-tab', 'terminal');
         await page.evaluate(() => APP.activeDeployment.set('__all__'));
@@ -282,8 +277,8 @@ test.describe('v3 — "All deployments" sentinel + fleet view', () => {
         await expect(page.locator('#terminal-scoped-content')).toBeHidden();
     });
 
-    // TODO: see note above — Payloads sub-pill unreachable in All-mode.
-    test.skip('All mode on Payloads → renders per-surface empty state', async ({ page }) => {
+    // 2026-05-20 (test-fix sweep) — Bug 1: now reachable in All-mode.
+    test('All mode on Payloads → renders per-surface empty state', async ({ page }) => {
         await gotoRoot(page);
         await gotoSubpill(page, 'operations-tab', 'payloads');
         await page.evaluate(() => APP.activeDeployment.set('__all__'));
@@ -358,10 +353,8 @@ test.describe('v3 — "All deployments" sentinel + fleet view', () => {
         await expect(badge).toContainText('Showing all labs');
     });
 
-    // TODO: see "All mode on Beacons" skip note — Operations sub-pills
-    // are unreachable in All-mode under the post-restructure nav, so the
-    // per-surface CTA inside #beacons-all-mode-empty has no operator path.
-    test.skip('"Pick a deployment" CTA opens the top-bar dropdown', async ({ page }) => {
+    // 2026-05-20 (test-fix sweep) — Bug 1: Operations reachable in All-mode again.
+    test('"Pick a deployment" CTA opens the top-bar dropdown', async ({ page }) => {
         await gotoRoot(page);
         await gotoSubpill(page, 'operations-tab', 'beacons');
         await page.evaluate(() => APP.activeDeployment.set('__all__'));
@@ -372,14 +365,9 @@ test.describe('v3 — "All deployments" sentinel + fleet view', () => {
         expect(expanded).toBe('true');
     });
 
-    // TODO: same as above — there's no scoped-content vs all-mode-empty
-    // flip on Beacons anymore because Operations is hidden the moment
-    // __all__ becomes active. The restore-to-scoped path is now driven
-    // entirely by the rail visibility recompute on the activeDeployment
-    // subscriber, which is exercised by the Manage fleet click-through
-    // test ('clicking a fleet table row switches the dropdown back to
-    // that project') above.
-    test.skip('exiting All mode (selecting a real deployment) restores scoped content', async ({ page }) => {
+    // 2026-05-20 (test-fix sweep) — Bug 1: Operations reachable in All-mode again,
+    // so the scoped-content vs all-mode-empty flip on Beacons is live too.
+    test('exiting All mode (selecting a real deployment) restores scoped content', async ({ page }) => {
         await gotoRoot(page);
         await gotoSubpill(page, 'operations-tab', 'beacons');
         await page.evaluate(() => APP.activeDeployment.set('__all__'));
@@ -586,18 +574,12 @@ test.describe('v3 — Operations per-pane selectors sync on first render', () =>
 // "All deployments" mode.
 // ─────────────────────────────────────────────────────────────────────────
 
-// 2026-05-20 — Whole describe block skipped. The Operations aggregate
-// fleet views (Beacons + Payloads in All-mode) are unreachable from the
-// post-restructure UI: APP.computeOperationsVisible() returns false the
-// moment APP.activeDeployment.isAll() is true (app.js:2275-2281), which
-// hides the Operations top-tab and every Operations sub-pill pane.
-// APP.beacons.renderFleet() / APP.payloads.renderFleet() still exist
-// (app.js:28969+, 29231+) and the /api/beacon/all + /api/tools/payloads/all
-// endpoints still return data, but no operator path renders them.
-// TODO: re-enable if the visibility gate is relaxed to allow Operations
-// in All-mode (would also need Beacons/Terminal/Payloads sub-pill
-// activation flows to honor isAll on first paint).
-test.describe.skip('v3 — Operations All-mode aggregate fleet views', () => {
+// 2026-05-20 (test-fix sweep) — Bug 1: APP.computeOperationsVisible() now
+// returns true for isAll() so the aggregate fleet views are reachable.
+// APP.beacons.renderFleet() / APP.payloads.renderFleet() paint into
+// #beacons-all-mode-empty / #payloads-all-mode-empty when the operator
+// is on the relevant sub-pill and the dropdown flips to __all__.
+test.describe('v3 — Operations All-mode aggregate fleet views', () => {
     test.beforeEach(async ({ context, page }) => {
         await context.clearCookies();
         await page.addInitScript(() => {
