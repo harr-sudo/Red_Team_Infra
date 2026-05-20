@@ -15169,22 +15169,25 @@ async function loadSettingsAgentCheck() {
 
     let calloutHtml = '';
     if (!configured || !sdk) {
-        const calloutClass = sdk ? 'callout--warning' : 'callout--danger';
+        // 2026-05-20 — flipped from legacy .callout--danger (left-ribbon
+        // style) to the TASTE .cfg-callout pattern (full border + tinted
+        // background, no ribbon). See style.css :13369.
+        const calloutClass = sdk ? 'cfg-callout--warning' : 'cfg-callout--danger';
         const headline = sdk
             ? 'Agent fallback unavailable — <code>ANTHROPIC_API_KEY</code> not set in dashboard environment.'
             : 'Anthropic SDK is not installed in the dashboard Python environment.';
         const remedy = sdk
-            ? `<p style="margin: 8px 0 0;">Export the key in the dashboard service environment, then restart:</p>
-               <pre style="margin: 6px 0 0; padding: 8px 10px; background: var(--bg-terminal); color: var(--text-terminal); border-radius: 4px; font-family: var(--font-family-mono); font-size: 12px; overflow-x: auto;">export ANTHROPIC_API_KEY="sk-ant-..."
+            ? `<p>Export the key in the dashboard service environment, then restart:</p>
+               <pre>export ANTHROPIC_API_KEY="sk-ant-..."
 ./scripts/server/dashboard-manage.sh restart</pre>`
-            : `<p style="margin: 8px 0 0;">Install the SDK in the dashboard Python environment, then restart:</p>
-               <pre style="margin: 6px 0 0; padding: 8px 10px; background: var(--bg-terminal); color: var(--text-terminal); border-radius: 4px; font-family: var(--font-family-mono); font-size: 12px; overflow-x: auto;">pip install 'anthropic&gt;=0.40.0'
+            : `<p>Install the SDK in the dashboard Python environment, then restart:</p>
+               <pre>pip install 'anthropic&gt;=0.40.0'
 ./scripts/server/dashboard-manage.sh restart</pre>`;
         calloutHtml = `
-            <div class="callout ${calloutClass}" data-agent-callout="true" style="margin-top: 12px;">
+            <div class="cfg-callout ${calloutClass}" data-agent-callout="true" style="margin-top: 12px;">
                 <strong>${headline}</strong>
                 ${remedy}
-                <p style="margin: 8px 0 0; font-size: 12px;">
+                <p style="font-size: 12px;">
                     Full configuration walk-through:
                     <a href="docs/internal/VULNERABLE_LAB_BOLTON_PLAN.md#79-operator-configuration"
                        target="_blank" rel="noopener">VULNERABLE_LAB_BOLTON_PLAN.md §7.9 — Operator configuration</a>.

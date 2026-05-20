@@ -13377,6 +13377,37 @@ textarea.cfg-input {
 }
 .cfg-callout--info strong { color: var(--info-text); }
 
+/* Warning / danger variants — same TASTE shape (full border + tinted
+   background, NO left-ribbon). Used by setup-status callouts (e.g. the
+   Anthropic SDK / API key warnings on the bolt-on agent status spec). */
+.cfg-callout--warning {
+    border-color: color-mix(in srgb, var(--warning-text) 32%, transparent);
+    background: color-mix(in srgb, var(--warning-text) 10%, transparent);
+}
+.cfg-callout--warning strong { color: var(--warning-text); }
+
+.cfg-callout--danger {
+    border-color: color-mix(in srgb, var(--danger-text) 32%, transparent);
+    background: color-mix(in srgb, var(--danger-text) 10%, transparent);
+}
+.cfg-callout--danger strong { color: var(--danger-text); }
+
+/* Embedded code block inside any cfg-callout — preserves the dark
+   terminal look without breaking the callout's tinted surface. */
+.cfg-callout pre {
+    margin: 8px 0 0;
+    padding: 8px 10px;
+    background: var(--bg-terminal);
+    color: var(--text-terminal);
+    border-radius: 4px;
+    font-family: var(--font-family-mono);
+    font-size: 12px;
+    overflow-x: auto;
+}
+.cfg-callout p { margin: 6px 0 0; }
+.cfg-callout p:first-child { margin-top: 0; }
+.cfg-callout a { color: inherit; text-decoration: underline; }
+
 /* Manage Test Lab status card — placed above the resource spec-list inside
  * the manage scoped view. Uses the same card-on-surface aesthetic as the
  * existing manage chrome so it visually nests with the rest of Manage. */
