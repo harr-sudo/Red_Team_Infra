@@ -58,11 +58,18 @@ test('Test Lab section hidden for goad-* family', async ({ page }) => {
     await expect(rail).toHaveClass(/is-hidden/);
 });
 
-test('Test Lab section hidden for combined-* family', async ({ page }) => {
+// 2026-05-20 (UX audit Batch B · C6) — Test Lab is now ALSO available for
+// combined-* deployments. The combined family has both GOAD AND a C2,
+// and the test lab is an additional purpose-built lab for catalog
+// validation that sits next to (not in lieu of) GOAD.
+test('Test Lab section visible for combined-* family + shows explainer note', async ({ page }) => {
     await openDraftConfigure(page);
     await pickFamily(page, 'combined');
     const section = page.locator('.cfg-section[data-cfg-section="testlab"]');
-    await expect(section).toHaveClass(/is-hidden/);
+    await expect(section).toBeVisible();
+    const combinedNote = page.locator('#cfg-test-lab-combined-note');
+    await expect(combinedNote).toBeVisible();
+    await expect(combinedNote).toContainText('Combined deployments already include a GOAD lab');
 });
 
 test('Toggle reveals subnet field + updates cost table', async ({ page }) => {

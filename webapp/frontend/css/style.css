@@ -12823,6 +12823,70 @@ textarea.cfg-input {
     box-shadow: inset 0 0 0 1px var(--brand-light);
 }
 
+/*
+ * 2026-05-20 (UX audit Batch A · C1) — Identity stage "sub" chip row.
+ * Shown once the operator picks a type. Reads like a confirmed pill
+ * (Family · C2 · type · c2-adhoc · pencil) and re-opens the family/type
+ * pickers when clicked.
+ */
+.cfg-identity-confirmed {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px 6px 12px;
+    margin-bottom: 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    background: var(--bg-input);
+    font-family: var(--font-family-mono);
+    font-size: 11.5px;
+    color: var(--text-primary);
+}
+.cfg-identity-confirmed[hidden] { display: none; }
+.cfg-identity-confirmed__kv {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+}
+.cfg-identity-confirmed__k {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    font-weight: 700;
+}
+.cfg-identity-confirmed__v {
+    font-weight: 700;
+    color: var(--text-primary);
+}
+.cfg-identity-confirmed__sep {
+    color: var(--text-secondary);
+    opacity: 0.5;
+}
+.cfg-identity-confirmed__edit {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    padding: 3px 6px;
+    margin-left: 4px;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color var(--cfg-motion-fast) var(--cfg-motion-ease),
+                border-color var(--cfg-motion-fast) var(--cfg-motion-ease),
+                background-color var(--cfg-motion-fast) var(--cfg-motion-ease);
+}
+.cfg-identity-confirmed__edit:hover {
+    color: var(--text-primary);
+    border-color: var(--border);
+    background: var(--bg-card-hover);
+}
+.cfg-identity-confirmed__edit svg { width: 12px; height: 12px; display: block; }
+[data-cfg-identity-sub-fields][hidden] { display: none; }
+[data-cfg-identity-pickers][hidden] { display: none; }
+
 .cfg-ssh-grid {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;

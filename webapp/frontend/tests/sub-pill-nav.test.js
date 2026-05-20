@@ -14,12 +14,25 @@ const APP = {};
 APP.activeDeployment = (function() {
     const DRAFT_SENTINEL = '__draft__';
     const ALL_SENTINEL = '__all__';
-    const state = { current: null, deployment_type: null, draftProject: null };
+    const state = {
+        current: null,
+        deployment_type: null,
+        draftProject: null,
+        // 2026-05-20 (UX audit Batch B · H2) — mirror the live module's
+        // enable_test_lab tracking. Set true when /api/deploy/active
+        // surfaces enable_test_lab=true for the active project; drives
+        // Bolt-ons sub-pill visibility for c2-* deployments that opted
+        // into the in-VPC test lab.
+        enable_test_lab: false,
+    };
     return {
         DRAFT_SENTINEL, ALL_SENTINEL,
         get current() { return state.current; },
         get deployment_type() { return state.deployment_type; },
         set deployment_type(v) { state.deployment_type = v || null; },
+        get enable_test_lab() { return state.enable_test_lab; },
+        set enable_test_lab(v) { state.enable_test_lab = v === true; },
+        hasTestLab() { return state.enable_test_lab === true; },
         get draftProject() { return state.draftProject; },
         set draftProject(v) { state.draftProject = v || null; },
         isDraft() { return state.current === DRAFT_SENTINEL; },
@@ -51,6 +64,7 @@ APP.activeDeployment = (function() {
             if (state.current === v) return;
             if (v !== DRAFT_SENTINEL) state.draftProject = null;
             state.deployment_type = null;
+            state.enable_test_lab = false;
             state.current = v || null;
         },
     };
@@ -62,19 +76,23 @@ APP.computeVisibleSubPills = function(active) {
     const isExisting = active.isExisting();
     // 2026-05-20 — deployment-type-aware visibility. Bolt-ons hide for
     // c2-* (no AD lab to configure); Operations hides for goad-* (no C2).
+    // Batch B · H2 — c2-* with enable_test_lab=true gets Bolt-ons back
+    // because the test lab is the bolt-on target.
     const type = (active.deployment_type || '').toLowerCase();
     const isC2only   = isExisting && type.startsWith('c2-');
     const isGoadOnly = isExisting && type.startsWith('goad-');
     const isCombined = isExisting && type.startsWith('combined-');
+    const hasTestLab = isExisting && active.hasTestLab && active.hasTestLab();
+    const isC2WithLab = isC2only && hasTestLab;
     // Cleanup is universal — always available regardless of mode.
     const base = isDraft
         ? ['configure', 'deploy']
         : isAll
             ? ['manage']
-            : isC2only
-                ? ['manage']
-                : (isGoadOnly || isCombined)
-                    ? ['manage', 'bolt-ons']
+            : (isGoadOnly || isCombined || isC2WithLab)
+                ? ['manage', 'bolt-ons']
+                : isC2only
+                    ? ['manage']
                     : ['manage'];
     base.push('cleanup');
     return base;
@@ -154,6 +172,25 @@ APP.activeDeployment.set('proj_combined');
 APP.activeDeployment.deployment_type = 'combined-adhoc-mini';
 eq('existing combined-* → [manage, bolt-ons, cleanup]', APP.computeVisibleSubPills(APP.activeDeployment), ['manage', 'bolt-ons', 'cleanup']);
 ok('existing combined-* → Operations visible', APP.computeOperationsVisible(APP.activeDeployment) === true);
+
+// 2026-05-20 (UX audit Batch B · H2) — c2-* WITH the test lab enabled
+// re-gains Bolt-ons (the test lab IS the bolt-on target). Mirrors the
+// live computeVisibleSubPills branch in app.js. Without enable_test_lab
+// the same project hides Bolt-ons; setting the flag reactively flips it
+// back on without re-selecting the project.
+APP.activeDeployment.set('proj_c2_with_lab');
+APP.activeDeployment.deployment_type = 'c2-adhoc';
+eq('c2-* without test lab → [manage, cleanup]', APP.computeVisibleSubPills(APP.activeDeployment), ['manage', 'cleanup']);
+APP.activeDeployment.enable_test_lab = true;
+eq('c2-* with enable_test_lab=true → [manage, bolt-ons, cleanup]',
+   APP.computeVisibleSubPills(APP.activeDeployment),
+   ['manage', 'bolt-ons', 'cleanup']);
+// hasTestLab() helper mirrors the live getter — surfaced for renderers.
+ok('hasTestLab() returns true', APP.activeDeployment.hasTestLab() === true);
+// Switching to a different project clears the flag (Batch B · _setActiveDeploymentType
+// helper repopulates from the per-project cache; .set() invalidates first).
+APP.activeDeployment.set('proj_other');
+ok('switching project clears enable_test_lab', APP.activeDeployment.hasTestLab() === false);
 
 // Sentinels never expose Operations regardless of any stale type.
 APP.activeDeployment.set('__draft__');

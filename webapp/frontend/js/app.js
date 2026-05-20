@@ -3374,6 +3374,16 @@ function initGlobalHeader() {
         // must wipe explicitly here in case the operator clicks "+ New"
         // while already mid-draft.
         if (APP.activeDeployment) APP.activeDeployment.draftProject = null;
+        // 2026-05-20 (UX audit Batch A · C1) — bounce Identity to the
+        // landing stage on every "+ New" click, even if the operator was
+        // already mid-draft. Otherwise a re-click would leave the form
+        // mid-state (stage 'sub', project_name pre-filled) — same UX
+        // bug the audit flagged, just triggered differently.
+        if (APP.configureV2 && APP.configureV2._state) {
+            APP.configureV2._state.identityStage = 'family';
+            const projInput = document.getElementById('cfg-project-name');
+            if (projInput) { projInput.value = ''; delete projInput.dataset.cfgUserEdited; }
+        }
         // 1) Pin draft sentinel — drops the operator into "creating a new
         //    one" mode. Subscribers (sub-pill visibility, URL) re-fire.
         APP.activeDeployment.set(APP.activeDeployment.DRAFT_SENTINEL);
@@ -12206,14 +12216,15 @@ APP.configureV2 = (function () {
     };
 
     // FAMILY_SECTIONS — section IDs in nav order PER family. The Test
-    // Lab section is c2-only (the spec explicitly excludes goad-* and
-    // combined-* — those already have GOAD for their lab needs). The
-    // section is rendered ONLY for the c2 family, so the rail + section
-    // count update from 8 → 9 when the operator picks c2.
+    // Lab section is available for c2-* AND combined-* (UX audit Batch
+    // B · C6). For combined deployments the operator may still want a
+    // bolt-on test lab AS WELL AS GOAD — they're distinct labs in
+    // distinct subnets, GOAD for training, test lab for catalog
+    // validation. goad-* still excludes it (no C2 to bolt onto).
     const FAMILY_SECTIONS = {
         c2:       ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'testlab', 'attackbox', 'cost'],
         goad:     ['identity', 'network', 'ssh', 'attackbox', 'cost'],
-        combined: ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'attackbox', 'cost']
+        combined: ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'testlab', 'attackbox', 'cost']
     };
 
     const PRICING = {
@@ -12264,7 +12275,21 @@ APP.configureV2 = (function () {
         // POST payload regardless of family — backend ignores them for
         // non-c2 deployments.
         enableTestLab: false,
-        testLabSubnetCidr: '10.0.20.0/24'
+        testLabSubnetCidr: '10.0.20.0/24',
+        // 2026-05-20 (UX audit Batch A · C1) — Identity landing stage.
+        //   'family' → only family + type pickers visible. Hero shows
+        //              "New deployment". project_name / env / region are
+        //              hidden (the operator hasn't picked yet).
+        //   'sub'    → family/type collapse to the confirmed chip row;
+        //              project_name auto-fills + env + region appear.
+        // Transitions:
+        //   - new draft / fullReset() / applyDraftMode() → 'family'
+        //   - type tile click in stage 'family'          → 'sub'
+        //   - family seg-control click                   → reset to 'family'
+        //     (types differ per family — staying in 'sub' would leave a
+        //     stale type label, so we force a re-pick)
+        //   - chip-row pencil click                      → back to 'family'
+        identityStage: 'family'
     };
 
     function _machineSuffix() {
@@ -12316,6 +12341,51 @@ APP.configureV2 = (function () {
         if (pill) pill.textContent = newState.charAt(0).toUpperCase() + newState.slice(1);
     }
 
+    // 2026-05-20 (UX audit Batch A · C1) — Drive the Identity section's
+    // two-stage landing. Stage 'family' hides the project_name/env/region
+    // rows so the first thing the operator sees is a clean "pick a family"
+    // surface. Stage 'sub' collapses family/type into a chip header and
+    // materialises the rest of the Identity fields. The hero text and the
+    // sidebar's deployment-type pill follow the same stage.
+    function applyIdentityStage() {
+        const sec = $('.cfg-section[data-cfg-section="identity"]');
+        if (!sec) return;
+        const pickers = sec.querySelector('[data-cfg-identity-pickers]');
+        const confirmed = sec.querySelector('[data-cfg-identity-confirmed]');
+        const sub = sec.querySelector('[data-cfg-identity-sub-fields]');
+        if (!pickers || !confirmed || !sub) return;
+        const stage = state.identityStage === 'sub' ? 'sub' : 'family';
+        sec.dataset.cfgIdentityStage = stage;
+        if (stage === 'family') {
+            pickers.hidden = false;
+            confirmed.hidden = true;
+            sub.hidden = true;
+        } else {
+            pickers.hidden = true;
+            confirmed.hidden = false;
+            sub.hidden = false;
+            // Repaint the chip row labels.
+            const famEl = $('#cfg-identity-confirmed-family');
+            const typeEl = $('#cfg-identity-confirmed-type');
+            const FAMILY_LABEL = { c2: 'C2', goad: 'GOAD', combined: 'Combined' };
+            if (famEl) famEl.textContent = FAMILY_LABEL[state.family] || state.family;
+            if (typeEl) typeEl.textContent = state.type;
+        }
+        // Hero text mirrors the stage. In 'family' it stays the abstract
+        // "New deployment" copy regardless of what state.type happens to
+        // be defaulted to; in 'sub' it shows the auto-generated name.
+        const heroText = $('#cfg-hero-title-text');
+        if (heroText) {
+            if (stage === 'family') {
+                heroText.textContent = 'New deployment';
+            } else {
+                const projInput = $('#cfg-project-name');
+                const name = (projInput && projInput.value) ? projInput.value.trim() : '';
+                heroText.textContent = name || 'New deployment';
+            }
+        }
+    }
+
     function applyTypeAwareVisibility() {
         const active = getActiveSections();
         $$('.cfg-section').forEach(sec => {
@@ -12351,13 +12421,16 @@ APP.configureV2 = (function () {
         const cntEl = $('#cfg-c2-server-count');
         const c2CountField = cntEl ? cntEl.closest('.cfg-field') : null;
         if (c2CountField) c2CountField.style.opacity = isPurple ? '1' : '0.55';
-        // When the family is anything other than c2 the test lab toggle
-        // doesn't apply — force-disable + clear so a stale checked state
-        // doesn't leak into assembleConfig() on family-switch.
-        if (state.family !== 'c2') {
+        // 2026-05-20 (UX audit Batch B · C6) — Test Lab is allowed for
+        // c2-* AND combined-*. Force-disable only when the family is
+        // goad-* (no C2 to bolt onto). Also surface the combined-family
+        // explainer note inline with the toggle.
+        if (state.family !== 'c2' && state.family !== 'combined') {
             const tl = $('#cfg-enable-test-lab');
             if (tl && tl.checked) { tl.checked = false; updateTestLabVisibility(); renderCost(); }
         }
+        const combinedNote = document.getElementById('cfg-test-lab-combined-note');
+        if (combinedNote) combinedNote.style.display = (state.family === 'combined') ? '' : 'none';
     }
 
     function updateProgress() {
@@ -12500,10 +12573,12 @@ APP.configureV2 = (function () {
             const abType = v('cfg-ab-instance-type');
             rows.push({ name: 'Attack box', type: abType + ' × 1', monthly: PRICING[abType] || 60 });
         }
-        // Test Lab — c2-only. The 4 hosts (tldc01 + tlms01 = t3.medium, tlws01
-        // + tllinux01 = t3.small) reuse the C2 VPC, NAT, and IGW, so we only
-        // add compute line items here. ~$90/mo per the design spec.
-        if (family === 'c2' && $('#cfg-enable-test-lab')?.checked) {
+        // Test Lab — c2-* AND combined-* (Batch B · C6). The 4 hosts
+        // (tldc01 + tlms01 = t3.medium, tlws01 + tllinux01 = t3.small)
+        // reuse the C2 VPC, NAT, and IGW, so we only add compute line
+        // items here. ~$90/mo per the design spec. For combined-* this
+        // sits alongside the GOAD lab — both are valid simultaneously.
+        if ((family === 'c2' || family === 'combined') && $('#cfg-enable-test-lab')?.checked) {
             rows.push({ name: 'Test lab · tldc01 (DC)',       type: 't3.medium × 1', monthly: PRICING['t3.medium'] });
             rows.push({ name: 'Test lab · tlms01 (member)',   type: 't3.medium × 1', monthly: PRICING['t3.medium'] });
             rows.push({ name: 'Test lab · tlws01 (workstation)', type: 't3.small × 1',  monthly: PRICING['t3.small'] });
@@ -12540,7 +12615,14 @@ APP.configureV2 = (function () {
                 state.type = btn.dataset.cfgType;
                 $$('#cfg-type-grid .cfg-type-btn').forEach(b => b.classList.remove('is-active'));
                 btn.classList.add('is-active');
+                // 2026-05-20 (UX audit Batch A · C1) — Picking a type flips
+                // Identity from the 'family' landing stage to 'sub' so the
+                // project_name/env/region rows materialise. Order matters:
+                // flip the stage BEFORE updateProjectName() so the auto-fill
+                // is allowed to populate the input.
+                state.identityStage = 'sub';
                 updateProjectName();
+                applyIdentityStage();
                 const sb = $('#cfg-sb-type'); if (sb) sb.textContent = state.type;
                 applyTypeAwareVisibility();
                 renderCost();
@@ -12552,19 +12634,20 @@ APP.configureV2 = (function () {
         const env = $('#cfg-env-select')?.value || 'dev';
         const safeType = state.type.replace(/-/g, '_');
         const projInput = $('#cfg-project-name');
-        if (projInput && !projInput.dataset.cfgUserEdited) {
+        // 2026-05-20 (UX audit Batch A · C1) — In stage 'family' the
+        // operator hasn't picked a type yet; leave the project_name input
+        // empty so the bug ("c2_adhoc_dev_mozilla_5_0_macintosh_in" leaks
+        // before the operator picked anything) cannot recur. The auto-fill
+        // only runs once stage flips to 'sub'.
+        if (state.identityStage === 'family') {
+            if (projInput && !projInput.dataset.cfgUserEdited) projInput.value = '';
+        } else if (projInput && !projInput.dataset.cfgUserEdited) {
             projInput.value = safeType + '_' + env + '_' + _machineSuffix();
         }
-        // 2026-05-19 — keep the hero title in sync with the resolved
-        // project name. Empty / falsy → "New deployment" (the operator
-        // hasn't picked a type yet); otherwise the real name. Sentinels
-        // never leak here because the V2 surface is only mounted when the
-        // active deployment is the draft sentinel.
-        const heroText = $('#cfg-hero-title-text');
-        if (heroText) {
-            const name = (projInput && projInput.value) ? projInput.value.trim() : '';
-            heroText.textContent = name || 'New deployment';
-        }
+        // Hero text mirrors stage — delegated to applyIdentityStage(), but
+        // call it eagerly so callers that only invoke updateProjectName()
+        // (e.g. env <select> change) still refresh the hero copy.
+        applyIdentityStage();
     }
 
     // ─── DOMAIN AVAILABILITY ──────────────────────────────────────────
@@ -12758,6 +12841,10 @@ APP.configureV2 = (function () {
         state.ssh = DEFAULTS.ssh;
         state.confirmed.clear();
         state.mode = 'draft';
+        // 2026-05-20 (UX audit Batch A · C1) — bounce Identity back to the
+        // family landing stage so the operator sees a clean "pick a family"
+        // surface, not the pre-filled form.
+        state.identityStage = 'family';
         // 2026-05-20 — clear any in-progress draftProject so the dropdown
         // label reverts to "Draft (unnamed)" and Deploy stops finding a
         // target. The operator is explicitly throwing away their work.
@@ -12844,6 +12931,7 @@ APP.configureV2 = (function () {
         }
 
         applyTypeAwareVisibility();
+        applyIdentityStage();
         updateProjectName();
         renderCost();
         const sbType = $('#cfg-sb-type'); if (sbType) sbType.textContent = state.type;
@@ -12995,6 +13083,34 @@ HTTP/1.1 200 OK
     }
 
     // ─── EVENT WIRING ───────────────────────────────────────────────────
+    // 2026-05-20 (UX audit Batch B · C5) — resetSectionsForFamilyChange.
+    // When the operator switches family (c2 → goad → combined etc.) the
+    // section list for the new family is different (c2 has 9 sections,
+    // goad has 5, combined has 8). Previously the family-change handler
+    // only reset sections in the *current* family's order starting from
+    // index 1 — Identity stayed confirmed AND any section confirmed
+    // under the old family but absent in the new family kept its stale
+    // confirmed state in state.confirmed (re-surfacing as a phantom
+    // "confirmed" if the operator flipped back). Fix: wipe the entire
+    // state.confirmed set, scrub every section's summary, snap section
+    // 1 (identity) to active and the rest to pending, then re-paint the
+    // TOC rail with the new family's ordering via applyTypeAwareVisibility().
+    function resetSectionsForFamilyChange() {
+        state.confirmed.clear();
+        $$('.cfg-section [data-cfg-summary]').forEach(el => { el.innerHTML = ''; });
+        applyTypeAwareVisibility();
+        const order = getActiveSections();
+        order.forEach((id, idx) => {
+            const sec = $('.cfg-section[data-cfg-section="' + id + '"]');
+            if (!sec) return;
+            const numEl = $('[data-cfg-num]', sec);
+            if (numEl) numEl.textContent = idx + 1;
+            if (idx === 0) { setSectionState(id, 'active'); setRailState(id, 'active'); }
+            else          { setSectionState(id, 'pending'); setRailState(id, 'pending'); }
+        });
+        renderSummary('identity');
+    }
+
     function wireEvents() {
         // Family
         $$('#cfg-family-row .cfg-family-btn').forEach(btn => {
@@ -13005,24 +13121,52 @@ HTTP/1.1 200 OK
                 btn.classList.add('is-active');
                 state.family = f;
                 state.type = TYPES_BY_FAMILY[f][0].id;
+                // 2026-05-20 (UX audit Batch A · C1) — Family change resets
+                // Identity to stage 'family'. Re-staging is intentional:
+                // types differ per family (c2 → c2-adhoc, goad → goad-mini),
+                // so keeping stage 'sub' with the silently-defaulted first
+                // type would feel like the picker auto-picked. Force the
+                // operator to re-click a type for the new family. Also
+                // wipe the project_name auto-fill + user-edit flag so the
+                // new type re-engages auto-fill on the next tile click.
+                state.identityStage = 'family';
+                const projInput = $('#cfg-project-name');
+                if (projInput) { projInput.value = ''; delete projInput.dataset.cfgUserEdited; }
                 renderTypeGrid();
+                applyIdentityStage();
                 updateProjectName();
                 const sb = $('#cfg-sb-type'); if (sb) sb.textContent = state.type;
-                applyTypeAwareVisibility();
-                // Reset downstream
-                const order = getActiveSections();
-                for (let i = 1; i < order.length; i++) {
-                    if (state.confirmed.has(order[i])) {
-                        state.confirmed.delete(order[i]);
-                        setSectionState(order[i], 'pending');
-                        setRailState(order[i], 'pending');
-                        const sec = $('.cfg-section[data-cfg-section="' + order[i] + '"]');
-                        if (sec) { const sm = $('[data-cfg-summary]', sec); if (sm) sm.innerHTML = ''; }
-                    }
-                }
+                // 2026-05-20 (UX audit Batch B · C5) — full downstream reset.
+                // Family changes the section list itself (c2 vs goad vs
+                // combined have different orderings + counts), so we wipe
+                // confirmed state for every section — including Identity,
+                // because the family selector lives inside Identity and
+                // operator intent on flipping family is "start over". The
+                // helper also re-paints the rail with the new ordering.
+                resetSectionsForFamilyChange();
                 renderCost();
                 updateProgress();
             });
+        });
+        // 2026-05-20 (UX audit Batch A · C1) — Pencil button on the
+        // confirmed Family/Type chip row flips Identity back to stage
+        // 'family' so the operator can re-pick. We do NOT clear state.type
+        // (it stays selected in the grid via .is-active) — just re-expand
+        // the pickers. If they pick a new type the tile handler re-flips
+        // to 'sub'; if they don't pick anything they can click the same
+        // type again and we'll bounce right back to 'sub'.
+        const identityEditBtn = $('#cfg-identity-edit-btn');
+        if (identityEditBtn) identityEditBtn.addEventListener('click', () => {
+            state.identityStage = 'family';
+            if (state.confirmed.has('identity')) {
+                state.confirmed.delete('identity');
+                const idSec = $('.cfg-section[data-cfg-section="identity"]');
+                if (idSec) { const sm = $('[data-cfg-summary]', idSec); if (sm) sm.innerHTML = ''; }
+                setSectionState('identity', 'active');
+                setRailState('identity', 'active');
+                updateProgress();
+            }
+            applyIdentityStage();
         });
 
         const envSel = $('#cfg-env-select');
@@ -13263,12 +13407,21 @@ HTTP/1.1 200 OK
             // doesn't have to special-case missing keys; the terraform
             // module is gated on `enable_test_lab && local.deploy_c2` so
             // the subnet CIDR is a no-op when the toggle is false.
-            enable_test_lab: (state.family === 'c2') && !!checked('cfg-enable-test-lab'),
+            // Batch B · C6 — allow combined-* in addition to c2-*; goad-*
+            // is still excluded (no C2 component to bolt onto).
+            enable_test_lab: (state.family === 'c2' || state.family === 'combined') && !!checked('cfg-enable-test-lab'),
             test_lab_subnet_cidr: (v('cfg-test-lab-subnet-cidr') || '10.0.20.0/24').trim()
         };
     }
 
     async function save() {
+        // 2026-05-20 (UX audit Batch B · H3) — disable Save during the
+        // POST round-trip so a double-click can't fire two writes against
+        // the same project_name. Re-enabled in the finally block; the
+        // success branch will also flip the pill / stash draftProject so
+        // the button being available afterwards is harmless.
+        const saveBtn = $('#cfg-save-btn');
+        if (saveBtn) saveBtn.disabled = true;
         try {
             const config = assembleConfig();
             if (!config.project_name) {
@@ -13322,6 +13475,17 @@ HTTP/1.1 200 OK
                 // flip happens only on Apply-success (in pollDeploymentStatus).
                 if (APP.activeDeployment) {
                     APP.activeDeployment.draftProject = config.project_name;
+                    // 2026-05-20 (UX audit Batch B · M2) — hero pill must
+                    // transition from "Draft" → "Draft: <project_name>"
+                    // once the operator commits a name via Save. The pill
+                    // label is the single visible reminder the project is
+                    // staged but not yet Applied; surfacing the name closes
+                    // the "did Save actually do anything?" gap. displayName
+                    // resolves to "Draft: <name>" because draftProject is
+                    // now populated.
+                    if (heroPill) {
+                        heroPill.textContent = APP.activeDeployment.displayName(APP.activeDeployment.DRAFT_SENTINEL);
+                    }
                     // Re-fire subscribers so the global header label + sub-pill
                     // hiding logic re-renders with the new draftProject. We're
                     // already in draft sentinel so .set() would no-op; manually
@@ -13346,6 +13510,12 @@ HTTP/1.1 200 OK
         } catch (e) {
             console.error('[cfgV2] save error:', e);
             if (APP && APP.toast) APP.toast('Save failed: ' + e.message, 'danger', 8000);
+        } finally {
+            // 2026-05-20 (UX audit Batch B · H3) — re-enable Save now that
+            // the round-trip is done. updateProgress() will subsequently
+            // gate the button on section-readiness; we leave it enabled
+            // here so re-saving after an edit is one click away.
+            if (saveBtn) saveBtn.disabled = false;
         }
     }
 
@@ -13389,6 +13559,9 @@ HTTP/1.1 200 OK
         renderTypeGrid();
         renderBackupList(DEFAULTS.backupDomains);
         applyTypeAwareVisibility();
+        // 2026-05-20 (UX audit Batch A · C1) — first paint of Identity
+        // lands on the family/type pickers, not the populated form.
+        applyIdentityStage();
         updateProjectName();
         updateFilePortalVisibility();
         updateSslSelfSignedVisibility();
@@ -13442,6 +13615,13 @@ HTTP/1.1 200 OK
             pane.hidden = false;
             pane.classList.remove('is-out-of-mode');
             ensureInitialized();
+            // 2026-05-20 (UX audit Batch A · C1) — make absolutely sure the
+            // Identity stage is in sync with state on every draft entry.
+            // ensureInitialized() is idempotent (initialized guard), so
+            // this is the hook that re-paints if startDraftFlow nudged
+            // state.identityStage between renders.
+            applyIdentityStage();
+            updateProjectName();
             // Hide the legacy chrome inside Configure (banner, summary spec-list,
             // editor dropdown, advanced details, sticky save bar).
             if (legacyBanner) legacyBanner.style.display = 'none';

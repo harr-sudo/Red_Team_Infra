@@ -1,0 +1,116 @@
+/**
+ * 2026-05-20 (UX audit Batch B · C5 + C6) — Configure V2 family-change.
+ *
+ * Covers:
+ *   1. Family switch resets all confirmed sections (including Identity)
+ *      AND re-paints the TOC rail with the new family's section list.
+ *   2. Combined family now exposes the Test Lab section (Batch B · C6).
+ *   3. Test Lab toggle in c2-adhoc adds 4 line items to the cost table.
+ *
+ * Spec: docs/internal/UX_AUDIT_2026-05-20.md (C5, C6)
+ */
+
+import { test, expect } from '@playwright/test';
+
+async function openDraftConfigure(page) {
+    await page.goto('/');
+    await page.locator('#global-new-deployment-btn').waitFor({ timeout: 5000 });
+    await page.evaluate(() => { window.confirm = () => true; });
+    await page.click('#global-new-deployment-btn');
+    await page.waitForTimeout(400);
+    await page.locator('#configure-v2-pane').waitFor({ timeout: 5000 });
+    await page.evaluate(() => {
+        if (window.APP && window.APP.configureV2 && window.APP.configureV2.ensureInitialized) {
+            return window.APP.configureV2.ensureInitialized();
+        }
+    });
+    await page.waitForTimeout(300);
+}
+
+async function pickFamily(page, family) {
+    await page.click(`#cfg-family-row [data-cfg-family="${family}"]`);
+    await page.waitForTimeout(200);
+}
+
+test('Family switch c2 → goad resets Identity AND re-paints rail with 5-section GOAD layout', async ({ page }) => {
+    await openDraftConfigure(page);
+    await pickFamily(page, 'c2');
+
+    // Fill the absolute minimum for Identity then confirm it.
+    await page.locator('#cfg-project-name').waitFor({ timeout: 3000 });
+    // Project name auto-fills from machine suffix; mgmt CIDR is optional for
+    // Identity confirm (it lives in Network). Click the Identity Confirm
+    // button — `data-cfg-confirm="identity"`.
+    await page.click('[data-cfg-confirm="identity"]');
+    await page.waitForTimeout(200);
+
+    // Identity should be confirmed.
+    const identitySection = page.locator('.cfg-section[data-cfg-section="identity"]');
+    await expect(identitySection).toHaveClass(/is-confirmed/);
+
+    // Switch family c2 → goad. Identity should no longer be confirmed and
+    // the rail should now reflect the 5-section GOAD ordering.
+    await pickFamily(page, 'goad');
+    await expect(identitySection).not.toHaveClass(/is-confirmed/);
+    await expect(identitySection).toHaveClass(/is-active/);
+
+    // Rail visible items match the GOAD section list (identity, network,
+    // ssh, attackbox, cost) — 5 entries, no domain/ssl/c2/testlab.
+    const visibleRailIds = await page.evaluate(() => {
+        const items = Array.from(document.querySelectorAll('.cfg-rail__item'));
+        return items
+            .filter(el => !el.classList.contains('is-hidden'))
+            .map(el => el.dataset.cfgSectionId);
+    });
+    expect(visibleRailIds).toEqual(['identity', 'network', 'ssh', 'attackbox', 'cost']);
+
+    // Test Lab section is hidden for goad.
+    const testlabSec = page.locator('.cfg-section[data-cfg-section="testlab"]');
+    await expect(testlabSec).toHaveClass(/is-hidden/);
+});
+
+test('Family switch goad → combined exposes Test Lab section (Batch B · C6)', async ({ page }) => {
+    await openDraftConfigure(page);
+    await pickFamily(page, 'combined');
+
+    // Test Lab section IS visible for combined (Batch B · C6).
+    const testlabSec = page.locator('.cfg-section[data-cfg-section="testlab"]');
+    await expect(testlabSec).toBeVisible();
+    const testlabRail = page.locator('.cfg-rail__item[data-cfg-section-id="testlab"]');
+    await expect(testlabRail).toBeVisible();
+
+    // The combined-family explainer note is rendered + visible.
+    const combinedNote = page.locator('#cfg-test-lab-combined-note');
+    await expect(combinedNote).toBeVisible();
+    await expect(combinedNote).toContainText('Combined deployments already include a GOAD lab');
+});
+
+test('Test Lab toggle in c2-adhoc adds 4 cost rows', async ({ page }) => {
+    await openDraftConfigure(page);
+    await pickFamily(page, 'c2');
+    // Default type for c2 family is c2-adhoc per TYPES_BY_FAMILY[0].
+
+    const beforeRows = await page.locator('#cfg-cost-body tr').count();
+    await page.click('#cfg-enable-test-lab');
+    await page.waitForTimeout(100);
+    const afterRows = await page.locator('#cfg-cost-body tr').count();
+    expect(afterRows - beforeRows).toBe(4);
+
+    // Sanity-check assembleConfig surfaces the flag.
+    const cfg = await page.evaluate(() => window.APP.configureV2.assembleConfig());
+    expect(cfg.enable_test_lab).toBe(true);
+});
+
+test('Test Lab toggle in combined-* also adds 4 cost rows (Batch B · C6)', async ({ page }) => {
+    await openDraftConfigure(page);
+    await pickFamily(page, 'combined');
+
+    const beforeRows = await page.locator('#cfg-cost-body tr').count();
+    await page.click('#cfg-enable-test-lab');
+    await page.waitForTimeout(100);
+    const afterRows = await page.locator('#cfg-cost-body tr').count();
+    expect(afterRows - beforeRows).toBe(4);
+
+    const cfg = await page.evaluate(() => window.APP.configureV2.assembleConfig());
+    expect(cfg.enable_test_lab).toBe(true);
+});

@@ -708,45 +708,63 @@
                                         <div class="cfg-section__summary" data-cfg-summary></div>
                                     </div>
                                     <div class="cfg-section__body"><div><div class="cfg-section__body-inner">
-                                        <div class="cfg-field">
-                                            <span class="cfg-field__label"><span>Family <span class="cfg-field__required">*</span></span></span>
-                                            <div class="cfg-family-row" id="cfg-family-row">
-                                                <button class="cfg-family-btn is-active" type="button" data-cfg-family="c2">C2-only</button>
-                                                <button class="cfg-family-btn" type="button" data-cfg-family="goad">GOAD-only</button>
-                                                <button class="cfg-family-btn" type="button" data-cfg-family="combined">Combined</button>
-                                            </div>
-                                        </div>
-                                        <div class="cfg-field">
-                                            <span class="cfg-field__label"><span>Deployment type <span class="cfg-field__required">*</span></span></span>
-                                            <div class="cfg-type-grid" id="cfg-type-grid"></div>
-                                            <span class="cfg-field__hint">Pick a type — the next sections adapt to what it needs.</span>
-                                        </div>
-                                        <div class="cfg-row">
+                                        <!--
+                                          2026-05-20 (UX audit Batch A · C1) — Identity stage machine.
+                                          Stage "family" → only the family + type pickers render.
+                                          Stage "sub"    → family/type collapse into the confirmed-style
+                                                           chip row below; project_name / env / region
+                                                           materialise. See applyIdentityStage() in app.js.
+                                        -->
+                                        <div data-cfg-identity-pickers>
                                             <div class="cfg-field">
-                                                <span class="cfg-field__label"><span>Project name <span class="cfg-field__required">*</span></span><span class="cfg-field__defaulted">Auto</span></span>
-                                                <input class="cfg-input" type="text" id="cfg-project-name" value="">
-                                                <span class="cfg-field__hint">{type}_{env}_{machine}. Override for a custom suffix.</span>
+                                                <span class="cfg-field__label"><span>Family <span class="cfg-field__required">*</span></span></span>
+                                                <div class="cfg-family-row" id="cfg-family-row">
+                                                    <button class="cfg-family-btn is-active" type="button" data-cfg-family="c2">C2-only</button>
+                                                    <button class="cfg-family-btn" type="button" data-cfg-family="goad">GOAD-only</button>
+                                                    <button class="cfg-family-btn" type="button" data-cfg-family="combined">Combined</button>
+                                                </div>
                                             </div>
                                             <div class="cfg-field">
-                                                <span class="cfg-field__label"><span>Environment</span><span class="cfg-field__defaulted">DEV</span></span>
-                                                <select class="cfg-input" id="cfg-env-select">
-                                                    <option value="dev" selected>dev</option>
-                                                    <option value="staging">staging</option>
-                                                    <option value="prod">prod</option>
+                                                <span class="cfg-field__label"><span>Deployment type <span class="cfg-field__required">*</span></span></span>
+                                                <div class="cfg-type-grid" id="cfg-type-grid"></div>
+                                                <span class="cfg-field__hint">Pick a type — the rest of the form materialises once you do.</span>
+                                            </div>
+                                        </div>
+                                        <!-- Confirmed-style chip row shown only in stage "sub". -->
+                                        <div class="cfg-identity-confirmed" id="cfg-identity-confirmed" data-cfg-identity-confirmed hidden>
+                                            <span class="cfg-identity-confirmed__kv"><span class="cfg-identity-confirmed__k">Family</span><span class="cfg-identity-confirmed__v" id="cfg-identity-confirmed-family">C2</span></span>
+                                            <span class="cfg-identity-confirmed__sep">·</span>
+                                            <span class="cfg-identity-confirmed__kv"><span class="cfg-identity-confirmed__k">type</span><span class="cfg-identity-confirmed__v" id="cfg-identity-confirmed-type">c2-adhoc</span></span>
+                                            <button class="cfg-identity-confirmed__edit" type="button" id="cfg-identity-edit-btn" data-cfg-identity-edit aria-label="Re-pick family / type"><svg><use href="#cfg-ic-edit"/></svg></button>
+                                        </div>
+                                        <div data-cfg-identity-sub-fields hidden>
+                                            <div class="cfg-row">
+                                                <div class="cfg-field">
+                                                    <span class="cfg-field__label"><span>Project name <span class="cfg-field__required">*</span></span><span class="cfg-field__defaulted">Auto</span></span>
+                                                    <input class="cfg-input" type="text" id="cfg-project-name" value="">
+                                                    <span class="cfg-field__hint">{type}_{env}_{machine}. Override for a custom suffix.</span>
+                                                </div>
+                                                <div class="cfg-field">
+                                                    <span class="cfg-field__label"><span>Environment</span><span class="cfg-field__defaulted">DEV</span></span>
+                                                    <select class="cfg-input" id="cfg-env-select">
+                                                        <option value="dev" selected>dev</option>
+                                                        <option value="staging">staging</option>
+                                                        <option value="prod">prod</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>AWS region</span><span class="cfg-field__defaulted">eu-central-1</span></span>
+                                                <select class="cfg-input" id="cfg-region-select">
+                                                    <option value="eu-central-1" selected>eu-central-1 · Frankfurt</option>
+                                                    <option value="us-east-1">us-east-1 · N. Virginia</option>
+                                                    <option value="us-west-2">us-west-2 · Oregon</option>
                                                 </select>
                                             </div>
-                                        </div>
-                                        <div class="cfg-field">
-                                            <span class="cfg-field__label"><span>AWS region</span><span class="cfg-field__defaulted">eu-central-1</span></span>
-                                            <select class="cfg-input" id="cfg-region-select">
-                                                <option value="eu-central-1" selected>eu-central-1 · Frankfurt</option>
-                                                <option value="us-east-1">us-east-1 · N. Virginia</option>
-                                                <option value="us-west-2">us-west-2 · Oregon</option>
-                                            </select>
-                                        </div>
-                                        <div class="cfg-confirm-row">
-                                            <button class="cfg-btn-confirm" type="button" data-cfg-confirm="identity">Confirm <svg><use href="#cfg-ic-arrow"/></svg></button>
-                                            <button class="cfg-btn-secondary" type="button" data-cfg-confirm="identity" data-cfg-skip>Skip · accept defaults</button>
+                                            <div class="cfg-confirm-row">
+                                                <button class="cfg-btn-confirm" type="button" data-cfg-confirm="identity">Confirm <svg><use href="#cfg-ic-arrow"/></svg></button>
+                                                <button class="cfg-btn-secondary" type="button" data-cfg-confirm="identity" data-cfg-skip>Skip · accept defaults</button>
+                                            </div>
                                         </div>
                                     </div></div></div>
                                 </section>
@@ -1075,6 +1093,13 @@
                                         <div class="cfg-section__summary" data-cfg-summary></div>
                                     </div>
                                     <div class="cfg-section__body"><div><div class="cfg-section__body-inner">
+                                        <!-- 2026-05-20 (UX audit Batch B · C6) — combined-family explainer.
+                                             Hidden by default; revealed by applyTypeAwareVisibility() when
+                                             state.family === 'combined'. Clarifies that the test lab and
+                                             GOAD coexist (distinct labs, distinct subnets, distinct purpose). -->
+                                        <div id="cfg-test-lab-combined-note" class="cfg-callout cfg-callout--info" style="display:none;margin-bottom:14px">
+                                            Combined deployments already include a GOAD lab. The test lab is an additional purpose-built lab for bolt-on catalog validation.
+                                        </div>
                                         <div class="cfg-field">
                                             <label class="cfg-toggle">
                                                 <input type="checkbox" id="cfg-enable-test-lab">
