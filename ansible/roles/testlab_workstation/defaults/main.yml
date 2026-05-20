@@ -1,0 +1,29 @@
+---
+# Defaults for the testlab_workstation role.
+
+# Base apps installed via winget (Win10/11 Pro ship winget by default).
+# Edge is technically already present — pinned here so the version
+# pulls forward on first provision.
+testlab_workstation_winget_apps:
+  - Microsoft.Edge
+  - Notepad++.Notepad++
+
+# Local `ansible` user password — separate from domain Administrator
+# so credential-exposure bolt-ons have a distinct local target.
+testlab_workstation_local_ansible_password: "{{ vault_ansible_password }}"
+
+# Office macro execution context — vulnerable BY DESIGN. The macro-doc
+# bolt-on relies on these registry keys to render its payload without
+# the security prompt.
+testlab_workstation_office_macro_levels:
+  # 1 = enable all macros (no prompt). 4 = disable all w/o notification.
+  Word:       1
+  Excel:      1
+  PowerPoint: 1
+  Outlook:    1
+
+# Office versions to write the registry keys under. We write to all
+# common policy paths because we don't know at provision time which
+# Office build the macro-doc bolt-on will publish.
+testlab_workstation_office_versions:
+  - "16.0"

@@ -677,8 +677,9 @@
                                 <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="domain" data-cfg-section-id="domain" disabled><span class="cfg-rail__bullet">4</span><span>Redirector &amp; domain</span></button>
                                 <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="ssl" data-cfg-section-id="ssl" disabled><span class="cfg-rail__bullet">5</span><span>SSL &amp; encryption</span></button>
                                 <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="c2" data-cfg-section-id="c2" disabled><span class="cfg-rail__bullet">6</span><span>C2 profile &amp; servers</span></button>
-                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="attackbox" data-cfg-section-id="attackbox" disabled><span class="cfg-rail__bullet">7</span><span>Attack box</span></button>
-                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="cost" data-cfg-section-id="cost" disabled><span class="cfg-rail__bullet">8</span><span>Cost</span></button>
+                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="testlab" data-cfg-section-id="testlab" disabled><span class="cfg-rail__bullet">7</span><span>Test lab</span></button>
+                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="attackbox" data-cfg-section-id="attackbox" disabled><span class="cfg-rail__bullet">8</span><span>Attack box</span></button>
+                                <button class="cfg-rail__item is-pending" type="button" data-cfg-jump="cost" data-cfg-section-id="cost" disabled><span class="cfg-rail__bullet">9</span><span>Cost</span></button>
                             </aside>
 
                             <!-- MAIN -->
@@ -1059,10 +1060,52 @@
                                     </div></div></div>
                                 </section>
 
-                                <!-- SECTION 7 · ATTACK BOX -->
-                                <section class="cfg-section is-pending" data-cfg-section="attackbox">
+                                <!-- SECTION 7 · TEST LAB (c2-* family only — bolt-on validation lab) -->
+                                <section class="cfg-section is-pending" data-cfg-section="testlab">
                                     <div class="cfg-section__head" data-cfg-head>
                                         <span class="cfg-section__num"><span data-cfg-num>7</span></span>
+                                        <span class="cfg-section__title-row">
+                                            <span class="cfg-section__eyebrow">OPTIONAL · BOLT-ON VALIDATION</span>
+                                            <span class="cfg-section__title">Test Lab</span>
+                                            <span class="cfg-section__sub">A purpose-built isolated AD lab (4 hosts) for validating catalog bolt-ons. Lives in the same VPC as your C2.</span>
+                                        </span>
+                                        <span class="cfg-section__state-pill" data-cfg-state-pill>Pending</span>
+                                        <button class="cfg-section__edit-btn" type="button" data-cfg-edit aria-label="Re-edit test lab"><svg><use href="#cfg-ic-edit"/></svg></button>
+                                        <div class="cfg-section__pending-hint">Waiting on <strong>C2 profile &amp; servers</strong>. Tick to add 4 hosts (tldc01 · tlms01 · tlws01 · tllinux01) inside the C2 VPC.</div>
+                                        <div class="cfg-section__summary" data-cfg-summary></div>
+                                    </div>
+                                    <div class="cfg-section__body"><div><div class="cfg-section__body-inner">
+                                        <div class="cfg-field">
+                                            <label class="cfg-toggle">
+                                                <input type="checkbox" id="cfg-enable-test-lab">
+                                                <span class="cfg-toggle__title">Enable test lab</span>
+                                                <span class="cfg-toggle__sub">tldc01 · tlms01 · tlws01 · tllinux01 — same VPC as C2, no peering</span>
+                                            </label>
+                                        </div>
+                                        <div id="cfg-test-lab-fields" style="display:none">
+                                            <div class="cfg-callout cfg-callout--info" style="margin-bottom:14px">
+                                                <strong>+ ~$90/mo</strong> · t3.medium × 2 + t3.small × 2. Reuses the C2 VPC, NAT, IGW — no extra networking spend.
+                                            </div>
+                                            <div class="cfg-field">
+                                                <span class="cfg-field__label"><span>Subnet CIDR</span><span class="cfg-field__defaulted">10.0.20.0/24</span></span>
+                                                <input class="cfg-input" type="text" id="cfg-test-lab-subnet-cidr" value="10.0.20.0/24" placeholder="10.0.20.0/24" pattern="^\d+\.\d+\.\d+\.\d+/\d+$">
+                                                <span class="cfg-field__hint">Must not overlap with C2 subnets (<code>10.0.0.0/24</code>, <code>10.0.1-2.0/24</code>, <code>10.0.10-11.0/24</code>).</span>
+                                            </div>
+                                            <p class="cfg-field__hint" style="margin-top:4px">
+                                                See the <a href="/docs/internal/TESTLAB_DESIGN.md" target="_blank" rel="noopener" style="color:var(--info-text);text-decoration:underline">Test Lab design spec</a> for the host matrix + how it maps to the bolt-on catalog.
+                                            </p>
+                                        </div>
+                                        <div class="cfg-confirm-row">
+                                            <button class="cfg-btn-confirm" type="button" data-cfg-confirm="testlab">Confirm <svg><use href="#cfg-ic-arrow"/></svg></button>
+                                            <button class="cfg-btn-secondary" type="button" data-cfg-confirm="testlab" data-cfg-skip>Skip · no test lab</button>
+                                        </div>
+                                    </div></div></div>
+                                </section>
+
+                                <!-- SECTION 8 · ATTACK BOX -->
+                                <section class="cfg-section is-pending" data-cfg-section="attackbox">
+                                    <div class="cfg-section__head" data-cfg-head>
+                                        <span class="cfg-section__num"><span data-cfg-num>8</span></span>
                                         <span class="cfg-section__title-row">
                                             <span class="cfg-section__title">Attack box</span>
                                             <span class="cfg-section__sub">Windows VM · CS client · WSL2 · operator workstation</span>
@@ -1110,10 +1153,10 @@
                                     </div></div></div>
                                 </section>
 
-                                <!-- SECTION 8 · COST -->
+                                <!-- SECTION 9 · COST -->
                                 <section class="cfg-section is-pending" data-cfg-section="cost">
                                     <div class="cfg-section__head" data-cfg-head>
-                                        <span class="cfg-section__num"><span data-cfg-num>8</span></span>
+                                        <span class="cfg-section__num"><span data-cfg-num>9</span></span>
                                         <span class="cfg-section__title-row">
                                             <span class="cfg-section__title">Cost</span>
                                             <span class="cfg-section__sub">Estimated monthly · auto-derived</span>
@@ -1141,7 +1184,7 @@
                         <footer class="cfg-savebar" role="contentinfo">
                             <div class="cfg-savebar__summary">
                                 <span>TYPE <strong id="cfg-sb-type">c2-adhoc</strong></span>
-                                <span>SECTIONS <strong id="cfg-sb-sections">0 / 8</strong></span>
+                                <span>SECTIONS <strong id="cfg-sb-sections">0 / 9</strong></span>
                                 <span>READY <strong id="cfg-sb-ready" style="color: var(--text-secondary);">NO</strong></span>
                             </div>
                             <div class="cfg-savebar__group">
@@ -2530,6 +2573,25 @@ ns-143.awsdns-17.org
                                 <strong id="manage-hero-type">&mdash;</strong>
                                 <span id="manage-hero-state" class="manage-view__hero-state"></span>
                             </p>
+                        </section>
+
+                        <!-- Test Lab status card — only shown when the active c2-* deployment
+                             has enable_test_lab=true. Hydrated by APP.testLab.renderManageCard()
+                             which polls /api/test_lab/status + /api/test_lab/hosts on entry. -->
+                        <section class="manage-testlab-card" id="manage-testlab-card" hidden aria-label="Test lab status">
+                            <div class="manage-testlab-card__head">
+                                <span class="manage-testlab-card__eyebrow">TEST LAB</span>
+                                <span class="spec-pill" id="manage-testlab-pill">
+                                    <span class="spec-pill__dot" aria-hidden="true"></span>
+                                    <span id="manage-testlab-status-label">checking…</span>
+                                </span>
+                            </div>
+                            <dl class="spec-list" id="manage-testlab-hosts" role="list" aria-label="Test lab hosts"></dl>
+                            <div class="manage-testlab-card__actions">
+                                <button class="btn btn-info btn-sm" type="button" id="manage-testlab-reprovision">Re-run provisioning</button>
+                                <button class="btn btn-secondary btn-sm" type="button" id="manage-testlab-refresh">Refresh</button>
+                            </div>
+                            <pre class="manage-testlab-card__log" id="manage-testlab-log" hidden></pre>
                         </section>
 
                         <!-- Resource summary spec-list (region, account, IPs, SGs, cost, last-touched) -->

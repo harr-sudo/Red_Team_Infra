@@ -1,0 +1,115 @@
+---
+# testlab_member — install baseline services on tlms01.
+#
+# None of these tasks make the host vulnerable on their own. Bolt-ons
+# enable the specific misconfiguration they own (e.g. flipping SMB
+# signing off, dropping a writable-to-Everyone share).
+
+- name: "Test Lab Member | preflight — assert Windows"
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family | default('Windows') == 'Windows'
+    fail_msg: "testlab_member only supports Windows Server hosts."
+
+# --------------------------------------------------------------------
+# IIS — used by PrintNightmare staging + ADCS Web Enrollment ESC8.
+# --------------------------------------------------------------------
+
+- name: "Test Lab Member | install IIS feature set"
+  ansible.windows.win_feature:
+    name: "{{ item }}"
+    state: present
+    include_management_tools: true
+  loop: "{{ testlab_member_iis_features }}"
+  register: testlab_member_iis_feats
+  notify: restart iis
+
+# --------------------------------------------------------------------
+# ADCS Web Enrollment — the ESC8 surface lives here, not on the DC.
+# Templates remain published by the DC (none, by design); this just
+# exposes the HTTP enrollment endpoint when a bolt-on attaches one.
+# --------------------------------------------------------------------
+
+- name: "Test Lab Member | install ADCS-Web-Enrollment sub-feature"
+  ansible.windows.win_feature:
+    name: ADCS-Web-Enrollment
+    state: present
+    include_management_tools: true
+  register: testlab_member_adcsweb
+
+- name: "Test Lab Member | install ADCS-Cert-Authority management tools (idle)"
+  ansible.windows.win_feature:
+    name: ADCS-Cert-Authority
+    state: absent  # role stays on the DC; we only want the consoles
+    include_management_tools: true
+  failed_when: false
+  changed_when: false
+
+# --------------------------------------------------------------------
+# SMB v1 server — feature installed but service NOT started. The
+# smb-signing-disabled bolt-on enables it; until then SMB v2/v3 only.
+# --------------------------------------------------------------------
+
+- name: "Test Lab Member | install SMB v1 server feature (idle)"
+  ansible.windows.win_feature:
+    name: FS-SMB1
+    state: present
+  when: testlab_member_install_smb1
+  register: testlab_member_smb1
+
+- name: "Test Lab Member | leave SMB v1 disabled at the protocol layer"
+  ansible.windows.win_shell: |
+    Set-SmbServerConfiguration -EnableSMB1Protocol $false -Confirm:$false
+  changed_when: false
+  when: testlab_member_install_smb1
+
+# --------------------------------------------------------------------
+# Baseline SMB share — Authenticated Users only. Not the vulnerable
+# share; the Writable-share bolt-on authors a separate Everyone:F one.
+# --------------------------------------------------------------------
+
+- name: "Test Lab Member | ensure baseline share directory exists"
+  ansible.windows.win_file:
+    path: "{{ testlab_member_baseline_share_path }}"
+    state: directory
+
+- name: "Test Lab Member | create baseline SMB share (Authenticated Users)"
+  ansible.windows.win_share:
+    name: "{{ testlab_member_baseline_share_name }}"
+    path: "{{ testlab_member_baseline_share_path }}"
+    description: "Test lab baseline share — NOT intentionally vulnerable."
+    full: ""        # nobody gets Full
+    change: "Authenticated Users"
+    read: ""
+    state: present
+
+# --------------------------------------------------------------------
+# Office for the macro-doc-share bolt-on. winget is preferred; on Server
+# Core / when winget isn't yet provisioned we fall back to LibreOffice
+# via the chocolatey collection (which is already in our requirements
+# for the bolton_kerberoastable_svc role).
+# --------------------------------------------------------------------
+
+- name: "Test Lab Member | detect winget availability"
+  ansible.windows.win_shell: |
+    if (Get-Command winget -ErrorAction SilentlyContinue) { 'present' } else { 'absent' }
+  register: testlab_member_winget
+  changed_when: false
+
+- name: "Test Lab Member | install Office via winget"
+  ansible.windows.win_shell: |
+    winget install --id {{ testlab_member_office_winget_id }} `
+                   --silent --accept-source-agreements `
+                   --accept-package-agreements
+  register: testlab_member_office
+  changed_when: "'Successfully installed' in (testlab_member_office.stdout | default(''))"
+  failed_when: false
+  when: testlab_member_winget.stdout is search('present')
+
+- name: "Test Lab Member | fall back to LibreOffice via chocolatey when winget unavailable or Office failed"
+  chocolatey.chocolatey.win_chocolatey:
+    name: "{{ testlab_member_libreoffice_choco_id }}"
+    state: present
+  when:
+    - (testlab_member_winget.stdout is not search('present'))
+      or (testlab_member_office is defined and testlab_member_office.rc | default(1) != 0)

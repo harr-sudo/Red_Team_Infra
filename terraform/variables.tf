@@ -615,7 +615,7 @@ variable "portal_password" {
 variable "portal_session_timeout" {
   description = "Portal session timeout in minutes"
   type        = number
-  default     = 30
+  default     = 60
 }
 
 # =============================================================================
@@ -700,6 +700,42 @@ variable "dashboard_sg_id" {
   description = "Dashboard security group ID for ingress rules"
   type        = string
   default     = ""
+}
+
+# =============================================================================
+# Test Lab (extension on c2-* deployments)
+# =============================================================================
+# When `enable_test_lab = true` and the deployment is c2-*, the test_lab
+# module provisions 4 vulnerable hosts (tldc01, tlms01, tlws01, tllinux01) on
+# a new private subnet INSIDE the existing C2 VPC. No new VPC, no peering,
+# no new NAT. See docs/internal/TESTLAB_DESIGN.md.
+
+variable "enable_test_lab" {
+  description = "When true on a c2-* deployment, provisions the in-VPC test lab subnet + 4 vulnerable hosts."
+  type        = bool
+  default     = false
+}
+
+variable "test_lab_subnet_cidr" {
+  description = "CIDR for the test lab private subnet (must be a /24 inside the C2 VPC, must not overlap standard C2 subnets)."
+  type        = string
+  default     = "10.0.20.0/24"
+
+  validation {
+    condition     = can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}/24$", var.test_lab_subnet_cidr))
+    error_message = "test_lab_subnet_cidr must be a valid IPv4 /24 CIDR (e.g. 10.0.20.0/24)."
+  }
+}
+
+variable "test_lab_size" {
+  description = "Test lab variant. Only 'mini' (4 hosts) is supported in Phase 1."
+  type        = string
+  default     = "mini"
+
+  validation {
+    condition     = contains(["mini"], var.test_lab_size)
+    error_message = "test_lab_size must be 'mini' (the only Phase 1 variant)."
+  }
 }
 
 # =============================================================================

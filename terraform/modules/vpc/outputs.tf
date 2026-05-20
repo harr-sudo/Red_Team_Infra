@@ -20,6 +20,16 @@ output "private_subnet_ids" {
   value       = aws_subnet.private_subnets[*].id
 }
 
+output "private_subnet_azs" {
+  description = "Availability zones of the private subnets (positionally aligned with private_subnet_ids)"
+  value       = aws_subnet.private_subnets[*].availability_zone
+}
+
+output "private_subnet_cidrs" {
+  description = "CIDR blocks of the private subnets (positionally aligned with private_subnet_ids)"
+  value       = aws_subnet.private_subnets[*].cidr_block
+}
+
 output "internet_gateway_id" {
   description = "ID of the Internet Gateway"
   value       = aws_internet_gateway.red_team_igw.id

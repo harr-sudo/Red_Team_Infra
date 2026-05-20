@@ -13158,3 +13158,90 @@ textarea.cfg-input {
         transition-duration: 0.01ms !important;
     }
 }
+
+/* ============================================================================
+ * Test Lab (TESTLAB_DESIGN.md) — Configure V2 + Manage card styling
+ * ============================================================================
+ *
+ * The Test Lab is a c2-only bolt-on validation lab. Configure V2 surfaces a
+ * toggle inside a dedicated cfg-section; Manage surfaces a status card that
+ * mirrors the existing .spec-pill + .spec-row primitives.
+ *
+ * Both themes verified — uses theme-safe variables only.
+ */
+
+/* Eyebrow above the section title (OPTIONAL · BOLT-ON VALIDATION). Sits
+ * on the section's card surface so we use --text-muted (resolves to a
+ * dim foreground in both themes). */
+.cfg-section__eyebrow {
+    display: block;
+    font-family: var(--font-family-mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    line-height: 1.2;
+}
+
+/* Inline callout used inside the test lab section to flag the +$/mo delta.
+ * Background is a tinted info layer; --info-text stays readable on top in
+ * both themes. */
+.cfg-callout {
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 1.5;
+    border: 1px solid color-mix(in srgb, var(--info-text) 28%, transparent);
+    background: color-mix(in srgb, var(--info-text) 10%, transparent);
+    color: var(--text-primary);
+}
+.cfg-callout--info strong { color: var(--info-text); }
+
+/* Manage Test Lab status card — placed above the resource spec-list inside
+ * the manage scoped view. Uses the same card-on-surface aesthetic as the
+ * existing manage chrome so it visually nests with the rest of Manage. */
+.manage-testlab-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 16px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.manage-testlab-card__head {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 14px;
+}
+.manage-testlab-card__eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+.manage-testlab-card__actions {
+    display: flex;
+    flex-direction: row;
+    gap: 10px;
+    align-items: center;
+    justify-content: flex-start;
+}
+.manage-testlab-card__log {
+    background: var(--bg-terminal);
+    color: var(--text-terminal);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+    line-height: 1.4;
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+}
+

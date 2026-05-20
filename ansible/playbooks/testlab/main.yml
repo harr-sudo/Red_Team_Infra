@@ -1,0 +1,36 @@
+---
+# Test Lab — top-level orchestrator.
+#
+# Runs the six phase playbooks in order against the inventory generated
+# by the dashboard endpoint at /home/ubuntu/test_lab/inventory.yml on
+# the jumpbox.
+#
+# Each phase is tagged so a single phase can be re-run for debug or to
+# recover a half-finished provision:
+#
+#     ansible-playbook -i /home/ubuntu/test_lab/inventory.yml \
+#         ansible/playbooks/testlab/main.yml --tags dc
+#
+# The phases are idempotent — re-running the whole chain against an
+# already-provisioned lab should report ok=N changed=0 (modulo
+# timestamp-y tasks like gpupdate).
+#
+# Spec: docs/internal/TESTLAB_DESIGN.md
+
+- import_playbook: testlab_base.yml
+  tags: ['base', 'testlab']
+
+- import_playbook: testlab_dc.yml
+  tags: ['dc', 'testlab']
+
+- import_playbook: testlab_join.yml
+  tags: ['join', 'testlab']
+
+- import_playbook: testlab_member.yml
+  tags: ['member', 'testlab']
+
+- import_playbook: testlab_workstation.yml
+  tags: ['workstation', 'testlab']
+
+- import_playbook: testlab_linux.yml
+  tags: ['linux', 'testlab']

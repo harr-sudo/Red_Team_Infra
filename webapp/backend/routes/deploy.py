@@ -76,6 +76,26 @@ SSH_KEYS_FOLDER.mkdir(exist_ok=True)
 # ACTIVE DEPLOYMENT STATE
 # =============================================================================
 
+def _project_has_test_lab(configs_dir, project_stem: str) -> bool:
+    """Return True iff configs/<project_stem>.tfvars sets enable_test_lab=true.
+
+    Lightweight regex-based reader — we only need this boolean for the
+    /api/deploy/active enrichment. Robust to comments / surrounding
+    whitespace; ignores commented-out lines.
+    """
+    tfvars_path = configs_dir / f"{project_stem}.tfvars"
+    if not tfvars_path.exists():
+        return False
+    try:
+        text = tfvars_path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return False
+    import re as _re
+    # `^\s*` ensures commented-out (# enable_test_lab = …) lines are skipped.
+    match = _re.search(r"^\s*enable_test_lab\s*=\s*(true|false)", text, _re.MULTILINE | _re.IGNORECASE)
+    return bool(match and match.group(1).lower() == "true")
+
+
 @bp.route("/active", methods=["GET"])
 def get_active_deployments():
     """Get all successful deployments, sorted most recent first."""
@@ -85,6 +105,7 @@ def get_active_deployments():
         return jsonify({"success": False, "error": "No deployments found", "deployments": []})
 
     deployments = []
+    configs_dir = project_root / "configs"
     for fname in os.listdir(state_dir):
         if not fname.endswith(".state.json"):
             continue
@@ -93,7 +114,13 @@ def get_active_deployments():
             with open(fpath) as f:
                 state = json.load(f)
             if state.get("status") == "success":
-                state["_filename"] = fname.replace(".state.json", "")
+                stem = fname.replace(".state.json", "")
+                state["_filename"] = stem
+                # 2026-05-20 — surface ``enable_test_lab`` on each row so the
+                # frontend's APP.computeVisibleSubPills can flip Bolt-ons on
+                # for c2-* deployments that opted into the test lab. Cheap
+                # one-line grep over the matching per-project tfvars.
+                state["enable_test_lab"] = _project_has_test_lab(configs_dir, stem)
                 deployments.append(state)
         except (json.JSONDecodeError, IOError):
             continue

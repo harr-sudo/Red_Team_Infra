@@ -27,6 +27,7 @@ from webapp.backend.routes import audit as audit_routes
 from webapp.backend.routes import bolton as bolton_routes
 from webapp.backend.routes import palette as palette_routes
 from webapp.backend.routes import presence as presence_routes
+from webapp.backend.routes import test_lab as test_lab_routes
 from webapp.backend.middleware import identity
 from webapp.backend.services import operator_service
 
@@ -146,6 +147,7 @@ app.register_blueprint(audit_routes.bp)
 app.register_blueprint(bolton_routes.bp)  # Vulnerable-lab bolt-on feature
 app.register_blueprint(palette_routes.bp)  # v3 — ⌘K command palette (Agent B)
 app.register_blueprint(presence_routes.bp)  # task #33 — soft presence banner
+app.register_blueprint(test_lab_routes.bp)  # Test lab — bolt-on validation lab (TESTLAB_DESIGN.md)
 
 # Initialize WebSocket support for terminal
 terminal.init_sock(app)
@@ -262,6 +264,30 @@ def changelog():
     except (OSError, UnicodeDecodeError) as exc:
         _logger.warning("Could not read CHANGELOG.md at %s: %s", _CHANGELOG_FILE, exc)
         return jsonify({'error': 'Could not read CHANGELOG.md'}), 500
+    return content, 200, {'Content-Type': 'text/markdown; charset=utf-8'}
+
+
+# Serve internal design docs (read-only) so the dashboard can deep-link to
+# specs like TESTLAB_DESIGN.md from inline help links. Allowlisted to keep
+# this from accidentally turning into an arbitrary-file read endpoint.
+_ALLOWED_DOCS = {
+    'internal/TESTLAB_DESIGN.md',
+}
+
+
+@app.route('/docs/<path:doc_path>')
+def serve_doc(doc_path):
+    """Return one of a small allowlist of read-only docs as text/markdown."""
+    if doc_path not in _ALLOWED_DOCS:
+        return jsonify({'error': 'doc not allowlisted'}), 404
+    target = project_root / 'docs' / doc_path
+    try:
+        content = target.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return jsonify({'error': f'{doc_path} not found'}), 404
+    except (OSError, UnicodeDecodeError) as exc:
+        _logger.warning("Could not read %s: %s", target, exc)
+        return jsonify({'error': 'read error'}), 500
     return content, 200, {'Content-Type': 'text/markdown; charset=utf-8'}
 
 if __name__ == '__main__':

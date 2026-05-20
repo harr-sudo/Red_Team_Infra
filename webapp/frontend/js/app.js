@@ -2049,6 +2049,12 @@ APP.activeDeployment = (function () {
     // the active project changes. Drives deployment-type-aware sub-pill
     // visibility (Bolt-ons hidden for c2-*, Operations hidden for goad-*).
     let _deploymentType = null;
+    // 2026-05-20 — Tracks the active deployment's enable_test_lab flag
+    // (populated alongside deployment_type whenever the global cache
+    // refreshes). Drives APP.computeVisibleSubPills() — closes the
+    // "Bolt-ons hidden for c2-*" gap when the operator opted into the
+    // test lab at Configure time. Defaults to false (fail-closed).
+    let _enableTestLab = false;
     // 2026-05-20 — draftProject is the project_name of an in-progress draft
     // the operator has saved-but-not-yet-Applied. Lives ONLY while
     // _current === DRAFT_SENTINEL. Clears on a real .set() (operator picks
@@ -2084,6 +2090,21 @@ APP.activeDeployment = (function () {
                 try { fn(_current); } catch (e) { console.error('activeDeployment type subscriber error', e); }
             });
         },
+        // 2026-05-20 — enable_test_lab accessor + helper. Mirrors the
+        // deployment_type reactive setter pattern so sub-pill visibility
+        // recomputes whenever the cache refresh learns about a freshly-
+        // applied test lab. Returns false (NOT undefined) for unknown
+        // projects so consumers can `if (active.hasTestLab())` cleanly.
+        get enable_test_lab() { return _enableTestLab; },
+        set enable_test_lab(v) {
+            const next = v === true;
+            if (_enableTestLab === next) return;
+            _enableTestLab = next;
+            _subscribers.forEach(fn => {
+                try { fn(_current); } catch (e) { console.error('activeDeployment testlab subscriber error', e); }
+            });
+        },
+        hasTestLab() { return _enableTestLab === true; },
         // 2026-05-20 — Draft staging slot (in-memory only). Holds the
         // project_name the operator has saved but not yet Applied.
         get draftProject() { return _draftProject; },
@@ -2140,6 +2161,9 @@ APP.activeDeployment = (function () {
             // / APP._setActiveDeploymentType() will repopulate from the cache
             // when the new project lands in the dropdown.
             _deploymentType = null;
+            // Test lab flag is project-scoped; clear on switch so a
+            // stale value from a prior project never bleeds through.
+            _enableTestLab = false;
             _current = name;
             _persist(name);
             _subscribers.forEach(fn => {
@@ -2190,23 +2214,28 @@ APP.computeVisibleSubPills = function (active) {
     const isAll      = active.isAll();
     const isExisting = active.isExisting();
     // 2026-05-20 — deployment-type-aware visibility. Bolt-ons configure
-    // the AD lab, so they're only relevant when the active deployment
-    // has a GOAD component (goad-* or combined-*). For pure c2-* the
-    // pill is hidden because there's no AD lab to bolt onto.
+    // the AD lab (or, post-TESTLAB_DESIGN.md, the test lab inside a c2-*
+    // deployment), so they're relevant when:
+    //   - GOAD-only deployment (always has AD)
+    //   - Combined deployment (always has AD)
+    //   - C2-only deployment WITH `enable_test_lab=true` (closes the gap
+    //     where bolt-ons used to be unreachable for c2-* operators)
     const type = (active.deployment_type || '').toLowerCase();
     const isC2only   = isExisting && type.startsWith('c2-');
     const isGoadOnly = isExisting && type.startsWith('goad-');
     const isCombined = isExisting && type.startsWith('combined-');
+    const hasTestLab = isExisting && active.hasTestLab && active.hasTestLab();
+    const isC2WithLab = isC2only && hasTestLab;
     // Cleanup is an orphan-resource viewer that's relevant in every mode —
     // it scans the whole account, not a specific deployment. Always append.
     const base = isDraft
         ? ['configure', 'deploy']
         : isAll
             ? ['manage']
-            : isC2only
-                ? ['manage']
-                : (isGoadOnly || isCombined)
-                    ? ['manage', 'bolt-ons']
+            : (isGoadOnly || isCombined || isC2WithLab)
+                ? ['manage', 'bolt-ons']
+                : isC2only
+                    ? ['manage']
                     : ['manage']; // empty / unknown — Manage with CTA
     base.push('cleanup');
     return base;
@@ -3238,6 +3267,7 @@ APP._setActiveDeploymentType = function _setActiveDeploymentType() {
     const active = APP.activeDeployment;
     if (!active || !active.isExisting || !active.isExisting()) {
         active.deployment_type = null;
+        active.enable_test_lab = false;
         return;
     }
     const name = active.current;
@@ -3254,6 +3284,11 @@ APP._setActiveDeploymentType = function _setActiveDeploymentType() {
     }
     const type = match.deployment_type || match.engagement_type || null;
     active.deployment_type = type;
+    // 2026-05-20 — propagate enable_test_lab from the per-deployment
+    // record. Backend (/api/deploy/active) writes it from the
+    // per-project tfvars; here we only need the boolean. Coerce to
+    // strict true so a stringy "true" doesn't slip through.
+    active.enable_test_lab = match.enable_test_lab === true;
 };
 
 /**
@@ -12103,8 +12138,13 @@ APP.configureV2 = (function () {
         ]
     };
 
+    // FAMILY_SECTIONS — section IDs in nav order PER family. The Test
+    // Lab section is c2-only (the spec explicitly excludes goad-* and
+    // combined-* — those already have GOAD for their lab needs). The
+    // section is rendered ONLY for the c2 family, so the rail + section
+    // count update from 8 → 9 when the operator picks c2.
     const FAMILY_SECTIONS = {
-        c2:       ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'attackbox', 'cost'],
+        c2:       ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'testlab', 'attackbox', 'cost'],
         goad:     ['identity', 'network', 'ssh', 'attackbox', 'cost'],
         combined: ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'attackbox', 'cost']
     };
@@ -12134,7 +12174,10 @@ APP.configureV2 = (function () {
         c2ServerCount: 2, c2InstanceType: 't3.medium',
         redirectorInstanceType: 't3.small',
         enableAttackBox: true, abInstanceType: 't2.large',
-        abDisk: 100, abPwMode: 'auto', abPassword: ''
+        abDisk: 100, abPwMode: 'auto', abPassword: '',
+        // 2026-05-20 — Test Lab (c2-* only). Default OFF so existing
+        // tfvars files remain backwards-compatible.
+        enableTestLab: false, testLabSubnetCidr: '10.0.20.0/24'
     };
 
     const state = {
@@ -12147,7 +12190,14 @@ APP.configureV2 = (function () {
         ownedDomains: new Set(),       // populated from /api/aws/route53/zones
         takenDomains: {},              // domain -> project_name
         domainsLoaded: false,
-        initialized: false
+        initialized: false,
+        // 2026-05-20 — Test Lab toggle + subnet cidr (c2-* only). The
+        // toggle reveals an inline sub-fields panel + flips the cost
+        // calculator on. assembleConfig() writes both keys into the
+        // POST payload regardless of family — backend ignores them for
+        // non-c2 deployments.
+        enableTestLab: false,
+        testLabSubnetCidr: '10.0.20.0/24'
     };
 
     function _machineSuffix() {
@@ -12234,6 +12284,13 @@ APP.configureV2 = (function () {
         const cntEl = $('#cfg-c2-server-count');
         const c2CountField = cntEl ? cntEl.closest('.cfg-field') : null;
         if (c2CountField) c2CountField.style.opacity = isPurple ? '1' : '0.55';
+        // When the family is anything other than c2 the test lab toggle
+        // doesn't apply — force-disable + clear so a stale checked state
+        // doesn't leak into assembleConfig() on family-switch.
+        if (state.family !== 'c2') {
+            const tl = $('#cfg-enable-test-lab');
+            if (tl && tl.checked) { tl.checked = false; updateTestLabVisibility(); renderCost(); }
+        }
     }
 
     function updateProgress() {
@@ -12315,6 +12372,16 @@ APP.configureV2 = (function () {
                     { k: 'CS pw',   v: document.querySelector('input[name="cfg-cs-pw-mode"]:checked')?.value || 'auto' },
                     { k: 'servers', v: v('cfg-c2-instance-type') + ' × ' + v('cfg-c2-server-count') }
                 ];
+            case 'testlab': {
+                const on = $('#cfg-enable-test-lab')?.checked;
+                if (!on) return [{ k: 'test lab', v: 'disabled' }];
+                return [
+                    { k: 'test lab', v: 'enabled' },
+                    { k: 'hosts', v: 'tldc01 · tlms01 · tlws01 · tllinux01' },
+                    { k: 'subnet', v: v('cfg-test-lab-subnet-cidr') || '10.0.20.0/24' },
+                    { k: '+ cost', v: '~$90/mo' }
+                ];
+            }
             case 'attackbox':
                 if (!$('#cfg-enable-attack-box')?.checked) return [{ k: 'attack box', v: 'disabled' }];
                 return [
@@ -12365,6 +12432,15 @@ APP.configureV2 = (function () {
         if ($('#cfg-enable-attack-box')?.checked) {
             const abType = v('cfg-ab-instance-type');
             rows.push({ name: 'Attack box', type: abType + ' × 1', monthly: PRICING[abType] || 60 });
+        }
+        // Test Lab — c2-only. The 4 hosts (tldc01 + tlms01 = t3.medium, tlws01
+        // + tllinux01 = t3.small) reuse the C2 VPC, NAT, and IGW, so we only
+        // add compute line items here. ~$90/mo per the design spec.
+        if (family === 'c2' && $('#cfg-enable-test-lab')?.checked) {
+            rows.push({ name: 'Test lab · tldc01 (DC)',       type: 't3.medium × 1', monthly: PRICING['t3.medium'] });
+            rows.push({ name: 'Test lab · tlms01 (member)',   type: 't3.medium × 1', monthly: PRICING['t3.medium'] });
+            rows.push({ name: 'Test lab · tlws01 (workstation)', type: 't3.small × 1',  monthly: PRICING['t3.small'] });
+            rows.push({ name: 'Test lab · tllinux01 (linux)', type: 't3.small × 1',  monthly: PRICING['t3.small'] });
         }
         rows.push({ name: 'Bastion (Windows)', type: 't3.medium × 1', monthly: PRICING['t3.medium'] });
         if ($('#cfg-enable-fronting')?.checked) rows.push({ name: 'CloudFront + ACM', type: 'on-demand', monthly: 5 });
@@ -12680,6 +12756,12 @@ APP.configureV2 = (function () {
         document.querySelectorAll('input[name="cfg-ab-pw-mode"]').forEach(r => r.checked = (r.value === DEFAULTS.abPwMode));
         setVal('cfg-ab-password', DEFAULTS.abPassword);
         updateAbPwVisibility();
+        // Test lab reset — toggle off + subnet back to default.
+        setChecked('cfg-enable-test-lab', DEFAULTS.enableTestLab);
+        setVal('cfg-test-lab-subnet-cidr', DEFAULTS.testLabSubnetCidr);
+        state.enableTestLab = DEFAULTS.enableTestLab;
+        state.testLabSubnetCidr = DEFAULTS.testLabSubnetCidr;
+        updateTestLabVisibility();
 
         $$('.cfg-section [data-cfg-summary]').forEach(el => el.innerHTML = '');
 
@@ -12739,6 +12821,15 @@ APP.configureV2 = (function () {
     function updateAbPwVisibility() {
         const mode = document.querySelector('input[name="cfg-ab-pw-mode"]:checked')?.value;
         const el = $('#cfg-ab-password'); if (el) el.style.display = mode === 'custom' ? '' : 'none';
+    }
+    function updateTestLabVisibility() {
+        const on = $('#cfg-enable-test-lab')?.checked;
+        const fields = $('#cfg-test-lab-fields');
+        if (fields) fields.style.display = on ? '' : 'none';
+        // Mirror state so reset / save reads the canonical value.
+        state.enableTestLab = !!on;
+        const subnet = $('#cfg-test-lab-subnet-cidr');
+        if (subnet) state.testLabSubnetCidr = subnet.value || '10.0.20.0/24';
     }
 
     // ─── PROFILE CATALOG & PREVIEW ──────────────────────────────────────
@@ -12940,6 +13031,14 @@ HTTP/1.1 200 OK
         ['cfg-ab-instance-type', 'cfg-c2-instance-type', 'cfg-redirector-instance-type'].forEach(id => {
             const el = $('#' + id); if (el) el.addEventListener('change', renderCost);
         });
+        // 2026-05-20 — Test lab toggle + subnet wiring. Toggle reveals
+        // the inline subnet/help block AND updates the cost table; subnet
+        // edits don't change cost (CIDR is a free choice) but we still
+        // mirror to state so summary/save sees the latest value.
+        const enTl = $('#cfg-enable-test-lab');
+        if (enTl) enTl.addEventListener('change', () => { updateTestLabVisibility(); renderCost(); });
+        const tlSubnet = $('#cfg-test-lab-subnet-cidr');
+        if (tlSubnet) tlSubnet.addEventListener('input', () => { state.testLabSubnetCidr = tlSubnet.value; });
 
         // Preview tabs
         $$('.cfg-preview-tab').forEach(tab => {
@@ -13092,7 +13191,13 @@ HTTP/1.1 200 OK
                 ? (v('cfg-cs-password') || '') : '',
             cobalt_strike_license_secret_name: (document.querySelector('input[name="cfg-cs-license-mode"]:checked')?.value === 'secret')
                 ? 'cs-license-key' : '',
-            enable_cs_rest_api: false
+            enable_cs_rest_api: false,
+            // 2026-05-20 — Test lab flags. Always written so the backend
+            // doesn't have to special-case missing keys; the terraform
+            // module is gated on `enable_test_lab && local.deploy_c2` so
+            // the subnet CIDR is a no-op when the toggle is false.
+            enable_test_lab: (state.family === 'c2') && !!checked('cfg-enable-test-lab'),
+            test_lab_subnet_cidr: (v('cfg-test-lab-subnet-cidr') || '10.0.20.0/24').trim()
         };
     }
 
@@ -13224,6 +13329,7 @@ HTTP/1.1 200 OK
         updateMalleableVisibility();
         updateCsPwVisibility();
         updateAbPwVisibility();
+        updateTestLabVisibility();
         renderCost();
         renderSummary('identity');
 
@@ -30137,6 +30243,212 @@ if (typeof window !== 'undefined') {
 // Row click → APP.activeDeployment.set(projectName) which causes the
 // per-deployment Manage view to reappear via the existing subscriber wiring.
 // ============================================================================
+// ============================================================================
+// 2026-05-20 — APP.testLab
+//
+// Manage-page status card + provisioning re-run for the bolt-on validation
+// lab introduced in docs/internal/TESTLAB_DESIGN.md. Endpoints:
+//   - GET  /api/test_lab/hosts/<project>     → 4 hosts with role/IP/instance_id
+//   - GET  /api/test_lab/status/<project>    → idle | running | success | failed
+//   - POST /api/test_lab/provision/<project> → write inventory + kick Ansible
+//
+// The card is rendered ONLY when the active deployment is c2-* AND has
+// enable_test_lab=true (mirrors computeVisibleSubPills logic). Hidden in
+// every other state — including draft / all / goad-* / combined-*.
+// ============================================================================
+APP.testLab = APP.testLab || (function () {
+    // Status pill variants are mapped to the existing spec-pill modifiers
+    // so we don't have to add new dot-color CSS. --stale (amber) = running,
+    // --alive (green) = success, --dead (red, dim) = failed, --draft (muted
+    // grey) = idle/unknown. Verified against style.css line 9322+.
+    const STATUS_PRESETS = {
+        running:  { label: 'provisioning…',         cls: 'spec-pill--stale' },
+        success:  { label: 'provisioned',           cls: 'spec-pill--alive' },
+        failed:   { label: 'failed',                cls: 'spec-pill--dead'  },
+        idle:     { label: 'not yet provisioned',   cls: 'spec-pill--draft' },
+        unknown:  { label: 'unknown',               cls: 'spec-pill--draft' }
+    };
+
+    const ROLE_LABELS = {
+        domain_controller: 'Domain Controller',
+        member_server: 'Member Server',
+        workstation: 'Workstation',
+        linux_member: 'Linux',
+        standalone: 'Standalone'
+    };
+
+    function _esc(v) {
+        return String(v == null ? '' : v).replace(/[&<>"']/g, m => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]
+        ));
+    }
+
+    function _projectScope() {
+        const active = APP.activeDeployment;
+        if (!active || !active.isExisting || !active.isExisting()) return null;
+        // Only c2-* deployments host a test lab (goad-* and combined-*
+        // get GOAD; the spec is explicit). Bail early on others.
+        const type = (active.deployment_type || '').toLowerCase();
+        if (!type.startsWith('c2-')) return null;
+        if (!active.hasTestLab || !active.hasTestLab()) return null;
+        return active.current;
+    }
+
+    function _setStatus(token) {
+        const preset = STATUS_PRESETS[token] || STATUS_PRESETS.unknown;
+        const pill = document.getElementById('manage-testlab-pill');
+        const label = document.getElementById('manage-testlab-status-label');
+        if (pill) {
+            pill.className = 'spec-pill ' + preset.cls;
+        }
+        if (label) {
+            label.textContent = preset.label;
+        }
+    }
+
+    async function _fetchHosts(project) {
+        try {
+            const resp = await fetch(`/api/test_lab/hosts/${encodeURIComponent(project)}`);
+            const data = await resp.json();
+            if (!data || data.success !== true) return [];
+            return data.hosts || [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    async function _fetchStatus(project) {
+        try {
+            const resp = await fetch(`/api/test_lab/status/${encodeURIComponent(project)}`);
+            const data = await resp.json();
+            if (!data || data.success !== true) return { status: 'unknown' };
+            return data;
+        } catch (e) {
+            return { status: 'unknown' };
+        }
+    }
+
+    function _renderHosts(hosts, status) {
+        const list = document.getElementById('manage-testlab-hosts');
+        if (!list) return;
+        if (!Array.isArray(hosts) || hosts.length === 0) {
+            // Use the same .spec-row __head structure as the rest of the
+            // manage spec-lists so the row renders correctly inside the
+            // grid layout (200px label column + 1fr value column).
+            list.innerHTML =
+                '<div class="spec-row" data-readonly="true">' +
+                    '<div class="spec-row__head">' +
+                        '<span class="spec-row__key">Hosts</span>' +
+                        '<span class="spec-row__value">Terraform outputs not yet available — run Apply or wait for the in-flight apply to finish.</span>' +
+                        '<span></span><span></span>' +
+                    '</div>' +
+                '</div>';
+            return;
+        }
+        // Status dot — mirrors the head pill so each row visually inherits
+        // the overall provisioning state.
+        const dotCls = status === 'success' ? 'spec-pill--alive'
+                     : status === 'running' ? 'spec-pill--stale'
+                     : status === 'failed' ? 'spec-pill--dead'
+                     : 'spec-pill--draft';
+        list.innerHTML = hosts.map(h => {
+            const roleLabel = ROLE_LABELS[h.role] || _esc(h.role || 'host');
+            return (
+                '<div class="spec-row" data-readonly="true">' +
+                    '<div class="spec-row__head">' +
+                        '<span class="spec-row__key">'
+                            + '<span class="spec-pill ' + dotCls + '" aria-hidden="true" style="margin-right:6px;display:inline-flex;align-items:center;gap:4px;">'
+                                + '<span class="spec-pill__dot"></span>'
+                            + '</span>'
+                            + _esc(h.name)
+                        + '</span>' +
+                        '<span class="spec-row__value spec-row__value--mono">' + _esc(roleLabel) + ' · ' + _esc(h.private_ip || '—') + '</span>' +
+                        '<span></span><span></span>' +
+                    '</div>' +
+                '</div>'
+            );
+        }).join('');
+    }
+
+    async function renderManageCard() {
+        const card = document.getElementById('manage-testlab-card');
+        if (!card) return;
+        const project = _projectScope();
+        if (!project) {
+            card.hidden = true;
+            return;
+        }
+        card.hidden = false;
+        _setStatus('unknown');
+        const [hosts, statusData] = await Promise.all([
+            _fetchHosts(project),
+            _fetchStatus(project)
+        ]);
+        const token = (statusData && statusData.status) || 'idle';
+        _setStatus(token);
+        _renderHosts(hosts, token);
+        const logEl = document.getElementById('manage-testlab-log');
+        if (logEl) {
+            if ((token === 'running' || token === 'failed') && statusData.log_tail) {
+                logEl.hidden = false;
+                logEl.textContent = statusData.log_tail;
+            } else {
+                logEl.hidden = true;
+                logEl.textContent = '';
+            }
+        }
+    }
+
+    async function reprovision() {
+        const project = _projectScope();
+        if (!project) return;
+        const btn = document.getElementById('manage-testlab-reprovision');
+        if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+        try {
+            const resp = await fetch(`/api/test_lab/provision/${encodeURIComponent(project)}`, { method: 'POST' });
+            const data = await resp.json();
+            if (data && data.success) {
+                if (APP && APP.toast) APP.toast('Test lab provisioning started · ~15-20 min.', 'success');
+            } else {
+                if (APP && APP.toast) APP.toast('Provisioning failed: ' + (data.error || 'unknown'), 'danger', 8000);
+            }
+        } catch (e) {
+            if (APP && APP.toast) APP.toast('Provisioning failed: ' + e.message, 'danger', 8000);
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Re-run provisioning'; }
+            renderManageCard();
+        }
+    }
+
+    function init() {
+        const reBtn = document.getElementById('manage-testlab-reprovision');
+        if (reBtn && !reBtn.dataset.tlWired) {
+            reBtn.addEventListener('click', () => reprovision());
+            reBtn.dataset.tlWired = '1';
+        }
+        const refBtn = document.getElementById('manage-testlab-refresh');
+        if (refBtn && !refBtn.dataset.tlWired) {
+            refBtn.addEventListener('click', () => renderManageCard());
+            refBtn.dataset.tlWired = '1';
+        }
+        // Re-render the card whenever the active deployment changes (so
+        // switching from c2-adhoc with test lab → goad-mini hides it).
+        if (APP.activeDeployment && APP.activeDeployment.subscribe) {
+            APP.activeDeployment.subscribe(() => { try { renderManageCard(); } catch (_) {} });
+        }
+    }
+
+    // Defer init until DOM is ready so the buttons exist.
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+    return { renderManageCard, reprovision };
+})();
+
+
 APP.manageFleet = APP.manageFleet || {
     _esc(v) {
         return String(v == null ? '' : v).replace(/[&<>"']/g, m => (
@@ -31128,6 +31440,13 @@ APP.bolton = APP.bolton || {
         rows: [],                // full row list (with state + category + coverage)
         filters: { category: 'all', state: 'all', coverage: 'all' },
         activeJob: null,
+        // Descriptor-driven host filter (task: target-host dropdown filter).
+        // selectedDescriptorId is the vuln id the operator last clicked; the
+        // full descriptor (with targets.required_roles) lives in
+        // selectedDescriptor. Both are null when no descriptor is selected
+        // (dropdown shows every host = current behavior).
+        selectedDescriptorId: null,
+        selectedDescriptor: null,
     },
     _initialized: false,
 
@@ -31290,20 +31609,211 @@ APP.bolton = APP.bolton || {
                 if (!body || body.success === false) throw new Error('hosts API returned !success');
                 const hosts = body.hosts || [];
                 this.state.hosts = hosts;
-                if (!hosts.length) {
-                    sel.innerHTML = '<option value="">— no hosts in this lab —</option>';
-                    return;
-                }
-                sel.innerHTML = '<option value="">— select a host —</option>' +
-                    hosts.map(h => {
-                        const name = h.name || h.host_id || '?';
-                        const role = h.role ? ` · ${h.role}` : '';
-                        return `<option value="${name}">${name}${role}</option>`;
-                    }).join('');
+                this._renderHostOptions();
             })
             .catch(err => {
                 console.warn('[bolton] loadHosts failed:', err);
                 sel.innerHTML = '<option value="">— failed to load hosts —</option>';
+                this._renderFilterHint(0, 0);
+            });
+    },
+
+    /**
+     * Normalise a role string for comparison. Catalog YAML + facts service
+     * both use snake_case (domain_controller, member_server, linux_member),
+     * but we defensively accept hyphenated / CamelCase / abbreviated forms
+     * coming from any future Phase 2 source. Returns lowercase snake_case.
+     */
+    _normalizeRole(r) {
+        if (r == null) return '';
+        let s = String(r).trim();
+        // CamelCase → snake_case (DomainController → domain_controller)
+        s = s.replace(/([a-z0-9])([A-Z])/g, '$1_$2');
+        s = s.toLowerCase().replace(/-/g, '_');
+        // Common abbreviations
+        const aliases = {
+            dc: 'domain_controller',
+            domaincontroller: 'domain_controller',
+            ms: 'member_server',
+            memberserver: 'member_server',
+            ws: 'workstation',
+            wkstn: 'workstation',
+        };
+        return aliases[s] || s;
+    },
+
+    /**
+     * Compute compatible-host list given the currently selected descriptor.
+     * Returns the full host list when no descriptor is picked OR when the
+     * descriptor declares no required_roles (filter inactive).
+     */
+    _compatibleHosts() {
+        const hosts = this.state.hosts || [];
+        const desc = this.state.selectedDescriptor;
+        const required = desc && desc.targets && Array.isArray(desc.targets.required_roles)
+            ? desc.targets.required_roles
+            : [];
+        if (!required.length) return hosts;
+        const needles = required.map(r => this._normalizeRole(r));
+        return hosts.filter(h => needles.includes(this._normalizeRole(h.role)));
+    },
+
+    /**
+     * Render the host <select> options, optionally filtered by the selected
+     * descriptor's targets.required_roles. Renders the filter hint above the
+     * dropdown and replaces the dropdown with an empty-state message when no
+     * compatible hosts exist in the lab.
+     *
+     * Backend dispatch backstop (CompatibilityRefusedError in
+     * bolton_install_service.py) still runs unchanged — this filter is a
+     * UX improvement, not a security boundary.
+     */
+    _renderHostOptions() {
+        const sel = document.getElementById('bolton-host-select');
+        if (!sel) return;
+        const all = this.state.hosts || [];
+        const compatible = this._compatibleHosts();
+        const desc = this.state.selectedDescriptor;
+        const required = desc && desc.targets && Array.isArray(desc.targets.required_roles)
+            ? desc.targets.required_roles
+            : [];
+
+        if (!all.length) {
+            sel.innerHTML = '<option value="">— no hosts in this lab —</option>';
+            sel.hidden = false;
+            this._renderFilterHint(0, 0);
+            this._renderEmptyCompat(false);
+            return;
+        }
+
+        // Filter active + no compatible hosts → empty-state UI replaces dropdown.
+        if (required.length && !compatible.length) {
+            sel.hidden = true;
+            this._renderFilterHint(0, all.length);
+            this._renderEmptyCompat(true, required, all);
+            return;
+        }
+
+        sel.hidden = false;
+        this._renderEmptyCompat(false);
+        sel.innerHTML = '<option value="">— select a host —</option>' +
+            compatible.map(h => {
+                const name = h.name || h.host_id || '?';
+                const role = h.role ? ` · ${h.role}` : '';
+                return `<option value="${name}">${name}${role}</option>`;
+            }).join('');
+        this._renderFilterHint(compatible.length, all.length);
+
+        // If the currently-selected host got filtered out, clear it.
+        if (this.state.host && !compatible.some(h => (h.name || h.host_id) === this.state.host)) {
+            this.state.host = null;
+            sel.value = '';
+        }
+    },
+
+    /**
+     * Inject (or update / remove) the "Filtered to hosts with role: …" hint
+     * above the dropdown. Hidden when the filter is inactive or every host
+     * passes the filter (per spec).
+     */
+    _renderFilterHint(shown, total) {
+        const actions = document.querySelector('.bolton-live__eyebrow-actions');
+        const sel = document.getElementById('bolton-host-select');
+        if (!actions || !sel) return;
+        let hint = document.getElementById('bolton-host-filter-hint');
+        const desc = this.state.selectedDescriptor;
+        const required = desc && desc.targets && Array.isArray(desc.targets.required_roles)
+            ? desc.targets.required_roles
+            : [];
+        const filterActive = required.length > 0;
+        // Hide hint when filter inactive OR when every host matches.
+        if (!filterActive || shown === total) {
+            if (hint) hint.remove();
+            return;
+        }
+        if (!hint) {
+            hint = document.createElement('div');
+            hint.id = 'bolton-host-filter-hint';
+            hint.className = 'bolton-live__host-filter-hint';
+            hint.setAttribute('role', 'status');
+            hint.style.cssText = 'font-size:11.5px;color:var(--text-secondary);margin-bottom:4px;line-height:1.4;';
+            actions.insertBefore(hint, sel);
+        }
+        const roleList = required.join(', ');
+        hint.textContent = `Filtered to hosts with role: ${roleList} · ${shown} of ${total} hosts shown`;
+    },
+
+    /**
+     * Inject (or remove) the "No compatible hosts in this lab." empty state.
+     * Replaces the dropdown visually when the filter rules every host out.
+     */
+    _renderEmptyCompat(show, required, allHosts) {
+        const actions = document.querySelector('.bolton-live__eyebrow-actions');
+        if (!actions) return;
+        let empty = document.getElementById('bolton-host-empty-compat');
+        if (!show) {
+            if (empty) empty.remove();
+            return;
+        }
+        if (!empty) {
+            empty = document.createElement('div');
+            empty.id = 'bolton-host-empty-compat';
+            empty.className = 'bolton-live__host-empty-compat';
+            empty.setAttribute('role', 'status');
+            empty.style.cssText = 'padding:10px 12px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-elevated);font-size:12px;color:var(--text-secondary);max-width:420px;line-height:1.45;';
+            actions.appendChild(empty);
+        }
+        const escapeHtml = (s) => String(s || '').replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[c]);
+        const reqList = (required || []).map(escapeHtml).join(', ');
+        const availRoles = Array.from(new Set((allHosts || []).map(h => h.role).filter(Boolean)))
+            .map(escapeHtml).join(', ') || '—';
+        empty.innerHTML = `
+            <p style="margin:0 0 6px 0;color:var(--text-primary);font-weight:600;">No compatible hosts in this lab.</p>
+            <p style="margin:0 0 4px 0;">This descriptor requires: <strong>${reqList}</strong>.</p>
+            <p style="margin:0 0 6px 0;">Available host roles in lab: <strong>${availRoles}</strong>.</p>
+            <a href="/docs/internal/TESTLAB_DESIGN.md" class="bolton-live__host-empty-link" style="font-size:11.5px;color:var(--info-text);text-decoration:underline;" data-bolton-testlab-doc target="_blank" rel="noopener">See the Test Lab design spec for the host matrix.</a>
+        `;
+    },
+
+    /**
+     * Select a descriptor as the "active" target — re-filters the host
+     * dropdown to only show hosts compatible with this descriptor.
+     *
+     * Fetches the full descriptor from /api/bolton/vulns/<id> so we have
+     * targets.required_roles (the slim catalog rows don't carry it).
+     * Re-entrant: passing the same id is a no-op (UI is already filtered).
+     * Passing null clears the filter.
+     */
+    selectDescriptor(vulnId) {
+        if (!vulnId) {
+            this.state.selectedDescriptorId = null;
+            this.state.selectedDescriptor = null;
+            this._renderHostOptions();
+            return Promise.resolve(null);
+        }
+        if (this.state.selectedDescriptorId === vulnId && this.state.selectedDescriptor) {
+            return Promise.resolve(this.state.selectedDescriptor);
+        }
+        this.state.selectedDescriptorId = vulnId;
+        return fetch(`/api/bolton/vulns/${encodeURIComponent(vulnId)}`)
+            .then(r => r.ok ? r.json() : { success: false })
+            .then(body => {
+                if (!body || body.success === false || !body.vuln) {
+                    console.warn('[bolton] selectDescriptor: vuln fetch failed for', vulnId);
+                    this.state.selectedDescriptor = null;
+                } else {
+                    this.state.selectedDescriptor = body.vuln;
+                }
+                this._renderHostOptions();
+                return this.state.selectedDescriptor;
+            })
+            .catch(err => {
+                console.warn('[bolton] selectDescriptor failed:', err);
+                this.state.selectedDescriptor = null;
+                this._renderHostOptions();
+                return null;
             });
     },
 
@@ -31484,7 +31994,25 @@ APP.bolton = APP.bolton || {
                     const action = btn.dataset.boltonAction;
                     const vid = btn.dataset.vulnId;
                     if (!action || !vid) return;
+                    // Capture the row as the selected descriptor so any host
+                    // dropdown re-render after this point will be filtered to
+                    // compatible hosts.
+                    APP.bolton.selectDescriptor && APP.bolton.selectDescriptor(vid);
                     APP.bolton[action] && APP.bolton[action](vid, APP.bolton.state.host);
+                });
+            });
+            // Wire row-level click → select descriptor (filters host dropdown).
+            // Click anywhere on a row that isn't an action button / why-link
+            // marks the row's descriptor as the active filter.
+            target.querySelectorAll('.bt-row').forEach(row => {
+                if (row._boltonRowWired) return;
+                row._boltonRowWired = true;
+                row.addEventListener('click', (ev) => {
+                    if (ev.target.closest('[data-bolton-action]')) return;
+                    if (ev.target.closest('[data-bolton-why]')) return;
+                    const vid = row.dataset.vulnId;
+                    if (!vid) return;
+                    APP.bolton.selectDescriptor(vid);
                 });
             });
             // Task 51 Item 2 — wire "Why?" / "View conflict" buttons to the

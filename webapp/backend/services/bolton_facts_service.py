@@ -438,18 +438,83 @@ class ProbeTimeout(Exception):
 # Route-facing wrappers (Agent D reconcile)
 # ──────────────────────────────────────────────────────────────────────
 
+def _maybe_resolve_testlab_hosts(lab: str) -> list[dict[str, Any]] | None:
+    """Return the live test lab host inventory for `lab`, or None.
+
+    The test lab lives in the C2 VPC and is gated by the ``enable_test_lab``
+    tfvars flag. When a project has it set, the bolt-on UI should see the
+    REAL 4 hosts (tldc01/tlms01/tlws01/tllinux01) — not the static mock
+    map. We consult two cheap on-disk sources before touching SSH/Ansible:
+
+      1. logs/deployment_state/<lab>.state.json  → terraform outputs cache
+         (already maintained by deploy_service)
+      2. configs/<lab>.tfvars                    → confirms enable_test_lab
+
+    Returns None when the lab isn't a deployment we know about OR when
+    enable_test_lab is false. Returning None falls through to the mock
+    map (preserving Phase 1 dev-loop behavior).
+    """
+    # Lazy import — pulling test_lab at module load would create a cycle
+    # (routes/test_lab.py imports nothing from services, but the route
+    # blueprint registers under flask.Blueprint at import time which can
+    # surprise the test runner).
+    try:
+        from webapp.backend.routes import test_lab as _tl
+    except Exception:
+        return None
+
+    if not _tl._test_lab_enabled(lab):
+        return None
+    state = _tl._read_state(lab)
+    if state is None:
+        return None
+    host_inventory = _tl._read_host_inventory_from_state(state)
+    if not host_inventory:
+        # Avoid calling terraform here — it's a network/disk hit and
+        # list_hosts is called per-page-render. Operators can call
+        # /api/test_lab/hosts to force a refresh from terraform.
+        return None
+    out: list[dict[str, Any]] = []
+    for name, meta in host_inventory.items():
+        if not isinstance(meta, dict):
+            continue
+        out.append(
+            {
+                "name": name,
+                "host_id": name,
+                "role": meta.get("role", "unknown"),
+                "os_family": meta.get("os_family", "unknown"),
+                "os_version": "2022" if meta.get("os_family") == "windows" else "22.04",
+                "ip": meta.get("private_ip"),
+                "installed_count": 0,
+                "stale": False,
+                # Mark these so the frontend can tell real lab hosts apart
+                # from cached mocks if it wants to.
+                "source": "testlab",
+            }
+        )
+    out.sort(key=lambda h: h.get("name") or "")
+    return out
+
+
 def list_hosts(lab: str) -> list[dict[str, Any]]:
     """Route-facing variant of ``list_lab_hosts`` — returns summary dicts.
 
-    Phase 1: if the lab has no cached facts but is a known mock host set,
-    seed the cache by gathering facts for each mock host. Phase 2 will
-    instead consult the Terraform / deployment-state registry.
+    Resolution order:
+      1. If the project has ``enable_test_lab=true`` in its tfvars AND
+         the terraform output is in state.json, return the 4 real lab
+         hosts with their actual private IPs + role tags.
+      2. Otherwise fall back to disk-cached facts written by previous
+         gather_facts() calls.
+      3. Last resort — surface the static ``_MOCK_HOST_FACTS`` so the
+         dev loop and bolt-on tests still have something to render.
     """
-    # Phase 1 — synthesize host list from the mock map when no cached
-    # facts exist yet. Operators visiting bolt-ons for the first time
-    # otherwise see an empty list. We do NOT raise KeyError for unknown
-    # labs (the v3 frontend will pre-fetch + handle a 404 gracefully when
-    # the registry layer arrives in Phase 2).
+    # 1. Real test lab hosts when enable_test_lab=true and outputs landed.
+    testlab_hosts = _maybe_resolve_testlab_hosts(lab)
+    if testlab_hosts is not None:
+        return testlab_hosts
+
+    # 2. Disk cache fallback.
     cached = list_lab_hosts(lab)
     if not cached:
         # Surface every mock host as a possible target for the lab.

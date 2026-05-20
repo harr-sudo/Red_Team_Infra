@@ -498,3 +498,22 @@ output "dashboard_tfstate_bucket" {
   description = "S3 bucket for Terraform state"
   value       = length(module.dashboard_server) > 0 ? module.dashboard_server[0].tfstate_bucket : ""
 }
+
+# =============================================================================
+# Test Lab Outputs
+# =============================================================================
+
+output "test_lab_enabled" {
+  description = "True when the optional in-VPC test lab was provisioned"
+  value       = local.enable_test_lab
+}
+
+output "test_lab_subnet_id" {
+  description = "ID of the test lab private subnet (empty when test lab is disabled)"
+  value       = length(module.test_lab) > 0 ? module.test_lab[0].subnet_id : ""
+}
+
+output "test_lab_host_inventory" {
+  description = "Map of hostname -> { private_ip, role, os_family, instance_id } for the test lab hosts (empty when disabled)"
+  value       = length(module.test_lab) > 0 ? module.test_lab[0].host_inventory : {}
+}

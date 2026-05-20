@@ -1,0 +1,23 @@
+---
+galaxy_info:
+  role_name: testlab_linux
+  author: Red Team Infra
+  description: >-
+    Configures a stand-alone Ubuntu 22.04 host (tllinux01) as the linux
+    target for the docker-socket-exposed and dvwa-lite bolt-ons. Installs
+    docker.io via apt, adds the ubuntu user to the docker group, pulls
+    a base image, and locks down ufw to SSH-only by default. Not
+    domain-joined.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+  galaxy_tags:
+    - testlab
+    - linux
+    - docker
+    - lab
+
+dependencies: []

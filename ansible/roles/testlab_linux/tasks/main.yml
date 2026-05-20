@@ -1,0 +1,96 @@
+---
+# testlab_linux — install Docker + base hardening on tllinux01.
+#
+# Idempotent. apt + systemd + ufw modules all report changed=False
+# when state already matches.
+
+- name: "Test Lab Linux | preflight — assert Ubuntu"
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution | default('') == 'Ubuntu'
+    fail_msg: "testlab_linux only supports Ubuntu hosts."
+    success_msg: "Ubuntu host confirmed."
+
+# --------------------------------------------------------------------
+# Packages — docker.io (NOT docker-ce) is what the spec calls for,
+# matching the simpler apt path. Bolt-ons that need docker-ce specifics
+# can layer on later.
+# --------------------------------------------------------------------
+
+- name: "Test Lab Linux | update apt cache"
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "Test Lab Linux | install baseline apt packages"
+  ansible.builtin.apt:
+    name: "{{ testlab_linux_apt_packages }}"
+    state: present
+
+# --------------------------------------------------------------------
+# Docker daemon — enable + start. The default config keeps the API on
+# the unix socket only; the docker-socket-exposed bolt-on flips it to
+# tcp://0.0.0.0:2375.
+# --------------------------------------------------------------------
+
+- name: "Test Lab Linux | ensure docker is enabled + running"
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: "Test Lab Linux | add ubuntu user to docker group"
+  ansible.builtin.user:
+    name: ubuntu
+    groups: docker
+    append: true
+
+# --------------------------------------------------------------------
+# Pre-pull a base image so the daemon has something to test against
+# and so dvwa-lite's base layer is cached for first-pull speed.
+# --------------------------------------------------------------------
+
+- name: "Test Lab Linux | check if base image is already pulled"
+  ansible.builtin.command: "docker image inspect {{ testlab_linux_base_image }}"
+  register: testlab_linux_image_state
+  changed_when: false
+  failed_when: false
+
+- name: "Test Lab Linux | pull base image ({{ testlab_linux_base_image }})"
+  community.docker.docker_image:
+    name: "{{ testlab_linux_base_image }}"
+    source: pull
+    state: present
+  when: testlab_linux_image_state.rc != 0
+
+# --------------------------------------------------------------------
+# ufw — default-deny inbound, allow only SSH + Docker (Docker disabled
+# unless an attached bolt-on flips testlab_linux_ufw_allow_docker on).
+# --------------------------------------------------------------------
+
+- name: "Test Lab Linux | set ufw default policies"
+  community.general.ufw:
+    direction: "{{ item.direction }}"
+    policy:    "{{ item.policy }}"
+  loop:
+    - { direction: incoming, policy: deny }
+    - { direction: outgoing, policy: allow }
+
+- name: "Test Lab Linux | ufw allow SSH"
+  community.general.ufw:
+    rule: allow
+    name: OpenSSH
+  when: testlab_linux_ufw_allow_ssh
+
+- name: "Test Lab Linux | ufw allow Docker daemon on the internal interface"
+  community.general.ufw:
+    rule: allow
+    port: "2375"
+    proto: tcp
+    interface: "{{ testlab_linux_internal_iface }}"
+    direction: in
+  when: testlab_linux_ufw_allow_docker
+
+- name: "Test Lab Linux | enable ufw"
+  community.general.ufw:
+    state: enabled

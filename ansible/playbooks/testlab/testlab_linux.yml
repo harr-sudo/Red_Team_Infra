@@ -1,0 +1,15 @@
+---
+# Test Lab — Phase 6: linux member build-out (tllinux01).
+#
+# Installs Docker + a base image so the docker-socket-exposed and
+# dvwa-lite bolt-ons have a daemon to attach to. NOT domain-joined,
+# NOT vulnerable by default — bolt-ons introduce the specific
+# misconfigurations.
+
+- name: "Test Lab | linux | configure tllinux01"
+  hosts: linux_members
+  gather_facts: true
+  become: true
+  roles:
+    - role: testlab_linux
+      tags: ['testlab_linux']

@@ -1,0 +1,69 @@
+---
+# Test Lab — Phase 3: domain-join the member server + workstation.
+#
+# Waits for the DC's DNS port to come up, joins each host to
+# testlab.local, reboots once to finalize the join, then creates a
+# local `ansible` user (mirrors the GOAD pattern) so WinRM stays
+# accessible even if the domain trust hiccups.
+
+- name: "Test Lab | join | wait for DC DNS to be reachable"
+  hosts: member_servers:workstations
+  gather_facts: false
+  vars:
+    testlab_dc_ip: "{{ hostvars[groups['domain_controllers'][0]].ansible_host }}"
+  tasks:
+    - name: "Test Lab | join | wait for tldc01:53 (DNS)"
+      ansible.builtin.wait_for:
+        host: "{{ testlab_dc_ip }}"
+        port: 53
+        timeout: 600
+        delay: 5
+      delegate_to: localhost
+
+- name: "Test Lab | join | domain-join + ansible local user"
+  hosts: member_servers:workstations
+  gather_facts: true
+  vars:
+    testlab_domain_name: "{{ domain_name | default('testlab.local') }}"
+    testlab_netbios: "{{ netbios_name | default('TESTLAB') }}"
+    # Reuse the same password the DC role provisions on the domain
+    # Administrator; the dashboard inventory writer injects this as a
+    # vaulted group var.
+    testlab_domain_admin_password: "{{ vault_domain_admin_password }}"
+    testlab_local_ansible_password: "{{ vault_ansible_password }}"
+
+  tasks:
+    - name: "Test Lab | join | preflight — assert Windows"
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family | default('Windows') == 'Windows'
+        fail_msg: "testlab_join only targets Windows hosts."
+
+    - name: "Test Lab | join | join host to testlab.local"
+      ansible.windows.win_domain_membership:
+        dns_domain_name: "{{ testlab_domain_name }}"
+        domain_admin_user: "{{ testlab_netbios }}\\Administrator"
+        domain_admin_password: "{{ testlab_domain_admin_password }}"
+        state: domain
+      register: testlab_join_state
+      no_log: true
+
+    - name: "Test Lab | join | reboot after domain join"
+      ansible.windows.win_reboot:
+        reboot_timeout: 900
+        post_reboot_delay: 90
+      when: testlab_join_state.reboot_required | default(false)
+
+    - name: "Test Lab | join | ensure local `ansible` user exists (WinRM continuity)"
+      ansible.windows.win_user:
+        name: ansible
+        password: "{{ testlab_local_ansible_password }}"
+        password_never_expires: true
+        account_disabled: false
+        groups:
+          - Administrators
+          - Remote Management Users
+        groups_action: add
+        state: present
+        update_password: always
+      no_log: true

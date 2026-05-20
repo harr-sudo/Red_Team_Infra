@@ -1,0 +1,25 @@
+---
+galaxy_info:
+  role_name: testlab_dc
+  author: Red Team Infra
+  description: >-
+    Promotes a fresh Windows Server 2022 host into the first DC of the
+    testlab.local forest. Installs AD DS + DNS + AD CS (Enterprise
+    Subordinate CA, no default templates) so the bolt-on catalog has a
+    clean canvas for ESC1/ESC2 / GPP / LAPS / Kerberoasting / AdminSDHolder
+    descriptors to author against.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Windows
+      versions:
+        - "2019"
+        - "2022"
+  galaxy_tags:
+    - testlab
+    - active-directory
+    - domain-controller
+    - adcs
+    - lab
+
+dependencies: []

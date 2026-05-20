@@ -87,6 +87,10 @@ locals {
   install_cs_on_jumpbox = local.is_goad_only # Only for GOAD-only mode
   deploy_attack_box     = var.enable_attack_box
 
+  # Test lab — extension flag, only meaningful on c2-* deployments.
+  # See docs/internal/TESTLAB_DESIGN.md. Lives in the SAME VPC as C2.
+  enable_test_lab = var.enable_test_lab && local.is_c2_only
+
   # -------------------------------------------------------------------------
   # Static IP Allocation (C2 VPC)
   # -------------------------------------------------------------------------
@@ -464,6 +468,47 @@ module "c2_phase_servers" {
 
   # Ensure NAT Gateway + route are ready before instance boots (user_data needs internet)
   depends_on = [module.vpc, module.cs_storage]
+}
+
+# =============================================================================
+# TEST LAB MODULE — Optional in-VPC vulnerable host lab
+# =============================================================================
+# Spins up 4 hosts (tldc01, tlms01, tlws01, tllinux01) on a NEW private subnet
+# inside the existing C2 VPC. Reuses the C2 VPC's NAT GW + route table. Only
+# attaches to c2-* deployments (not goad-* or combined-*). See
+# docs/internal/TESTLAB_DESIGN.md.
+
+module "test_lab" {
+  count  = local.enable_test_lab ? 1 : 0
+  source = "./modules/test_lab"
+
+  project_name = var.project_name
+  aws_region   = var.aws_region
+
+  # Reuse the existing C2 VPC — no new VPC, no peering.
+  vpc_id   = module.vpc[0].vpc_id
+  vpc_cidr = var.vpc_cidr
+
+  # Place the lab subnet in the SAME AZ as the first C2 private subnet so
+  # bastion -> lab traffic doesn't incur cross-AZ data transfer charges.
+  subnet_cidr       = var.test_lab_subnet_cidr
+  availability_zone = module.vpc[0].private_subnet_azs[0]
+
+  # Reuse the C2 VPC's existing private route table -> NAT GW.
+  c2_private_route_table_id = module.vpc[0].private_route_table_id
+
+  # Ingress from the C2 bastion (RDP / SSH).
+  c2_bastion_sg_id = module.security[0].bastion_security_group_id
+
+  # Phase 1 is c2-* only — no GOAD jumpbox exists for these deployments.
+  c2_jumpbox_sg_id = null
+
+  key_pair_name = local.effective_key_pair_name
+  size          = var.test_lab_size
+
+  tags = local.enhanced_tags
+
+  depends_on = [module.vpc, module.security]
 }
 
 # =============================================================================
