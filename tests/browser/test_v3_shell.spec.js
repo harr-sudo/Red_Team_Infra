@@ -247,7 +247,27 @@ test.describe('v3 shell — rail navigation', () => {
     });
 
     test('clicking a sub-pill child navigates + activates that child', async ({ page }) => {
+        // 2026-05-20: Operations rail group is now hidden when the active
+        // deployment has no C2 component (goad-* / draft / empty). Stub
+        // /api/deploy/active to return a C2 deployment so the Operations
+        // sub-pill children stay reachable for this navigation test.
+        await page.route('**/api/deploy/active', async (route) => {
+            await route.fulfill({
+                status: 200, contentType: 'application/json',
+                body: JSON.stringify({ success: true, deployments: [
+                    { project_name: 'c2_test_fixture', _filename: 'c2_test_fixture', deployment_type: 'c2-adhoc', status: 'success' },
+                ]}),
+            });
+        });
         await page.goto('/');
+        // Wait for the rail to settle on the C2 deployment so Operations is
+        // visible before exercising the click path.
+        await page.waitForFunction(() => {
+            try {
+                return APP.activeDeployment.current === 'c2_test_fixture'
+                    && APP.computeOperationsVisible(APP.activeDeployment);
+            } catch (_) { return false; }
+        }, null, { timeout: 5000 });
         // Open the Operations group, then click its Terminal sub-pill.
         await page.locator('.app-rail__item[data-rail-target="operations-tab"]').click();
         // 2026-05-20: rail children use a grid-template-rows transition
@@ -283,7 +303,25 @@ test.describe('v3 shell — rail navigation', () => {
 
 test.describe('v3 shell — D6 regression', () => {
     test('hash deep-link sets the active rail item + sub-pill on load', async ({ page }) => {
+        // 2026-05-20: applyFromState({snap: true}) now redirects
+        // operations-tab → deployments-tab/manage when no C2 deployment is
+        // active. Stub the dropdown payload with a C2 deployment so the
+        // initial navigateTo('operations-tab', 'beacons') sticks.
+        await page.route('**/api/deploy/active', async (route) => {
+            await route.fulfill({
+                status: 200, contentType: 'application/json',
+                body: JSON.stringify({ success: true, deployments: [
+                    { project_name: 'c2_test_fixture', _filename: 'c2_test_fixture', deployment_type: 'c2-adhoc', status: 'success' },
+                ]}),
+            });
+        });
         await page.goto('/#operations-tab/beacons');
+        // Let the async deployment fetch resolve before asserting (otherwise
+        // applyFromState may snap operations → deployments/manage mid-wait).
+        await page.waitForFunction(() => {
+            try { return APP.computeOperationsVisible(APP.activeDeployment); }
+            catch (_) { return false; }
+        }, null, { timeout: 5000 });
 
         // Operations rail item active.
         await expect(
