@@ -24,8 +24,54 @@ async function setTheme(page, theme) {
 }
 
 async function navigateToDeploySubPill(page) {
+    // 2026-05-20 (Batch C) — The Deploy sub-pill is mode-gated. For an
+    // existing GOAD deployment (the live backend's default), the visible
+    // pills are ['manage', 'bolt-ons', 'cleanup'] — Deploy is hidden. And
+    // the live /api/config has no deployment_type set, so loadConfigSummary
+    // early-returns with display:none. Mock /api/config with a valid c2-adhoc
+    // config so the summary section renders, then pin draft mode so the
+    // Deploy sub-pill is visible.
+    const configHandler = async (route) => {
+        if (route.request().method() !== 'GET') return route.continue();
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                success: true,
+                config: {
+                    deployment_type: 'c2-adhoc',
+                    project_name: 'spec_test_lab',
+                    environment: 'dev',
+                    aws_region: 'eu-central-1',
+                    management_cidr_blocks: ['203.0.113.0/24'],
+                    key_pair_name: 'red-team-keypair',
+                    primary_domain_name: 'example.com',
+                    vpc_cidr: '10.0.0.0/16',
+                    enable_ssl: true,
+                    ssl_provider: 'letsencrypt',
+                    cobalt_strike_password: 'auto',
+                    malleable_profile: 'default',
+                    c2_server_instance_type: 't3.medium',
+                    c2_server_count: 1,
+                    enable_attack_box: true,
+                    enable_test_lab: false,
+                },
+            }),
+        });
+    };
+    // Match both with + without trailing slash; loadConfigSummary uses
+    // /api/config (no slash) and Flask redirects to /api/config/.
+    await page.route('**/api/config', configHandler);
+    await page.route('**/api/config/', configHandler);
+    await page.route('**/api/config?**', configHandler);
+    await page.route('**/api/audit/**', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, entries: [] }) });
+    });
     await page.goto('/');
     await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
+    await page.evaluate(() => {
+        window.APP.activeDeployment.set(window.APP.activeDeployment.DRAFT_SENTINEL);
+    });
     await page.click('button.tab-btn[data-target="deployments-tab"]');
     await page.waitForTimeout(150);
     // Click the Deploy sub-pill button within the Deployments tab

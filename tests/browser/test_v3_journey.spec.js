@@ -32,7 +32,17 @@ async function openJourney(page) {
         window._origConfirm = window.confirm;
         window.confirm = () => true;
     });
-    await page.click('#global-new-deployment-btn');
+    // 2026-05-20 (Batch C) — `+ New Deployment` now lands on Configure V2 by
+    // default; the legacy journey wizard is opt-in via `?wizard=1`. The URL
+    // rewrite strips the flag before startDraftFlow can read it (see
+    // test_v3_flow_stitching.spec.js for the full reasoning), so the only
+    // reliable opt-in path is to invoke APP.journey.open() directly after
+    // pinning a draft sentinel + activating the configure sub-pill.
+    await page.evaluate(() => {
+        window.APP.activeDeployment.set(window.APP.activeDeployment.DRAFT_SENTINEL);
+        window.APP.subPills.setActive('configure');
+        window.APP.journey.open({ trigger: document.getElementById('global-new-deployment-btn') });
+    });
     // Wait for transition + first render
     await page.waitForTimeout(400);
 }

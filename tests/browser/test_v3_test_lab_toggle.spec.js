@@ -35,8 +35,20 @@ async function openDraftConfigure(page) {
 
 async function pickFamily(page, family) {
     // Family buttons live at #cfg-family-row; data-cfg-family carries 'c2'/'goad'/'combined'.
+    // When Identity is confirmed the body collapses and the family buttons
+    // are not pointer-clickable — re-open via the chip-row pencil first.
+    await page.evaluate(() => {
+        const sec = document.querySelector('.cfg-section[data-cfg-section="identity"]');
+        if (sec && sec.classList.contains('is-confirmed')) {
+            const editBtn = document.getElementById('cfg-identity-edit-btn');
+            if (editBtn) editBtn.click();
+        }
+    });
     await page.click(`#cfg-family-row [data-cfg-family="${family}"]`);
-    await page.waitForTimeout(200);
+    // Wait for applyTypeAwareVisibility() — it runs synchronously off the
+    // click handler, but the section's `.is-hidden` class observation needs
+    // a microtask cycle to settle in Playwright.
+    await page.waitForTimeout(400);
 }
 
 // 2026-05-20 (Batch C) — `.cfg-section.is-pending` collapses its body via
