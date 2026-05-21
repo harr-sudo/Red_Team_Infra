@@ -2101,17 +2101,16 @@ ns-143.awsdns-17.org
                     </div>
                     </details><!-- /#configure-advanced-details -->
 
-                    <!-- Task 51 Item 4 — Sticky save / discard footer mirrors the
-                         Deploy summary's action strip. Buttons preserve their legacy
-                         IDs and onclick handlers so saveConfig() / validateConfig() /
-                         clearConfig() remain the source of truth. -->
-                    <div class="form-actions configure-form-actions configure-form-actions--sticky">
-                        <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
-                        <button class="btn btn-secondary" onclick="validateConfig()">Validate</button>
-                        <button class="btn btn-danger" onclick="clearConfig()" style="margin-left: auto;">Clear All</button>
-                    </div>
+                    <!-- 2026-05-21 (frontend legacy audit) — Sticky Save/Validate/Clear
+                         button strip RETIRED. V2 progressive Configure owns its own
+                         Save inside the cfg-hero strip (see configureV2.save).
+                         Clear All was a footgun (wiped saved tfvars); Discard draft is
+                         the canonical empty-state primitive. The strip only ever
+                         surfaced in All mode (a fleet view — impossible Save context).
+                         The .configure-form-actions chrome was the most operator-
+                         visible legacy surface. -->
 
-                    <div id="config-message" class="message"></div>
+                    <div id="config-message" class="message">
                     </div><!-- /#configure-edit-pane -->
                     </div><!-- /#configure-scoped-content -->
                     </div>
@@ -3193,24 +3192,32 @@ ns-143.awsdns-17.org
                 </div>
 
                 <!-- No Deployment -->
+                <!-- 2026-05-21 (frontend legacy audit) — "Go to Configuration"
+                     was wired to `navigateTo('configuration')` which lands on
+                     the legacy form. New CTA enters draft mode via the
+                     canonical _startDraftFlow entry. -->
                 <div id="beacon-no-deployment" class="section-card" style="display: none;">
                     <div style="text-align: center; padding: 40px 20px;">
                         <h3 style="margin-bottom: 16px;">No Active Deployments</h3>
                         <p style="color: var(--text-muted); max-width: 500px; margin: 0 auto; line-height: 1.6;">
-                            Deploy infrastructure with REST API enabled to manage beacons. Enable it in the <strong>Configuration</strong> tab under Cobalt Strike settings.
+                            Deploy infrastructure with REST API enabled to manage beacons. Enable it in the new-deployment flow under Cobalt Strike settings.
                         </p>
-                        <button class="btn btn-primary" onclick="APP.navigateTo('configuration')" style="margin-top: 16px;">Go to Configuration</button>
+                        <button class="btn btn-primary" onclick="APP.startNewDeployment()" style="margin-top: 16px;">+ New Deployment</button>
                     </div>
                 </div>
 
                 <!-- REST API not enabled for selected deployment -->
+                <!-- 2026-05-21 (frontend legacy audit) — operator already
+                     has a deployment, just needs to edit its CS REST API
+                     toggle. Route to Manage (which opens the edit drawer)
+                     instead of the legacy form. -->
                 <div id="beacon-not-enabled" class="section-card" style="display: none;">
                     <div style="text-align: center; padding: 40px 20px;">
                         <h3 style="color: var(--warning-text); margin-bottom: 16px;">REST API Not Enabled</h3>
                         <p style="color: var(--text-muted); max-width: 500px; margin: 0 auto; line-height: 1.6;">
-                            This deployment does not have the REST API enabled. Enable it in the <strong>Configuration</strong> tab and redeploy.
+                            This deployment does not have the REST API enabled. Open Manage &rarr; Edit configuration to enable it and redeploy.
                         </p>
-                        <button class="btn btn-primary" onclick="APP.navigateTo('configuration')" style="margin-top: 16px;">Go to Configuration</button>
+                        <button class="btn btn-primary" onclick="APP.navigateTo('deployments-tab', 'manage')" style="margin-top: 16px;">Open in Manage &rarr;</button>
                     </div>
                 </div>
 

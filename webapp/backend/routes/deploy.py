@@ -56,6 +56,39 @@ def _resolve_project_tfvars(project_param, default_tfvars):
     return candidate, workspace
 
 
+def _project_tfvars_for(project_param):
+    """Pick the right tfvars file for a project (per-project first, then global).
+
+    Helper used by read-only endpoints that just need a config dict (region,
+    project_name, domain). Returns the resolved ``Path`` so callers can pass
+    it straight to ``ConfigParser.parse_tfvars``. Mirrors the resolution
+    precedence in ``_resolve_project_tfvars`` but without forcing the
+    workspace name onto the global terraform_service — read-only callers
+    shouldn't mutate shared service state.
+    """
+    global_tfvars = project_root / "configs" / "terraform.tfvars"
+    if not project_param or project_param in _RESERVED_PROJECT_NAMES:
+        return global_tfvars
+    candidate = _resolve_tfvars_path(
+        project_param, global_tfvars.parent, global_tfvars
+    )
+    return candidate if candidate.exists() else global_tfvars
+
+
+def _read_project_config(project_param):
+    """Parse ``configs/<project>.tfvars`` (or global) into a dict.
+
+    Returns ``{}`` if no file exists. Centralizes the "load region +
+    project_name + domain" boilerplate that was duplicated across the
+    stop/start/outputs/sg-rules/ssl-status/toggle-redirector handlers.
+    """
+    from webapp.backend.utils.config_parser import ConfigParser
+    tfvars = _project_tfvars_for(project_param)
+    if not tfvars.exists():
+        return {}
+    return ConfigParser.parse_tfvars(tfvars) or {}
+
+
 def _audit_actor():
     """Return the current operator id from flask.g (set by app.before_request)."""
     op = getattr(g, "operator", None)
@@ -229,14 +262,21 @@ def get_active_deployments():
 # WINDOWS PASSWORD DECRYPTION (EC2Launch v2)
 # =============================================================================
 
-def _get_aws_region() -> str:
-    """Get AWS region from terraform.tfvars or default config."""
+def _get_aws_region(project_param: str = None) -> str:
+    """Get AWS region from the project's tfvars (or global) or AWS CLI default.
+
+    Accepts an optional ``project_param`` — when provided, looks up
+    ``configs/<project>.tfvars`` first, then falls back to the global
+    tfvars, then to the AWS CLI configured region. This is invoked from
+    places like the EC2 password-decryption helper that previously hard-
+    coded the global tfvars and silently picked up the wrong region for
+    per-project deployments.
+    """
     try:
-        tfvars = project_root / "configs" / "terraform.tfvars"
-        if tfvars.exists():
-            for line in tfvars.read_text().splitlines():
-                if line.strip().startswith("aws_region"):
-                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+        cfg = _read_project_config(project_param)
+        region = (cfg.get("aws_region") or "").strip()
+        if region:
+            return region
     except Exception:
         pass
     # Fall back to AWS CLI default region
@@ -459,14 +499,11 @@ def query_remaining_resources(project_name: str) -> dict:
     that AWS retains temporarily after destruction.
     Returns {count, by_service, resources} or {count: -1, error} on failure."""
     import boto3
-    from webapp.backend.utils.config_parser import ConfigParser
 
-    aws_region = 'eu-central-1'
-    config_dir = project_root / "configs"
-    tfvars_file = config_dir / "terraform.tfvars"
-    if tfvars_file.exists():
-        config = ConfigParser.parse_tfvars(tfvars_file)
-        aws_region = config.get('aws_region', 'eu-central-1')
+    # Per-project region lookup: configs/<project>.tfvars wins over the
+    # global tfvars. Falls back to eu-central-1 only if neither exists.
+    config = _read_project_config(project_name)
+    aws_region = config.get('aws_region', 'eu-central-1')
 
     try:
         tagging = boto3.client('resourcegroupstaggingapi', region_name=aws_region)
@@ -1657,45 +1694,17 @@ def get_deployment_status():
     })
 
 
-@bp.route('/status/all', methods=['GET'])
-def get_all_deployment_status():
-    """Get status of all active deployments"""
-    active = get_active_deployments()
-    
-    # Also include default deployment state if it's active
-    if deployment_state["status"] == "running":
-        active.append({"project_name": "default", **deployment_state})
-    
-    return jsonify({
-        "success": True,
-        "active_deployments": active,
-        "total_active": len(active)
-    })
+# /status/all removed 2026-05-21 — no frontend or script caller; the
+# Manage fleet view uses /api/deploy/active (which surfaces all
+# successful per-project state files). The "default" legacy single-
+# deployment view is no longer presented in the V3 UI.
 
 
-@bp.route('/workspaces', methods=['GET'])
-def list_workspaces():
-    """List all Terraform workspaces"""
-    result = terraform_service.workspace_list()
-    
-    # Enhance with deployment states
-    workspaces = []
-    for ws in result.get("workspaces", []):
-        ws_info = {
-            "name": ws,
-            "is_current": ws == result.get("current"),
-            "status": "idle"
-        }
-        if ws in deployment_states:
-            ws_info["status"] = deployment_states[ws].get("status", "idle")
-        workspaces.append(ws_info)
-    
-    return jsonify({
-        "success": result["success"],
-        "workspaces": workspaces,
-        "current": result.get("current"),
-        "stderr": result.get("stderr", "")
-    })
+# /workspaces removed 2026-05-21 — debugging endpoint with no frontend or
+# script callers. The Configure / Manage UIs read per-project deployment
+# state from logs/deployment_state/*.state.json (via /api/deploy/active),
+# not from terraform workspace listings. Use that endpoint for the same
+# information.
 
 
 @bp.route('/check-project-name', methods=['GET'])
@@ -1757,14 +1766,14 @@ def check_project_name():
     else:
         history_warning = None
     
-    # Get AWS region from config
-    config_dir = project_root / "configs"
-    tfvars_file = config_dir / "terraform.tfvars"
+    # Get AWS region from config — prefer the candidate project's per-project
+    # tfvars (if any) so check-project-name surfaces the right region when the
+    # operator is naming a candidate that already has a stub config on disk.
     aws_region = 'eu-central-1'  # Default
-    if tfvars_file.exists():
-        config = ConfigParser.parse_tfvars(tfvars_file)
+    config = _read_project_config(project_name)
+    if config:
         aws_region = config.get('aws_region', 'eu-central-1')
-    
+
     # Check AWS using Resource Groups Tagging API — finds ALL resources with Project tag
     # This is comprehensive: covers EC2, VPC, S3, IAM, Secrets Manager, Security Groups, etc.
     aws_check = {"checked": False, "found": 0, "by_service": {}, "error": None}
@@ -1904,45 +1913,10 @@ def check_project_name():
     return jsonify(response)
 
 
-@bp.route('/generate-project-name', methods=['GET'])
-def generate_project_name():
-    """
-    Generate a unique project name with machine-specific suffix.
-    OPTION 3: Ensures uniqueness across different users/machines.
-    
-    Format: {prefix}_{env}_{hostname}
-    Example: goad_mini_dev_harris_macbook
-    """
-    import socket
-    import re
-    
-    prefix = request.args.get('prefix', 'project')
-    environment = request.args.get('env', 'dev')
-    
-    # Get hostname and sanitize it for use in project name
-    hostname = socket.gethostname()
-    # Sanitize: lowercase, replace dots/spaces with underscores, keep only valid chars
-    sanitized_hostname = re.sub(r'[^a-zA-Z0-9]', '_', hostname.lower())
-    # Remove consecutive underscores and trim
-    sanitized_hostname = re.sub(r'_+', '_', sanitized_hostname).strip('_')
-    # Limit length to keep project names reasonable
-    if len(sanitized_hostname) > 20:
-        sanitized_hostname = sanitized_hostname[:20].rstrip('_')
-    
-    # Build the project name
-    project_name = f"{prefix}_{environment}_{sanitized_hostname}"
-    
-    return jsonify({
-        "success": True,
-        "project_name": project_name,
-        "components": {
-            "prefix": prefix,
-            "environment": environment,
-            "machine_suffix": sanitized_hostname,
-            "hostname": hostname
-        },
-        "message": f"Generated unique project name based on hostname '{hostname}'"
-    })
+# /generate-project-name removed 2026-05-21 — no frontend or script
+# caller. The frontend now composes project names client-side from
+# /api/deploy/machine-info (returns sanitized hostname) + the operator-
+# selected deployment_type / environment in Configure V2.
 
 
 @bp.route('/machine-info', methods=['GET'])
@@ -2109,9 +2083,14 @@ def deploy():
 
 @bp.route('/cancel', methods=['POST'])
 def cancel_deployment():
-    """Cancel an in-progress deployment by killing the Terraform subprocess"""
+    """Cancel an in-progress deployment by killing the Terraform subprocess.
+
+    Per-project: must specify ``project_name`` in the JSON body OR
+    ``?project=`` query param. Refuses without one — there's no single
+    "active deployment" to cancel on a multi-project dashboard.
+    """
     data = request.get_json() or {}
-    project_name = data.get("project_name")
+    project_name = (data.get("project_name") or request.args.get("project") or "").strip()
 
     if not project_name:
         return jsonify({"success": False, "error": "project_name required"}), 400
@@ -2791,21 +2770,9 @@ def plan():
             "stderr": detailed_error
         }), 500
 
-@bp.route('/init', methods=['POST'])
-def init():
-    """Initialize Terraform"""
-    try:
-        result = terraform_service.init()
-        return jsonify({
-            "success": result["success"],
-            "stdout": result.get("stdout", ""),
-            "stderr": result.get("stderr", "")
-        })
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+# /init removed 2026-05-21 — no frontend or script caller; terraform init
+# is run inline by the deployment pipeline (run_deployment) and the
+# /plan handler. A standalone init endpoint was a duplicate code path.
 
 @bp.route('/upload-cobalt-strike', methods=['POST'])
 def upload_cobalt_strike():
@@ -3264,366 +3231,16 @@ def get_user_public_key() -> str:
 
 
 # =============================================================================
-# SECURE CONNECTION INFO ENDPOINTS (Phase 4)
+# REMOVED 2026-05-21 — /connection-info, /connection-info/quick, /ssh-fingerprints
 # =============================================================================
-# These endpoints provide connection information WITHOUT exposing private keys.
-# Private keys are generated on the hosts themselves and never transmitted.
-# Users connect using their own SSH key that they uploaded before deployment.
+# These Phase-4 endpoints had no frontend or script callers. The Manage
+# sub-pill renders connection info from /api/deploy/infrastructure +
+# /api/deploy/outputs (which are project-aware). The fingerprint info was
+# never surfaced — SSH-host-key trust uses TOFU on first connect from
+# the operator's terminal, not a UI display. Keeping them around added
+# 350+ lines of unmaintained code reading global terraform_service state.
 # =============================================================================
-
-@bp.route('/connection-info', methods=['GET'])
-def get_connection_info():
-    """
-    Get secure connection information for deployed infrastructure.
-    
-    SECURITY: This endpoint NEVER returns private keys.
-    - User's private key stays on their machine
-    - Internal keys are generated on hosts and never transmitted
-    - Only public information (IPs, ports, commands) is returned
-    
-    Query params:
-        project: project name (optional, uses default workspace if not provided)
-    """
-    try:
-        project_name = request.args.get('project')
-        
-        # Use project-specific service if provided
-        if project_name:
-            service = get_service_for_project(project_name)
-            service.init()
-            service.ensure_workspace()
-        else:
-            service = terraform_service
-        
-        # Get Terraform outputs
-        output_result = service.output()
-        
-        if not output_result.get("success"):
-            return jsonify({
-                "success": False,
-                "error": "Failed to get deployment outputs. Infrastructure may not be deployed.",
-                "has_deployment": False
-            })
-        
-        outputs = output_result.get("outputs", {})
-        
-        # Check if there's an active deployment
-        deployment_type = outputs.get("deployment_type", {}).get("value", "")
-        if not deployment_type:
-            return jsonify({
-                "success": False,
-                "error": "No active deployment found",
-                "has_deployment": False
-            })
-        
-        # Get deployment mode
-        deployment_mode = outputs.get("deployment_mode", {}).get("value", {})
-        is_goad = deployment_mode.get("is_goad_only", False) or deployment_mode.get("is_combined", False)
-        
-        # Build secure connection info (NO PRIVATE KEYS!)
-        connection_info = {
-            "success": True,
-            "has_deployment": True,
-            "deployment_type": deployment_type,
-            "project_name": project_name or "default",
-            
-            # Security notice
-            "security_notice": {
-                "message": "Private keys are NOT provided by this API.",
-                "user_key": "Use the SSH key you generated locally (~/.ssh/goad_key)",
-                "internal_keys": "Internal keys are generated on hosts and never transmitted"
-            },
-            
-            # SSH connection commands (using user's own key)
-            "ssh_commands": {},
-            
-            # Host information
-            "hosts": {},
-            
-            # Network information
-            "network": {}
-        }
-        
-        # GOAD Lab connection info
-        if is_goad:
-            jumpbox_ip = outputs.get("goad_jumpbox_public_ip", {}).get("value")
-            jumpbox_private_ip = outputs.get("goad_jumpbox_private_ip", {}).get("value")
-            
-            if jumpbox_ip:
-                connection_info["hosts"]["jumpbox"] = {
-                    "public_ip": jumpbox_ip,
-                    "private_ip": jumpbox_private_ip,
-                    "user": "ubuntu",
-                    "role": "SSH Gateway / Bastion Host"
-                }
-                
-                # SSH command using user's own key
-                connection_info["ssh_commands"]["jumpbox"] = {
-                    "command": f"ssh -i ~/.ssh/goad_key ubuntu@{jumpbox_ip}",
-                    "description": "Connect to jumpbox using YOUR SSH key"
-                }
-                
-                # Team Server (via jumpbox)
-                teamserver_ip = outputs.get("goad_teamserver_private_ip", {}).get("value")
-                if teamserver_ip:
-                    connection_info["hosts"]["teamserver"] = {
-                        "private_ip": teamserver_ip,
-                        "user": "ubuntu",
-                        "role": "Cobalt Strike Team Server",
-                        "access": "Via jumpbox only"
-                    }
-                    
-                    connection_info["ssh_commands"]["teamserver"] = {
-                        "command": f"ssh teamserver  # From jumpbox",
-                        "description": "Connect to Team Server FROM the jumpbox (internal key is on jumpbox)",
-                        "tunnel_command": f"ssh -i ~/.ssh/goad_key -L 50050:{teamserver_ip}:50050 ubuntu@{jumpbox_ip}",
-                        "tunnel_description": "Create tunnel for Cobalt Strike client"
-                    }
-                
-                # Attack Box
-                attackbox_ip = outputs.get("goad_attackbox_private_ip", {}).get("value")
-                if attackbox_ip:
-                    connection_info["hosts"]["attackbox"] = {
-                        "private_ip": attackbox_ip,
-                        "role": "Windows Attack Workstation",
-                        "access": "Via jumpbox tunnel (RDP)"
-                    }
-                    
-                    connection_info["ssh_commands"]["attackbox_rdp"] = {
-                        "command": f"ssh -i ~/.ssh/goad_key -L 3389:{attackbox_ip}:3389 ubuntu@{jumpbox_ip}",
-                        "description": "Create RDP tunnel to Attack Box, then RDP to localhost:3389"
-                    }
-                
-                # Windows AD VMs
-                goad_vms = outputs.get("goad_lab_vms", {}).get("value", [])
-                if goad_vms:
-                    connection_info["hosts"]["windows_vms"] = {
-                        "vms": goad_vms,
-                        "access": "Via jumpbox tunnel (RDP/WinRM)"
-                    }
-                    
-                    # Example RDP tunnel for first VM
-                    if goad_vms and len(goad_vms) > 0:
-                        first_vm = goad_vms[0] if isinstance(goad_vms[0], dict) else {"ip": goad_vms[0]}
-                        vm_ip = first_vm.get("ip", first_vm.get("private_ip", "192.168.56.10"))
-                        connection_info["ssh_commands"]["windows_rdp_example"] = {
-                            "command": f"ssh -i ~/.ssh/goad_key -L 3389:{vm_ip}:3389 ubuntu@{jumpbox_ip}",
-                            "description": f"Create RDP tunnel to Windows VM ({vm_ip})"
-                        }
-        
-        # C2-only or combined mode - bastion info
-        bastion_ip = outputs.get("bastion_public_ip", {}).get("value")
-        if bastion_ip:
-            connection_info["hosts"]["bastion"] = {
-                "public_ip": bastion_ip,
-                "user": "ubuntu",
-                "role": "C2 Bastion Host"
-            }
-            
-            connection_info["ssh_commands"]["bastion"] = {
-                "command": f"ssh -i ~/.ssh/goad_key ubuntu@{bastion_ip}",
-                "description": "Connect to C2 bastion using YOUR SSH key"
-            }
-        
-        # C2 server info
-        c2_ip = outputs.get("c2_server_primary_ip", {}).get("value")
-        if c2_ip:
-            connection_info["hosts"]["c2_server"] = {
-                "private_ip": c2_ip,
-                "role": "C2 Team Server",
-                "access": "Via bastion only"
-            }
-        
-        # Redirectors
-        redirectors = outputs.get("proxy_redirector_public_ips", {}).get("value", [])
-        if redirectors:
-            connection_info["hosts"]["redirectors"] = {
-                "public_ips": redirectors,
-                "role": "Traffic Redirectors"
-            }
-        
-        # Network info
-        connection_info["network"] = {
-            "vpc_cidr": outputs.get("vpc_cidr", {}).get("value"),
-            "private_subnet": outputs.get("private_subnet_cidr", {}).get("value"),
-            "public_subnet": outputs.get("public_subnet_cidr", {}).get("value")
-        }
-        
-        return jsonify(connection_info)
-        
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-
-
-@bp.route('/ssh-fingerprints', methods=['GET'])
-def get_ssh_fingerprints():
-    """
-    Get SSH host key fingerprints for deployed hosts.
-    
-    This endpoint retrieves fingerprints that users can verify when connecting
-    to ensure they're connecting to the correct hosts (TOFU verification).
-    
-    Query params:
-        project: project name (optional)
-        host: specific host to get fingerprint for (optional)
-    
-    Note: Fingerprints are retrieved from S3 where hosts upload them during bootstrap,
-    or from Terraform outputs if available.
-    """
-    try:
-        project_name = request.args.get('project')
-        specific_host = request.args.get('host')
-        
-        # Use project-specific service if provided
-        if project_name:
-            service = get_service_for_project(project_name)
-            service.init()
-            service.ensure_workspace()
-        else:
-            service = terraform_service
-        
-        # Get Terraform outputs
-        output_result = service.output()
-        
-        if not output_result.get("success"):
-            return jsonify({
-                "success": False,
-                "error": "Failed to get deployment outputs"
-            })
-        
-        outputs = output_result.get("outputs", {})
-        
-        # Check for deployment
-        deployment_type = outputs.get("deployment_type", {}).get("value", "")
-        if not deployment_type:
-            return jsonify({
-                "success": False,
-                "error": "No active deployment found"
-            })
-        
-        fingerprints = {
-            "success": True,
-            "project_name": project_name or "default",
-            "hosts": {},
-            "verification_instructions": {
-                "description": "Compare these fingerprints with what SSH shows on first connection",
-                "example": "The authenticity of host 'x.x.x.x' can't be established. ED25519 key fingerprint is SHA256:xxxxx. Are you sure you want to continue connecting (yes/no)?",
-                "action": "Verify the fingerprint matches before typing 'yes'"
-            }
-        }
-        
-        # Get jumpbox connection info (includes fingerprint if available)
-        jumpbox_info = outputs.get("goad_jumpbox_connection_info", {}).get("value", {})
-        if jumpbox_info:
-            jumpbox_ip = jumpbox_info.get("public_ip") or outputs.get("goad_jumpbox_public_ip", {}).get("value")
-            
-            fingerprints["hosts"]["jumpbox"] = {
-                "ip": jumpbox_ip,
-                "user": "ubuntu",
-                "key_type": jumpbox_info.get("key_type", "ed25519"),
-                "fingerprint": jumpbox_info.get("host_key_fingerprint", "Available after first boot - check /etc/ssh/ssh_host_ed25519_key.pub on host"),
-                "how_to_verify": f"ssh-keyscan -t ed25519 {jumpbox_ip} 2>/dev/null | ssh-keygen -l -f -" if jumpbox_ip else "Deploy first to get IP"
-            }
-        
-        # Internal key info (for verifying jumpbox can connect to internal hosts)
-        internal_key_info = outputs.get("goad_internal_key_info", {}).get("value", {})
-        if internal_key_info:
-            fingerprints["internal_key"] = {
-                "description": "Jumpbox's internal key for connecting to Team Server/Attack Box",
-                "public_key_location": internal_key_info.get("public_key_location", "S3 bucket"),
-                "note": "This key is generated ON the jumpbox - private key never leaves the host"
-            }
-        
-        # Get bastion fingerprint if available
-        bastion_ip = outputs.get("bastion_public_ip", {}).get("value")
-        if bastion_ip:
-            fingerprints["hosts"]["bastion"] = {
-                "ip": bastion_ip,
-                "user": "ubuntu",
-                "key_type": "ed25519",
-                "fingerprint": "Available after first boot",
-                "how_to_verify": f"ssh-keyscan -t ed25519 {bastion_ip} 2>/dev/null | ssh-keygen -l -f -"
-            }
-        
-        # Filter by specific host if requested
-        if specific_host and specific_host in fingerprints["hosts"]:
-            fingerprints["hosts"] = {specific_host: fingerprints["hosts"][specific_host]}
-        
-        return jsonify(fingerprints)
-        
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-
-
-@bp.route('/connection-info/quick', methods=['GET'])
-def get_quick_connection_info():
-    """
-    Get minimal connection info for quick access.
-    Returns just the essential SSH commands needed to connect.
-    
-    Query params:
-        project: project name (optional)
-    """
-    try:
-        project_name = request.args.get('project')
-        
-        # Use project-specific service if provided
-        if project_name:
-            service = get_service_for_project(project_name)
-            service.init()
-            service.ensure_workspace()
-        else:
-            service = terraform_service
-        
-        # Get Terraform outputs
-        output_result = service.output()
-        outputs = output_result.get("outputs", {})
-        
-        # Get key IPs
-        jumpbox_ip = outputs.get("goad_jumpbox_public_ip", {}).get("value")
-        bastion_ip = outputs.get("bastion_public_ip", {}).get("value")
-        teamserver_ip = outputs.get("goad_teamserver_private_ip", {}).get("value")
-        
-        quick_info = {
-            "success": True,
-            "project_name": project_name or "default"
-        }
-        
-        if jumpbox_ip:
-            quick_info["jumpbox"] = {
-                "ip": jumpbox_ip,
-                "ssh": f"ssh -i ~/.ssh/goad_key ubuntu@{jumpbox_ip}"
-            }
-            
-            if teamserver_ip:
-                quick_info["teamserver_tunnel"] = {
-                    "ip": teamserver_ip,
-                    "tunnel": f"ssh -i ~/.ssh/goad_key -L 50050:{teamserver_ip}:50050 ubuntu@{jumpbox_ip}",
-                    "then": "Connect CS client to localhost:50050"
-                }
-        
-        if bastion_ip:
-            quick_info["bastion"] = {
-                "ip": bastion_ip,
-                "ssh": f"ssh -i ~/.ssh/goad_key ubuntu@{bastion_ip}"
-            }
-        
-        if not jumpbox_ip and not bastion_ip:
-            quick_info["message"] = "No deployment found or no public IPs available"
-        
-        return jsonify(quick_info)
-        
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+# (legacy handler bodies deleted in full — see banner above)
 
 
 # =============================================================================
@@ -3802,30 +3419,12 @@ def get_infrastructure():
         }), 500
 
 
-@bp.route('/infrastructure/refresh', methods=['POST'])
-def refresh_infrastructure():
-    """Refresh Terraform state (terraform refresh)"""
-    try:
-        # Run terraform refresh to sync state with actual infrastructure
-        exit_code, stdout, stderr = terraform_service._run_command([
-            "terraform", "refresh",
-            "-var-file", str(terraform_service.tfvars_file.absolute())
-        ])
-        
-        if exit_code != 0:
-            return jsonify({
-                "success": False,
-                "error": stderr or "Terraform refresh failed"
-            }), 500
-        
-        # Now get the updated infrastructure
-        return get_infrastructure()
-        
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+# /infrastructure/refresh removed 2026-05-21 — no frontend or script
+# caller. The endpoint shelled out to `terraform refresh` against the
+# global terraform_service workspace, which is wrong for any per-project
+# deployment (would refresh the default workspace). The Manage sub-pill
+# uses ?refresh=true on /api/deploy/resources/project/<name> for live
+# AWS state instead.
 
 
 # =============================================================================
@@ -3957,64 +3556,11 @@ def get_deployment_details():
         }), 500
 
 
-# =============================================================================
-# GOAD STATUS ENDPOINT
-# =============================================================================
-
-@bp.route('/goad-status', methods=['GET'])
-def get_goad_status():
-    """
-    Get GOAD Ansible provisioning status.
-    Returns the status of AD configuration on GOAD VMs.
-    """
-    global deployment_state
-    
-    try:
-        # Check if GOAD is deployed
-        output_result = terraform_service.output()
-        outputs = output_result.get("outputs", {})
-        
-        goad_deployed = outputs.get("goad_deployed", {}).get("value", False)
-        
-        if not goad_deployed:
-            return jsonify({
-                "success": True,
-                "goad_deployed": False,
-                "status": "not_deployed",
-                "message": "GOAD lab is not deployed"
-            })
-        
-        # Get current Ansible status from state
-        ansible_status = deployment_state.get("goad_ansible_status", "unknown")
-        
-        # In a real implementation, we'd check the jumpbox for status
-        # For now, return the tracked status
-        return jsonify({
-            "success": True,
-            "goad_deployed": True,
-            "status": ansible_status or "pending",
-            "message": _get_ansible_status_message(ansible_status),
-            "jumpbox_ip": outputs.get("goad_jumpbox_public_ip", {}).get("value"),
-            "lab_type": outputs.get("goad_lab_type", {}).get("value")
-        })
-        
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-
-
-def _get_ansible_status_message(status: str) -> str:
-    """Get human-readable message for Ansible status."""
-    messages = {
-        "pending": "Ansible provisioning has not started yet. SSH to jumpbox and run: cd /opt/goad && ansible-playbook main.yml",
-        "running": "Ansible provisioning is in progress. This may take 30-60 minutes.",
-        "complete": "GOAD Active Directory configuration is complete!",
-        "error": "Ansible provisioning encountered an error. Check logs on jumpbox.",
-        "unknown": "Unable to determine Ansible status. SSH to jumpbox to check."
-    }
-    return messages.get(status, messages["unknown"])
+# /goad-status removed 2026-05-21 — no frontend or script caller.
+# It also read terraform_service.output() against the default workspace,
+# which is wrong for per-project GOAD deployments. The Manage sub-pill
+# uses /api/goad/status (which IS project-aware via the goad workspace
+# marker) for the same information.
 
 
 # =============================================================================
@@ -4106,80 +3652,12 @@ def save_ssh_key_to_disk_OLD():
 """
 
 
-# =============================================================================
-# S3 UPLOAD ENDPOINT
-# =============================================================================
-
-@bp.route('/upload-to-s3', methods=['POST'])
-def upload_to_s3():
-    """
-    Upload Cobalt Strike file to S3 bucket.
-    The bucket must be created by Terraform first.
-    """
-    try:
-        from webapp.backend.utils.s3_upload import upload_cs_file, S3UploadError
-        from webapp.backend.utils.config_parser import ConfigParser
-        
-        # Get config for project name
-        config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        
-        if not tfvars_file.exists():
-            return jsonify({
-                "success": False,
-                "error": "Configuration not found. Please configure deployment first."
-            }), 400
-        
-        config = ConfigParser.parse_tfvars(tfvars_file)
-        project_name = config.get('project_name', '')
-        aws_region = config.get('aws_region', 'eu-central-1')
-        
-        if not project_name:
-            return jsonify({
-                "success": False,
-                "error": "Project name not configured"
-            }), 400
-        
-        # Find local CS file
-        cobalt_strike_files = [
-            f for f in UPLOAD_FOLDER.glob("*")
-            if f.is_file() and allowed_file(f.name)
-        ]
-        
-        if not cobalt_strike_files:
-            return jsonify({
-                "success": False,
-                "error": "No Cobalt Strike file found. Upload a file first."
-            }), 400
-        
-        # Use most recent file
-        cs_file = max(cobalt_strike_files, key=lambda f: f.stat().st_mtime)
-        
-        # Upload to S3
-        s3_uri, bucket_name = upload_cs_file(
-            str(cs_file),
-            project_name,
-            aws_region
-        )
-        
-        return jsonify({
-            "success": True,
-            "message": "File uploaded to S3 successfully",
-            "s3_uri": s3_uri,
-            "bucket": bucket_name,
-            "local_file": str(cs_file)
-        })
-        
-    except S3UploadError as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+# /upload-to-s3 removed 2026-05-21 — no frontend or script caller.
+# The deploy pipeline (run_deployment) uploads the CS archive to S3
+# itself via webapp.backend.utils.s3_upload during the apply phase, and
+# the per-project tfvars is rewritten with the resulting S3 URI in-place
+# (see update_tfvars_cs_path above). A standalone "upload to S3" UI
+# button was never wired up.
 
 
 # =============================================================================
@@ -4191,23 +3669,23 @@ def stop_infrastructure():
     """
     Stop all EC2 instances (keep resources, stop compute charges).
     This is a cost-saving measure that preserves all data and configuration.
+
+    Project resolution: body ``project_name`` wins, else ``?project=`` query
+    param, else falls back to the global tfvars' ``project_name`` field (legacy
+    single-deployment hosts). Per-project tfvars dictate the region.
     """
     try:
         import boto3
-        from webapp.backend.utils.config_parser import ConfigParser
-        
-        # Get project name from request body or config
+
+        # Get project name from request body, then query, then global tfvars
         data = request.get_json() or {}
-        project_name = data.get('project_name')
-        
-        # Get config for region (and fallback project name)
-        config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        
-        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        project_name = (data.get('project_name') or request.args.get('project') or '').strip()
+
+        # Pull region (and project_name fallback) from the per-project tfvars
+        # when we already know the name, otherwise from the global tfvars.
+        config = _read_project_config(project_name) if project_name else _read_project_config(None)
         aws_region = config.get('aws_region', 'eu-central-1')
-        
-        # Use config project name as fallback
+
         if not project_name:
             project_name = config.get('project_name', '')
         
@@ -4279,23 +3757,19 @@ def start_infrastructure():
     """
     Start all stopped EC2 instances.
     Resumes compute charges.
+
+    Same project-resolution model as /stop.
     """
     try:
         import boto3
-        from webapp.backend.utils.config_parser import ConfigParser
-        
-        # Get project name from request body or config
+
+        # Get project name from request body, then query, then global tfvars
         data = request.get_json() or {}
-        project_name = data.get('project_name')
-        
-        # Get config for region (and fallback project name)
-        config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        
-        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        project_name = (data.get('project_name') or request.args.get('project') or '').strip()
+
+        config = _read_project_config(project_name) if project_name else _read_project_config(None)
         aws_region = config.get('aws_region', 'eu-central-1')
-        
-        # Use config project name as fallback
+
         if not project_name:
             project_name = config.get('project_name', '')
         
@@ -4366,19 +3840,16 @@ def start_infrastructure():
 def get_instance_status():
     """
     Get the current status of all EC2 instances for this project.
-    Accepts optional ?project=name query parameter.
+    Accepts optional ?project=name query parameter — when provided the
+    region is read from configs/<project>.tfvars; otherwise the global.
     """
     try:
         import boto3
-        from webapp.backend.utils.config_parser import ConfigParser
 
-        # Get project name from query param or config
+        # Get project name from query param
         project_name = request.args.get('project', '').strip()
 
-        config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-
-        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        config = _read_project_config(project_name) if project_name else _read_project_config(None)
         aws_region = config.get('aws_region', 'eu-central-1')
 
         if not project_name:
@@ -4950,13 +4421,16 @@ def get_all_project_resources():
 
         resources_file = project_root / "logs" / "deployment_resources.json"
 
-        # Resolve the configured region. Falls back to eu-central-1 (the
-        # project default) so a missing tfvars doesn't blank the response.
+        # This endpoint is intentionally cross-project (the Cleanup sub-pill's
+        # orphan scan walks ALL deployments), so the region is read from the
+        # global tfvars on purpose — there's no single "active project" here.
+        # If the operator wants a different region they can pass ?region= (TBD)
+        # or rely on the eu-central-1 default that matches the project lock.
         aws_region = 'eu-central-1'
         try:
-            tfvars_file = project_root / "configs" / "terraform.tfvars"
-            if tfvars_file.exists():
-                cfg = ConfigParser.parse_tfvars(tfvars_file)
+            global_tfvars = project_root / "configs" / "terraform.tfvars"
+            if global_tfvars.exists():
+                cfg = ConfigParser.parse_tfvars(global_tfvars)
                 aws_region = cfg.get('aws_region', aws_region) or aws_region
         except Exception as e:
             print(f"[deploy] Could not read aws_region from tfvars: {e}")
@@ -5009,21 +4483,21 @@ def get_terraform_outputs():
     """
     Get Terraform outputs for a specific project.
     Returns connection info like IPs, key names, etc.
+
+    Reads region + domain + secret-names from the per-project tfvars
+    (``configs/<project>.tfvars``) when ?project= is set; only falls back
+    to the global tfvars when no project is specified.
     """
     try:
         import boto3
-        from webapp.backend.utils.config_parser import ConfigParser
-        
+
         # Get project name from query params
         project_name = request.args.get('project')
-        
-        # Get config for region and fallback project name
-        config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        
-        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+
+        # Per-project tfvars first; global only when no project specified.
+        config = _read_project_config(project_name)
         aws_region = config.get('aws_region', 'eu-central-1')
-        
+
         if not project_name:
             project_name = config.get('project_name', '')
         
@@ -5265,10 +4739,7 @@ def get_sg_rules():
         if not project_name:
             return jsonify({"success": False, "error": "Project name required"}), 400
 
-        config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        from webapp.backend.utils.config_parser import ConfigParser
-        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        config = _read_project_config(project_name)
         aws_region = config.get('aws_region', 'eu-central-1')
 
         ec2 = boto3.client('ec2', region_name=aws_region)
@@ -5383,11 +4854,9 @@ def get_ssl_status():
 
         project_name = request.args.get('project')
         if not project_name:
-            config_dir = project_root / "configs"
-            tfvars_file = config_dir / "terraform.tfvars"
-            from webapp.backend.utils.config_parser import ConfigParser
-            config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
-            project_name = config.get('project_name', '')
+            # Fall back to the global tfvars' project_name (legacy hosts)
+            fallback_cfg = _read_project_config(None)
+            project_name = fallback_cfg.get('project_name', '')
 
         if not project_name:
             return jsonify({"success": False, "error": "No project name"}), 400
@@ -5431,12 +4900,9 @@ def get_ssl_status():
                     expanded_key = os.path.expanduser(alt)
                     break
 
-        # Get redirector public IPs from EC2
+        # Get redirector public IPs from EC2 — per-project region lookup
         import boto3
-        config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        from webapp.backend.utils.config_parser import ConfigParser
-        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        config = _read_project_config(project_name)
         aws_region = config.get('aws_region', 'eu-central-1')
 
         ec2 = boto3.client('ec2', region_name=aws_region)
@@ -5573,11 +5039,11 @@ def toggle_redirector():
         if not target_ip or not project_name:
             return jsonify({"success": False, "error": "Missing 'ip' or 'project'"}), 400
 
-        # Load config to get domain and region
-        config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        from webapp.backend.utils.config_parser import ConfigParser
-        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        # Load the PROJECT's tfvars to get domain and region — without
+        # this lookup the redirector toggle would target the global
+        # terraform.tfvars' domain even though the operator is acting on
+        # a per-project deployment.
+        config = _read_project_config(project_name)
         aws_region = config.get('aws_region', 'eu-central-1')
         domain_name = config.get('primary_domain_name', '')
         c2_subdomain = config.get('c2_subdomain', 'api')
@@ -5678,10 +5144,8 @@ def get_redirector_dns_status():
         if not project_name:
             return jsonify({"success": False, "error": "Missing 'project' parameter"}), 400
 
-        config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        from webapp.backend.utils.config_parser import ConfigParser
-        config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
+        # Per-project tfvars dictate the domain/region for the DNS lookup.
+        config = _read_project_config(project_name)
         aws_region = config.get('aws_region', 'eu-central-1')
         domain_name = config.get('primary_domain_name', '')
         c2_subdomain = config.get('c2_subdomain', 'api')
@@ -5982,29 +5446,8 @@ def clear_deployment_history():
         }), 500
 
 
-@bp.route('/history/add', methods=['POST'])
-def add_deployment_history():
-    """Add a log entry to deployment history"""
-    try:
-        data = request.get_json() or {}
-        message = data.get('message', '')
-        level = data.get('level', 'info')
-        details = data.get('details')
-        
-        if not message:
-            return jsonify({
-                "success": False,
-                "error": "Message is required"
-            }), 400
-        
-        add_history_entry(message, level, details)
-        
-        return jsonify({
-            "success": True,
-            "message": "Log entry added"
-        })
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+# /history/add removed 2026-05-21 — no frontend or script caller.
+# History entries are appended internally by add_history_entry() from
+# run_deployment/run_destroy/run_purge — exposing a POST that lets any
+# loopback caller manufacture arbitrary log lines was never used and
+# made the audit trail easier to forge.

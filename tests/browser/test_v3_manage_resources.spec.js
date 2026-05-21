@@ -41,16 +41,23 @@ async function navigateToManageSubPill(page) {
 }
 
 async function pickFirstAvailableProject(page) {
-    const project = await page.evaluate(() => {
+    // 2026-05-21 legacy-audit sweep — dropped `#project-name` legacy select
+    // fallback. The V3 surface is the global combobox listbox, but its
+    // population is async; hitting /api/deploy/active directly is
+    // deterministic and side-effect free.
+    const project = await page.evaluate(async () => {
         if (window.APP && window.APP.activeDeployment) {
             const cur = window.APP.activeDeployment.current;
             if (cur) return cur;
         }
-        const sel = document.querySelector('#header-deployment-select, #project-name');
-        if (sel && sel.tagName === 'SELECT') {
-            const first = Array.from(sel.options).map(o => o.value).filter(Boolean)[0];
+        try {
+            const resp = await fetch('/api/deploy/active');
+            const json = await resp.json();
+            const list = Array.isArray(json) ? json
+                : (json && Array.isArray(json.deployments) ? json.deployments : []);
+            const first = list.map(d => d.project_name || d._filename).filter(Boolean)[0];
             if (first) return first;
-        }
+        } catch (_) { /* fall through */ }
         return null;
     });
     if (project) {

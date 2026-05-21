@@ -71,11 +71,20 @@ test('Manage sub-pill: spec-list renders expected resource rows when a project i
         return !!p;
     });
     if (!hasProject) {
-        // Try to pick the first deployment from the header selector.
-        const opts = await page.evaluate(() => {
-            const sel = document.querySelector('#header-deployment-select, #project-name');
-            if (!sel || sel.tagName !== 'SELECT') return [];
-            return Array.from(sel.options).map(o => o.value).filter(Boolean);
+        // Try to pick the first deployment via /api/deploy/active directly —
+        // 2026-05-21 legacy-audit sweep dropped the `#project-name` legacy
+        // select fallback; the canonical V3 surface is the global combobox,
+        // but its listbox population is async and not always settled when
+        // Manage navigation happens. Hitting the backend directly is
+        // deterministic and side-effect free.
+        const opts = await page.evaluate(async () => {
+            try {
+                const resp = await fetch('/api/deploy/active');
+                const json = await resp.json();
+                const list = Array.isArray(json) ? json
+                    : (json && Array.isArray(json.deployments) ? json.deployments : []);
+                return list.map(d => d.project_name || d._filename).filter(Boolean);
+            } catch (_) { return []; }
         });
         if (opts.length === 0) {
             test.skip(true, 'no active deployment in dev harness — skipping spec-list rows');

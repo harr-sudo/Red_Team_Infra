@@ -346,9 +346,18 @@ def provision_goad():
     # Get jumpbox IP from terraform output
     try:
         from webapp.backend.utils.config_parser import ConfigParser
+        from webapp.backend.utils.tfvars_path import resolve_tfvars_path
         project_root = get_project_root()
         config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
+        default_tfvars = config_dir / "terraform.tfvars"
+
+        # ?project= or body.project_name → configs/<project>.tfvars (path-
+        # traversal sanitized). Falls back to global tfvars when the per-
+        # project file is missing — legacy single-deployment hosts.
+        project_param = request.args.get("project") or (data.get("project_name") if isinstance(data, dict) else None)
+        tfvars_file = resolve_tfvars_path(project_param, config_dir, default_tfvars)
+        if not tfvars_file.exists():
+            tfvars_file = default_tfvars
 
         config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
 
@@ -1054,31 +1063,41 @@ def get_jumpbox_info():
 
 @bp.route('/start', methods=['POST'])
 def start_goad():
-    """Start stopped GOAD lab VMs using AWS EC2 API directly"""
+    """Start stopped GOAD lab VMs using AWS EC2 API directly.
+
+    Accepts optional ``?project=`` query param (or ``project_name`` in the
+    JSON body) to scope region/tag lookup to a specific per-project tfvars.
+    """
     goad_workspace = get_goad_workspace()
-    
+
     deployment_marker = goad_workspace / 'current_deployment.json'
     if not deployment_marker.exists():
         return jsonify({
             'success': False,
             'error': 'No GOAD deployment found'
         }), 404
-    
+
     try:
         with open(deployment_marker, 'r') as f:
             deployment = json.load(f)
-        
+
         lab_name = deployment.get('lab_name')
-        
-        # Get AWS region from config
+
+        # Per-project tfvars wins over the global tfvars when ?project= is set.
         from webapp.backend.utils.config_parser import ConfigParser
+        from webapp.backend.utils.tfvars_path import resolve_tfvars_path
+        body = request.get_json(silent=True) or {}
+        project_param = request.args.get('project') or body.get('project_name')
         project_root = get_project_root()
         config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        
+        default_tfvars = config_dir / "terraform.tfvars"
+        tfvars_file = resolve_tfvars_path(project_param, config_dir, default_tfvars)
+        if not tfvars_file.exists():
+            tfvars_file = default_tfvars
+
         config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
         aws_region = config.get('aws_region', 'eu-central-1')
-        project_name = config.get('project_name', '')
+        project_name = (project_param or config.get('project_name', '')).strip()
         
         # Use AWS EC2 API to start instances
         ec2 = boto3.client('ec2', region_name=aws_region)
@@ -1126,31 +1145,41 @@ def start_goad():
 
 @bp.route('/stop', methods=['POST'])
 def stop_goad():
-    """Stop GOAD lab VMs to save costs using AWS EC2 API directly"""
+    """Stop GOAD lab VMs to save costs using AWS EC2 API directly.
+
+    Accepts optional ``?project=`` (or body ``project_name``) to target a
+    specific per-project tfvars for region/tag lookup.
+    """
     goad_workspace = get_goad_workspace()
-    
+
     deployment_marker = goad_workspace / 'current_deployment.json'
     if not deployment_marker.exists():
         return jsonify({
             'success': False,
             'error': 'No GOAD deployment found'
         }), 404
-    
+
     try:
         with open(deployment_marker, 'r') as f:
             deployment = json.load(f)
-        
+
         lab_name = deployment.get('lab_name')
-        
-        # Get AWS region from config
+
+        # Per-project tfvars wins over the global tfvars when ?project= is set.
         from webapp.backend.utils.config_parser import ConfigParser
+        from webapp.backend.utils.tfvars_path import resolve_tfvars_path
+        body = request.get_json(silent=True) or {}
+        project_param = request.args.get('project') or body.get('project_name')
         project_root = get_project_root()
         config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        
+        default_tfvars = config_dir / "terraform.tfvars"
+        tfvars_file = resolve_tfvars_path(project_param, config_dir, default_tfvars)
+        if not tfvars_file.exists():
+            tfvars_file = default_tfvars
+
         config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
         aws_region = config.get('aws_region', 'eu-central-1')
-        project_name = config.get('project_name', '')
+        project_name = (project_param or config.get('project_name', '')).strip()
         
         # Use AWS EC2 API to stop instances
         ec2 = boto3.client('ec2', region_name=aws_region)
@@ -1198,31 +1227,40 @@ def stop_goad():
 
 @bp.route('/instance-status', methods=['GET'])
 def get_goad_instance_status():
-    """Get the current status of all GOAD EC2 instances"""
+    """Get the current status of all GOAD EC2 instances.
+
+    Accepts optional ``?project=`` to scope region/tag lookup to a
+    specific per-project tfvars instead of the legacy global tfvars.
+    """
     goad_workspace = get_goad_workspace()
-    
+
     deployment_marker = goad_workspace / 'current_deployment.json'
     if not deployment_marker.exists():
         return jsonify({
             'success': False,
             'error': 'No GOAD deployment found'
         }), 404
-    
+
     try:
         with open(deployment_marker, 'r') as f:
             deployment = json.load(f)
-        
+
         lab_name = deployment.get('lab_name')
-        
-        # Get AWS region from config
+
+        # Per-project tfvars wins over the global tfvars when ?project= is set.
         from webapp.backend.utils.config_parser import ConfigParser
+        from webapp.backend.utils.tfvars_path import resolve_tfvars_path
+        project_param = request.args.get('project')
         project_root = get_project_root()
         config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
-        
+        default_tfvars = config_dir / "terraform.tfvars"
+        tfvars_file = resolve_tfvars_path(project_param, config_dir, default_tfvars)
+        if not tfvars_file.exists():
+            tfvars_file = default_tfvars
+
         config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
         aws_region = config.get('aws_region', 'eu-central-1')
-        project_name = config.get('project_name', '')
+        project_name = (project_param or config.get('project_name', '')).strip()
         
         # Use AWS EC2 API to get instance status
         ec2 = boto3.client('ec2', region_name=aws_region)

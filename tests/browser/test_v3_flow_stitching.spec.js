@@ -127,7 +127,24 @@ test.describe('Task 1 — "+ New Deployment" mounts V2 progressive surface', () 
     });
 });
 
-// ─── Task 2 — Configure gating ─────────────────────────────────────────────
+// ─── Task 2 — Configure gating (legacy-form unit test) ───────────────────
+//
+// 2026-05-21 legacy-audit sweep: Task 2 + Task 3 drive APP.config.applyGating()
+// on the LEGACY `.configuration-editor` form. They force-show
+// `#configure-edit-pane .configuration-editor` + `#configure-advanced-details`,
+// flip `#deployment-type`, and inspect `*-config-section` visibility.
+//
+// V2-native equivalents (family-aware section gating + the Malleable preview
+// `<details>` wrapper) are covered by:
+//
+//   - tests/browser/test_v3_configure_progressive.spec.js  (state machine,
+//     assembleConfig per type)
+//   - tests/browser/test_v3_configure_family_change.spec.js  (family switch
+//     repaints rail with C2 / GOAD / combined section lists)
+//
+// Once UX_AUDIT M1 lands (legacy form deleted), the helper below + Task 2 +
+// Task 3 will fail because the IDs disappear. At that point: delete Task 2
+// and Task 3 wholesale; the V2 specs above are the canonical replacement.
 
 // 2026-05-20 (Batch C) — Configure sub-pill visibility is now mode-gated by
 // APP.computeVisibleSubPills(): when the live backend exposes an existing

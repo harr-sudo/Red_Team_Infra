@@ -184,28 +184,10 @@ def _validate_destination(path):
 # ENDPOINTS
 # =============================================================================
 
-@bp.route('/projects', methods=['GET'])
-def list_projects():
-    """List active deployments that may have an attack box."""
-    try:
-        force = request.args.get('force', 'false').lower() == 'true'
-        now = time.time()
-
-        if not force and _projects_cache["data"] is not None and (now - _projects_cache["fetched_at"]) < _PROJECTS_CACHE_TTL:
-            return jsonify({
-                "success": True,
-                "projects": _projects_cache["data"],
-                "cached": True,
-                "cache_age": round(now - _projects_cache["fetched_at"]),
-            })
-
-        projects = _scan_active_projects()
-        _projects_cache["data"] = projects
-        _projects_cache["fetched_at"] = now
-
-        return jsonify({"success": True, "projects": projects, "cached": False})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+# /api/tools/projects removed 2026-05-21 — no live frontend caller
+# (only referenced from app.js.bak). The Operations → Payloads UI gets
+# project options from /api/deploy/active instead, which is the
+# canonical source of "deployments that exist on this host".
 
 
 @bp.route('/upload', methods=['POST'])
@@ -398,10 +380,15 @@ def start_transfer():
         if not s3_bucket:
             return jsonify({"success": False, "error": "Cannot resolve S3 bucket from deployment outputs"}), 400
 
-        # Get AWS region from config
+        # Per-project tfvars: the transfer is scoped to the project we're
+        # talking to, so read region from configs/<project>.tfvars first.
         from webapp.backend.utils.config_parser import ConfigParser
+        from webapp.backend.utils.tfvars_path import resolve_tfvars_path
         config_dir = project_root / "configs"
-        tfvars_file = config_dir / "terraform.tfvars"
+        default_tfvars = config_dir / "terraform.tfvars"
+        tfvars_file = resolve_tfvars_path(project, config_dir, default_tfvars)
+        if not tfvars_file.exists():
+            tfvars_file = default_tfvars
         config = ConfigParser.parse_tfvars(tfvars_file) if tfvars_file.exists() else {}
         aws_region = config.get('aws_region', 'eu-central-1')
 

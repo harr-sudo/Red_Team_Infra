@@ -193,13 +193,22 @@ test('Deploy sub-pill: live progress opens APP.overlay when startDeployment fire
     await page.route('**/api/health/domain-config', (route) => route.fulfill({ status: 200, body: JSON.stringify({ success: true, configured: true }) }));
     await page.route('**/api/health/aws-cli', (route) => route.fulfill({ status: 200, body: JSON.stringify({ success: true, installed: true }) }));
     // Bypass confirm() and force the project name + deployment type.
+    // 2026-05-21 legacy-audit sweep — prefer V2 IDs (#cfg-*) when present;
+    // fall back to the legacy form inputs (#project-name, #deployment-type)
+    // only while the legacy block survives in the DOM. Once the parallel
+    // frontend agent retires the legacy form per UX_AUDIT M1, the fallback
+    // arm becomes a no-op and can be removed.
     await page.evaluate(() => {
         window.confirm = () => true;
         window.alert = () => undefined;
-        const pn = document.getElementById('project-name');
-        if (pn) pn.value = 'unit_test_project';
-        const dt = document.getElementById('deployment-type');
-        if (dt) dt.value = 'c2-adhoc';
+        const setVal = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
+        };
+        setVal('cfg-project-name', 'unit_test_project');
+        setVal('cfg-deployment-type', 'c2-adhoc');
+        setVal('project-name', 'unit_test_project');
+        setVal('deployment-type', 'c2-adhoc');
     });
     // Fire startDeployment
     const ok = await page.evaluate(async () => {

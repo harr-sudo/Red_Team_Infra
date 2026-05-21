@@ -13702,6 +13702,9 @@ HTTP/1.1 200 OK
         const isAll = APP.activeDeployment && APP.activeDeployment.isAll && APP.activeDeployment.isAll();
         const legacyEditor = document.querySelector('#configure-edit-pane .configuration-editor');
         const legacyAdvanced = document.getElementById('configure-advanced-details');
+        // 2026-05-21 (frontend legacy audit) — `.configure-form-actions` (the
+        // Save / Validate / Clear All button strip) was retired. The selector
+        // resolves to null now; guarded reads below are still safe.
         const legacyActions = document.querySelector('#configure-edit-pane .configure-form-actions');
         const legacyBanner = document.getElementById('configure-new-deployment-banner');
         const legacySummary = document.getElementById('configure-summary-section');

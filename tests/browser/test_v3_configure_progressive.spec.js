@@ -197,7 +197,16 @@ test.describe('V3 Configure Progressive — per-project pipeline (Configure → 
     // stale global one). These tests verify the wiring end-to-end via
     // request interception + the defence-in-depth legacy-field sync.
 
-    test('V2 save syncs legacy #project-name + #deployment-type inputs', async ({ page }) => {
+    // 2026-05-21 legacy-audit sweep — This test guards the defence-in-depth
+    // legacy-field sync: V2's save() mirrors project_name + deployment_type
+    // into the hidden legacy #project-name + #deployment-type inputs so any
+    // legacy consumers (Manage edit drawer, audit log, status polling) see
+    // consistent values. UX_AUDIT M1 schedules retirement of the entire
+    // `.configuration-editor` block; once it lands, the hidden legacy
+    // inputs are gone too and this test SHOULD fail loudly (the sync
+    // target disappears). At that point, delete this test — the V2 save
+    // is the only writer left.
+    test('V2 save syncs legacy #project-name + #deployment-type inputs (defence-in-depth — retire with legacy form)', async ({ page }) => {
         await gotoDraft(page);
         await page.waitForTimeout(400);
         // 2026-05-20 (Batch C) — pick a type tile to expose the Identity
