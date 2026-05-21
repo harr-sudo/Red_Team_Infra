@@ -323,6 +323,48 @@ ok('all: configure hidden', allPills[0].hasAttribute('hidden'));
 ok('all: deploy hidden', allPills[1].hasAttribute('hidden'));
 ok('all: bolt-ons hidden', allPills[4].hasAttribute('hidden'));
 
+// 2026-05-21 (Bug 1 — left rail visibility mirror)
+// applyFromState() applies the SAME visibility logic to .app-rail__child
+// nodes as it does to .subpill-nav__pill nodes. Simulate the rail-children
+// pipeline with the same stub helper to lock the contract: an existing
+// goad-* deployment must NOT show Configure / Deploy in the left rail.
+console.log('\n=== Left-rail children visibility map (Bug 1) ===');
+function railChildrenMap(active) {
+    const visible = new Set(APP.computeVisibleSubPills(active));
+    const names = ['configure', 'deploy', 'manage', 'bolt-ons', 'cleanup'];
+    const stubs = names.map(makePillStub);
+    applyVisibility(visible, stubs);
+    const map = {};
+    names.forEach((n, i) => {
+        map[n] = stubs[i].hasAttribute('hidden') ? 'hidden' : 'visible';
+    });
+    return map;
+}
+APP.activeDeployment.set('goad_mini_dev_harriss_macbook_pro');
+APP.activeDeployment.deployment_type = 'goad-mini';
+eq('existing goad → rail children {configure:hidden, deploy:hidden, manage:visible, bolt-ons:visible, cleanup:visible}',
+   railChildrenMap(APP.activeDeployment),
+   { configure: 'hidden', deploy: 'hidden', manage: 'visible', 'bolt-ons': 'visible', cleanup: 'visible' });
+
+// c2-* without test lab — bolt-ons hidden.
+APP.activeDeployment.set('c2_adhoc_dev_harriss_macbook_pro_01');
+APP.activeDeployment.deployment_type = 'c2-adhoc';
+eq('existing c2 (no lab) → rail children {configure:hidden, deploy:hidden, manage:visible, bolt-ons:hidden, cleanup:visible}',
+   railChildrenMap(APP.activeDeployment),
+   { configure: 'hidden', deploy: 'hidden', manage: 'visible', 'bolt-ons': 'hidden', cleanup: 'visible' });
+
+// c2-* WITH enable_test_lab — bolt-ons re-appears.
+APP.activeDeployment.enable_test_lab = true;
+eq('existing c2 + test lab → rail children {configure:hidden, deploy:hidden, manage:visible, bolt-ons:visible, cleanup:visible}',
+   railChildrenMap(APP.activeDeployment),
+   { configure: 'hidden', deploy: 'hidden', manage: 'visible', 'bolt-ons': 'visible', cleanup: 'visible' });
+
+// Draft mode — only configure/deploy/cleanup show.
+APP.activeDeployment.set('__draft__');
+eq('draft → rail children {configure:visible, deploy:visible, manage:hidden, bolt-ons:hidden, cleanup:visible}',
+   railChildrenMap(APP.activeDeployment),
+   { configure: 'visible', deploy: 'visible', manage: 'hidden', 'bolt-ons': 'hidden', cleanup: 'visible' });
+
 console.log('\n=== URL hash parsing ===');
 eq('empty', APP.parseDeploymentsHash(''), null);
 eq('non-deployments', APP.parseDeploymentsHash('#dashboard'), null);

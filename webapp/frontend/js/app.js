@@ -2384,8 +2384,19 @@ APP.subPills = APP.subPills || {
         });
 
         // Snap to mode default when explicitly requested (dropdown change).
+        // 2026-05-21 (Bug 1 — existing-deployment Configure empty state)
+        // Don't snap away from `configure` when the active deployment is
+        // an existing project: applyDraftMode() renders the dedicated
+        // empty-state surface (#configure-existing-empty) in this case,
+        // giving the operator two explicit exit ramps (+ New / Open in
+        // Manage). Snapping to manage would defeat the whole point of
+        // the empty state — it exists precisely so operators who land on
+        // Configure with a live deployment selected understand WHY they
+        // shouldn't be editing the existing spec from this surface.
         const onDeployments = APP.currentPage === 'deployments-tab';
-        if (snap && onDeployments && APP.currentSubPill && !visibleSet.has(APP.currentSubPill)) {
+        const isExisting = APP.activeDeployment && APP.activeDeployment.isExisting && APP.activeDeployment.isExisting();
+        const onConfigureWithExisting = APP.currentSubPill === 'configure' && isExisting;
+        if (snap && onDeployments && APP.currentSubPill && !visibleSet.has(APP.currentSubPill) && !onConfigureWithExisting) {
             const fallback = APP._defaultSubPillForState(APP.activeDeployment);
             if (fallback && visibleSet.has(fallback)) {
                 APP.setActiveSubPill('deployments-tab', fallback);
@@ -3443,6 +3454,32 @@ function initGlobalHeader() {
     }
     // Expose for tests + programmatic callers.
     APP._startDraftFlow = startDraftFlow;
+
+    // 2026-05-21 (Bug 2 — existing-deployment empty state CTAs).
+    // The empty state inside #configure-scoped-content offers two
+    // exit ramps when the operator lands on Configure with a real
+    // (non-draft) project selected. Wiring is idempotent — the
+    // `ghWired` flag prevents double-bind on hot-reload paths.
+    const existingEmptyNew = document.getElementById('configure-existing-empty-new');
+    if (existingEmptyNew && !existingEmptyNew.dataset.ghWired) {
+        existingEmptyNew.addEventListener('click', () => startDraftFlow(existingEmptyNew));
+        existingEmptyNew.dataset.ghWired = '1';
+    }
+    const existingEmptyManage = document.getElementById('configure-existing-empty-manage');
+    if (existingEmptyManage && !existingEmptyManage.dataset.ghWired) {
+        existingEmptyManage.addEventListener('click', () => {
+            // Preserve the current project context — Manage's scoped view
+            // expects the activeDeployment to still be the existing project.
+            // Just flip to the Manage sub-pill; the URL writer will append
+            // the right ?project= param via _updateUrlState().
+            if (APP.subPills && typeof APP.subPills.setActive === 'function') {
+                APP.subPills.setActive('manage');
+            } else {
+                APP.navigateTo('deployments-tab', 'manage');
+            }
+        });
+        existingEmptyManage.dataset.ghWired = '1';
+    }
 
     // 2026-05-19 audit — the Configure banner hint must reflect the active
     // deployment so a journey handoff (or a top-bar selector change) makes
@@ -4730,6 +4767,45 @@ async function _refreshGlobalDeployments() {
         valueEl.textContent = 'Pick a deployment';
     }
     APP.activeDeployment.set(selected);
+    // 2026-05-21 (Bug 1 — left rail visibility mirror) — when _initFromUrl
+    // already pinned activeDeployment to the same project that ends up
+    // selected here, APP.activeDeployment.set() short-circuits as a no-op
+    // (see activeDeployment.set at line ~2193) and the subscribers that
+    // hydrate deployment_type + run applyFromState NEVER fire. That leaves
+    // the left rail painted with Configure + Deploy clickable even though
+    // we just hydrated an existing (non-draft) deployment_type into the
+    // module state via _setActiveDeploymentType() above.
+    //
+    // Belt-and-braces: re-run _setActiveDeploymentType so the freshly
+    // resolved `selected` has its type populated, then call applyFromState
+    // explicitly so the rail children + sub-pill nav reflect the FULL,
+    // post-hydration state on first paint. This is idempotent — calling
+    // it twice when the set() did fire subscribers is harmless.
+    try { APP._setActiveDeploymentType(); } catch (_) { /* noop */ }
+    if (APP.subPills && typeof APP.subPills.applyFromState === 'function') {
+        try { APP.subPills.applyFromState(); } catch (e) {
+            console.error('[subPills] late applyFromState error', e);
+        }
+    }
+    // Also re-run applyDraftMode so the Configure pane reflects the
+    // existing-vs-draft state once the cache lands. Without this, the
+    // V2 pane / legacy form / empty state can be painted against a
+    // half-hydrated active deployment on a deep-link first paint.
+    //
+    // 2026-05-21 — Skip when isDraft. The legacy journey wizard mounts
+    // into #configure-new-pane via APP.journey._mountInline() and calls
+    // _showNewMode() (which hides #configure-edit-pane). If we call
+    // applyDraftMode() unconditionally here, the isDraft branch would
+    // re-show #configure-edit-pane AND clear #configure-new-pane.innerHTML,
+    // tearing down the mounted wizard. The draft-state branch of
+    // applyDraftMode is already wired through APP.activeDeployment's
+    // subscribers + the sub-pill init hook (line ~2927), so re-running it
+    // here is redundant in the draft case. Only existing/empty modes
+    // benefit from the late re-apply (deep-link first-paint hydration).
+    const _isDraftLate = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+    if (!_isDraftLate && APP.configureV2 && typeof APP.configureV2.applyDraftMode === 'function') {
+        try { APP.configureV2.applyDraftMode(); } catch (_) { /* noop */ }
+    }
 }
 
 /**
@@ -13629,6 +13705,8 @@ HTTP/1.1 200 OK
         const legacyActions = document.querySelector('#configure-edit-pane .configure-form-actions');
         const legacyBanner = document.getElementById('configure-new-deployment-banner');
         const legacySummary = document.getElementById('configure-summary-section');
+        // 2026-05-21 (Bug 2 — existing-deployment empty state).
+        const existingEmpty = document.getElementById('configure-existing-empty');
 
         if (isDraft) {
             // Ensure #configure-edit-pane is visible (journey wizard may have
@@ -13654,6 +13732,7 @@ HTTP/1.1 200 OK
             if (legacyEditor) legacyEditor.style.display = 'none';
             if (legacyAdvanced) legacyAdvanced.style.display = 'none';
             if (legacyActions) legacyActions.style.display = 'none';
+            if (existingEmpty) existingEmpty.hidden = true;
         } else if (isAll) {
             pane.hidden = true;
             pane.classList.remove('is-out-of-mode');
@@ -13662,34 +13741,51 @@ HTTP/1.1 200 OK
             if (legacyEditor) legacyEditor.style.display = '';
             if (legacyAdvanced) legacyAdvanced.style.display = '';
             if (legacyActions) legacyActions.style.display = '';
+            if (existingEmpty) existingEmpty.hidden = true;
         } else {
-            // 2026-05-20 (UX audit Batch A · C2 fix) — Two cases collapse here:
-            //   a) Existing deployment selected — Configure is out-of-mode anyway,
-            //      sub-pill nav typically routes to Manage. The legacy form acts
-            //      as the Manage edit drawer's source-of-truth so we restore it.
-            //   b) Operator just discarded the draft — APP.activeDeployment was
-            //      set(null). NOTHING should render: the configure-banner empty
-            //      state owns the empty surface; both V2 AND the legacy form
-            //      MUST stay hidden. Previously the else branch re-showed legacy,
-            //      leaving the operator looking at a stale "+ New deployment"
-            //      form alongside the V2 pane the prior render had left up.
             pane.hidden = true;
             pane.classList.remove('is-out-of-mode');
-            const current = APP.activeDeployment && APP.activeDeployment.current;
             const isExisting = APP.activeDeployment && APP.activeDeployment.isExisting && APP.activeDeployment.isExisting();
             if (isExisting) {
-                if (legacyBanner) legacyBanner.style.display = '';
-                if (legacySummary) legacySummary.style.display = '';
-                if (legacyEditor) legacyEditor.style.display = '';
-                if (legacyAdvanced) legacyAdvanced.style.display = '';
-                if (legacyActions) legacyActions.style.display = '';
+                // 2026-05-21 (Bug 2) — existing-deployment case. The operator
+                // landed on Configure with a real project active (deep-link,
+                // bookmark, back button, or sub-pill nav). NEITHER V2 NOR
+                // legacy form should render — Configure is for CREATING new
+                // deployments, not editing live ones. Render the dedicated
+                // empty state with two exit ramps:
+                //   • "+ New Deployment" → startDraftFlow()
+                //   • "Open in Manage →" → navigate to Manage scoped to project
+                // The legacy form acts as the Manage edit-drawer's source of
+                // truth but stays hidden here; Manage handles its own drawer.
+                if (legacyBanner) legacyBanner.style.display = 'none';
+                if (legacySummary) legacySummary.style.display = 'none';
+                if (legacyEditor) legacyEditor.style.display = 'none';
+                if (legacyAdvanced) legacyAdvanced.style.display = 'none';
+                if (legacyActions) legacyActions.style.display = 'none';
+                if (existingEmpty) {
+                    existingEmpty.hidden = false;
+                    // Stamp the active project name into the description so the
+                    // operator knows EXACTLY which deployment they bumped into.
+                    const projEl = document.getElementById('configure-existing-empty-project');
+                    if (projEl) {
+                        const name = APP.activeDeployment.current || '';
+                        projEl.textContent = name;
+                    }
+                }
             } else {
-                // Empty / null / post-discard — keep the surface CLEAN.
+                // 2026-05-20 (UX audit Batch A · C2 fix) — Empty / null /
+                // post-discard. NOTHING should render: the configure-banner
+                // empty state owns the empty surface; both V2 AND the legacy
+                // form MUST stay hidden. Previously the else branch re-showed
+                // legacy, leaving the operator looking at a stale "+ New
+                // deployment" form alongside the V2 pane the prior render
+                // had left up.
                 if (legacyBanner) legacyBanner.style.display = '';   // configure-banner empty state
                 if (legacySummary) legacySummary.style.display = 'none';
                 if (legacyEditor) legacyEditor.style.display = 'none';
                 if (legacyAdvanced) legacyAdvanced.style.display = 'none';
                 if (legacyActions) legacyActions.style.display = 'none';
+                if (existingEmpty) existingEmpty.hidden = true;
             }
         }
     }

@@ -626,6 +626,42 @@
                                     class="btn btn-secondary btn-sm"
                                     type="button">Discard draft</button>
                         </div>
+
+                        <!-- 2026-05-21 (Bug 2 — existing-deployment empty state)
+                             Visible ONLY when the operator reaches Configure with an
+                             EXISTING deployment selected (not draft, not All). The
+                             rail visibility logic hides Configure for non-draft
+                             modes, but this surface can still be reached via:
+                                - direct URL `#deployments-tab/configure?project=<name>`
+                                - bookmarked deep links
+                                - browser back button
+                                - sub-pill nav buttons that bypass the rail
+                             When that happens, NEITHER the V2 pane NOR the legacy
+                             form should render. This empty-state tells the operator
+                             that Configure is for NEW deployments, and offers two
+                             explicit exit ramps (start fresh, or open in Manage).
+                             Toggled by APP.configureV2.applyDraftMode() — see the
+                             `else if (isExisting)` branch around line ~13680. -->
+                        <div id="configure-existing-empty" class="configure-existing-empty" hidden>
+                            <p class="configure-existing-empty__eyebrow">CONFIGURE</p>
+                            <h2 class="configure-existing-empty__title">Editing a deployment's config</h2>
+                            <p class="configure-existing-empty__desc">
+                                <strong id="configure-existing-empty-project">—</strong> is a live deployment.
+                                Configure is the surface for creating a NEW one.
+                                To edit this deployment's config, open
+                                <strong>Manage &rarr; Edit configuration</strong>.
+                                To start a fresh deployment, click
+                                <strong>+ New Deployment</strong>.
+                            </p>
+                            <div class="configure-existing-empty__actions">
+                                <button id="configure-existing-empty-new"
+                                        class="btn btn-primary"
+                                        type="button">+ New Deployment</button>
+                                <button id="configure-existing-empty-manage"
+                                        class="btn btn-secondary"
+                                        type="button">Open in Manage &rarr;</button>
+                            </div>
+                        </div>
                         <!-- D3.2: Configuration tab content re-parents here -->
                     <!-- 2026-05-19 flow-stitching — Configure has TWO modes:
                           (1) NEW MODE  → renders the 4-step wizard inline inside
