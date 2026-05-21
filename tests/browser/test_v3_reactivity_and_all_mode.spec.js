@@ -289,31 +289,15 @@ test.describe('v3 — "All deployments" sentinel + fleet view', () => {
         await expect(page.locator('#payloads-scoped-content')).toBeHidden();
     });
 
-    // 2026-05-20 — Same restructure: APP.computeVisibleSubPills() returns
-    // just ['manage', 'cleanup'] for All-mode (app.js:2229-2259), so the
-    // Configure / Deploy / Bolt-ons sub-pill buttons get the `hidden`
-    // attribute via _applyPaneVisibility() and the panes are unreachable
-    // by rail click. The all-mode-empty containers + _paintAllModeEmpty()
-    // markup still exist (app.js:2472-2497) but are dead code in the new
-    // nav. Only the Manage fleet + Cleanup badge surfaces remain visible.
-    // TODO: delete once the legacy all-mode-empty containers are removed.
-    test.skip('All mode on Configure / Deploy / Bolt-ons → renders empty states', async ({ page }) => {
-        await gotoRoot(page);
-        // Configure
-        await gotoSubpill(page, 'deployments-tab', 'configure');
-        await page.evaluate(() => APP.activeDeployment.set('__all__'));
-        await page.waitForTimeout(120);
-        await expect(page.locator('#configure-all-mode-empty .empty-state--all-mode')).toBeVisible();
-        await expect(page.locator('#configure-scoped-content')).toBeHidden();
-        // Deploy
-        await gotoSubpill(page, 'deployments-tab', 'deploy');
-        await expect(page.locator('#deploy-all-mode-empty .empty-state--all-mode')).toBeVisible();
-        await expect(page.locator('#deploy-scoped-content')).toBeHidden();
-        // Bolt-ons
-        await gotoSubpill(page, 'deployments-tab', 'bolt-ons');
-        await expect(page.locator('#bolt-ons-all-mode-empty .empty-state--all-mode')).toBeVisible();
-        await expect(page.locator('#bolt-ons-scoped-content')).toBeHidden();
-    });
+    // 2026-05-21 — Deleted: "All mode on Configure / Deploy / Bolt-ons →
+    // renders empty states". Was test.skip'd because computeVisibleSubPills()
+    // returns just ['manage','cleanup'] in All mode, so those three sub-pill
+    // panes are unreachable. The feature is intentionally retired — Configure
+    // / Deploy / Bolt-ons are inherently per-deployment surfaces; the Manage
+    // fleet table at #manage-all-mode is the canonical All-mode view. The
+    // associated #configure-all-mode-empty / #deploy-all-mode-empty /
+    // #bolt-ons-all-mode-empty containers and the _paintAllModeEmpty() helper
+    // were removed from app.js + index.html in the same commit.
 
     test('All mode on Manage → renders the fleet table with one row per project', async ({ page }) => {
         await gotoRoot(page);

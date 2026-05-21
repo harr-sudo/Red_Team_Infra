@@ -2441,29 +2441,19 @@ APP.subPills = APP.subPills || {
     },
 
     /**
-     * Toggle the scoped-content vs all-mode-empty containers inside each
-     * Deployments sub-pill pane. Mirrors the Operations pane pattern
-     * (already in place at #beacons-scoped-content / #beacons-all-mode-empty).
+     * Toggle the scoped-content vs All-mode containers inside the
+     * Deployments sub-pill panes. The Operations pane pattern still uses
+     * per-surface empty/scoped flips at #beacons-* / #payloads-* /
+     * #terminal-*. Deployments now only flips Manage (fleet table vs
+     * scoped per-project view) — Configure / Deploy / Bolt-ons sub-pills
+     * are hidden in All mode by computeVisibleSubPills(), so their panes
+     * are unreachable and no longer need per-pill empty-state painting.
+     * (Removed 2026-05-21 — see deleted #*-all-mode-empty containers.)
      */
     _applyPaneVisibility() {
         const isAll = APP.activeDeployment.isAll();
         const isExisting = APP.activeDeployment.isExisting();
         const isDraft = APP.activeDeployment.isDraft();
-
-        // Configure / Deploy / Bolt-ons → All-mode empty state when isAll.
-        ['configure', 'deploy', 'bolt-ons'].forEach((pill) => {
-            const empty = document.getElementById(`${pill}-all-mode-empty`);
-            const scoped = document.getElementById(`${pill}-scoped-content`);
-            if (!empty || !scoped) return;
-            if (isAll) {
-                APP.subPills._paintAllModeEmpty(pill, empty);
-                empty.hidden = false;
-                scoped.hidden = true;
-            } else {
-                empty.hidden = true;
-                scoped.hidden = false;
-            }
-        });
 
         // Manage: fleet table vs scoped (per-project) view.
         const manageAll = document.getElementById('manage-all-mode');
@@ -2496,41 +2486,13 @@ APP.subPills = APP.subPills || {
             manageEmpty.hidden = !!(isAll || isDraft || isExisting);
         }
     },
-
-    /**
-     * Idempotent paint for an All-mode empty-state container. Each pill
-     * gets a tailored title + body but shares the .empty-state--all-mode
-     * chrome (same as the Operations panes).
-     */
-    _paintAllModeEmpty(pill, host) {
-        // Don't repaint if already mounted (avoid clobbering operator state).
-        if (host.dataset.allMounted === pill) return;
-        host.dataset.allMounted = pill;
-        const copy = {
-            configure: {
-                title: 'Configure is per-deployment',
-                body: 'Pick a single deployment from the top-bar dropdown to edit its configuration, or start a new one.',
-            },
-            deploy: {
-                title: 'Deploy is per-deployment',
-                body: 'Pick a single deployment from the top-bar dropdown to plan, apply, or destroy it.',
-            },
-            'bolt-ons': {
-                title: 'Bolt-ons are per-deployment',
-                body: 'Pick a single deployment from the top-bar dropdown to manage its vulnerability bolt-ons.',
-            },
-        }[pill] || { title: 'Pick a deployment', body: 'Pick a single deployment from the top-bar dropdown.' };
-        host.innerHTML = `
-            <div class="empty-state empty-state--all-mode">
-              <h3 class="empty-state__title">${copy.title}</h3>
-              <p class="empty-state__body">${copy.body}</p>
-              <button type="button" class="btn btn-primary"
-                      data-action="open-global-deployment-dropdown"
-                      onclick="document.getElementById('global-deploy-trigger')?.click()">
-                Pick a deployment
-              </button>
-            </div>`;
-    },
+    // Removed 2026-05-21: _paintAllModeEmpty() previously painted
+    // tailored empty-state markup into #configure-all-mode-empty,
+    // #deploy-all-mode-empty, and #bolt-ons-all-mode-empty when
+    // activeDeployment.isAll() was true. computeVisibleSubPills() now
+    // returns ['manage','cleanup'] in All mode, so those sub-pills (and
+    // their host containers) are unreachable. Manage's fleet table is
+    // the canonical All-mode view.
 };
 
 // D3.1 — Sub-pill switcher for the merged Deployments tab.
@@ -25976,10 +25938,15 @@ function renderSetupCheckResults(data) {
     if (badgeEl && summary.total) {
         const healthy = summary.healthy || 0;
         const total = summary.total || 0;
-        let badgeColor = 'var(--success)';
-        if (healthy === 0) badgeColor = 'var(--error)';
-        else if (healthy < total) badgeColor = 'var(--warning)';
-        badgeEl.innerHTML = `<span style="background: ${badgeColor}; color: var(--text-inverse); padding: 2px 10px; border-radius: 10px;">${healthy}/${total} healthy</span>`;
+        // 2026-05-21 — class-based state pill; see .dashboard-health-pill in
+        // style.css. Replaces the inline `background: ${badgeColor}; color:
+        // var(--text-inverse)` pattern which failed WCAG AA contrast in both
+        // themes (saturated --success/--warning/--error vs theme-flipping
+        // text). Same fix shape as .resource-scope-badge--live/--cached.
+        let healthVariant = 'ok';
+        if (healthy === 0) healthVariant = 'danger';
+        else if (healthy < total) healthVariant = 'warn';
+        badgeEl.innerHTML = `<span class="dashboard-health-pill dashboard-health-pill--${healthVariant}">${healthy}/${total} healthy</span>`;
     }
 
     // Update last checked
@@ -32066,7 +32033,7 @@ APP.bolton = APP.bolton || {
 
         sel.hidden = false;
         this._renderEmptyCompat(false);
-        sel.innerHTML = '<option value="">— select a host —</option>' +
+        sel.innerHTML = '<option value="">Pick a target host…</option>' +
             compatible.map(h => {
                 const name = h.name || h.host_id || '?';
                 const role = h.role ? ` · ${h.role}` : '';
@@ -32288,15 +32255,33 @@ APP.bolton = APP.bolton || {
 
     applyFilter(f) {
         const rows = this.state.rows || [];
+        // BLOCKED is an umbrella over every "cannot install here right now"
+        // state — incompatibilities, missing prereq/software, conflicts.
+        // The dedicated per-section chip groups (Incompatible / Conflicts)
+        // still surface the underlying state for triage; this is the filter
+        // strip's coarse "show me everything I can't install" shortcut.
+        const isBlocked = (s) => {
+            const v = String(s || '').toUpperCase();
+            return v.startsWith('INCOMPATIBLE')
+                || v === 'MISSING_PREREQ'
+                || v === 'MISSING_SOFTWARE'
+                || v === 'CONFLICTS_WITH_INSTALLED';
+        };
         const visible = rows.filter(r => {
             if (f.category && f.category !== 'all' && r.category !== f.category) return false;
-            if (f.state && f.state !== 'all' && r.state !== f.state) return false;
+            if (f.state && f.state !== 'all') {
+                if (f.state === 'BLOCKED') {
+                    if (!isBlocked(r.state)) return false;
+                } else if (r.state !== f.state) {
+                    return false;
+                }
+            }
             if (f.coverage && f.coverage !== 'all' && r.coverage !== f.coverage) return false;
             return true;
         });
         this._renderSections(visible);
         const count = document.getElementById('bolton-active-count');
-        if (count) count.textContent = `${visible.length} of ${rows.length} bolt-ons shown`;
+        if (count) count.textContent = `${visible.length} of ${rows.length} shown`;
     },
 
     _sectionFor(row) {

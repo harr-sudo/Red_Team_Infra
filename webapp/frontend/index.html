@@ -607,11 +607,14 @@
                 </div>
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="configure" id="subpill-pane-configure">
-                        <!-- 2026-05-19 (deployments nav restructure) — All-mode
-                             empty state. Visible only when APP.activeDeployment.isAll()
-                             is true; #configure-scoped-content hides at the same time.
-                             Painted lazily by APP.subPills._paintAllModeEmpty(). -->
-                        <div id="configure-all-mode-empty" hidden></div>
+                        <!-- 2026-05-21 — All-mode empty state container removed.
+                             computeVisibleSubPills() returns ['manage','cleanup']
+                             in All mode, so the Configure sub-pill button itself
+                             is `hidden` and this pane is unreachable. The Manage
+                             fleet table at #manage-all-mode is the canonical
+                             All-mode view; no per-deployment surface needs an
+                             empty state because the pill that would host them
+                             is gated upstream. -->
                         <div id="configure-scoped-content">
                         <!-- 2026-05-19 (deployments nav restructure) — Discard draft
                              affordance. Visible only when APP.activeDeployment.isDraft()
@@ -2077,9 +2080,9 @@ ns-143.awsdns-17.org
                     </div><!-- /#configure-scoped-content -->
                     </div>
                     <div class="subpill-pane" data-subpill-pane="deploy" id="subpill-pane-deploy" hidden>
-                        <!-- 2026-05-19 (deployments nav restructure) — All-mode
-                             empty state. Mirrors Configure's pattern. -->
-                        <div id="deploy-all-mode-empty" hidden></div>
+                        <!-- 2026-05-21 — All-mode empty state container removed
+                             (see Configure pane note). Deploy is per-deployment
+                             only; the pill is hidden in All mode. -->
                         <div id="deploy-scoped-content">
                         <!-- D3.3: Deploy sub-pill — V3-native (v3-production-rollout 2026-05-19).
                              Layout: spec-list summary → primary action strip (Apply / Plan /
@@ -2920,10 +2923,9 @@ ns-143.awsdns-17.org
                          Mirrors webapp/frontend/preview/page-bolton-target.html with
                          live wiring to /api/bolton/*. JS controller is APP.bolton. -->
                     <div class="subpill-pane" data-subpill-pane="bolt-ons" id="subpill-pane-bolt-ons" hidden>
-                        <!-- 2026-05-19 (deployments nav restructure) — All-mode
-                             empty state. Visible when isAll(); painted by
-                             APP.subPills._paintAllModeEmpty('bolt-ons', ...). -->
-                        <div id="bolt-ons-all-mode-empty" hidden></div>
+                        <!-- 2026-05-21 — All-mode empty state container removed
+                             (see Configure pane note). Bolt-ons are
+                             per-deployment only; the pill is hidden in All mode. -->
                         <div id="bolt-ons-scoped-content">
                         <div class="bolton-live" data-bolton-root>
                             <div class="bolton-live__eyebrow">
@@ -2931,15 +2933,12 @@ ns-143.awsdns-17.org
                                     <span class="bolton-live__eyebrow-label">VULNERABILITY CATALOG</span>
                                     <h2 class="bolton-live__title">Bolt-ons</h2>
                                     <p class="bolton-live__description">
-                                        Per-host vulnerability state for the active lab. Install, patch, uninstall,
-                                        or revert any bolt-on across the deployment. Compatibility is evaluated
-                                        per host against the active facts; coverage shows the matching Elastic rules.
+                                        Install, patch, or revert vulnerability bolt-ons against the selected host. Compatibility and detection coverage are evaluated live.
                                     </p>
                                 </div>
                                 <div class="bolton-live__eyebrow-actions">
-                                    <label class="bolton-live__host-label" for="bolton-host-select">Target host</label>
                                     <select id="bolton-host-select" class="form-select bolton-live__host-select" aria-label="Target host">
-                                        <option value="">— select a host —</option>
+                                        <option value="">Pick a target host…</option>
                                     </select>
                                 </div>
                             </div>
@@ -2978,50 +2977,39 @@ ns-143.awsdns-17.org
                                 </div>
                                 <div class="bolton-live__summary-tile">
                                     <span class="bolton-live__summary-num bolton-live__summary-num--danger" id="bolton-stat-no-coverage">0</span>
-                                    <span class="bolton-live__summary-label">Pending detection coverage</span>
+                                    <span class="bolton-live__summary-label">Uncovered</span>
                                 </div>
                                 <div class="bolton-live__summary-tile">
                                     <span class="bolton-live__summary-num bolton-live__summary-num--warn" id="bolton-stat-available">0</span>
-                                    <span class="bolton-live__summary-label">Available compatible</span>
+                                    <span class="bolton-live__summary-label">Available</span>
                                 </div>
                             </div>
 
-                            <!-- Filter bar (chips: category × compatibility × coverage) -->
+                            <!-- Filter bar — single-row chip strip (category + state umbrella + coverage).
+                                 The "Blocked" chip is an umbrella over every non-installable / non-patched
+                                 state (INCOMPATIBLE_*, MISSING_*, CONFLICTS_WITH_INSTALLED). -->
                             <div class="bolton-live__filters" id="bolton-filters" hidden aria-label="Filters">
-                                <div class="bolton-live__filters-row bolton-live__filters-row--top">
-                                    <span class="bolton-live__filters-title">Filters
-                                        <small id="bolton-active-count">— bolt-ons shown</small>
-                                    </span>
-                                </div>
                                 <div class="bolton-live__filters-row">
-                                    <span class="bolton-live__filters-rowlabel">Category</span>
-                                    <div class="bolton-live__chips" data-chip-group="category">
-                                        <button class="bt-chip is-active" data-group="category" data-value="all" type="button">All</button>
+                                    <div class="bolton-live__chips" data-chip-group="category" aria-label="Category">
+                                        <button class="bt-chip is-active" data-group="category" data-value="all" type="button">All categories</button>
                                     </div>
-                                </div>
-                                <div class="bolton-live__filters-row">
-                                    <span class="bolton-live__filters-rowlabel">Compatibility</span>
-                                    <div class="bolton-live__chips" data-chip-group="state">
-                                        <button class="bt-chip is-active" data-group="state" data-value="all" type="button">All</button>
+                                    <span class="bolton-live__filters-sep" aria-hidden="true"></span>
+                                    <div class="bolton-live__chips" data-chip-group="state" aria-label="Compatibility">
+                                        <button class="bt-chip is-active" data-group="state" data-value="all" type="button">All states</button>
                                         <button class="bt-chip" data-group="state" data-value="ALREADY_INSTALLED" type="button">Installed</button>
                                         <button class="bt-chip" data-group="state" data-value="INSTALLABLE" type="button">Available</button>
                                         <button class="bt-chip" data-group="state" data-value="PATCHED" type="button">Patched</button>
-                                        <button class="bt-chip" data-group="state" data-value="INCOMPATIBLE_OS" type="button">Incompatible OS</button>
-                                        <button class="bt-chip" data-group="state" data-value="INCOMPATIBLE_ROLE" type="button">Incompatible role</button>
-                                        <button class="bt-chip" data-group="state" data-value="MISSING_PREREQ" type="button">Missing prereq</button>
-                                        <button class="bt-chip" data-group="state" data-value="MISSING_SOFTWARE" type="button">Missing software</button>
-                                        <button class="bt-chip" data-group="state" data-value="CONFLICTS_WITH_INSTALLED" type="button">Conflicts</button>
+                                        <button class="bt-chip" data-group="state" data-value="BLOCKED" type="button">Blocked</button>
                                     </div>
-                                </div>
-                                <div class="bolton-live__filters-row">
-                                    <span class="bolton-live__filters-rowlabel">Coverage</span>
-                                    <div class="bolton-live__chips" data-chip-group="coverage">
-                                        <button class="bt-chip is-active" data-group="coverage" data-value="all" type="button">All</button>
+                                    <span class="bolton-live__filters-sep" aria-hidden="true"></span>
+                                    <div class="bolton-live__chips" data-chip-group="coverage" aria-label="Coverage">
+                                        <button class="bt-chip is-active" data-group="coverage" data-value="all" type="button">All coverage</button>
                                         <button class="bt-chip" data-group="coverage" data-value="covered" type="button">Covered</button>
                                         <button class="bt-chip" data-group="coverage" data-value="partial" type="button">Partial</button>
                                         <button class="bt-chip" data-group="coverage" data-value="no-rule" type="button">No-rule</button>
                                         <button class="bt-chip" data-group="coverage" data-value="rule-stale" type="button">Stale</button>
                                     </div>
+                                    <span class="bolton-live__filters-count" id="bolton-active-count" aria-live="polite">— shown</span>
                                 </div>
                             </div>
 
@@ -3033,7 +3021,6 @@ ns-143.awsdns-17.org
                                             <span class="bt-section__chevron" aria-hidden="true"></span>
                                             <h3 class="bt-section__title">Installed · <span data-count="installed">0</span></h3>
                                         </span>
-                                        <span class="bt-section__hint">Active bolt-ons on this host</span>
                                     </button>
                                     <div class="bt-section__body">
                                         <div class="bt-section__body-inner">
@@ -3047,7 +3034,6 @@ ns-143.awsdns-17.org
                                             <span class="bt-section__chevron" aria-hidden="true"></span>
                                             <h3 class="bt-section__title">Available to install · <span data-count="available">0</span></h3>
                                         </span>
-                                        <span class="bt-section__hint">Compatible with this host</span>
                                     </button>
                                     <div class="bt-section__body">
                                         <div class="bt-section__body-inner">
@@ -3061,7 +3047,6 @@ ns-143.awsdns-17.org
                                             <span class="bt-section__chevron" aria-hidden="true"></span>
                                             <h3 class="bt-section__title">Incompatible · <span data-count="incompatible">0</span></h3>
                                         </span>
-                                        <span class="bt-section__hint">Cannot install on this host</span>
                                     </button>
                                     <div class="bt-section__body">
                                         <div class="bt-section__body-inner">
@@ -3075,7 +3060,6 @@ ns-143.awsdns-17.org
                                             <span class="bt-section__chevron" aria-hidden="true"></span>
                                             <h3 class="bt-section__title">Conflicts · <span data-count="conflicts">0</span></h3>
                                         </span>
-                                        <span class="bt-section__hint">Cannot coexist with installed bolt-ons</span>
                                     </button>
                                     <div class="bt-section__body">
                                         <div class="bt-section__body-inner">
@@ -3089,7 +3073,6 @@ ns-143.awsdns-17.org
                                             <span class="bt-section__chevron" aria-hidden="true"></span>
                                             <h3 class="bt-section__title">Already installed elsewhere · <span data-count="already-elsewhere">0</span></h3>
                                         </span>
-                                        <span class="bt-section__hint">Installed on another host in this lab</span>
                                     </button>
                                     <div class="bt-section__body">
                                         <div class="bt-section__body-inner">
@@ -3103,7 +3086,6 @@ ns-143.awsdns-17.org
                                             <span class="bt-section__chevron" aria-hidden="true"></span>
                                             <h3 class="bt-section__title">Patched · <span data-count="patched">0</span></h3>
                                         </span>
-                                        <span class="bt-section__hint">Underlying CVE patched on host</span>
                                     </button>
                                     <div class="bt-section__body">
                                         <div class="bt-section__body-inner">

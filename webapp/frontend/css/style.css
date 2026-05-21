@@ -8461,6 +8461,39 @@ details.details-card--v3 > .resource-list-v3__body {
     color: var(--warning-text);
     border-color: var(--warning-border);
 }
+/* 2026-05-21 (test-fix sweep, third location) — Host Setup Status health
+   pill rendered inside the `details-card` summary on the Manage spec
+   panel (js/app.js renderSetupCheckResults). Previously inline-styled
+   with `background: ${badgeColor}; color: var(--text-inverse);` where
+   badgeColor was one of `var(--success)` / `var(--warning)` / `var(--error)`.
+   Same WCAG-AA contrast failure shape as `.resource-scope-badge--*`
+   (saturated bg vs theme-flipping text). Each state pairs the canonical
+   `--<state>-bg` + `--<state>-text` variables, which are contrast-tuned
+   per theme in palette.css. Parent surface is `--bg-card`. */
+.dashboard-health-pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 10px;
+    font-size: 0.88em;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border: 1px solid transparent;
+}
+.dashboard-health-pill--ok {
+    background: var(--success-bg);
+    color: var(--success-text);
+    border-color: var(--success-border);
+}
+.dashboard-health-pill--warn {
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    border-color: var(--warning-border);
+}
+.dashboard-health-pill--danger {
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    border-color: var(--danger-border);
+}
 .resource-list-v3__btn-group {
     display: inline-flex;
     gap: 8px;
@@ -10775,13 +10808,6 @@ body:has(.app-shell) {
     min-width: 240px;
 }
 
-.bolton-live__host-label {
-    font-size: 11px;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-}
-
 .bolton-live__host-select {
     background: var(--bg-input);
     color: var(--text-primary);
@@ -10880,15 +10906,16 @@ body:has(.app-shell) {
 }
 
 /* FILTERS --------------------------------------------------------------- */
+/* Single-row chip strip. Three chip groups (category / state / coverage)
+   are separated by a thin vertical divider; the active count sits at the
+   far right. Row labels have been retired — the leading "All …" chip in
+   each group communicates its group identity. */
 .bolton-live__filters {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
     border-radius: 10px;
-    padding: 12px 14px;
+    padding: 10px 12px;
     margin-bottom: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
 }
 
 .bolton-live__filters-row {
@@ -10898,33 +10925,17 @@ body:has(.app-shell) {
     gap: 8px;
 }
 
-.bolton-live__filters-row--top {
-    justify-content: space-between;
-    border-bottom: 1px dashed var(--border-subtle);
-    padding-bottom: 6px;
+.bolton-live__filters-sep {
+    width: 1px;
+    height: 18px;
+    background: var(--border-subtle);
+    margin: 0 2px;
+    flex: 0 0 auto;
 }
 
-.bolton-live__filters-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-primary);
-    letter-spacing: 0.4px;
-    text-transform: uppercase;
-}
-
-.bolton-live__filters-title small {
-    margin-left: 8px;
-    text-transform: none;
-    color: var(--text-secondary);
-    font-weight: 400;
-    letter-spacing: 0;
-}
-
-.bolton-live__filters-rowlabel {
-    min-width: 100px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
+.bolton-live__filters-count {
+    margin-left: auto;
+    font-size: 11.5px;
     color: var(--text-secondary);
 }
 
@@ -11022,11 +11033,6 @@ body:has(.app-shell) {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
-}
-
-.bolton-live .bt-section__hint {
-    font-size: 11.5px;
-    color: var(--text-secondary);
 }
 
 .bolton-live .bt-section[data-open="false"] .bt-section__body {
