@@ -13538,6 +13538,78 @@ textarea.cfg-input {
 }
 .cfg-callout--success strong { color: var(--success-text); }
 
+/*
+ * Manage page — "deployment integrity" warning banner.
+ *
+ * Reuses the .cfg-callout--danger base for color/border/background.
+ * This add-on only handles layout: title row, body paragraph, action
+ * row, and the small "foreign module" pills that list what's wrong.
+ *
+ * Renders ABOVE the manage-view hero (markup ordering controls it). No
+ * left ribbon — TASTE shape is full-border + tinted-bg only.
+ */
+.manage-foreign-banner {
+    margin: 0 0 18px;
+    padding: 14px 18px;
+}
+.manage-foreign-banner__title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 6px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--danger-text);
+}
+.manage-foreign-banner__body {
+    margin: 0 0 10px;
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.5;
+}
+.manage-foreign-banner__modules {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 4px 0 8px;
+}
+.manage-foreign-banner__chip {
+    /* Small mono chip — colour-mixed off the danger text so it works in
+       both themes without hard-coded hexes. */
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--danger-text) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger-text) 40%, transparent);
+    color: var(--text-primary);
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+}
+.manage-foreign-banner__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+}
+.manage-foreign-banner__actions .btn-link {
+    /* Plain "Learn more" link, theme-safe. */
+    background: none;
+    border: none;
+    padding: 6px 8px;
+    color: var(--text-secondary);
+    text-decoration: underline;
+    cursor: pointer;
+    font-size: 12px;
+}
+.manage-foreign-banner__actions .btn-link:hover { color: var(--text-primary); }
+@media (prefers-reduced-motion: reduce) {
+    .manage-foreign-banner { transition: none; }
+}
+
 /* Embedded code block inside any cfg-callout — preserves the dark
    terminal look without breaking the callout's tinted surface. */
 .cfg-callout pre {

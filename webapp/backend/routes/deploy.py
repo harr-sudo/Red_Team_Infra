@@ -27,6 +27,11 @@ from webapp.backend.utils.tfvars_path import (
     resolve_tfvars_path as _resolve_tfvars_path,
     sanitize_project_name as _sanitize_project_name,
 )
+from webapp.backend.utils.destroy_safety import (
+    expected_modules_for as _expected_modules_for,
+    parse_top_level_modules as _parse_top_level_modules,
+    compute_foreign_modules as _compute_foreign_modules,
+)
 from webapp.backend.middleware.identity import get_operator
 
 
@@ -55,6 +60,94 @@ def _audit_actor():
     """Return the current operator id from flask.g (set by app.before_request)."""
     op = getattr(g, "operator", None)
     return op.get("id") if op else "unknown"
+
+
+def _read_project_deployment_type(configs_dir, project_stem: str) -> str:
+    """Best-effort read of ``deployment_type`` from configs/<project>.tfvars.
+
+    Returns ``""`` if the file is missing or the key is absent. Used by
+    the destroy-safety check so we can build the expected-modules set
+    without depending on terraform output (which may be unavailable if
+    the state was hand-edited or the dashboard was just upgraded).
+
+    Mirrors the lightweight regex approach in ``_project_has_test_lab``
+    — full HCL parsing is overkill for a single string assignment.
+    """
+    tfvars_path = configs_dir / f"{project_stem}.tfvars"
+    if not tfvars_path.exists():
+        return ""
+    try:
+        text = tfvars_path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return ""
+    import re as _re
+    m = _re.search(
+        r'^\s*deployment_type\s*=\s*"([^"]+)"',
+        text,
+        _re.MULTILINE,
+    )
+    return m.group(1).strip() if m else ""
+
+
+def _summarize_state_for_safety(project_name: str):
+    """Compute (deployment_type, expected, actual, foreign) for a project.
+
+    Returns a dict shaped::
+
+        {
+          "success": bool,
+          "error": str | None,                # populated on failure
+          "deployment_type": str,
+          "enable_test_lab": bool,
+          "expected_modules": [str, ...],
+          "actual_modules":   [str, ...],
+          "foreign_modules":  [str, ...],
+          "state_list_stderr": str,            # for debugging
+        }
+
+    Used by both the destroy guard (Component 1) and the state-summary
+    endpoint (Component 5). The shared helper guarantees the two surfaces
+    can never drift — same definition of "foreign" everywhere.
+
+    NOTE: ``terraform state list`` against an empty / uninitialized
+    workspace returns an empty list with exit 0 — in that case all four
+    lists are empty and ``foreign_modules`` is ``[]`` (no false positive).
+    """
+    configs_dir = project_root / "configs"
+    deployment_type = _read_project_deployment_type(configs_dir, project_name)
+    enable_test_lab = _project_has_test_lab(configs_dir, project_name)
+
+    service = get_service_for_project(project_name)
+    listing = service.state_list()
+
+    if not listing.get("success"):
+        return {
+            "success": False,
+            "error": "state_list_failed",
+            "state_list_stderr": listing.get("stderr", ""),
+            "deployment_type": deployment_type,
+            "enable_test_lab": enable_test_lab,
+            "expected_modules": sorted(_expected_modules_for(
+                deployment_type, enable_test_lab=enable_test_lab)),
+            "actual_modules": [],
+            "foreign_modules": [],
+        }
+
+    actual = _parse_top_level_modules(listing.get("stdout", ""))
+    expected = _expected_modules_for(deployment_type, enable_test_lab=enable_test_lab)
+    foreign = _compute_foreign_modules(
+        deployment_type, actual, enable_test_lab=enable_test_lab)
+
+    return {
+        "success": True,
+        "error": None,
+        "state_list_stderr": listing.get("stderr", ""),
+        "deployment_type": deployment_type,
+        "enable_test_lab": enable_test_lab,
+        "expected_modules": sorted(expected),
+        "actual_modules": sorted(actual),
+        "foreign_modules": foreign,
+    }
 
 bp = Blueprint('deploy', __name__)
 
@@ -2045,13 +2138,37 @@ def cancel_deployment():
 
 @bp.route('/destroy', methods=['POST'])
 def destroy():
-    """Destroy infrastructure for a specific project"""
+    """Destroy infrastructure for a specific project.
+
+    Pre-destroy safety guard:
+        Before kicking off the terraform destroy thread we list the
+        workspace's state and check whether any "foreign" modules are
+        present — modules that should NOT exist for the deployment_type
+        declared in configs/<project>.tfvars. The classic example is
+        ``module.dashboard_server`` accidentally pinned to a goad-mini
+        workspace at provisioning time. Destroying that workspace would
+        wipe the dashboard server out from under the operator.
+
+        When foreign modules are present we refuse with HTTP 409 and a
+        structured payload telling the UI to offer the "Detach" recovery
+        action (preferred) or the explicit ``?force_foreign=1`` override.
+        The override is audited so we can trace which operator pulled the
+        ripcord and when.
+
+        The check is intentionally cheap (one ``terraform state list``)
+        and only blocks when state actually contains foreign modules —
+        on an empty / clean workspace it's a no-op.
+    """
     global deployment_state
-    
+
     # Get request data
     data = request.get_json() or {}
     project_name = data.get("project_name")
-    
+    # URL flag override: only this exact form bypasses the safety check.
+    # We do NOT honor a body field here — forcing the operator to type
+    # `?force_foreign=1` into a URL is a deliberate friction step.
+    force_foreign = request.args.get("force_foreign", "").strip() == "1"
+
     # Check if specific project is running
     if project_name and project_name in deployment_states:
         if deployment_states[project_name].get("status") == "running":
@@ -2064,14 +2181,69 @@ def destroy():
             "success": False,
             "error": "Operation already in progress"
         }), 400
-    
+
     # Require confirmation
     if data.get("confirm") != "DESTROY":
         return jsonify({
             "success": False,
             "error": "Confirmation required. Send confirm: 'DESTROY'"
         }), 400
-    
+
+    # =====================================================================
+    # SAFETY GUARD — refuse if foreign modules are in the workspace state
+    # =====================================================================
+    if project_name and not force_foreign:
+        safe = _sanitize_project_name(project_name)
+        if safe:
+            summary = _summarize_state_for_safety(safe)
+            foreign = summary.get("foreign_modules") or []
+            # Only enforce when we successfully read state AND found
+            # foreign modules. A state_list failure (e.g. workspace
+            # not yet created) should NOT block destroy — it would
+            # break the legitimate "destroy a never-deployed draft"
+            # path.
+            if summary.get("success") and foreign:
+                dtype = summary.get("deployment_type") or "unknown"
+                foreign_list = ", ".join(foreign)
+                return jsonify({
+                    "success": False,
+                    "error": "foreign_modules_in_state",
+                    "message": (
+                        f"This workspace contains modules that aren't part of the "
+                        f"{dtype} deployment: {foreign_list}. Destroying would damage "
+                        f"shared infrastructure."
+                    ),
+                    "deployment_type": dtype,
+                    "foreign_modules": foreign,
+                    "expected_modules": summary.get("expected_modules") or [],
+                    "actual_modules": summary.get("actual_modules") or [],
+                    "actions": [
+                        {
+                            "id": "detach-foreign",
+                            "label": "Detach foreign modules from this workspace's state",
+                            "endpoint": f"/api/deploy/detach-foreign/{safe}",
+                            "method": "POST",
+                            "description": (
+                                "Removes the foreign modules from terraform's state "
+                                "tracking for THIS workspace only. Does NOT touch AWS "
+                                "— the dashboard server keeps running. After this, "
+                                "Destroy is safe."
+                            ),
+                        },
+                        {
+                            "id": "force-anyway",
+                            "label": "I understand — destroy everything in state including foreign modules",
+                            "endpoint": "/api/deploy/destroy?force_foreign=1",
+                            "method": "POST",
+                            "description": (
+                                "Last-resort escape hatch. Will destroy the foreign "
+                                "modules too. Operator must explicitly opt in via "
+                                "the URL flag."
+                            ),
+                        },
+                    ],
+                }), 409
+
     # Initialize state for this project
     if project_name:
         if project_name not in deployment_states:
@@ -2086,7 +2258,7 @@ def destroy():
 
     # Log the start of destroy to history
     add_history_entry(f"Starting destroy for project: {project_name or 'default'}", "warning", project_name=project_name)
-    
+
     # Start destroy in background thread
     thread = threading.Thread(target=run_destroy, args=(project_name,))
     thread.daemon = False
@@ -2094,11 +2266,158 @@ def destroy():
 
     audit_service.write(_audit_actor(), "deploy.destroy", project=project_name)
 
+    # If the operator force-bypassed the safety check, record that
+    # separately so the override is independently auditable. We use a
+    # distinct action name (``deploy.destroy.force_foreign``) so the
+    # filter on the Activity page can surface these as a discrete event.
+    if force_foreign and project_name:
+        try:
+            safe = _sanitize_project_name(project_name)
+            details = {"force_foreign": True}
+            if safe:
+                # Best-effort: enrich the audit record with the foreign
+                # list at decision time. Never raise from audit.
+                summary = _summarize_state_for_safety(safe)
+                if summary.get("success"):
+                    details["foreign_modules"] = summary.get("foreign_modules") or []
+            audit_service.write(
+                _audit_actor(),
+                "deploy.destroy.force_foreign",
+                project=project_name,
+                details=details,
+            )
+        except Exception:
+            pass
+
     return jsonify({
         "success": True,
         "message": f"Destruction started" + (f" for project '{project_name}'" if project_name else ""),
-        "project_name": project_name
+        "project_name": project_name,
+        "force_foreign": force_foreign,
     })
+
+
+@bp.route('/state-summary/<project>', methods=['GET'])
+def state_summary(project):
+    """Return the expected vs actual top-level modules for a project.
+
+    Cheap GET — runs a single ``terraform state list`` against the
+    project's workspace and computes the foreign-module delta using the
+    same helper the destroy guard uses. Surfaced by the Manage UI
+    pre-destroy warning banner (Component 3).
+
+    Response::
+
+        {
+          "success": true,
+          "project": "<sanitized>",
+          "deployment_type": "<type or ''>",
+          "expected_modules": [str, ...],
+          "actual_modules":   [str, ...],
+          "foreign_modules":  [str, ...],
+          "enable_test_lab":  bool
+        }
+
+    Sanitization mirrors every other per-project endpoint — a malformed
+    name returns ``success: false`` rather than scanning a fallback
+    workspace (which would be misleading for the UI).
+    """
+    safe = _sanitize_project_name(project)
+    if not safe:
+        return jsonify({
+            "success": False,
+            "error": "invalid_project_name",
+            "project": project,
+        }), 400
+
+    summary = _summarize_state_for_safety(safe)
+
+    return jsonify({
+        "success": bool(summary.get("success")),
+        "project": safe,
+        "deployment_type": summary.get("deployment_type") or "",
+        "enable_test_lab": bool(summary.get("enable_test_lab")),
+        "expected_modules": summary.get("expected_modules") or [],
+        "actual_modules": summary.get("actual_modules") or [],
+        "foreign_modules": summary.get("foreign_modules") or [],
+        "error": summary.get("error"),
+    })
+
+
+@bp.route('/detach-foreign/<project>', methods=['POST'])
+def detach_foreign(project):
+    """Remove foreign modules from a project's terraform state.
+
+    Computes the same foreign-modules set as the destroy guard, then runs
+    ``terraform state rm module.<name>`` for each one. ``state rm`` does
+    NOT touch the underlying AWS resource — it only stops the workspace
+    from tracking it. This is the safe recovery path for the
+    "dashboard_server pinned to goad-mini" class of bug.
+
+    Audits each successful detachment + the operator who triggered it.
+    Returns the list of modules actually detached so the UI can confirm.
+    """
+    safe = _sanitize_project_name(project)
+    if not safe:
+        return jsonify({
+            "success": False,
+            "error": "invalid_project_name",
+            "project": project,
+        }), 400
+
+    summary = _summarize_state_for_safety(safe)
+    if not summary.get("success"):
+        return jsonify({
+            "success": False,
+            "error": summary.get("error") or "state_list_failed",
+            "stderr": summary.get("state_list_stderr", ""),
+            "project": safe,
+        }), 500
+
+    foreign = summary.get("foreign_modules") or []
+    if not foreign:
+        return jsonify({
+            "success": True,
+            "project": safe,
+            "detached": [],
+            "message": "No foreign modules to detach — state is already clean.",
+        })
+
+    service = get_service_for_project(safe)
+    detached = []
+    errors = []
+    for name in foreign:
+        addr = f"module.{name}"
+        result = service.state_rm(addr)
+        if result.get("success"):
+            detached.append(name)
+            audit_service.write(
+                _audit_actor(),
+                "deploy.detach_foreign",
+                project=safe,
+                details={"address": addr},
+            )
+        else:
+            errors.append({
+                "module": name,
+                "stderr": result.get("stderr", ""),
+            })
+
+    success = len(errors) == 0
+    msg = (
+        f"Detached {len(detached)} foreign module(s) from workspace '{safe}'."
+        if success
+        else f"Detached {len(detached)} of {len(foreign)} foreign module(s); "
+             f"{len(errors)} failed — see errors."
+    )
+
+    return jsonify({
+        "success": success,
+        "project": safe,
+        "detached": detached,
+        "errors": errors,
+        "message": msg,
+    }), (200 if success else 207)
 
 @bp.route('/purge', methods=['POST'])
 def purge_resources():

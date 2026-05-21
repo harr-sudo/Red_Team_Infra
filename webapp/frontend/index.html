@@ -2629,6 +2629,21 @@ ns-143.awsdns-17.org
                             </div>
                         </div>
 
+                        <!--
+                          Deployment-integrity warning banner. Hidden by default;
+                          APP.manage.render() populates this via the
+                          /api/deploy/state-summary/<project> probe and shows
+                          it ONLY when the workspace contains modules that are
+                          foreign to the deployment_type (e.g. dashboard_server
+                          accidentally pinned to a goad-mini workspace). The
+                          TASTE callout pattern (border + tinted bg, no left
+                          ribbon) keeps it consistent with the rest of V3.
+                        -->
+                        <div id="manage-foreign-modules-banner"
+                             class="cfg-callout cfg-callout--danger manage-foreign-banner"
+                             role="alert"
+                             hidden></div>
+
                         <!-- Hero: project identity + deployment type kicker -->
                         <section class="manage-view__hero" aria-label="Deployment identity">
                             <span class="manage-view__hero-caption">project</span>

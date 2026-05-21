@@ -17586,6 +17586,23 @@ async function executeDestroyConfirmation(projectName, mode) {
 
         if (data.success) {
             pollDestructionStatus(projectName);
+        } else if (data.error === 'foreign_modules_in_state' && !isPurge) {
+            // Pre-destroy safety check refused. Show the recovery modal
+            // (Detach recommended / force-destroy escape hatch) and
+            // restore the auto-refresh + button state so the operator
+            // isn't stranded in a "Destroy in progress" UI for a request
+            // that never started.
+            const progressDiv = document.getElementById(`destroy-progress-${projectName}`);
+            if (progressDiv) {
+                const list = (data.foreign_modules || []).join(', ') || '(unknown)';
+                progressDiv.innerHTML = `<div class="status-display error" style="margin: 0;"><p><strong>Foreign modules in state:</strong> ${list}. Choose recovery option in the dialog above.</p></div>`;
+            }
+            disableDeployButton(false);
+            window._destroyInProgress = false;
+            startAutoRefresh();
+            if (window.APP && APP.manage && typeof APP.manage._handleForeignModulesError === 'function') {
+                APP.manage._handleForeignModulesError(projectName, data);
+            }
         } else {
             const progressDiv = document.getElementById(`destroy-progress-${projectName}`);
             if (progressDiv) {
@@ -30466,6 +30483,225 @@ APP.manage._confirmDestroy = function () {
 };
 
 /**
+ * ──────────────────────────────────────────────────────────────────
+ *  Deployment-integrity safety: foreign modules in state
+ * ──────────────────────────────────────────────────────────────────
+ *
+ *  Probes /api/deploy/state-summary/<project> on Manage entry and
+ *  surfaces a danger callout above the hero when the workspace contains
+ *  modules that are not part of the declared deployment_type. Operator
+ *  click-flow:
+ *
+ *    [Detach foreign modules →] → confirm modal → POST detach-foreign
+ *    [Learn more]               → docs/internal/DEPLOY_SAFETY.md
+ *
+ *  Same banner template is also invoked by the destroy click handler
+ *  when /api/deploy/destroy returns the structured 409 payload — see
+ *  APP.manage._handleForeignModulesError() at the bottom of this block.
+ */
+APP.manage._renderForeignModulesBanner = function (summary) {
+    const banner = document.getElementById('manage-foreign-modules-banner');
+    if (!banner) return;
+    const foreign = (summary && summary.foreign_modules) || [];
+    if (!summary || !summary.success || foreign.length === 0) {
+        banner.hidden = true;
+        banner.innerHTML = '';
+        return;
+    }
+    const esc = APP.manage._escape;
+    const dtype = esc(summary.deployment_type || 'unknown');
+    const chips = foreign.map(m => `<span class="manage-foreign-banner__chip">${esc(m)}</span>`).join('');
+    banner.innerHTML = `
+        <p class="manage-foreign-banner__title"><strong>Deployment integrity warning</strong></p>
+        <p class="manage-foreign-banner__body">
+            This workspace's terraform state contains module(s) that don't belong to a
+            <strong>${dtype}</strong> deployment. Destroying this deployment would damage
+            shared infrastructure (e.g. the dashboard server or other deployments' state
+            locking). Detach the foreign modules from this workspace's state — the
+            underlying AWS resources keep running.
+        </p>
+        <div class="manage-foreign-banner__modules" aria-label="Foreign modules">${chips}</div>
+        <div class="manage-foreign-banner__actions">
+            <button type="button" class="btn btn-secondary btn-sm"
+                    data-action="manage-detach-foreign">
+                Detach foreign modules &rarr;
+            </button>
+            <a href="docs/internal/DEPLOY_SAFETY.md"
+               class="btn-link"
+               target="_blank"
+               rel="noopener noreferrer">Learn more</a>
+        </div>`;
+    banner.hidden = false;
+
+    // Wire the Detach button. delegate-once so we don't stack handlers
+    // when render() is re-invoked.
+    if (!banner._detachWired) {
+        banner._detachWired = true;
+        banner.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action="manage-detach-foreign"]');
+            if (!btn) return;
+            const project = APP.manage._currentProject();
+            if (!project) return;
+            APP.manage._confirmDetachForeign(project, foreign);
+        });
+    }
+};
+
+/** Confirmation modal for the Detach flow. */
+APP.manage._confirmDetachForeign = function (project, foreignList) {
+    const list = (foreignList || []).join(', ') || '(unknown)';
+    const msg =
+        `Detach ${foreignList.length} foreign module(s) from workspace "${project}"?\n\n` +
+        `Modules: ${list}\n\n` +
+        `This runs "terraform state rm" against this workspace's state only. ` +
+        `It does NOT touch AWS — the underlying resources keep running. ` +
+        `After this, destroying "${project}" is safe.`;
+    const proceed = () => APP.manage._runDetachForeign(project);
+    if (window.APP && typeof window.APP.modal === 'function') {
+        try {
+            window.APP.modal({
+                title: 'Detach foreign modules',
+                body: msg,
+                danger: false,
+                confirmLabel: 'Detach',
+                onConfirm: proceed,
+            });
+            return;
+        } catch (_) { /* fall through */ }
+    }
+    if (window.confirm(msg)) proceed();
+};
+
+APP.manage._runDetachForeign = async function (project) {
+    const banner = document.getElementById('manage-foreign-modules-banner');
+    if (banner) {
+        // Inline progress feedback — keep the banner in place while the
+        // detach runs so the operator doesn't lose context.
+        banner.innerHTML = `
+            <p class="manage-foreign-banner__title"><strong>Detaching foreign modules…</strong></p>
+            <p class="manage-foreign-banner__body">Running terraform state rm against workspace "${APP.manage._escape(project)}".</p>`;
+    }
+    try {
+        const r = await fetch(`/api/deploy/detach-foreign/${encodeURIComponent(project)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const d = await r.json();
+        if (d && d.success) {
+            if (typeof showMessage === 'function') {
+                showMessage(`Detached ${(d.detached || []).length} foreign module(s). State is now clean.`, 'success');
+            }
+        } else if (typeof showMessage === 'function') {
+            showMessage(`Detach failed: ${d.message || d.error || 'unknown error'}`, 'error');
+        }
+    } catch (err) {
+        if (typeof showMessage === 'function') {
+            showMessage(`Detach request failed: ${err.message || err}`, 'error');
+        }
+    }
+    // Re-probe state-summary and re-render either banner or hidden state.
+    try { await APP.manage._probeStateSummary(); } catch (_) { /* noop */ }
+};
+
+APP.manage._probeStateSummary = async function () {
+    const banner = document.getElementById('manage-foreign-modules-banner');
+    const project = APP.manage._currentProject();
+    if (!project) {
+        if (banner) { banner.hidden = true; banner.innerHTML = ''; }
+        return null;
+    }
+    try {
+        const r = await fetch(`/api/deploy/state-summary/${encodeURIComponent(project)}`);
+        const d = await r.json();
+        APP.manage._renderForeignModulesBanner(d);
+        return d;
+    } catch (_) {
+        if (banner) { banner.hidden = true; }
+        return null;
+    }
+};
+
+/** Called by the destroy click handler when the server returns the
+ *  structured 409 (foreign_modules_in_state). Shows a confirm modal
+ *  matching the backend's `actions` array. */
+APP.manage._handleForeignModulesError = function (projectName, payload) {
+    const foreign = (payload && payload.foreign_modules) || [];
+    const list = foreign.join(', ') || '(unknown)';
+    const dtype = payload?.deployment_type || 'unknown';
+    const body =
+        `This workspace's terraform state contains modules that aren't part of the ` +
+        `${dtype} deployment: ${list}.\n\n` +
+        `Destroying would damage shared infrastructure. Choose a recovery path:`;
+
+    const detach = () => APP.manage._runDetachForeign(projectName).then(() => {
+        // After detach, retry the destroy — at this point state is clean.
+        if (typeof destroyInfrastructure === 'function') {
+            destroyInfrastructure(projectName);
+        }
+    });
+    const forceAnyway = () => {
+        if (typeof destroyInfrastructureForce === 'function') {
+            destroyInfrastructureForce(projectName);
+        } else if (typeof showMessage === 'function') {
+            showMessage('Force-destroy unavailable in this build.', 'error');
+        }
+    };
+
+    // Try the rich modal; fall back to two-stage native confirms.
+    if (window.APP && typeof window.APP.modal === 'function') {
+        try {
+            window.APP.modal({
+                title: 'Foreign modules in state',
+                body,
+                danger: true,
+                confirmLabel: 'Detach foreign modules (recommended)',
+                cancelLabel: 'Cancel',
+                onConfirm: detach,
+                secondary: {
+                    label: 'I know what I\'m doing — destroy everything',
+                    onClick: forceAnyway,
+                    danger: true,
+                },
+            });
+            return;
+        } catch (_) { /* fall through */ }
+    }
+    // Fallback: two-step confirms.
+    if (window.confirm(`${body}\n\nClick OK to Detach foreign modules (recommended), Cancel to choose a different action.`)) {
+        detach();
+    } else if (window.confirm('Destroy EVERYTHING including foreign modules? Last warning.')) {
+        forceAnyway();
+    }
+};
+
+/** Public helper used by legacy destroy handlers to send the
+ *  force_foreign=1 override. Kept on APP.manage so all destroy-related
+ *  flows can find it in one place. */
+window.destroyInfrastructureForce = async function (projectName) {
+    if (!projectName) return;
+    try {
+        const r = await fetch(`/api/deploy/destroy?force_foreign=1`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_name: projectName, confirm: 'DESTROY' }),
+        });
+        const d = await r.json();
+        if (d && d.success) {
+            if (typeof pollDestructionStatus === 'function') pollDestructionStatus(projectName);
+            if (typeof showMessage === 'function') {
+                showMessage('Force-destroy started. Foreign modules will be destroyed too.', 'warning');
+            }
+        } else if (typeof showMessage === 'function') {
+            showMessage(`Force-destroy failed: ${d.message || d.error || 'unknown error'}`, 'error');
+        }
+    } catch (err) {
+        if (typeof showMessage === 'function') {
+            showMessage(`Force-destroy request failed: ${err.message || err}`, 'error');
+        }
+    }
+};
+
+/**
  * 2026-05-19 audit fix — Hide / show the GOAD Lab section based on the active
  * deployment's type. The section only makes sense for goad-* or combined-*
  * deployments; for every other case (including "no deployment selected"),
@@ -30557,8 +30793,16 @@ APP.manage.render = async function () {
         `;
         APP.manage._evaluateGoadSection('');
         APP.manage._scopeProjectViews(null);
+        // No project → no integrity warning possible. Hide unconditionally
+        // so a stale banner from a previous scoped view doesn't linger.
+        APP.manage._renderForeignModulesBanner(null);
         return;
     }
+
+    // Fire the state-summary probe in the background — render the banner
+    // when it resolves. We don't await so the rest of the Manage render
+    // is not blocked on a terraform state list.
+    APP.manage._probeStateSummary().catch(() => { /* fail-quiet */ });
 
     view.style.display = 'block';
     if (heroName) heroName.textContent = project;

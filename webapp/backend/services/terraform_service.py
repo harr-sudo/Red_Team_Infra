@@ -824,9 +824,104 @@ class TerraformService:
         }
     
     # =========================================================================
+    # STATE-LEVEL OPERATIONS (read-only listing + targeted detachment)
+    # =========================================================================
+    #
+    # These thin wrappers exist so the destroy-safety check + the detach-
+    # foreign endpoint can pose terraform questions about a workspace
+    # WITHOUT shelling out from route code directly. Centralizing the
+    # subprocess args here keeps ``terraform state list/rm`` correctly
+    # workspace-scoped (every other helper above does ``ensure_workspace``
+    # first; these must too).
+
+    def state_list(self) -> Dict:
+        """List every resource address in the current workspace's state.
+
+        Returns a dict shaped like the other helpers:
+            { success, exit_code, stdout, stderr, addresses, workspace }
+        ``addresses`` is a parsed list of non-empty lines from stdout for
+        callers that don't want to re-parse. On failure ``addresses`` is
+        an empty list; consult ``stderr`` for the underlying error.
+        """
+        if self.workspace_name != "default":
+            ws_result = self.ensure_workspace()
+            if not ws_result["success"]:
+                return {
+                    "success": False,
+                    "exit_code": -1,
+                    "stdout": "",
+                    "stderr": ws_result.get("stderr", "Workspace selection failed"),
+                    "addresses": [],
+                    "workspace": self.workspace_name,
+                }
+
+        exit_code, stdout, stderr = self._run_command(
+            ["terraform", "state", "list"],
+            timeout=TIMEOUT_SHOW
+        )
+
+        addresses = []
+        if exit_code == 0:
+            addresses = [l.strip() for l in stdout.splitlines() if l.strip()]
+
+        return {
+            "success": exit_code == 0,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "addresses": addresses,
+            "workspace": self.workspace_name,
+        }
+
+    def state_rm(self, addr: str) -> Dict:
+        """Detach a resource/module from THIS workspace's state.
+
+        ``terraform state rm <addr>`` removes the address from state tracking
+        but does NOT touch the underlying AWS resource. This is the safe
+        recovery path when a foreign module was accidentally applied to a
+        deployment workspace — the dashboard server (or shared lock table)
+        keeps running, we just stop pretending this workspace owns it.
+
+        Returns success/failure shape consistent with the other helpers.
+        """
+        if not addr or not isinstance(addr, str):
+            return {
+                "success": False,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": "state_rm: address required",
+                "workspace": self.workspace_name,
+            }
+
+        if self.workspace_name != "default":
+            ws_result = self.ensure_workspace()
+            if not ws_result["success"]:
+                return {
+                    "success": False,
+                    "exit_code": -1,
+                    "stdout": "",
+                    "stderr": ws_result.get("stderr", "Workspace selection failed"),
+                    "workspace": self.workspace_name,
+                }
+
+        exit_code, stdout, stderr = self._run_command(
+            ["terraform", "state", "rm", addr],
+            timeout=TIMEOUT_SHOW
+        )
+
+        return {
+            "success": exit_code == 0,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "address": addr,
+            "workspace": self.workspace_name,
+        }
+
+    # =========================================================================
     # UTILITY METHODS
     # =========================================================================
-    
+
     def get_state_file_path(self) -> Path:
         """Get the path to the state file for current workspace"""
         if self.workspace_name == "default":
