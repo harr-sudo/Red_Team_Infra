@@ -4499,27 +4499,27 @@ APP.journey = (function () {
 // the active deployment in the global picker (form is no longer tied to one).
 
 APP.startNewDeployment = function () {
-    // 1. Navigate to the Configure sub-pill (forces tab + sub-pill activation).
-    APP.navigateTo('deployments-tab', 'configure');
-
-    // 2. Clear the form to a fresh state (lightweight blanking — no backend
-    //    DELETE, no confirm dialog; that's what clearConfig() is for).
-    APP.resetConfigForm();
-
-    // 3. Pre-fill project_name with a recognizable placeholder so the operator
-    //    sees a fresh value to overwrite. Format: new_<env>_<short-suffix>.
-    const projectInput = document.getElementById('project-name');
-    if (projectInput) {
-        const env = document.getElementById('environment')?.value || 'dev';
-        const suffix = (Date.now() % 100000).toString(36);
-        projectInput.value = `new_${env}_${suffix}`;
-        projectInput.focus();
-        projectInput.select();
+    // 2026-05-21 — delegate to the canonical draft-flow entry point so the
+    // Dashboard hero CTA enters DRAFT mode the same way the global "+ New"
+    // top-bar button + Manage empty-state CTA do. The legacy implementation
+    // below cleared activeDeployment to null (not DRAFT_SENTINEL) which left
+    // the operator on a half-mode Configure pane: top-bar showed "Pick a
+    // deployment", left rail collapsed to Manage+Cleanup, and the legacy
+    // banner rendered another redundant "+ New Deployment" button. Calling
+    // _startDraftFlow() correctly pins DRAFT_SENTINEL → visibility map
+    // returns {configure, deploy, cleanup} → V2 mounts with the clean
+    // family-picker landing.
+    if (typeof APP._startDraftFlow === 'function') {
+        return APP._startDraftFlow(null);
     }
 
-    // 4. Clear the global active-deployment picker so the form isn't tied to
-    //    an existing deployment.
-    APP.activeDeployment.set(null);
+    // Fallback for the (rare) case where _startDraftFlow isn't loaded yet —
+    // e.g. very early in boot before initGlobalHeader runs. We still set
+    // the draft sentinel directly so we never regress to the null-state bug.
+    APP.navigateTo('deployments-tab', 'configure');
+    if (APP.activeDeployment && APP.activeDeployment.DRAFT_SENTINEL) {
+        APP.activeDeployment.set(APP.activeDeployment.DRAFT_SENTINEL);
+    }
 };
 
 /**
