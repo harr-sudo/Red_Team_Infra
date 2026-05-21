@@ -23,6 +23,20 @@
     box-sizing: border-box;
 }
 
+/* 2026-05-21 — defensive guard. The HTML5 `[hidden]` attribute defaults
+   to `display: none` at user-agent specificity (0,0,0,0). Any class
+   with `display: flex` / `grid` / `block` wins on tie-break, leaving
+   "hidden" elements visible. This bit us on .manage-testlab-card —
+   the card stayed visible with a stale "checking…" pill even when JS
+   correctly set `card.hidden = true`. Apply the override globally so
+   no future component repeats the mistake.
+
+   `!important` is the right hammer here because every `display: *`
+   class declaration on a hideable component would otherwise need to
+   add `[hidden] { display: none }` of its own. Belt-and-braces against
+   a whole bug class. */
+[hidden] { display: none !important; }
+
 html {
     font-size: 15px;
 }
@@ -13359,6 +13373,98 @@ textarea.cfg-input {
     filter: grayscale(0.5);
 }
 
+/* ============================================================================
+ * 2026-05-21 (Bug 2 — existing-deployment empty state)
+ * Rendered inside #configure-scoped-content when an operator lands on the
+ * Configure sub-pill while a live deployment is selected. Two CTAs steer
+ * them to the right surface (Configure for NEW work, Manage for editing).
+ * Tokens are layer-aware: --bg-card / --border-subtle / --text-primary /
+ * --text-secondary all resolve correctly in both dark and light modes.
+ * ========================================================================== */
+.configure-existing-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 32px 28px;
+    margin: 24px 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-left: 3px solid var(--brand-light);
+    border-radius: 8px;
+    color: var(--text-primary);
+}
+/* The default rule above overrides the UA stylesheet's `[hidden] { display: none }`
+   because class specificity beats attribute specificity. Restore the native
+   hidden-attribute semantics so applyDraftMode()'s `hidden = true/false` toggle
+   actually hides the empty state. Without this, `.configure-existing-empty`
+   with `hidden=""` would still render as a flex container. */
+.configure-existing-empty[hidden] {
+    display: none;
+}
+.configure-existing-empty__eyebrow {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+.configure-existing-empty__title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--text-primary);
+}
+.configure-existing-empty__desc {
+    margin: 0;
+    max-width: 64ch;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+}
+.configure-existing-empty__desc strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+.configure-existing-empty__actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+/* ============================================================================
+ * 2026-05-21 (Bug 3 — defence-in-depth CSS guard)
+ * Whenever #configure-v2-pane is visible (no [hidden] attribute), the legacy
+ * Configure form MUST stay hidden. applyDraftMode() already sets inline
+ * display:none on these elements, but if a JS path forgets to do that (timing,
+ * exception, race), the legacy form would bleed through alongside V2 — exactly
+ * the "~80 fields visible at once" UX bug operators hit.
+ *
+ * The selector uses `~` (general sibling combinator): #configure-v2-pane and
+ * the legacy elements (.configuration-editor, #configure-advanced-details,
+ * #configure-summary-section, .configure-form-actions, #configure-new-deployment-banner)
+ * are all DIRECT siblings inside #configure-edit-pane in index.html (verified
+ * against the DOM structure at lines 643–2079).
+ *
+ * NOTE on #configure-existing-empty: it lives one level UP, inside
+ * #configure-scoped-content (as a sibling of #configure-edit-pane, not of
+ * #configure-v2-pane). It carries the native [hidden] attribute toggled
+ * by applyDraftMode(), so it cannot bleed through under V2 — when V2 is
+ * visible (draft mode), the existing-empty branch did not run and the
+ * default [hidden] attribute (set in the HTML markup) keeps it suppressed.
+ * No `~` rule is needed for it.
+ * ========================================================================== */
+#configure-v2-pane:not([hidden]) ~ .configuration-editor,
+#configure-v2-pane:not([hidden]) ~ #configure-advanced-details,
+#configure-v2-pane:not([hidden]) ~ #configure-summary-section,
+#configure-v2-pane:not([hidden]) ~ .configure-form-actions,
+#configure-v2-pane:not([hidden]) ~ #configure-new-deployment-banner {
+    display: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .cfg-section,
     .cfg-section__body,
@@ -13461,6 +13567,9 @@ textarea.cfg-input {
     flex-direction: column;
     gap: 14px;
 }
+/* The global `[hidden] { display: none !important }` near the top of
+   this file now handles this — kept this comment as a tombstone for
+   the bug history. Removed per-card override. */
 .manage-testlab-card__head {
     display: flex;
     align-items: center;
