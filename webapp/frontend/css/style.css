@@ -5364,6 +5364,126 @@ body { padding-top: 64px; }
     .dashboard-hero__demo:hover { transform: none; }
 }
 
+/* ───────────────────────────────────────────────────────────────────────
+   Phase 4 — "+ Provision a Demo Deployment" CTA.
+   Mirrors .dashboard-hero__demo (Try Demo Mode) but with a distinguishing
+   double-line inset edge in --brand-light so the operator can tell the
+   two CTAs apart at a glance. TASTE V3 dials 5/6/5:
+   - VARIANCE: same shape grammar as the showcase demo CTA, swapped accent
+   - MOTION: same 280ms cubic-bezier hover lift; reduced-motion strips
+   - DENSITY: same internal padding to keep the hero row balanced
+   ─────────────────────────────────────────────────────────────────────── */
+.dashboard-hero__demo-draft {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    padding: 14px 20px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    color: var(--text-primary);
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                transform 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    /* Distinguishing cue vs the static demo CTA: a brighter --brand-light
+       left edge (no opacity blend) so the two cards read as adjacent but
+       not identical. */
+    box-shadow: inset 4px 0 0 0 var(--brand-light);
+}
+.dashboard-hero__demo-draft:hover {
+    border-color: var(--brand-light);
+    background: var(--bg-card-hover);
+    transform: translateY(-1px);
+}
+.dashboard-hero__demo-draft:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+.dashboard-hero__demo-draft .dashboard-hero__demo-glyph {
+    color: var(--brand-light);
+    font-size: 18px;
+    line-height: 1;
+    flex-shrink: 0;
+    /* No pulse on this one — it's a walkthrough entry, not an "always-on"
+       showcase demo, and the operator's about to enter an active flow. */
+}
+.dashboard-hero__demo-draft .dashboard-hero__demo-label {
+    color: var(--brand-light);  /* tighter accent on the label so the
+                                   walkthrough CTA reads as the "action"
+                                   sibling vs the showcase "preview". */
+}
+@media (prefers-reduced-motion: reduce) {
+    .dashboard-hero__demo-draft { transition: none; }
+    .dashboard-hero__demo-draft:hover { transform: none; }
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   Phase 4 — DEMO ribbon. Mounted on every Deployments + Operations
+   sub-pill pane when the walkthrough flow is active. Persistent so the
+   operator can never confuse it with a real deployment. TASTE V3 dials
+   5/6/5 — calm border-left accent, no motion beyond the 280ms transition
+   for hover/state changes, mono eyebrow + readable body text on
+   --text-secondary so contrast clears 4.5:1 in both themes.
+   ─────────────────────────────────────────────────────────────────────── */
+.demo-ribbon {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 14px;
+    margin: 0 0 16px 0;
+    background: color-mix(in srgb, var(--brand-light) 14%, transparent);
+    border-left: 3px solid var(--brand-light);
+    border-radius: var(--radius-sm, 4px);
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.demo-ribbon[hidden] { display: none; }
+.demo-ribbon__eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--brand-light);
+    font-weight: 700;
+    flex-shrink: 0;
+}
+.demo-ribbon__text {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    flex: 1 1 auto;
+    line-height: 1.4;
+}
+.demo-ribbon__skip {
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--brand-light) 50%, transparent);
+    color: var(--text-secondary);
+    padding: 5px 12px;
+    border-radius: var(--radius-sm, 4px);
+    font-size: 11.5px;
+    font-family: inherit;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.demo-ribbon__skip:hover {
+    color: var(--brand-light);
+    border-color: var(--brand-light);
+    background: color-mix(in srgb, var(--brand-light) 8%, transparent);
+}
+.demo-ribbon__skip:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+    .demo-ribbon,
+    .demo-ribbon__skip { transition: none; }
+}
+
 .dashboard-alerts {
     display: flex;
     flex-direction: column;
@@ -11722,36 +11842,157 @@ body:has(.app-shell) {
     gap: 10px;
 }
 
-/* Per-row state tinting — mirrors page-bolton-target.html. Uses palette
-   tokens so light + dark modes both meet 4.5:1 contrast. */
-.bolton-live .bt-row[data-state="ALREADY_INSTALLED"] .spec-row__head {
-    border-left: 3px solid var(--brand-light, var(--text-secondary));
+/* ────────────────────────────────────────────────────────────────────────
+ * Per-row state tinting (TASTE refresh — variance 5, motion 6, density 5).
+ * Resolver returns state values in LOWERCASE (already_installed, etc.) —
+ * see webapp/backend/services/bolton_compatibility.py CompatibilityState.
+ * Previous selectors used uppercase and silently never matched.
+ *
+ * Every state gets:
+ *   • a distinct left-edge accent (border-left)
+ *   • optional surface tint via color-mix() against the existing
+ *     --bg-card so both themes inherit the right base shade
+ *   • a state-pill colour class (.bt-state-pill--<kind>) wired from JS
+ *
+ * Compatible states (installed / patched / installable) stay at full
+ * opacity; blocked / incompatible rows render at 0.7 so actionable rows
+ * pop visually. Hover lifts opacity back to full and surfaces actions.
+ * ──────────────────────────────────────────────────────────────────────── */
+.bolton-live .bt-row {
+    transition: opacity 280ms cubic-bezier(.2, .0, 0, 1),
+                background-color 280ms cubic-bezier(.2, .0, 0, 1);
 }
 
-.bolton-live .bt-row[data-state="INSTALLABLE"] .spec-row__head {
-    border-left: 3px solid var(--success-text, var(--text-secondary));
+.bolton-live .bt-row[data-state="already_installed"] .spec-row__head {
+    border-left: 3px solid var(--success);
+    background: color-mix(in srgb, var(--success) 8%, transparent);
 }
 
-.bolton-live .bt-row[data-state="PATCHED"] .spec-row__head {
-    background: var(--success-bg);
-    border-left: 3px solid var(--success-text);
+.bolton-live .bt-row[data-state="installable"] .spec-row__head {
+    border-left: 2px solid var(--brand-light);
 }
 
-.bolton-live .bt-row[data-state="AS_PATCHED_BUT_VULN"] .spec-row__head {
+.bolton-live .bt-row[data-state="patched"] .spec-row__head {
+    border-left: 3px solid var(--info);
+    background: color-mix(in srgb, var(--info) 8%, transparent);
+}
+
+/* Backwards-compat: the upstream patch-but-vuln state if ever surfaced. */
+.bolton-live .bt-row[data-state="as_patched_but_vuln"] .spec-row__head {
     background: var(--danger-bg);
     border-left: 3px solid var(--danger-text);
 }
 
-.bolton-live .bt-row[data-state^="INCOMPATIBLE"] .spec-row__head,
-.bolton-live .bt-row[data-state="MISSING_PREREQ"] .spec-row__head,
-.bolton-live .bt-row[data-state="MISSING_SOFTWARE"] .spec-row__head {
-    opacity: 0.65;
-    border-left: 3px solid var(--border-subtle);
+.bolton-live .bt-row[data-state="missing_prereq"] .spec-row__head,
+.bolton-live .bt-row[data-state="missing_software"] .spec-row__head {
+    border-left: 2px solid var(--warning);
 }
 
-.bolton-live .bt-row[data-state="CONFLICTS_WITH_INSTALLED"] .spec-row__head {
-    background: var(--warning-bg);
-    border-left: 3px solid var(--warning-text);
+.bolton-live .bt-row[data-state^="incompatible"] .spec-row__head {
+    border-left: 1px dashed var(--text-muted);
+    background: color-mix(in srgb, var(--text-muted) 5%, transparent);
+}
+
+.bolton-live .bt-row[data-state="conflicts_with_installed"] .spec-row__head {
+    border-left: 2px solid var(--danger);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+/* Compatible rows: full opacity. */
+.bolton-live .bt-row[data-state="installable"],
+.bolton-live .bt-row[data-state="already_installed"],
+.bolton-live .bt-row[data-state="patched"] {
+    opacity: 1;
+}
+
+/* Blocked/incompatible rows: faded so eye gravitates to actionable ones. */
+.bolton-live .bt-row[data-state^="incompatible"],
+.bolton-live .bt-row[data-state="missing_prereq"],
+.bolton-live .bt-row[data-state="missing_software"],
+.bolton-live .bt-row[data-state="conflicts_with_installed"] {
+    opacity: 0.7;
+}
+
+.bolton-live .bt-row:hover {
+    opacity: 1;
+}
+
+/* ── State pill (rendered next to category/MITRE eyebrow) ────────────── */
+.bolton-live .bt-state-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: var(--font-weight-bold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid currentColor;
+    background: transparent;
+    line-height: 1.4;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.bolton-live .bt-state-pill__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}
+
+/* Pills use the *-text semantic tokens which are pre-tuned to pass AA
+ * on both card surfaces (dark #1C2031 / light #D8E5BD). The bare
+ * --success / --warning / etc. values are flat solids designed for
+ * fills, not text — they fall short of 4.5:1 in dark mode on cards. */
+.bolton-live .bt-state-pill--installed { color: var(--success-text); }
+.bolton-live .bt-state-pill--patched   { color: var(--info-text); }
+.bolton-live .bt-state-pill--available { color: var(--brand-light); }
+.bolton-live .bt-state-pill--warn      { color: var(--warning-text); }
+.bolton-live .bt-state-pill--muted     { color: var(--text-muted); }
+.bolton-live .bt-state-pill--danger    { color: var(--danger-text); }
+
+/* ── Section-header coloured dot (left of section title) ─────────────── */
+.bolton-live .bt-section__title::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-right: 8px;
+    vertical-align: middle;
+    background: var(--text-muted);
+    transition: transform 280ms cubic-bezier(.2, .0, 0, 1);
+}
+.bolton-live .bt-section[data-section="installed"] .bt-section__title::before {
+    background: var(--success);
+}
+.bolton-live .bt-section[data-section="available"] .bt-section__title::before {
+    background: var(--brand-light);
+}
+.bolton-live .bt-section[data-section="patched"] .bt-section__title::before {
+    background: var(--info);
+}
+.bolton-live .bt-section[data-section="conflicts"] .bt-section__title::before {
+    background: var(--danger);
+}
+.bolton-live .bt-section[data-section="incompatible"] .bt-section__title::before,
+.bolton-live .bt-section[data-section="already-elsewhere"] .bt-section__title::before {
+    background: var(--text-muted);
+}
+.bolton-live .bt-section__header:hover .bt-section__title::before {
+    transform: scale(1.4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bolton-live .bt-row,
+    .bolton-live .bt-section__title::before {
+        transition: none;
+    }
 }
 
 .bolton-live .bt-section {
