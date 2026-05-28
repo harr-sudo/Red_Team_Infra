@@ -223,9 +223,70 @@ def terminal_ssh(ws):
     user = params.get('user', 'ubuntu')
     bastion = params.get('bastion')
     key_path = params.get('key_path', '')
+    # Demo mode marker — frontend tags every demo instance button so we
+    # can short-circuit the real SSH path even though the host/IP looks
+    # plausible (10.99.50.x test_lab range etc).
+    is_demo = bool(params.get('is_demo')) or str(params.get('project', '')).strip().lower() == 'demo'
 
     if not host:
         ws.send('\r\n\x1b[31mNo target host specified.\x1b[0m\r\n')
+        return
+
+    # ── Demo bypass ──────────────────────────────────────────────────
+    # Don't shell out to ssh — spawn a LOCAL bash with a fake login
+    # banner so the operator gets a working PTY labelled as the demo
+    # target. The session is fully local; nothing leaves the dashboard.
+    if is_demo:
+        from webapp.backend.services import demo_data_service
+        demo_data_service.seed_demo_audit_entries()
+        audit_service.write(
+            _audit_actor(),
+            "terminal.start",
+            target=f"{user}@{host}",
+            details={"kind": "ssh", "is_demo": True, "demo_host": host},
+        )
+        # Build a fake-MOTD bash shim. We use bash --rcfile to inject
+        # a custom prompt + login banner without persisting anything.
+        # The PS1 shows {user}@{host_label} so it visually matches the
+        # real remote shell the operator would see.
+        from datetime import datetime as _dt
+        login_ts = _dt.now().strftime("%a %b %d %H:%M:%S %Y")
+        host_label = (host.split('.')[0] if host else 'demo')[:32]
+        # Single-quote the dynamic bits so they survive the rcfile heredoc.
+        rcfile_body = (
+            "if [ -f /etc/bash.bashrc ]; then . /etc/bash.bashrc; fi\n"
+            "if [ -f \"$HOME/.bashrc\" ]; then . \"$HOME/.bashrc\"; fi\n"
+            "clear 2>/dev/null || true\n"
+            "printf 'Welcome to Ubuntu 22.04 LTS (GNU/Linux 5.15.0-aws x86_64) [DEMO]\\n'\n"
+            "printf '\\n'\n"
+            "printf '  * Documentation:  https://help.ubuntu.com\\n'\n"
+            "printf '  * Management:     https://landscape.canonical.com\\n'\n"
+            "printf '  * Support:        https://ubuntu.com/advantage\\n'\n"
+            "printf '\\n'\n"
+            f"printf 'Last login: {login_ts} from 203.0.113.10\\n'\n"
+            "printf '\\n'\n"
+            "printf '\\033[33m[demo] this is a LOCAL shell labelled as the demo target.\\033[0m\\n'\n"
+            "printf '\\033[33m[demo] no remote SSH is performed — operations are synthetic.\\033[0m\\n'\n"
+            "printf '\\n'\n"
+            f"export PS1='\\[\\e[32m\\]{user}@{host_label}\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]$ '\n"
+            "export DEMO_SSH_TARGET='" + f"{user}@{host}" + "'\n"
+        )
+        import tempfile
+        rc = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.demoshrc', delete=False, prefix='demo-ssh-'
+        )
+        rc.write(rcfile_body)
+        rc.flush()
+        rc.close()
+        ws.send(f'\x1b[36m[demo] Connecting to {user}@{host} (local PTY, synthetic)...\x1b[0m\r\n')
+        _pty_session(ws, ['/bin/bash', '--rcfile', rc.name, '-i'], env={
+            'HOME': os.environ.get('HOME', '/tmp'),
+            'DEMO_MODE': '1',
+        })
+        try:
+            os.unlink(rc.name)
+        except OSError:
+            pass
         return
 
     # Resolve SSH key path — server shared key only

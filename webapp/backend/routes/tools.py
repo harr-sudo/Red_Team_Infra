@@ -282,6 +282,33 @@ def connection_info():
         if not project_name:
             return jsonify({"success": False, "error": "project parameter is required"}), 400
 
+        # Demo bypass — no AWS / no terraform output. Return synthetic
+        # connection metadata so the Payloads sub-pill paints with the
+        # same shape it would for a real c2-adhoc deployment. See
+        # demo_data_service.deployment_state() for the canonical IPs.
+        try:
+            from webapp.backend.services import demo_data_service
+            if demo_data_service.is_demo_project(project_name):
+                demo_data_service.seed_demo_audit_entries()
+                return jsonify({
+                    "success": True,
+                    "is_demo": True,
+                    "has_attack_box": True,
+                    "has_hop_host": True,
+                    "bastion_ip": "203.0.113.10",
+                    "bastion_type": "bastion",
+                    "attack_box_ip": "10.0.10.30",
+                    "attack_box_private_ip": "10.0.10.30",
+                    "attack_box_instance_id": "i-0demoattack01",
+                    "attack_box_password": "demo-attack-do-not-use",
+                    "s3_bucket": "demo-payloads-bucket",
+                    "transfer_method": "s3",
+                    "ready": True,
+                })
+        except Exception:
+            # Demo branch is best-effort — never break the real path.
+            pass
+
         # Get terraform outputs for this project
         service = get_terraform_service(project_root, project_name)
         service.init()
@@ -346,6 +373,32 @@ def start_transfer():
             return jsonify({"success": False, "error": "No files specified"}), 400
         if not project:
             return jsonify({"success": False, "error": "No project specified"}), 400
+
+        # Demo bypass — synthetic transfer that never touches S3 / SSM.
+        # Returns a single-shot success payload so the UI's progress
+        # overlay resolves cleanly. We do NOT register a transfer_state
+        # entry because there's nothing to poll for the demo.
+        try:
+            from webapp.backend.services import demo_data_service
+            if demo_data_service.is_demo_project(project):
+                demo_data_service.seed_demo_audit_entries()
+                from datetime import datetime as _dt, timezone as _tz
+                names = ", ".join(files) if isinstance(files, list) else str(files)
+                # Mimic the validated destination path (Windows-style).
+                dest = destination if destination else "C:\\demo-payloads\\"
+                if not dest.endswith("\\"):
+                    dest += "\\"
+                first = files[0] if isinstance(files, list) and files else "payload"
+                return jsonify({
+                    "success": True,
+                    "is_demo": True,
+                    "message": f"Transferred {names} to demo attack box (synthetic)",
+                    "target_path": f"C:/demo-payloads/{first}",
+                    "destination": dest,
+                    "uploaded_at": _dt.now(_tz.utc).isoformat().replace("+00:00", "Z"),
+                })
+        except Exception:
+            pass
 
         # Validate destination
         valid, result = _validate_destination(destination)
