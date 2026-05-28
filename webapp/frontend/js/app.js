@@ -244,6 +244,22 @@ function _initFromUrl() {
     // pin above — covers the case where a subscriber resets _current
     // between this function and _refreshGlobalDeployments running.
     APP._wantsNewOnBoot = !!isNewMode;
+    // 2026-05-23 — Bookmark deep-links need their target sub-pill / tab
+    // to be visible. With no deployment pinned by the params above,
+    // computeVisibleSubPills + computeOperationsVisible return the
+    // empty/null branches and the target pill/rail is hidden →
+    // bookmark broken. Pin the right sentinel based on the hash target.
+    const rawHash = (window.location.hash || '').replace('#', '').split('?')[0];
+    const hashTargetsOps = rawHash.startsWith('operations-tab') || rawHash === 'operations';
+    const hashTargetsDraftPill = rawHash === 'deployments-tab/configure'
+        || rawHash === 'deployments-tab/deploy';
+    if (APP.activeDeployment && !APP.activeDeployment.current) {
+        if (hashTargetsOps) {
+            APP.activeDeployment.set(APP.activeDeployment.ALL_SENTINEL);
+        } else if (hashTargetsDraftPill) {
+            APP.activeDeployment.set(APP.activeDeployment.DRAFT_SENTINEL);
+        }
+    }
 }
 
 /**
@@ -2269,13 +2285,18 @@ APP.computeVisibleSubPills = function (active) {
     const isCombined = isExisting && type.startsWith('combined-');
     const hasTestLab = isExisting && active.hasTestLab && active.hasTestLab();
     const isC2WithLab = isC2only && hasTestLab;
+    // 2026-05-22 — Demo deployment_type exposes every surface so operators
+    // can showcase the full UI without provisioning real AWS infra. Treated
+    // as both a C2 and a GOAD for visibility — has bolt-ons, beacons,
+    // payloads, manage, cleanup.
+    const isDemo = isExisting && type === 'demo';
     // Cleanup is an orphan-resource viewer that's relevant in every mode —
     // it scans the whole account, not a specific deployment. Always append.
     const base = isDraft
         ? ['configure', 'deploy']
         : isAll
             ? ['manage']
-            : (isGoadOnly || isCombined || isC2WithLab)
+            : (isDemo || isGoadOnly || isCombined || isC2WithLab)
                 ? ['manage', 'bolt-ons']
                 : isC2only
                     ? ['manage']
@@ -2310,7 +2331,10 @@ APP.computeOperationsVisible = function (active) {
     const type = (active.deployment_type || '').toLowerCase();
     const isC2only   = type.startsWith('c2-');
     const isCombined = type.startsWith('combined-');
-    return isC2only || isCombined;
+    // 2026-05-22 — demo mode exposes Operations so beacons/terminal/payloads
+    // can be showcased without a real C2 server provisioned.
+    const isDemo = type === 'demo';
+    return isC2only || isCombined || isDemo;
 };
 
 /**
@@ -3025,6 +3049,16 @@ APP._runSubPillInit = function (parentTabName, subPillName) {
             if (APP.activeDeployment.isAll() && APP.payloads?.renderFleet) {
                 APP.payloads.renderFleet();
             }
+        } else if (subPillName === 'topology') {
+            // 2026-05-23 — top-level Topology sub-pill. Ensure BEACON.init
+            // has run (so cachedBeacons is populated) then paint the tree
+            // onto the full-page canvas.
+            APP._syncSubPillSelectorToActive('topology');
+            if (typeof BEACON !== 'undefined') {
+                Promise.resolve(BEACON.init ? BEACON.init() : null)
+                    .then(() => BEACON.renderTopologyPane && BEACON.renderTopologyPane())
+                    .catch(() => BEACON.renderTopologyPane && BEACON.renderTopologyPane());
+            }
         }
     }
 };
@@ -3690,18 +3724,22 @@ APP.closeArchitectureModal = function () {
 //   saveAndApply()→ POST /api/config, then transition Configure into edit mode
 
 APP.journey = (function () {
-    const FAMILY_LABEL = { c2: 'Red team C2', goad: 'Training lab', combined: 'Combined' };
+    // 2026-05-23 — operator-facing labels per directive: surface the
+    // internet-exposure distinction. External C2 = public-facing infra;
+    // Private Lab = self-contained CS+GOAD with no internet exposure;
+    // Combined = both, VPC-peered.
+    const FAMILY_LABEL = { c2: 'External C2', goad: 'Private Lab', combined: 'Combined' };
     const FAMILY_TYPES = {
         c2: ['c2-adhoc', 'c2-purple', 'c2-full'],
         goad: ['goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha'],
         combined: ['combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full'],
     };
+    // 2026-05-23 — operator directive: deploys are locked to eu-central-1.
+    // The wizard surfaces this as a single non-selectable region; no other
+    // regions are valid for NEW infra. (CloudFront ACM is the lone exception
+    // — provisioned in us-east-1 only by the domain_fronting module.)
     const REGION_LIST = [
         ['eu-central-1', 'Frankfurt'],
-        ['eu-west-1', 'Ireland'],
-        ['eu-west-2', 'London'],
-        ['us-east-1', 'N. Virginia'],
-        ['us-west-2', 'Oregon'],
     ];
     const STEP_LABELS = ['Family', 'Type', 'Identity', 'Network'];
     const ENV_OPTIONS = [
@@ -4497,6 +4535,26 @@ APP.journey = (function () {
 // Navigates to Deployments > Configure, blanks the form, pre-fills a sensible
 // project_name default, focuses + selects the project_name input, and clears
 // the active deployment in the global picker (form is no longer tied to one).
+
+/**
+ * 2026-05-22 — Dashboard CTA: enter demo mode. Selects the synthetic
+ * `demo` deployment (served by /api/deploy/active) and navigates to the
+ * Manage sub-pill so the operator immediately sees the canned fleet.
+ *
+ * Idempotent — selecting demo when already on demo just re-navigates.
+ */
+APP.startDemoMode = function () {
+    if (!APP.activeDeployment || typeof APP.activeDeployment.set !== 'function') return;
+    APP.activeDeployment.set('demo');
+    if (typeof APP._setActiveDeploymentType === 'function') {
+        APP._setActiveDeploymentType();
+    }
+    // Land on Manage so the canned fleet is immediately visible. The
+    // operator can switch to Bolt-ons / Operations from the sub-pill nav.
+    if (typeof APP.navigateTo === 'function') {
+        APP.navigateTo('deployments-tab', 'manage');
+    }
+};
 
 APP.startNewDeployment = function () {
     // 2026-05-21 — delegate to the canonical draft-flow entry point so the
@@ -5802,6 +5860,27 @@ if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function'
             console.warn('Dashboard widget refresh failed on activeDeployment change:', e);
         }
     });
+    // 2026-05-23 — Mirror the active deployment into the topbar combobox
+    // trigger text. Previously the text was only set during the full
+    // _refreshGlobalDeployments() rebuild; programmatic changes (Demo CTA,
+    // bolton dispatch return paths, draft → existing flips) left the
+    // trigger stuck on its last-rendered value (commonly "Pick a deployment").
+    APP.activeDeployment.subscribe(() => {
+        try {
+            const valueEl = document.getElementById('global-deploy-value');
+            if (!valueEl) return;
+            const ad = APP.activeDeployment;
+            if (ad.isDraft && ad.isDraft()) {
+                valueEl.textContent = ad.displayName(ad.DRAFT_SENTINEL);
+            } else if (ad.isAll && ad.isAll()) {
+                valueEl.textContent = 'All deployments';
+            } else if (ad.current) {
+                valueEl.textContent = ad.current;
+            } else {
+                valueEl.textContent = 'Pick a deployment';
+            }
+        } catch (_) { /* noop — topbar may not be mounted yet */ }
+    });
 }
 
 function refreshElasticRulesCard() {
@@ -6291,6 +6370,24 @@ const BEACON = {
                 select.appendChild(opt);
             });
 
+            // 2026-05-23 — If the dashboard's active deployment matches one
+            // of the loaded deployments AND that one has CS REST enabled
+            // (demo always does), auto-select it directly without the
+            // tunnel-probe round-trip. This is what makes the Operations
+            // sub-pills "just work" in demo mode — _tryAutoConnect's
+            // /api/beacon/health probe was returning disconnected (no real
+            // tunnel) and bailing before showState('main') could fire.
+            const activeName = (APP && APP.activeDeployment && APP.activeDeployment.current) || '';
+            const activeIdx = this.deployments.findIndex(d =>
+                (d._filename || d.project_name) === activeName
+                && d.output?.cs_connection_info?.value?.rest_api_enabled
+            );
+            if (activeIdx >= 0) {
+                select.value = String(activeIdx);
+                this.onDeploymentSelected();
+                this.connect();
+                return;
+            }
             // Auto-select if only one deployment
             if (this.deployments.length === 1) {
                 select.value = '0';
@@ -6451,7 +6548,14 @@ const BEACON = {
 
     async checkHealth() {
         try {
-            const resp = await fetch('/api/beacon/health');
+            // 2026-05-23 — thread the active project so /api/beacon/health
+            // can return "connected" for the demo deployment without a
+            // real CS REST API tunnel.
+            const active = APP && APP.activeDeployment && APP.activeDeployment.current;
+            const qs = active && active !== '__all__' && active !== '__draft__'
+                ? `?project=${encodeURIComponent(active)}`
+                : '';
+            const resp = await fetch(`/api/beacon/health${qs}`);
             const data = await resp.json();
             this.updateConnectionStatus(data.status, data.error, data.detail);
             return data;
@@ -6566,7 +6670,13 @@ const BEACON = {
 
     async refreshBeacons() {
         try {
-            const resp = await fetch('/api/beacon/list');
+            // 2026-05-22 — pass the active project so the demo deployment
+            // can be served from canned data instead of hitting CS REST.
+            const active = APP && APP.activeDeployment && APP.activeDeployment.current;
+            const qs = active && active !== '__all__' && active !== '__draft__'
+                ? `?project=${encodeURIComponent(active)}`
+                : '';
+            const resp = await fetch(`/api/beacon/list${qs}`);
             const data = await resp.json();
             if (!data.success) {
                 this.checkHealth();
@@ -10181,10 +10291,41 @@ const BEACON = {
 
     // ── Network Graph Visualization ─────────────────────────────────
 
-    renderGraph() {
-        const canvas = document.getElementById('beacon-graph-canvas');
-        const container = document.getElementById('graph-container');
+    /**
+     * 2026-05-23 — Render the beacon parent/child callback tree onto a
+     * canvas. Defaults target the beacon-detail Graph tab; the new
+     * full-page Topology sub-pill calls `renderTopologyPane()` which
+     * forwards different DOM IDs.
+     */
+    renderGraph(canvasId, containerId) {
+        canvasId = canvasId || 'beacon-graph-canvas';
+        containerId = containerId || 'graph-container';
+        const canvas = document.getElementById(canvasId);
+        const container = document.getElementById(containerId);
         if (!canvas || !container) return;
+
+        // 2026-05-23 — defer to next frame so layout flushes after the
+        // panel becomes visible. Previously the container returned 0×0
+        // here and the canvas was sized to nothing → blank box.
+        const rect0 = container.getBoundingClientRect();
+        if (rect0.width === 0 || rect0.height === 0) {
+            requestAnimationFrame(() => this.renderGraph(canvasId, containerId));
+            return;
+        }
+        // Set up a one-time ResizeObserver per container so the canvas
+        // re-paints when its panel toggles or the viewport resizes.
+        this._graphResizeBound = this._graphResizeBound || {};
+        if (!this._graphResizeBound[containerId]) {
+            this._graphResizeBound[containerId] = true;
+            try {
+                const ro = new ResizeObserver(() => {
+                    if (getComputedStyle(container).display !== 'none' && container.offsetParent !== null) {
+                        this.renderGraph(canvasId, containerId);
+                    }
+                });
+                ro.observe(container);
+            } catch (_) { /* ResizeObserver unavailable — skip */ }
+        }
 
         const ctx = canvas.getContext('2d');
         const dpr = window.devicePixelRatio || 1;
@@ -10358,9 +10499,11 @@ const BEACON = {
 
         ctx.restore();
 
-        // Click handler
-        if (!this._graphClickBound) {
-            this._graphClickBound = true;
+        // Click handler — bind once per canvas (so both the detail-tab
+        // canvas and the topology-pane canvas get their own listener).
+        this._graphClickBound = this._graphClickBound || {};
+        if (!this._graphClickBound[canvasId]) {
+            this._graphClickBound[canvasId] = true;
             canvas.addEventListener('click', (e) => {
                 const rect = canvas.getBoundingClientRect();
                 const mx = e.clientX - rect.left;
@@ -10370,8 +10513,566 @@ const BEACON = {
                 );
                 if (hit) {
                     self.selectBeacon(hit.bid, hit.label);
-                    self.renderGraph();
+                    self.renderGraph(canvasId, containerId);
                 }
+            });
+        }
+    },
+
+    /**
+     * 2026-05-23 — Full-page Operations → Topology renderer.
+     *
+     * Differences vs the (legacy) beacon-detail Graph tab:
+     *   • Team Server is the synthetic hub — every beacon branches from it,
+     *     even when the beacon has a parent pivot (parent relay rendered
+     *     as a secondary dotted edge so the operator still sees the chain).
+     *   • Nodes are DRAGGABLE — mousedown + drag updates the position;
+     *     positions are cached in `this._topoPositions` keyed by bid so
+     *     a refresh doesn't fight the operator's layout.
+     *   • Click (no drag) opens the side info panel with metadata + a
+     *     real "Interact" CTA that opens the beacon detail drawer.
+     *   • Labels render under every node (computer + user) so it's
+     *     readable even before clicking.
+     */
+    _topoPositions: {},
+    _topoSelectedBid: null,
+    _topoWired: false,
+
+    renderTopologyPane() {
+        const ensure = () => {
+            this._renderTopologyCanvas();
+            this._wireTopologyInteractions();
+            this._wireTopologyButtons();
+        };
+        if (!this.cachedBeacons || !this.cachedBeacons.length) {
+            if (typeof this.refreshBeacons === 'function') {
+                this.refreshBeacons().then(ensure).catch(ensure);
+                return;
+            }
+        }
+        ensure();
+    },
+
+    _wireTopologyButtons() {
+        const refreshBtn = document.getElementById('topology-refresh-btn');
+        if (refreshBtn && !refreshBtn._wired) {
+            refreshBtn._wired = true;
+            refreshBtn.addEventListener('click', () => {
+                if (typeof this.refreshBeacons === 'function') {
+                    this.refreshBeacons().then(() => this._renderTopologyCanvas());
+                } else {
+                    this._renderTopologyCanvas();
+                }
+            });
+        }
+        const resetBtn = document.getElementById('topology-reset-btn');
+        if (resetBtn && !resetBtn._wired) {
+            resetBtn._wired = true;
+            resetBtn.addEventListener('click', () => {
+                this._topoPositions = {};
+                this._renderTopologyCanvas();
+            });
+        }
+        // 2026-05-23 — View toggle (New inline vs Old full-screen).
+        // "Old" opens the legacy `const TOPOLOGY` overlay defined later
+        // in this file (around line 27586). The TOPOLOGY object lives in
+        // script scope (not on window), so we reference it directly.
+        document.querySelectorAll('[data-topology-view]').forEach((btn) => {
+            if (btn._wired) return;
+            btn._wired = true;
+            btn.addEventListener('click', () => {
+                const mode = btn.dataset.topologyView;
+                document.querySelectorAll('[data-topology-view]').forEach((b) => {
+                    b.classList.toggle('is-active', b.dataset.topologyView === mode);
+                });
+                if (mode === 'old') {
+                    try {
+                        const project = (window.APP && window.APP.activeDeployment
+                            && window.APP.activeDeployment.current) || '';
+                        if (typeof TOPOLOGY !== 'undefined' && TOPOLOGY.show) {
+                            TOPOLOGY.show(project || 'demo');
+                        }
+                    } catch (e) { console.warn('[topology] full-screen open failed:', e); }
+                    // Flip the toggle back to "new" after the overlay opens so
+                    // when the operator closes it they're back on the inline
+                    // view by default.
+                    setTimeout(() => {
+                        document.querySelectorAll('[data-topology-view]').forEach((b) => {
+                            b.classList.toggle('is-active', b.dataset.topologyView === 'new');
+                        });
+                    }, 250);
+                }
+                // "new" is the default — already rendered; nothing to do.
+            });
+        });
+    },
+
+    /**
+     * Compute (or read cached) hub-and-spoke node positions, then paint
+     * onto the topology canvas. Pure render — no event wiring (that's
+     * one-time in _wireTopologyInteractions).
+     */
+    /**
+     * 2026-05-23 — Pull infrastructure metadata (redirector IPs, team
+     * server identity) from the active deployment's outputs so the
+     * topology can render them as real nodes between the hub and the
+     * beacons. Falls back to a sensible single-redirector default when
+     * the deployment doesn't expose any (e.g. early-Phase demos).
+     */
+    _topoInfra() {
+        const ad = window.APP && window.APP.activeDeployment;
+        const project = ad && ad.current;
+        // Find the deployment record in the global cache.
+        const list = (window._globalHeaderDeployments || []);
+        const dep = list.find(d => (d._filename || d.project_name) === project)
+                 || list[0] || {};
+        const out = dep.output && typeof dep.output === 'object' ? dep.output : {};
+        const tsIps = ((out.c2_team_server_private_ips || {}).value)
+                    || (out.c2_team_server_private_ips || []);
+        const redirIp = ((out.redirector_public_ip || {}).value)
+                      || out.redirector_public_ip || '';
+        return {
+            teamServerIp: Array.isArray(tsIps) && tsIps.length ? tsIps[0]
+                       : (typeof tsIps === 'string' ? tsIps : '10.0.10.20'),
+            redirectorIp: redirIp || '203.0.113.50',
+        };
+    },
+
+    _renderTopologyCanvas() {
+        const canvas = document.getElementById('topology-canvas');
+        const container = document.getElementById('topology-canvas-wrap');
+        if (!canvas || !container) return;
+        const rect = container.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) {
+            requestAnimationFrame(() => this._renderTopologyCanvas());
+            return;
+        }
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const W = rect.width, H = rect.height;
+
+        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--bg-terminal').trim() || '#0f1117';
+        ctx.fillRect(0, 0, W, H);
+
+        const beacons = this.cachedBeacons || [];
+        if (!beacons.length) {
+            ctx.fillStyle = '#7A849E';
+            ctx.font = '13px -apple-system, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('No beacons to display — connect to a deployment with active beacons.', W / 2, H / 2);
+            this._topoNodeRects = [];
+            return;
+        }
+
+        const infra = this._topoInfra();
+
+        // ── Layout — vertical 3-tier with hub LEFT, redirector MIDDLE,
+        // beacons RIGHT (or a circular tier if dragged). Hub + redirector
+        // sit on the same horizontal centreline. Beacons spread vertically
+        // on the right. HTTPS beacons route through the redirector; SMB
+        // pivots draw a peer-to-peer link to their parent beacon.
+        const hubDefault = { x: W * 0.18, y: H * 0.5 };
+        const redirDefault = { x: W * 0.42, y: H * 0.5 };
+        const hub = this._topoPositions['__hub__'] || hubDefault;
+        const redir = this._topoPositions['__redir__'] || redirDefault;
+
+        // Split beacons into "HTTPS to redirector" vs "SMB to parent beacon".
+        // SMB pivots originate from their pbid (or fall back to redirector
+        // if pbid is missing in the cache).
+        const isPivot = (b) => b.listener && /smb|tcp/i.test(b.listener);
+
+        const beaconAreaX0 = W * 0.62;
+        const beaconAreaX1 = W * 0.95;
+        const beaconAreaY0 = H * 0.10;
+        const beaconAreaY1 = H * 0.90;
+        const nodeW = 170, nodeH = 56;
+
+        // Auto-layout: stack beacons vertically, spacing evenly.
+        const ringNodes = beacons.map((b, i) => {
+            const cached = this._topoPositions[b.bid];
+            if (cached) return { bid: b.bid, x: cached.x, y: cached.y };
+            const t = beacons.length > 1 ? i / (beacons.length - 1) : 0.5;
+            const x = (beaconAreaX0 + beaconAreaX1) / 2;
+            const y = beaconAreaY0 + t * (beaconAreaY1 - beaconAreaY0);
+            return { bid: b.bid, x, y };
+        });
+        const byBid = {};
+        ringNodes.forEach(n => { byBid[n.bid] = n; });
+
+        // ── Edges ─────────────────────────────────────────────────────
+        // 1. hub ↔ redirector (HTTPS tunnel — solid green)
+        ctx.beginPath();
+        ctx.moveTo(hub.x, hub.y);
+        ctx.lineTo(redir.x, redir.y);
+        ctx.strokeStyle = '#7ECF8C';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.stroke();
+        ctx.fillStyle = '#7ECF8C';
+        ctx.font = '10px var(--font-family-mono, monospace)';
+        ctx.textAlign = 'center';
+        ctx.fillText('HTTPS 443', (hub.x + redir.x) / 2, (hub.y + redir.y) / 2 - 6);
+
+        // 2. HTTPS beacons → redirector (solid grey, labelled "demo-https-cdn")
+        beacons.forEach((b) => {
+            const node = byBid[b.bid];
+            if (!node || isPivot(b)) return;
+            ctx.beginPath();
+            ctx.moveTo(redir.x, redir.y);
+            ctx.lineTo(node.x, node.y);
+            ctx.strokeStyle = '#7A849E';
+            ctx.lineWidth = 1.4;
+            ctx.setLineDash([]);
+            ctx.stroke();
+            const lbl = b.listener || '';
+            if (lbl) {
+                ctx.fillStyle = '#7A849E';
+                ctx.font = '10px var(--font-family-mono, monospace)';
+                ctx.textAlign = 'center';
+                ctx.fillText(lbl, (redir.x + node.x) / 2, (redir.y + node.y) / 2 - 4);
+            }
+        });
+
+        // 3. SMB pivot beacons → parent beacon (dashed blue). Falls back
+        //    to the redirector if the parent isn't in the cache.
+        beacons.forEach((b) => {
+            const node = byBid[b.bid];
+            if (!node || !isPivot(b)) return;
+            const parent = (b.pbid && byBid[b.pbid]) || redir;
+            ctx.beginPath();
+            ctx.moveTo(parent.x, parent.y);
+            ctx.lineTo(node.x, node.y);
+            ctx.strokeStyle = '#82BBE8';
+            ctx.setLineDash([6, 4]);
+            ctx.lineWidth = 1.4;
+            ctx.stroke();
+            ctx.setLineDash([]);
+            const lbl = b.pivotHint
+                ? String(b.pivotHint).replace(/^\d+,\s*/, '')
+                : (b.listener || '');
+            if (lbl) {
+                ctx.fillStyle = '#82BBE8';
+                ctx.font = '10px var(--font-family-mono, monospace)';
+                ctx.textAlign = 'center';
+                ctx.fillText(lbl, (parent.x + node.x) / 2, (parent.y + node.y) / 2 - 4);
+            }
+        });
+
+        // 4. Secondary parent-relay (dotted faint) — surfaces HTTPS beacon
+        //    relationships that aren't load-bearing for the topology layout
+        //    but are interesting for tracing the operator's pivot path.
+        ctx.save();
+        ctx.setLineDash([2, 5]);
+        ctx.strokeStyle = 'rgba(122, 132, 158, 0.4)';
+        ctx.lineWidth = 1;
+        beacons.forEach((b) => {
+            if (!b.pbid || isPivot(b)) return;
+            const parent = byBid[b.pbid];
+            const child = byBid[b.bid];
+            if (!parent || !child) return;
+            ctx.beginPath();
+            ctx.moveTo(parent.x, parent.y);
+            ctx.lineTo(child.x, child.y);
+            ctx.stroke();
+        });
+        ctx.restore();
+
+        // ── Draw the hub (team server) ────────────────────────────────
+        const hubR = 40;
+        ctx.beginPath();
+        ctx.arc(hub.x, hub.y, hubR, 0, Math.PI * 2);
+        ctx.fillStyle = '#1c2435';
+        ctx.fill();
+        ctx.strokeStyle = '#7ECF8C';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        ctx.fillStyle = '#EEF0F6';
+        ctx.font = 'bold 11px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('TEAM SERVER', hub.x, hub.y - 4);
+        ctx.fillStyle = '#7ECF8C';
+        ctx.font = '9.5px var(--font-family-mono, monospace)';
+        ctx.fillText('cobalt-strike', hub.x, hub.y + 8);
+        ctx.fillStyle = '#7A849E';
+        ctx.font = '9px var(--font-family-mono, monospace)';
+        ctx.fillText(infra.teamServerIp, hub.x, hub.y + 22);
+
+        // ── Draw the redirector ───────────────────────────────────────
+        const redirW = 110, redirH = 50;
+        ctx.fillStyle = '#1c2435';
+        ctx.strokeStyle = '#82BBE8';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.roundRect(redir.x - redirW / 2, redir.y - redirH / 2, redirW, redirH, 8);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#EEF0F6';
+        ctx.font = 'bold 11px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('REDIRECTOR', redir.x, redir.y - 4);
+        ctx.fillStyle = '#82BBE8';
+        ctx.font = '9.5px var(--font-family-mono, monospace)';
+        ctx.fillText('nginx · CDN', redir.x, redir.y + 8);
+        ctx.fillStyle = '#7A849E';
+        ctx.font = '9px var(--font-family-mono, monospace)';
+        ctx.fillText(infra.redirectorIp, redir.x, redir.y + 22);
+
+        // ── Draw the beacon nodes ─────────────────────────────────────
+        const healthColors = { alive: '#7ECF8C', stale: '#F0CA4A', dead: '#F08A84' };
+        const nodeRects = [];
+        beacons.forEach((b) => {
+            const n = byBid[b.bid];
+            if (!n) return;
+            const elapsedMs = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
+            const health = this.getElapsedClass(elapsedMs, b.sleep, b.alive);
+            const color = healthColors[health] || healthColors.alive;
+            const isSelected = b.bid === this._topoSelectedBid;
+            const x = n.x - nodeW / 2;
+            const y = n.y - nodeH / 2;
+            // Card
+            ctx.fillStyle = isSelected ? '#2a3550' : '#1c2031';
+            ctx.strokeStyle = color;
+            ctx.lineWidth = isSelected ? 2.5 : 1.5;
+            ctx.beginPath();
+            ctx.roundRect(x, y, nodeW, nodeH, 8);
+            ctx.fill();
+            ctx.stroke();
+            // Computer line + admin star
+            ctx.font = 'bold 12px -apple-system, sans-serif';
+            ctx.fillStyle = '#EEF0F6';
+            ctx.textAlign = 'center';
+            const star = b.isAdmin ? '  ★' : '';
+            ctx.fillText((b.computer || '—').substring(0, 18) + star, n.x, n.y - 8);
+            // User line
+            ctx.font = '10.5px var(--font-family-mono, monospace)';
+            ctx.fillStyle = '#B0B8CC';
+            ctx.fillText((b.user || '—').substring(0, 22), n.x, n.y + 6);
+            // IP line
+            ctx.fillStyle = '#7A849E';
+            ctx.font = '10px var(--font-family-mono, monospace)';
+            ctx.fillText(b.internal || '', n.x, n.y + 20);
+
+            // Node label BELOW the card (always visible regardless of state)
+            ctx.fillStyle = '#9aa3bd';
+            ctx.font = '9.5px var(--font-family-mono, monospace)';
+            ctx.fillText(b.bid, n.x, y + nodeH + 12);
+
+            nodeRects.push({ bid: b.bid, x, y, w: nodeW, h: nodeH, cx: n.x, cy: n.y });
+        });
+
+        // Hub + redirector click targets stored too
+        nodeRects.push({ bid: '__hub__',   x: hub.x - hubR,         y: hub.y - hubR,         w: hubR * 2,    h: hubR * 2,    cx: hub.x,   cy: hub.y,   isHub: true });
+        nodeRects.push({ bid: '__redir__', x: redir.x - redirW / 2, y: redir.y - redirH / 2, w: redirW,      h: redirH,      cx: redir.x, cy: redir.y, isRedirector: true });
+
+        this._topoNodeRects = nodeRects;
+        this._topoHubPos = hub;
+        this._topoRedirPos = redir;
+        this._topoLastRect = { W, H };
+    },
+
+    /**
+     * One-time wire of mousedown/move/up on the topology canvas for drag
+     * + click. Drag threshold ~4px so a slight wiggle still registers as
+     * a click. Click on a beacon node populates the info panel; click on
+     * empty canvas clears the selection.
+     */
+    _wireTopologyInteractions() {
+        if (this._topoWired) return;
+        const canvas = document.getElementById('topology-canvas');
+        const container = document.getElementById('topology-canvas-wrap');
+        if (!canvas || !container) return;
+        this._topoWired = true;
+
+        const local = (e) => {
+            const r = canvas.getBoundingClientRect();
+            return { x: e.clientX - r.left, y: e.clientY - r.top };
+        };
+        const hit = (px, py) => {
+            const rects = this._topoNodeRects || [];
+            for (const r of rects) {
+                if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return r;
+            }
+            return null;
+        };
+
+        let drag = null;
+        canvas.addEventListener('mousedown', (e) => {
+            const p = local(e);
+            const target = hit(p.x, p.y);
+            if (!target) { drag = null; return; }
+            drag = { bid: target.bid, startX: p.x, startY: p.y, dx: 0, dy: 0, moved: 0 };
+            container.classList.add('is-dragging');
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!drag) return;
+            const p = local(e);
+            drag.dx = p.x - drag.startX;
+            drag.dy = p.y - drag.startY;
+            drag.moved = Math.hypot(drag.dx, drag.dy);
+            // Pin the new position so the layout doesn't fight the operator.
+            const prev = this._topoPositions[drag.bid] || (
+                drag.bid === '__hub__' ? this._topoHubPos : null
+            );
+            if (prev) {
+                this._topoPositions[drag.bid] = { x: prev.x + drag.dx, y: prev.y + drag.dy };
+            } else {
+                // No previous — use cursor as new pin point.
+                this._topoPositions[drag.bid] = { x: p.x, y: p.y };
+            }
+            // Reset startX/Y so subsequent move deltas are relative.
+            drag.startX = p.x;
+            drag.startY = p.y;
+            this._renderTopologyCanvas();
+        });
+        window.addEventListener('mouseup', (e) => {
+            if (!drag) return;
+            container.classList.remove('is-dragging');
+            // Click (no significant drag) → open info panel.
+            if (drag.moved < 4) {
+                const p = local(e);
+                const target = hit(p.x, p.y);
+                if (!target) {
+                    this._topoSelectedBid = null;
+                    this._renderTopologyInfo(null);
+                } else if (target.isHub) {
+                    this._topoSelectedBid = null;
+                    this._renderTopologyInfo('__hub__');
+                } else if (target.isRedirector) {
+                    this._topoSelectedBid = null;
+                    this._renderTopologyInfo('__redir__');
+                } else {
+                    this._topoSelectedBid = target.bid;
+                    this._renderTopologyInfo(target.bid);
+                }
+                this._renderTopologyCanvas();
+            }
+            drag = null;
+        });
+
+        // Repaint on container resize.
+        try {
+            new ResizeObserver(() => {
+                if (container.offsetParent !== null) this._renderTopologyCanvas();
+            }).observe(container);
+        } catch (_) { /* no ResizeObserver, fine */ }
+    },
+
+    /**
+     * Populate the side info panel for the given beacon bid. Pass null
+     * to revert to the empty state. Pass '__hub__' for team server info.
+     */
+    _renderTopologyInfo(bid) {
+        const empty = document.getElementById('topology-info-empty');
+        const body = document.getElementById('topology-info-body');
+        if (!empty || !body) return;
+        if (!bid) {
+            empty.hidden = false;
+            body.hidden = true;
+            body.innerHTML = '';
+            return;
+        }
+        const esc = (s) => String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+        if (bid === '__hub__') {
+            const infra = this._topoInfra();
+            empty.hidden = true;
+            body.hidden = false;
+            body.innerHTML = `
+                <div class="topology-pane__info-head">
+                  <span class="topology-pane__info-eyebrow">HUB · TEAM SERVER</span>
+                  <div class="topology-pane__info-title">cobalt-strike teamserver</div>
+                  <div class="topology-pane__info-sub">${esc(this.cachedBeacons.length)} beacon(s) attached</div>
+                </div>
+                <div class="topology-pane__info-grid">
+                  <div class="topology-pane__info-key">Role</div><div class="topology-pane__info-val">primary C2</div>
+                  <div class="topology-pane__info-key">Private IP</div><div class="topology-pane__info-val">${esc(infra.teamServerIp)}</div>
+                  <div class="topology-pane__info-key">Listeners</div><div class="topology-pane__info-val">demo-https-cdn · smb-pivot</div>
+                  <div class="topology-pane__info-key">REST API</div><div class="topology-pane__info-val">connected · port 50050</div>
+                  <div class="topology-pane__info-key">Network</div><div class="topology-pane__info-val">private subnet · no public IP</div>
+                </div>
+            `;
+            return;
+        }
+
+        if (bid === '__redir__') {
+            const infra = this._topoInfra();
+            const httpsCount = (this.cachedBeacons || []).filter(b => !(b.listener && /smb|tcp/i.test(b.listener))).length;
+            empty.hidden = true;
+            body.hidden = false;
+            body.innerHTML = `
+                <div class="topology-pane__info-head">
+                  <span class="topology-pane__info-eyebrow">INFRA · REDIRECTOR</span>
+                  <div class="topology-pane__info-title">nginx · CDN-fronted</div>
+                  <div class="topology-pane__info-sub">${esc(httpsCount)} HTTPS beacon(s) routed</div>
+                </div>
+                <div class="topology-pane__info-grid">
+                  <div class="topology-pane__info-key">Public IP</div><div class="topology-pane__info-val">${esc(infra.redirectorIp)}</div>
+                  <div class="topology-pane__info-key">Listen</div><div class="topology-pane__info-val">443/tcp (HTTPS)</div>
+                  <div class="topology-pane__info-key">Upstream</div><div class="topology-pane__info-val">team server ${esc(infra.teamServerIp)}:443</div>
+                  <div class="topology-pane__info-key">Profile</div><div class="topology-pane__info-val">malleable C2 · demo-https-cdn</div>
+                  <div class="topology-pane__info-key">TLS</div><div class="topology-pane__info-val">Let's Encrypt (auto-renew)</div>
+                </div>
+            `;
+            return;
+        }
+
+        const b = (this.cachedBeacons || []).find(x => x.bid === bid);
+        if (!b) {
+            empty.hidden = false;
+            body.hidden = true;
+            return;
+        }
+        empty.hidden = true;
+        body.hidden = false;
+        const sleepStr = b.sleep ? `${Math.round(b.sleep / 1000)}s` : '—';
+        const parent = b.pbid ? this.cachedBeacons.find(x => x.bid === b.pbid) : null;
+        const parentLine = parent ? `${esc(parent.computer)} (${esc(parent.bid)})` : '<em>direct → team server</em>';
+        const lastSeenMs = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
+        const lastSeen = typeof this.formatElapsed === 'function' ? this.formatElapsed(Math.max(0, lastSeenMs)) : `${Math.round(lastSeenMs/1000)}s`;
+        body.innerHTML = `
+            <div class="topology-pane__info-head">
+              <span class="topology-pane__info-eyebrow">BEACON</span>
+              <div class="topology-pane__info-title">${esc(b.computer || '—')}${b.isAdmin ? '  ★' : ''}</div>
+              <div class="topology-pane__info-sub">${esc(b.user || '—')} · ${esc(b.os || '—')}</div>
+            </div>
+            <div class="topology-pane__info-grid">
+              <div class="topology-pane__info-key">BID</div>     <div class="topology-pane__info-val">${esc(b.bid)}</div>
+              <div class="topology-pane__info-key">Internal</div><div class="topology-pane__info-val">${esc(b.internal || '—')}</div>
+              <div class="topology-pane__info-key">PID</div>     <div class="topology-pane__info-val">${esc(b.pid || '—')}</div>
+              <div class="topology-pane__info-key">Process</div> <div class="topology-pane__info-val">${esc(b.process || '—')}</div>
+              <div class="topology-pane__info-key">Listener</div><div class="topology-pane__info-val">${esc(b.listener || '—')}</div>
+              <div class="topology-pane__info-key">Sleep</div>   <div class="topology-pane__info-val">${esc(sleepStr)}${b.jitter ? ' · jitter ' + b.jitter + '%' : ''}</div>
+              <div class="topology-pane__info-key">Last seen</div><div class="topology-pane__info-val">${esc(lastSeen)}</div>
+              <div class="topology-pane__info-key">Parent</div>  <div class="topology-pane__info-val">${parentLine}</div>
+              <div class="topology-pane__info-key">Admin</div>   <div class="topology-pane__info-val">${b.isAdmin ? '★ yes' : 'no'}</div>
+            </div>
+            <div class="topology-pane__info-actions">
+              <button class="btn btn-success beacon-action-btn" type="button" data-topo-interact="${esc(b.bid)}">Interact →</button>
+              <button class="btn btn-secondary beacon-action-btn" type="button" data-topo-deselect>Clear</button>
+            </div>
+        `;
+        // Wire action buttons (idempotent — re-fired each render but the
+        // inner buttons are new DOM nodes so we always re-attach).
+        const interactBtn = body.querySelector('[data-topo-interact]');
+        if (interactBtn) {
+            interactBtn.addEventListener('click', () => {
+                if (typeof this.selectBeacon === 'function') {
+                    this.selectBeacon(b.bid, `${b.user}@${b.computer}`);
+                }
+            });
+        }
+        const clearBtn = body.querySelector('[data-topo-deselect]');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this._topoSelectedBid = null;
+                this._renderTopologyInfo(null);
+                this._renderTopologyCanvas();
             });
         }
     },
@@ -12468,7 +13169,7 @@ APP.configureV2 = (function () {
             // Repaint the chip row labels.
             const famEl = $('#cfg-identity-confirmed-family');
             const typeEl = $('#cfg-identity-confirmed-type');
-            const FAMILY_LABEL = { c2: 'C2', goad: 'GOAD', combined: 'Combined' };
+            const FAMILY_LABEL = { c2: 'External C2', goad: 'Private Lab', combined: 'Combined' };
             if (famEl) famEl.textContent = FAMILY_LABEL[state.family] || state.family;
             if (typeEl) typeEl.textContent = state.type;
         }
@@ -17960,7 +18661,9 @@ function buildPurgeResultContent(status, trackedProject, outcome) {
  */
 async function appendInstanceStateSummary(containerSelector) {
     try {
-        const response = await fetch(`${API_BASE}/deploy/instance-status`);
+        const activeProject = APP.activeDeployment?.effectiveProject?.() || '';
+        const qs = activeProject ? `?project=${encodeURIComponent(activeProject)}` : '';
+        const response = await fetch(`${API_BASE}/deploy/instance-status${qs}`);
         const data = await response.json();
 
         if (!data.success || !data.instances || data.instances.length === 0) return;
@@ -20867,8 +21570,11 @@ let _suppressSectionToasts = false;
  */
 async function refreshAll({ silent = false } = {}) {
     const lastUpdatedSpan = document.getElementById('deployments-last-updated');
-    if (lastUpdatedSpan && !silent) {
-        lastUpdatedSpan.textContent = 'Refreshing all sections...';
+    // 2026-05-23 — Suppress the inline "Refreshing all sections..." text so
+    // it can't sit next to a stale LIVE pill in the eyebrow. The Refresh
+    // button below (with its own "Refreshing..." label) is the affordance.
+    if (lastUpdatedSpan && !silent && !lastUpdatedSpan.textContent.startsWith('Last updated:')) {
+        lastUpdatedSpan.textContent = '';
     }
 
     const refreshBtn = document.getElementById('refresh-all-btn');
@@ -20925,10 +21631,14 @@ async function refreshDeployments() {
     const overviewDiv = document.getElementById('deployments-overview');
     const lastUpdatedSpan = document.getElementById('deployments-last-updated');
     const noDeploymentDiv = document.getElementById('no-deployment-message');
-    
-    // Show loading state inline (no flashing box)
-    if (lastUpdatedSpan) {
-        lastUpdatedSpan.textContent = 'Loading...';
+
+    // 2026-05-23 — Don't flash a literal "Loading..." here. The Manage
+    // hero's status pill (IDLE/LIVE/ERROR) is the real progress signal;
+    // a contradictory "Loading..." next to a "LIVE" pill is worse than
+    // briefly stale "Last updated:" text. Empty out the slot so the
+    // first paint after success cleanly reads "Last updated: HH:MM:SS".
+    if (lastUpdatedSpan && !lastUpdatedSpan.textContent.startsWith('Last updated:')) {
+        lastUpdatedSpan.textContent = '';
     }
     
     try {
@@ -21037,7 +21747,9 @@ async function refreshDeployments() {
  */
 async function checkInstanceStates(projectName) {
     try {
-        const response = await fetch(`${API_BASE}/deploy/instance-status`);
+        const p = projectName || APP.activeDeployment?.effectiveProject?.() || '';
+        const qs = p ? `?project=${encodeURIComponent(p)}` : '';
+        const response = await fetch(`${API_BASE}/deploy/instance-status${qs}`);
         const data = await response.json();
 
         if (!data.success || !data.instances || data.instances.length === 0) return;
@@ -27100,10 +27812,17 @@ const TOPOLOGY = {
         } catch { /* ignore — fall back to static labels */ }
 
         // Check if CS REST API is actually connected via the health endpoint
+        // 2026-05-23 — thread the active project so the demo deployment's
+        // /api/beacon/health?project=demo bypass returns "connected" and
+        // the legacy overlay can render the synthetic beacon roster.
         this.beaconStatus = 'not_connected';
         this.beaconData = null;
         try {
-            const healthResp = await fetch('/api/beacon/health');
+            const ap = (window.APP && window.APP.activeDeployment
+                && window.APP.activeDeployment.current) || projectName || '';
+            const qs = ap && ap !== '__all__' && ap !== '__draft__'
+                ? `?project=${encodeURIComponent(ap)}` : '';
+            const healthResp = await fetch(`/api/beacon/health${qs}`);
             const healthJson = await healthResp.json();
             const apiConnected = healthJson.status === 'connected' && healthJson.authenticated;
 
@@ -27143,7 +27862,13 @@ const TOPOLOGY = {
 
             // Get connected server IP to verify it belongs to this deployment
             try {
-                const ipResp = await fetch('/api/beacon/server/ip');
+                // 2026-05-23 — pass project so demo bypass returns the
+                // synthetic teamserver IP and the ownership check passes.
+                const ap2 = (window.APP && window.APP.activeDeployment
+                    && window.APP.activeDeployment.current) || projectName || '';
+                const qs2 = ap2 && ap2 !== '__all__' && ap2 !== '__draft__'
+                    ? `?project=${encodeURIComponent(ap2)}` : '';
+                const ipResp = await fetch(`/api/beacon/server/ip${qs2}`);
                 const ipJson = await ipResp.json();
                 if (ipJson.success && ipJson.data) this._connectedServerIp = ipJson.data;
             } catch { /* ignore */ }
@@ -28487,6 +29212,41 @@ async function loadCleanupResources(forceRefresh = false) {
     if (!list) return;
     const refreshBtn = document.getElementById('cleanup-refresh-btn');
     if (refreshBtn) refreshBtn.setAttribute('data-loading', 'true');
+    // ── 2026-05-28 SAFETY: short-circuit when demo deployment is active.
+    // `/api/deploy/resources/all-projects` issues a live boto3 scan
+    // across the operator's real AWS account regardless of which
+    // deployment is selected. That's misleading in demo mode — the
+    // operator clicked Cleanup expecting to see what the demo would
+    // surface, not their personal AWS detritus. Render a canned
+    // "Demo mode — scan disabled" panel + zero out the tiles so the
+    // surface still reads as "the page works, just nothing to scan".
+    const _active = (window.APP && window.APP.activeDeployment
+        && window.APP.activeDeployment.current) || '';
+    if (_active === 'demo') {
+        const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setText('cleanup-orphan-count', 0);
+        setText('cleanup-eip-count', 0);
+        setText('cleanup-acm-count', 0);
+        setText('cleanup-buckets-count', 0);
+        const refreshedAt = document.getElementById('cleanup-refreshed-at');
+        if (refreshedAt) {
+            refreshedAt.textContent = 'Demo mode';
+            refreshedAt.hidden = false;
+        }
+        list.innerHTML = `
+            <div class="cleanup-v3__placeholder" style="display:flex;flex-direction:column;gap:8px;padding:24px;text-align:center;">
+                <div style="font-family:var(--font-family-mono);font-size:10.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--brand-light);font-weight:600;">DEMO MODE</div>
+                <div style="font-size:14px;font-weight:600;color:var(--text-primary);">AWS orphan scan disabled for demo</div>
+                <div style="font-size:12.5px;color:var(--text-secondary);max-width:520px;margin:0 auto;line-height:1.5;">
+                    Cleanup queries your real AWS account (EIPs, ACM certs, S3 buckets, EBS volumes).
+                    The demo deployment has no real cloud footprint, so this scan is suppressed.
+                    Switch to a real deployment from the top-bar dropdown to scan for orphans.
+                </div>
+            </div>
+        `;
+        if (refreshBtn) refreshBtn.removeAttribute('data-loading');
+        return;
+    }
     if (APP && typeof APP.renderSkeleton === 'function') {
         APP.renderSkeleton('cleanup-resource-list', 'card', 3);
     }
@@ -30386,6 +31146,9 @@ APP.manage._wireActions = function () {
         const action = btn.dataset.manageAction;
         if (action === 'refresh') {
             APP.manage._setOutput('Refreshing...', 'loading');
+            // Invalidate the per-project cache so render() does a real fetch
+            // instead of serving last bundle from cache.
+            APP.manage.invalidate(APP.manage._currentProject());
             try {
                 if (typeof refreshAll === 'function') await refreshAll();
             } catch (err) { /* surfaced via banners */ }
@@ -30746,20 +31509,23 @@ APP.manage._evaluateGoadSection = function (deployType) {
 APP.manage._scopeProjectViews = function (projectName) {
     const tableBody = document.getElementById('resource-table-body');
     const scopeDiv = document.getElementById('resource-scope-info');
-    if (tableBody && typeof window.allResources !== 'undefined' && Array.isArray(window.allResources)) {
-        if (!projectName) {
-            tableBody.innerHTML = `<div class="resource-list-v3__empty">Pick a deployment from the top bar to manage it.</div>`;
-            if (scopeDiv) scopeDiv.innerHTML = '<span class="t-muted">No deployment selected &mdash; full inventory hidden.</span>';
-        } else {
-            const scoped = window.allResources.filter(r => r.project === projectName);
-            if (scoped.length === 0) {
-                tableBody.innerHTML = `<div class="resource-list-v3__empty">No live resources tagged <code>${APP.manage._escape(projectName)}</code>.</div>`;
-            } else if (typeof renderResourceTable === 'function') {
-                renderResourceTable(scoped);
-            }
-            if (scopeDiv) {
-                scopeDiv.innerHTML = `<span class="spec-pill spec-pill--live"><span class="spec-pill__dot" aria-hidden="true"></span>SCOPED</span> &nbsp;Showing resources tagged <strong>${APP.manage._escape(projectName)}</strong>`;
-            }
+    // 2026-05-23 — Empty-state branch unconditionally updates the table
+    // body so the "Pick a deployment" prompt shows even when
+    // window.allResources hasn't been populated yet by a background
+    // fetch. Previously gated on `typeof window.allResources` which left
+    // the table body stale (or empty) for cold-boot empty-state.
+    if (tableBody && !projectName) {
+        tableBody.innerHTML = `<div class="resource-list-v3__empty">Pick a deployment from the top bar to manage it.</div>`;
+        if (scopeDiv) scopeDiv.innerHTML = '<span class="t-muted">No deployment selected &mdash; full inventory hidden.</span>';
+    } else if (tableBody && projectName && typeof window.allResources !== 'undefined' && Array.isArray(window.allResources)) {
+        const scoped = window.allResources.filter(r => r.project === projectName);
+        if (scoped.length === 0) {
+            tableBody.innerHTML = `<div class="resource-list-v3__empty">No live resources tagged <code>${APP.manage._escape(projectName)}</code>.</div>`;
+        } else if (typeof renderResourceTable === 'function') {
+            renderResourceTable(scoped);
+        }
+        if (scopeDiv) {
+            scopeDiv.innerHTML = `<span class="spec-pill spec-pill--live"><span class="spec-pill__dot" aria-hidden="true"></span>SCOPED</span> &nbsp;Showing resources tagged <strong>${APP.manage._escape(projectName)}</strong>`;
         }
     }
 
@@ -30802,15 +31568,49 @@ APP.manage.render = async function () {
         return;
     }
 
+    // 2026-05-23 — Per-project in-memory cache. Re-entering Manage from
+    // another sub-pill used to fire all 6 fetches again and flash
+    // "loading…" on heroType even when nothing had changed. Cache
+    // entries are valid for MANAGE_CACHE_TTL_MS; a stale-hit renders
+    // immediately AND kicks off a background refresh. A miss falls
+    // through to the original skeleton + parallel-fetch path.
+    APP.manage._cache = APP.manage._cache || {};
+    const MANAGE_CACHE_TTL_MS = 60_000;
+    const cached = APP.manage._cache[project];
+    const now = Date.now();
+    const isFresh = cached && (now - cached.ts) < MANAGE_CACHE_TTL_MS;
+
+    view.style.display = 'block';
+    if (heroName) heroName.textContent = project;
+    if (cached) {
+        // Render from cache instantly — no skeleton flash, no "loading…".
+        APP.manage._paintFromBundle(cached.bundle);
+        if (isFresh) {
+            // Truth is fresh enough; no refetch needed.
+            return;
+        }
+        // Stale-while-revalidate: keep what we have, fetch silently behind.
+    } else {
+        // True cold miss — show skeleton + clear stale text. heroType is
+        // intentionally left empty (no flash of "loading…" jargon).
+        if (heroType) heroType.textContent = '';
+        if (heroState) heroState.textContent = '';
+        APP.manage._updateStatusPill('idle');
+        specList.innerHTML = `
+            <div class="manage-skeleton" aria-busy="true" aria-label="Loading deployment data">
+                <div class="manage-skeleton__row"><span class="manage-skeleton__bar manage-skeleton__bar--short"></span><span class="manage-skeleton__bar manage-skeleton__bar--mid"></span></div>
+                <div class="manage-skeleton__row"><span class="manage-skeleton__bar manage-skeleton__bar--short"></span><span class="manage-skeleton__bar manage-skeleton__bar--long"></span></div>
+                <div class="manage-skeleton__row"><span class="manage-skeleton__bar manage-skeleton__bar--short"></span><span class="manage-skeleton__bar manage-skeleton__bar--mid"></span></div>
+                <div class="manage-skeleton__row"><span class="manage-skeleton__bar manage-skeleton__bar--short"></span><span class="manage-skeleton__bar manage-skeleton__bar--long"></span></div>
+                <div class="manage-skeleton__row"><span class="manage-skeleton__bar manage-skeleton__bar--short"></span><span class="manage-skeleton__bar manage-skeleton__bar--mid"></span></div>
+            </div>
+        `;
+    }
+
     // Fire the state-summary probe in the background — render the banner
     // when it resolves. We don't await so the rest of the Manage render
     // is not blocked on a terraform state list.
     APP.manage._probeStateSummary().catch(() => { /* fail-quiet */ });
-
-    view.style.display = 'block';
-    if (heroName) heroName.textContent = project;
-    if (heroState) heroState.textContent = '';
-    if (heroType) heroType.textContent = 'loading…';
 
     const [infraRes, statusRes, costRes, auditEntry, configRes, outputsRes] = await Promise.all([
         fetch(`/api/deploy/infrastructure?project=${encodeURIComponent(project)}`).then(r => r.json()).catch(() => ({ success: false })),
@@ -30823,9 +31623,37 @@ APP.manage.render = async function () {
 
     const hasDeployment = !!(infraRes && infraRes.has_deployment);
     const config = (configRes && configRes.config) || {};
+    const bundle = {
+        project,
+        infraRes: infraRes || { success: false },
+        statusRes: statusRes || { success: false },
+        costRes: costRes || { success: false },
+        auditEntry,
+        configRes: configRes || { success: false },
+        outputsRes: outputsRes || { success: false },
+    };
+    APP.manage._cache[project] = { ts: Date.now(), bundle };
+    APP.manage._paintFromBundle(bundle);
+};
+
+/**
+ * Render the Manage hero + spec-list from a fetched bundle. Pure render,
+ * no I/O. Used by both the cold-fetch path (after Promise.all resolves)
+ * and the cache-hit path (instant re-render on sub-pill re-entry).
+ */
+APP.manage._paintFromBundle = function (bundle) {
+    if (!bundle) return;
+    const project = bundle.project;
+    const heroName = document.getElementById('manage-hero-name');
+    const heroType = document.getElementById('manage-hero-type');
+    const heroState = document.getElementById('manage-hero-state');
+    const specList = document.getElementById('manage-spec-list');
+    if (!specList) return;
+
+    const { infraRes, statusRes, costRes, auditEntry, configRes, outputsRes } = bundle;
+    const hasDeployment = !!(infraRes && infraRes.has_deployment);
+    const config = (configRes && configRes.config) || {};
     const outputs = (outputsRes && outputsRes.success && outputsRes.outputs) ? outputsRes.outputs : {};
-    // deployment_type resolution order: per-project status (most authoritative) →
-    // terraform output → infra deployment_mode → global config (fallback).
     const deployType =
         (statusRes?.status?.deployment_type) ||
         (outputs.deployment_type) ||
@@ -30834,10 +31662,10 @@ APP.manage.render = async function () {
         '';
     const deployConfig = (typeof DEPLOYMENT_CONFIGS !== 'undefined') ? DEPLOYMENT_CONFIGS[deployType] : null;
 
+    if (heroName) heroName.textContent = project;
     if (heroType) heroType.textContent = deployConfig?.title || deployType || '—';
     if (heroState) {
-        if (hasDeployment) heroState.textContent = 'live infrastructure';
-        else heroState.textContent = 'no live infrastructure';
+        heroState.textContent = hasDeployment ? 'live infrastructure' : 'no live infrastructure';
     }
 
     if (statusRes?.status?.deployed) APP.manage._updateStatusPill('live');
@@ -30868,6 +31696,19 @@ APP.manage.render = async function () {
     // Reactive show/hide of the GOAD section + scoped resource / history views.
     APP.manage._evaluateGoadSection(deployType);
     APP.manage._scopeProjectViews(project);
+};
+
+/**
+ * Force a refresh — clears the cache for the current project and re-renders.
+ * Use from the Refresh button hook.
+ */
+APP.manage.invalidate = function (project) {
+    APP.manage._cache = APP.manage._cache || {};
+    if (project) {
+        delete APP.manage._cache[project];
+    } else {
+        APP.manage._cache = {};
+    }
 };
 
 /** Init hook — idempotent. */
@@ -32118,7 +32959,7 @@ APP.bolton = APP.bolton || {
         facts: null,
         catalog: null,           // last /catalog response
         rows: [],                // full row list (with state + category + coverage)
-        filters: { category: 'all', state: 'all', coverage: 'all' },
+        filters: { category: 'all', state: 'all', coverage: 'all', search: '' },
         activeJob: null,
         // Descriptor-driven host filter (task: target-host dropdown filter).
         // selectedDescriptorId is the vuln id the operator last clicked; the
@@ -32140,13 +32981,54 @@ APP.bolton = APP.bolton || {
             this._wireFilters();
             this._wireRefresh();
             this._wireSectionToggles();
+            this._wireEnableDetection();
+            // 2026-05-22 — wire a one-time activeDeployment subscriber so the
+            // bolt-ons pane reacts when the operator picks a different
+            // deployment from the top-bar dropdown. Without this, the host
+            // dropdown + facts + catalog stay pinned to the FIRST deployment
+            // the operator clicked into and a switch leaves the panel
+            // showing stale hosts (ca01/linux01 from a previous deployment).
+            if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function') {
+                APP.activeDeployment.subscribe(() => {
+                    const newLab = this._activeLab();
+                    if (!newLab || newLab === this.state.lab) return;
+                    // Reset all per-deployment state.
+                    this.state.lab = newLab;
+                    this.state.host = null;
+                    this.state.facts = null;
+                    this.state.catalog = null;
+                    this.state.rows = [];
+                    this.state.selectedDescriptorId = null;
+                    this.state.selectedDescriptor = null;
+                    // Hide the host-scoped UI until a host is picked again.
+                    ['bolton-hero', 'bolton-summary', 'bolton-filters', 'bolton-sections'].forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) el.hidden = true;
+                    });
+                    const placeholder = document.getElementById('bolton-empty-state');
+                    if (placeholder) placeholder.hidden = false;
+                    // Re-fetch the host list for the new deployment.
+                    this.loadHosts(newLab);
+                });
+            }
         }
         // Resolve active lab — fall back to currentDeploymentProject.
         // If state.lab was preset by APP.bolton.open(), keep it.
-        const lab = this.state.lab || this._activeLab();
-        if (lab && lab !== this.state.lab) {
-            this.state.lab = lab;
-            this.loadHosts(lab);
+        const activeLab = this._activeLab();
+        // 2026-05-22 — if the cached state.lab differs from the *currently*
+        // active deployment, the subscriber above will have already reset
+        // state. But if init runs cold (first sub-pill activation) and the
+        // operator already picked a deployment, state.lab may be null —
+        // pull it from activeLab.
+        if (activeLab && activeLab !== this.state.lab) {
+            this.state.lab = activeLab;
+            this.state.host = null;
+            this.state.facts = null;
+            this.state.catalog = null;
+            this.state.rows = [];
+            this.state.selectedDescriptorId = null;
+            this.state.selectedDescriptor = null;
+            this.loadHosts(activeLab);
         } else if (this.state.lab) {
             this.loadHosts(this.state.lab);
             // If host was preset (e.g. via APP.bolton.open(lab, host)), select it
@@ -32197,15 +33079,22 @@ APP.bolton = APP.bolton || {
         }
     },
 
-    /** Resolve the active lab id from APP state. */
+    /** Resolve the active lab id from APP state.
+     *
+     * 2026-05-22 — `APP.activeDeployment.get()` doesn't exist on the
+     * current reactive sentinel; the active project lives on
+     * `.current`. The old code silently fell back to `'default'` which
+     * made the host dropdown serve a stale fact-cache. Reading `.current`
+     * here is the canonical source. Filter out the draft/all sentinels.
+     */
     _activeLab() {
         try {
+            if (APP.activeDeployment && APP.activeDeployment.current) {
+                const v = APP.activeDeployment.current;
+                if (v && v !== '__draft__' && v !== '__all__') return v;
+            }
             if (typeof window.currentDeploymentProject === 'string' && window.currentDeploymentProject) {
                 return window.currentDeploymentProject;
-            }
-            if (APP.activeDeployment && typeof APP.activeDeployment.get === 'function') {
-                const v = APP.activeDeployment.get();
-                if (v) return v;
             }
         } catch (_) { /* ignore */ }
         return 'default';
@@ -32217,24 +33106,133 @@ APP.bolton = APP.bolton || {
         sel._boltonWired = true;
         sel.addEventListener('change', () => {
             const host = sel.value;
-            if (!host) return;
+            const picker = document.getElementById('bolton-host-picker');
+            if (!host) {
+                if (picker) picker.classList.remove('is-host-selected');
+                return;
+            }
+            // Compact the picker banner once a host is chosen so the host
+            // hero card below becomes the focal point.
+            if (picker) picker.classList.add('is-host-selected');
             this.selectHost(this.state.lab, host);
         });
     },
 
     _wireFilters() {
-        document.querySelectorAll('#bolton-filters .bt-chip').forEach((chip) => {
-            if (chip._boltonWired) return;
-            chip._boltonWired = true;
-            chip.addEventListener('click', () => {
-                const group = chip.dataset.group;
-                const value = chip.dataset.value;
-                if (!group) return;
-                // Update active class within the same group.
-                document.querySelectorAll(`#bolton-filters .bt-chip[data-group="${group}"]`).forEach(c => {
-                    c.classList.toggle('is-active', c === chip);
-                });
-                this.state.filters[group] = value;
+        // 2026-05-22 — Filter UI rebuilt. Was a 22-chip flat strip across 3
+        // axes; now a search box + 3 dropdowns + an active-filter pill row.
+        // Falls back gracefully if any element is missing (e.g. an older
+        // page snapshot during tests).
+        const wire = (id, group) => {
+            const el = document.getElementById(id);
+            if (!el || el._boltonWired) return;
+            el._boltonWired = true;
+            el.addEventListener('change', () => {
+                this.state.filters[group] = el.value;
+                this._renderFilterPills();
+                this.applyFilter(this.state.filters);
+            });
+        };
+        wire('bolton-filter-category', 'category');
+        wire('bolton-filter-state', 'state');
+        wire('bolton-filter-coverage', 'coverage');
+
+        // Search box — debounced, updates the filter and triggers re-render.
+        const search = document.getElementById('bolton-filter-search');
+        if (search && !search._boltonWired) {
+            search._boltonWired = true;
+            let searchT = null;
+            search.addEventListener('input', () => {
+                clearTimeout(searchT);
+                searchT = setTimeout(() => {
+                    this.state.filters.search = (search.value || '').trim().toLowerCase();
+                    this._renderFilterPills();
+                    this.applyFilter(this.state.filters);
+                }, 150);
+            });
+        }
+
+        // Clear-filters button.
+        const clear = document.getElementById('bolton-filter-clear');
+        if (clear && !clear._boltonWired) {
+            clear._boltonWired = true;
+            clear.addEventListener('click', () => {
+                this._clearAllFilters();
+            });
+        }
+    },
+
+    /** Reset every filter axis + the search field, then re-render. */
+    _clearAllFilters() {
+        this.state.filters = { category: 'all', state: 'all', coverage: 'all', search: '' };
+        const cat = document.getElementById('bolton-filter-category');
+        const st = document.getElementById('bolton-filter-state');
+        const cov = document.getElementById('bolton-filter-coverage');
+        const search = document.getElementById('bolton-filter-search');
+        if (cat) cat.value = 'all';
+        if (st) st.value = 'all';
+        if (cov) cov.value = 'all';
+        if (search) search.value = '';
+        this._renderFilterPills();
+        this.applyFilter(this.state.filters);
+    },
+
+    /** Render the active-filter pill row below the filter bar. */
+    _renderFilterPills() {
+        const wrap = document.getElementById('bolton-filter-pills');
+        const clear = document.getElementById('bolton-filter-clear');
+        if (!wrap) return;
+        const f = this.state.filters || {};
+        const escape = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[c]);
+        const labelFor = {
+            state: { ALREADY_INSTALLED: 'Installed', INSTALLABLE: 'Available',
+                     PATCHED: 'Patched', BLOCKED: 'Blocked' },
+            coverage: { covered: 'Covered', partial: 'Partial', 'no-rule': 'No rule',
+                       'rule-stale': 'Stale rule' },
+        };
+        const pills = [];
+        if (f.category && f.category !== 'all') {
+            pills.push({ group: 'category', value: f.category,
+                         label: `Category · ${escape(f.category)}` });
+        }
+        if (f.state && f.state !== 'all') {
+            pills.push({ group: 'state', value: f.state,
+                         label: `State · ${escape(labelFor.state[f.state] || f.state)}` });
+        }
+        if (f.coverage && f.coverage !== 'all') {
+            pills.push({ group: 'coverage', value: f.coverage,
+                         label: `Detection · ${escape(labelFor.coverage[f.coverage] || f.coverage)}` });
+        }
+        if (f.search) {
+            pills.push({ group: 'search', value: '',
+                         label: `Search · "${escape(f.search)}"` });
+        }
+        if (!pills.length) {
+            wrap.innerHTML = '';
+            if (clear) clear.hidden = true;
+            return;
+        }
+        wrap.innerHTML = pills.map(p =>
+            `<span class="bolton-filter-pill">${p.label}` +
+            `<button type="button" class="bolton-filter-pill__close" data-clear-filter="${p.group}" aria-label="Remove filter">×</button>` +
+            `</span>`
+        ).join('');
+        if (clear) clear.hidden = false;
+        wrap.querySelectorAll('[data-clear-filter]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const group = btn.dataset.clearFilter;
+                if (group === 'search') {
+                    this.state.filters.search = '';
+                    const search = document.getElementById('bolton-filter-search');
+                    if (search) search.value = '';
+                } else {
+                    this.state.filters[group] = 'all';
+                    const sel = document.getElementById(`bolton-filter-${group}`);
+                    if (sel) sel.value = 'all';
+                }
+                this._renderFilterPills();
                 this.applyFilter(this.state.filters);
             });
         });
@@ -32263,6 +33261,273 @@ APP.bolton = APP.bolton || {
         });
     },
 
+    /**
+     * 2026-05-22 — "Enable detection layer" convenience button.
+     *
+     * Fires the 4 infra bolt-on installs in dependency order so the
+     * operator gets full Elastic detection coverage across every test_lab
+     * host with one click:
+     *
+     *   1. bolton.infrastructure.elastic-detection-stack → Linux host
+     *      (the Elasticsearch + Kibana + Fleet Server brain)
+     *   2. bolton.infrastructure.sysmon → every Windows host
+     *      (endpoint sensor — most important signal source)
+     *   3. bolton.infrastructure.winlogbeat-shipper → every Windows host
+     *      (ships Sysmon + native event logs to Elastic)
+     *   4. bolton.infrastructure.filebeat-shipper → Linux host
+     *      (ships syslog + auditd to Elastic)
+     *
+     * Each step queues a job; the button reflects progress as
+     * "<step>/<total>". On demo deployments the bolton install endpoint
+     * short-circuits to a fake job that completes instantly, so the
+     * operator sees the full flow without provisioning anything.
+     */
+    // Detection layer plan — single source of truth, used by both the
+    // dispatch click handler and the state computation that drives the
+    // button label/colour. Kept module-private (assigned inside the IIFE
+    // closure of APP.bolton).
+    _DETECTION_PLAN: [
+        { vuln: 'bolton.infrastructure.elastic-detection-stack',
+          targetRoles: ['standalone', 'linux_member'], label: 'Elastic stack' },
+        { vuln: 'bolton.infrastructure.sysmon',
+          targetRoles: ['domain_controller', 'member_server', 'workstation'], label: 'Sysmon' },
+        { vuln: 'bolton.infrastructure.winlogbeat-shipper',
+          targetRoles: ['domain_controller', 'member_server', 'workstation'], label: 'Winlogbeat' },
+        { vuln: 'bolton.infrastructure.filebeat-shipper',
+          targetRoles: ['standalone', 'linux_member'], label: 'Filebeat' },
+    ],
+
+    // Cache of host_id → installed_boltons[] so _refreshDetectionButton
+    // doesn't fan out N fetches every render.
+    _detectionFactsCache: {},
+
+    /**
+     * Build the canonical (vuln, host) job list given the loaded hosts.
+     * Returns [] when no hosts loaded or no compatible roles.
+     */
+    _detectionJobs() {
+        const hosts = this.state.hosts || [];
+        if (!hosts.length) return [];
+        const jobs = [];
+        this._DETECTION_PLAN.forEach((step) => {
+            hosts
+                .filter((h) => step.targetRoles.includes(this._normalizeRole(h.role)))
+                .forEach((h) => {
+                    jobs.push({
+                        vuln: step.vuln,
+                        host: h.name || h.host_id,
+                        label: `${step.label} on ${h.name || h.host_id}`,
+                    });
+                });
+        });
+        return jobs;
+    },
+
+    /**
+     * Fetch installed_boltons for every host, populate _detectionFactsCache,
+     * then call back into _refreshDetectionButton to repaint. Cheap on demo
+     * (in-memory), cheaper on real backend (a single facts call per host —
+     * 4 hosts in the test_lab). Failures fall through to "none" state.
+     */
+    async _hydrateDetectionFacts() {
+        const lab = this.state.lab;
+        const hosts = this.state.hosts || [];
+        if (!lab || !hosts.length) return;
+        const ids = hosts.map((h) => h.name || h.host_id).filter(Boolean);
+        await Promise.all(ids.map(async (host) => {
+            try {
+                const r = await fetch(
+                    `/api/bolton/labs/${encodeURIComponent(lab)}/hosts/${encodeURIComponent(host)}/facts`
+                );
+                if (!r.ok) return;
+                const body = await r.json();
+                this._detectionFactsCache[host] = body && body.installed_boltons || [];
+            } catch (_) {
+                this._detectionFactsCache[host] = [];
+            }
+        }));
+    },
+
+    /**
+     * Compute current detection-layer coverage from the cached host facts.
+     * Returns {installed, total, state} where state ∈ {'none','partial','full'}.
+     */
+    _computeDetectionCoverage() {
+        const jobs = this._detectionJobs();
+        const total = jobs.length;
+        if (!total) return { installed: 0, total: 0, state: 'none' };
+        let installed = 0;
+        jobs.forEach((j) => {
+            const onHost = this._detectionFactsCache[j.host] || [];
+            if (onHost.includes(j.vuln)) installed += 1;
+        });
+        let state;
+        if (installed === 0) state = 'none';
+        else if (installed >= total) state = 'full';
+        else state = 'partial';
+        return { installed, total, state };
+    },
+
+    /**
+     * Paint the detection-layer button in one of 4 visual states without
+     * touching its DOM structure (just classes + child spans). Idempotent.
+     *
+     *   none      → brand-light pill, "🛡 Enable detection layer"
+     *   partial   → muted pill, "🛡 Detection: N/M installed · Complete?"
+     *   full      → success pill, disabled, "✓ Detection layer enabled · M/M"
+     *   working   → progress fill animates 0→100% over the dispatch loop;
+     *               text-content swap is throttled to step boundaries only
+     *               (no per-char flashing).
+     *
+     * Call this AFTER state.hosts is populated; works without facts (paints
+     * 'none' and silently kicks off _hydrateDetectionFacts to refine).
+     */
+    async _refreshDetectionButton(opts) {
+        const btn = document.getElementById('bolton-enable-detection');
+        if (!btn) return;
+        opts = opts || {};
+        // Ensure the button has the structural children once.
+        if (!btn._detectionScaffolded) {
+            btn._detectionScaffolded = true;
+            btn.innerHTML = `
+                <span class="bolton-detect__progress" aria-hidden="true"></span>
+                <span class="bolton-detect__glyph" aria-hidden="true">🛡</span>
+                <span class="bolton-detect__label">Enable detection layer</span>
+                <span class="bolton-detect__counter" aria-hidden="true"></span>
+            `;
+            btn.classList.add('bolton-detect-btn');
+            btn.classList.remove('spec-edit-btn--save');
+        }
+
+        // Working state is driven by the dispatch click handler, not by
+        // coverage — short-circuit so an in-flight install isn't repainted
+        // mid-progress.
+        if (opts.working) {
+            btn.dataset.detectState = 'working';
+            btn.disabled = true;
+            const pct = Math.max(0, Math.min(100, Math.round((opts.done / opts.total) * 100)));
+            btn.style.setProperty('--detect-progress', pct + '%');
+            btn.querySelector('.bolton-detect__label').textContent = 'Installing detection layer…';
+            const counter = btn.querySelector('.bolton-detect__counter');
+            counter.textContent = `${opts.done} / ${opts.total}`;
+            return;
+        }
+
+        // Compute coverage from cached facts; if cache is empty for this
+        // host set, kick off hydration in the background and paint a
+        // tentative state for now so the button doesn't flash on first paint.
+        const ids = (this.state.hosts || []).map((h) => h.name || h.host_id);
+        const cached = ids.every((id) => this._detectionFactsCache[id] !== undefined);
+        if (!cached && this.state.hosts && this.state.hosts.length) {
+            this._hydrateDetectionFacts().then(() => this._refreshDetectionButton());
+        }
+
+        const { installed, total, state } = this._computeDetectionCoverage();
+        btn.dataset.detectState = state;
+        btn.style.setProperty('--detect-progress', '0%');
+        btn.disabled = state === 'full';
+        const label = btn.querySelector('.bolton-detect__label');
+        const counter = btn.querySelector('.bolton-detect__counter');
+        const glyph = btn.querySelector('.bolton-detect__glyph');
+        if (state === 'full') {
+            glyph.textContent = '✓';
+            label.textContent = 'Detection layer enabled';
+            counter.textContent = total ? `${installed} / ${total}` : '';
+        } else if (state === 'partial') {
+            glyph.textContent = '🛡';
+            label.textContent = 'Detection layer · complete?';
+            counter.textContent = `${installed} / ${total}`;
+        } else {
+            glyph.textContent = '🛡';
+            label.textContent = total
+                ? 'Enable detection layer'
+                : 'Enable detection layer';
+            counter.textContent = total ? `0 / ${total}` : '';
+        }
+    },
+
+    _wireEnableDetection() {
+        const btn = document.getElementById('bolton-enable-detection');
+        if (!btn || btn._boltonWired) return;
+        btn._boltonWired = true;
+        btn.addEventListener('click', async () => {
+            const lab = this.state.lab;
+            if (!lab) {
+                console.warn('[bolton] cannot enable detection: no lab loaded');
+                return;
+            }
+            const jobs = this._detectionJobs();
+            if (!jobs.length) {
+                this._toast('No compatible hosts for the detection layer in this lab.', 'warn');
+                return;
+            }
+            // Skip jobs already installed (idempotent re-clicks shouldn't
+            // re-dispatch a successful install).
+            const pending = jobs.filter((j) =>
+                !(this._detectionFactsCache[j.host] || []).includes(j.vuln)
+            );
+            if (!pending.length) {
+                this._toast('Detection layer is already fully installed.', 'success');
+                return;
+            }
+            const total = pending.length;
+            let done = 0;
+            this._refreshDetectionButton({ working: true, done, total });
+            const failures = [];
+            for (const j of pending) {
+                try {
+                    const r = await fetch(
+                        `/api/bolton/labs/${encodeURIComponent(lab)}/hosts/${encodeURIComponent(j.host)}/install/${encodeURIComponent(j.vuln)}`,
+                        { method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ role_vars: {}, run_probe: false }) },
+                    );
+                    const body = await r.json();
+                    if (!body || body.success === false) {
+                        failures.push(`${j.label}: ${body && body.error || r.status}`);
+                    } else {
+                        // Optimistically update the cache so the progress
+                        // counter + final coverage state are correct without
+                        // waiting for a full re-hydrate.
+                        const arr = this._detectionFactsCache[j.host] || [];
+                        if (!arr.includes(j.vuln)) arr.push(j.vuln);
+                        this._detectionFactsCache[j.host] = arr;
+                    }
+                } catch (e) {
+                    failures.push(`${j.label}: ${String(e)}`);
+                }
+                done += 1;
+                this._refreshDetectionButton({ working: true, done, total });
+            }
+            // Done — refresh facts (truth, not optimistic cache) and repaint.
+            await this._hydrateDetectionFacts();
+            this._refreshDetectionButton();
+            // Refresh the catalog so newly-installed bolt-ons move to the
+            // "Installed" section.
+            if (this.state.host) this.selectHost(lab, this.state.host);
+            if (failures.length) {
+                this._toast(
+                    `Detection layer install: ${total - failures.length}/${total} succeeded. Failures: ${failures.slice(0, 3).join('; ')}`,
+                    'warn',
+                );
+            } else {
+                this._toast(`Detection layer installed across ${total} (vuln, host) pair(s).`, 'success');
+            }
+        });
+    },
+
+    _toast(message, kind) {
+        // Lean on the dashboard's existing toast container if present;
+        // fall back to console for tests.
+        try {
+            if (APP.toast && typeof APP.toast.show === 'function') {
+                APP.toast.show(message, kind || 'info');
+                return;
+            }
+        } catch (_) {}
+        console.log(`[bolton:${kind || 'info'}] ${message}`);
+    },
+
     _wireSectionToggles() {
         document.querySelectorAll('#bolton-sections .bt-section__header').forEach((hdr) => {
             if (hdr._boltonWired) return;
@@ -32283,6 +33548,9 @@ APP.bolton = APP.bolton || {
         const sel = document.getElementById('bolton-host-select');
         if (!sel) return;
         sel.innerHTML = '<option value="">Loading hosts…</option>';
+        // Reset the per-deployment detection facts cache so we don't carry
+        // installed_boltons from a previous lab into the new one.
+        this._detectionFactsCache = {};
         fetch(`/api/bolton/labs/${encodeURIComponent(lab)}/hosts`)
             .then(r => r.json())
             .then(body => {
@@ -32290,6 +33558,9 @@ APP.bolton = APP.bolton || {
                 const hosts = body.hosts || [];
                 this.state.hosts = hosts;
                 this._renderHostOptions();
+                // Paint the detection button now that we know the host roster;
+                // it'll repaint again once facts hydrate from the background.
+                try { this._refreshDetectionButton(); } catch (_) { /* noop */ }
             })
             .catch(err => {
                 console.warn('[bolton] loadHosts failed:', err);
@@ -32397,9 +33668,16 @@ APP.bolton = APP.bolton || {
      * passes the filter (per spec).
      */
     _renderFilterHint(shown, total) {
+        // 2026-05-23 — host picker moved out of the eyebrow corner into
+        // the new `.bolton-host-picker` banner. Insert the hint inside
+        // the picker (so it sits next to the dropdown) and fall back to
+        // the old `.bolton-live__eyebrow-actions` location if the picker
+        // isn't in the DOM yet.
+        const picker = document.getElementById('bolton-host-picker');
         const actions = document.querySelector('.bolton-live__eyebrow-actions');
+        const parent = picker || actions;
         const sel = document.getElementById('bolton-host-select');
-        if (!actions || !sel) return;
+        if (!parent || !sel) return;
         let hint = document.getElementById('bolton-host-filter-hint');
         const desc = this.state.selectedDescriptor;
         const required = desc && desc.targets && Array.isArray(desc.targets.required_roles)
@@ -32416,11 +33694,30 @@ APP.bolton = APP.bolton || {
             hint.id = 'bolton-host-filter-hint';
             hint.className = 'bolton-live__host-filter-hint';
             hint.setAttribute('role', 'status');
-            hint.style.cssText = 'font-size:11.5px;color:var(--text-secondary);margin-bottom:4px;line-height:1.4;';
-            actions.insertBefore(hint, sel);
+            hint.style.cssText = 'font-size:11.5px;color:var(--text-secondary);margin-bottom:4px;line-height:1.4;display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%;';
+            // Place the hint above the select so the operator reads
+            // "what's being filtered" before they touch the dropdown.
+            parent.insertBefore(hint, sel);
         }
         const roleList = required.join(', ');
-        hint.textContent = `Filtered to hosts with role: ${roleList} · ${shown} of ${total} hosts shown`;
+        // 2026-05-22 — surface a Clear-filter affordance so the operator
+        // isn't stuck on a sticky descriptor-driven filter after picking a
+        // role-specific vuln earlier in the session.
+        hint.innerHTML = '';
+        const text = document.createElement('span');
+        text.textContent = `Filtered to hosts with role: ${roleList} · ${shown} of ${total} hosts shown`;
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.textContent = '× Clear filter';
+        clearBtn.className = 'bolton-live__host-filter-clear';
+        clearBtn.style.cssText = 'background:transparent;border:1px solid var(--border);color:var(--text-primary);padding:2px 8px;border-radius:var(--radius-sm);font-size:11px;cursor:pointer;font-family:inherit;';
+        clearBtn.addEventListener('click', () => {
+            this.state.selectedDescriptorId = null;
+            this.state.selectedDescriptor = null;
+            this._renderHostOptions();
+        });
+        hint.appendChild(text);
+        hint.appendChild(clearBtn);
     },
 
     /**
@@ -32428,8 +33725,12 @@ APP.bolton = APP.bolton || {
      * Replaces the dropdown visually when the filter rules every host out.
      */
     _renderEmptyCompat(show, required, allHosts) {
+        // 2026-05-23 — host picker moved to the new banner; fall back to
+        // the old eyebrow-actions container if the banner isn't there.
+        const picker = document.getElementById('bolton-host-picker');
         const actions = document.querySelector('.bolton-live__eyebrow-actions');
-        if (!actions) return;
+        const parent = picker || actions;
+        if (!parent) return;
         let empty = document.getElementById('bolton-host-empty-compat');
         if (!show) {
             if (empty) empty.remove();
@@ -32440,8 +33741,8 @@ APP.bolton = APP.bolton || {
             empty.id = 'bolton-host-empty-compat';
             empty.className = 'bolton-live__host-empty-compat';
             empty.setAttribute('role', 'status');
-            empty.style.cssText = 'padding:10px 12px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-elevated);font-size:12px;color:var(--text-secondary);max-width:420px;line-height:1.45;';
-            actions.appendChild(empty);
+            empty.style.cssText = 'padding:10px 12px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-elevated);font-size:12px;color:var(--text-secondary);max-width:420px;line-height:1.45;width:100%;';
+            parent.appendChild(empty);
         }
         const escapeHtml = (s) => String(s || '').replace(/[&<>"']/g, c => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -32497,6 +33798,402 @@ APP.bolton = APP.bolton || {
             });
     },
 
+    /**
+     * Open the bolt-on detail drawer with three tabs: Install, Walkthrough,
+     * Detections. The drawer is rendered into APP.overlay (so it inherits
+     * the existing scrim + focus management + close-on-Escape). Initial
+     * tab can be 'install' | 'walkthrough' | 'detections'.
+     *
+     * Two parallel fetches: full vuln descriptor (for detections + metadata)
+     * and curriculum-with-progress (only when has_curriculum). Renderer is
+     * idempotent — re-opening the same vuln re-fetches and re-paints.
+     */
+    openDetail(vulnId, initialTab = 'walkthrough') {
+        if (!vulnId) return;
+        // Generic row-action dispatcher passes (vulnId, host) — when the
+        // second arg isn't a known tab string, default to walkthrough.
+        const VALID_TABS = ['install', 'walkthrough', 'detections'];
+        if (!VALID_TABS.includes(initialTab)) initialTab = 'walkthrough';
+        this.state.detailVulnId = vulnId;
+        this.state.detailTab = initialTab;
+        const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[c]);
+        const shellBody = `
+            <div class="bolton-detail" data-vuln-id="${escapeHtml(vulnId)}">
+                <div class="bolton-detail__tabs" role="tablist">
+                    <button type="button" role="tab" data-bolton-detail-tab="install" class="bolton-detail__tab">Install</button>
+                    <button type="button" role="tab" data-bolton-detail-tab="walkthrough" class="bolton-detail__tab">📖 Walkthrough</button>
+                    <button type="button" role="tab" data-bolton-detail-tab="detections" class="bolton-detail__tab">🛡 Detections</button>
+                </div>
+                <div class="bolton-detail__panes">
+                    <div class="bolton-detail__pane" data-bolton-detail-pane="install"><p class="app-overlay__loading">Loading…</p></div>
+                    <div class="bolton-detail__pane" data-bolton-detail-pane="walkthrough"><p class="app-overlay__loading">Loading…</p></div>
+                    <div class="bolton-detail__pane" data-bolton-detail-pane="detections"><p class="app-overlay__loading">Loading…</p></div>
+                </div>
+            </div>`;
+        if (APP.overlay && typeof APP.overlay.open === 'function') {
+            APP.overlay.open('bolton-detail', shellBody, {
+                title: vulnId,
+                eyebrow: 'Bolt-on detail',
+                // 2026-05-22 — wide variant for the curriculum + detections
+                // table; the default 680px clipped long URLs and registry
+                // paths in markdown content.
+                wide: true,
+            });
+        } else {
+            // Fallback: append a minimal takeover so the drawer still works
+            // when overlay scaffolding is absent.
+            let host_el = document.getElementById('bolton-detail-fallback');
+            if (host_el) host_el.remove();
+            host_el = document.createElement('div');
+            host_el.id = 'bolton-detail-fallback';
+            host_el.innerHTML = `
+                <div class="scrim-takeover" data-open="true"></div>
+                <div class="takeover-card bi-card" data-open="true" role="dialog" aria-modal="true">
+                    <div class="bi-card__head">
+                        <div class="bi-card__head-row">
+                            <div>
+                                <div class="bi-card__eyebrow">Bolt-on detail</div>
+                                <h3 class="bi-card__title">${escapeHtml(vulnId)}</h3>
+                            </div>
+                            <button class="bi-card__close" type="button" id="bolton-detail-fb-close" aria-label="Close">✕</button>
+                        </div>
+                    </div>
+                    <div class="bi-card__body">${shellBody}</div>
+                </div>`;
+            document.body.appendChild(host_el);
+            const close = document.getElementById('bolton-detail-fb-close');
+            if (close) close.addEventListener('click', () => host_el.remove());
+        }
+
+        // Defer DOM-dependent wireup until the overlay has actually mounted
+        // its content into the DOM (APP.overlay.open uses a microtask in
+        // some paths; querying immediately can race). One animation-frame
+        // is sufficient on every observed code path.
+        const wireDetail = () => {
+            document.querySelectorAll('.bolton-detail__tab').forEach(btn => {
+                if (btn._boltonDetailWired) return;
+                btn._boltonDetailWired = true;
+                btn.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    const tab = btn.dataset.boltonDetailTab;
+                    this._switchDetailTab(tab);
+                });
+            });
+            this._switchDetailTab(initialTab);
+        };
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(wireDetail);
+        } else {
+            setTimeout(wireDetail, 0);
+        }
+
+        // Kick off both fetches in parallel; render each pane as data lands.
+        const vulnP = fetch(`/api/bolton/vulns/${encodeURIComponent(vulnId)}`)
+            .then(r => r.ok ? r.json() : { success: false });
+        const curriculumP = fetch(`/api/bolton/vulns/${encodeURIComponent(vulnId)}/curriculum`)
+            .then(r => r.ok ? r.json() : { success: false });
+
+        vulnP.then(body => {
+            const vuln = (body && body.vuln) || null;
+            this.state.detailVuln = vuln;
+            this._renderInstallPane(vuln);
+            this._renderDetectionsPane(vuln);
+        }).catch(err => console.warn('[bolton] detail vuln fetch failed:', err));
+        curriculumP.then(body => {
+            if (!body || body.success === false) {
+                this._renderWalkthroughPane(null, null);
+                return;
+            }
+            this.state.detailCurriculum = body.curriculum;
+            this.state.detailProgress = body.progress;
+            this._renderWalkthroughPane(body.curriculum, body.progress);
+        }).catch(err => console.warn('[bolton] detail curriculum fetch failed:', err));
+    },
+
+    _switchDetailTab(tab) {
+        this.state.detailTab = tab;
+        const tabs = document.querySelectorAll('.bolton-detail__tab');
+        const panes = document.querySelectorAll('.bolton-detail__pane');
+        tabs.forEach(t => {
+            t.classList.toggle('is-active', t.dataset.boltonDetailTab === tab);
+            t.setAttribute('aria-selected', t.dataset.boltonDetailTab === tab ? 'true' : 'false');
+        });
+        panes.forEach(p => {
+            p.hidden = (p.dataset.boltonDetailPane !== tab);
+        });
+    },
+
+    _renderInstallPane(vuln) {
+        const pane = document.querySelector('[data-bolton-detail-pane="install"]');
+        if (!pane) return;
+        const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[c]);
+        if (!vuln) {
+            pane.innerHTML = `<p class="app-overlay__empty">Could not load this vulnerability.</p>`;
+            return;
+        }
+        const m = vuln.mitre || {};
+        const tactic = m.tactic ? `${escapeHtml(m.tactic.id)} · ${escapeHtml(m.tactic.name)}` : '—';
+        const technique = m.technique ? `${escapeHtml(m.technique.id)} · ${escapeHtml(m.technique.name)}` : '—';
+        const sub = m.subtechnique ? `${escapeHtml(m.subtechnique.id)} · ${escapeHtml(m.subtechnique.name)}` : '—';
+        const inst = vuln.install || {};
+        const patch = vuln.patch || {};
+        pane.innerHTML = `
+            <div class="bolton-detail__head">
+                <div class="bolton-detail__eyebrow">${escapeHtml(vuln.category || '')}${vuln.subcategory ? ' · ' + escapeHtml(vuln.subcategory) : ''}</div>
+                <h3 class="bolton-detail__title">${escapeHtml(vuln.name || vuln.id)}</h3>
+                <p class="bolton-detail__desc">${escapeHtml(vuln.description || '')}</p>
+            </div>
+            <dl class="bolton-detail__meta">
+                <dt>MITRE Tactic</dt><dd>${tactic}</dd>
+                <dt>Technique</dt><dd>${technique}</dd>
+                <dt>Sub-technique</dt><dd>${sub}</dd>
+                <dt>Status</dt><dd>${escapeHtml(vuln.status || '')}</dd>
+                <dt>Install ETA</dt><dd>${inst.estimated_time_seconds ? `~${inst.estimated_time_seconds}s` : '—'}</dd>
+                <dt>Patch rollback</dt><dd>${patch.rollback_supported ? 'supported' : 'not supported'}</dd>
+            </dl>
+            <p class="bolton-detail__hint" style="margin-top:12px;color:var(--text-secondary);font-size:12.5px">
+                Use the row actions on the Bolt-ons list (Install / Patch / Uninstall) to dispatch a job —
+                this tab is the read-only descriptor view.
+            </p>`;
+    },
+
+    _renderDetectionsPane(vuln) {
+        const pane = document.querySelector('[data-bolton-detail-pane="detections"]');
+        if (!pane) return;
+        const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[c]);
+        const det = (vuln || {}).detection || {};
+        const rules = det.elastic_rules || [];
+        const signals = det.signal_sources || [];
+        if (!rules.length && !signals.length) {
+            pane.innerHTML = `<p class="app-overlay__empty">No detection coverage declared for this vulnerability.</p>`;
+            return;
+        }
+        const covPill = (cov) => {
+            const c = String(cov || '').toLowerCase();
+            if (c === 'full' || c === 'covered') return 'spec-pill--success';
+            if (c === 'partial' || c === 'indirect') return 'spec-pill--warn';
+            return 'spec-pill--no-detect';
+        };
+        const rows = rules.map(r => `
+            <tr>
+                <td><strong>${escapeHtml(r.rule_name || r.rule_uuid)}</strong>
+                    <div style="color:var(--text-secondary);font-size:11.5px"><code>${escapeHtml(r.rule_uuid)}</code></div>
+                </td>
+                <td><span class="spec-pill ${covPill(r.coverage)}">${escapeHtml(r.coverage)}</span></td>
+                <td>${escapeHtml(r.confidence)}</td>
+                <td>${escapeHtml(r.last_validated)}</td>
+            </tr>`).join('');
+        const sigList = signals.map(s => `<li>${escapeHtml(s)}</li>`).join('');
+        pane.innerHTML = `
+            <div class="bolton-detail__detection">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                    <span class="spec-pill ${covPill(det.coverage_status)}">${escapeHtml(det.coverage_status || 'no-rule')}</span>
+                    <span style="color:var(--text-secondary);font-size:12.5px">${rules.length} Elastic rule${rules.length === 1 ? '' : 's'} mapped</span>
+                </div>
+                <table class="bolton-detail__detection-table" style="width:100%">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left">Rule</th>
+                            <th style="text-align:left">Coverage</th>
+                            <th style="text-align:left">Confidence</th>
+                            <th style="text-align:left">Last validated</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                ${sigList ? `<div style="margin-top:16px">
+                    <h4 style="margin:0 0 6px;font-size:13px">Signal sources</h4>
+                    <ul style="margin:0;padding-left:18px;color:var(--text-secondary);font-size:12.5px">${sigList}</ul>
+                </div>` : ''}
+            </div>`;
+    },
+
+    _renderWalkthroughPane(curriculum, progress) {
+        const pane = document.querySelector('[data-bolton-detail-pane="walkthrough"]');
+        if (!pane) return;
+        const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[c]);
+        if (!curriculum) {
+            pane.innerHTML = `<p class="app-overlay__empty">This vulnerability has no curriculum yet — open the Detections tab or use the Install button on the row to interact with it.</p>`;
+            return;
+        }
+        const completed = new Set((progress && progress.completed_steps) || []);
+        const totalSteps = curriculum.steps.length;
+        const percent = totalSteps ? Math.round((completed.size / totalSteps) * 100) : 0;
+        // Pick the active step: first incomplete, falling back to the first.
+        const activeIndex = curriculum.steps.findIndex(s => !completed.has(s.id));
+        const initialIdx = activeIndex === -1 ? 0 : activeIndex;
+        const stepList = curriculum.steps.map((s, i) => {
+            const done = completed.has(s.id);
+            return `
+                <li class="bolton-walk__step ${done ? 'is-done' : ''}" data-step-index="${i}">
+                    <button type="button" class="bolton-walk__step-btn" data-bolton-walk-step="${escapeHtml(s.id)}">
+                        <span class="bolton-walk__step-check">${done ? '✓' : `${i + 1}`}</span>
+                        <span class="bolton-walk__step-title">${escapeHtml(s.title)}</span>
+                        <span class="bolton-walk__step-time">${s.estimated_minutes}m</span>
+                    </button>
+                </li>`;
+        }).join('');
+        const objectives = (curriculum.learning_objectives || []).map(o => `<li>${escapeHtml(o)}</li>`).join('');
+        const prereqs = (curriculum.prerequisites || []).map(p => `<li>${escapeHtml(p)}</li>`).join('');
+        pane.innerHTML = `
+            <div class="bolton-walk">
+                <header class="bolton-walk__head">
+                    <h3 class="bolton-walk__title">${escapeHtml(curriculum.title)}</h3>
+                    <p class="bolton-walk__summary">${escapeHtml(curriculum.summary)}</p>
+                    <div class="bolton-walk__progress" role="progressbar"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}">
+                        <div class="bolton-walk__progress-bar" style="width:${percent}%"></div>
+                        <span class="bolton-walk__progress-label" data-bolton-walk-progress-label>${completed.size} of ${totalSteps} steps · ${percent}%</span>
+                    </div>
+                </header>
+                <div class="bolton-walk__body">
+                    <aside class="bolton-walk__nav">
+                        ${objectives ? `<div class="bolton-walk__nav-block">
+                            <h4>Learning objectives</h4>
+                            <ul>${objectives}</ul>
+                        </div>` : ''}
+                        ${prereqs ? `<div class="bolton-walk__nav-block">
+                            <h4>Prerequisites</h4>
+                            <ul>${prereqs}</ul>
+                        </div>` : ''}
+                        <ol class="bolton-walk__steps">${stepList}</ol>
+                    </aside>
+                    <section class="bolton-walk__main" data-bolton-walk-main aria-live="polite"></section>
+                </div>
+            </div>`;
+        // Wire step navigation.
+        pane.querySelectorAll('[data-bolton-walk-step]').forEach(btn => {
+            btn.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                const sid = btn.dataset.boltonWalkStep;
+                this._showWalkStep(sid);
+            });
+        });
+        this._showWalkStep(curriculum.steps[initialIdx].id);
+    },
+
+    _showWalkStep(stepId) {
+        const curriculum = this.state.detailCurriculum;
+        if (!curriculum) return;
+        const step = (curriculum.steps || []).find(s => s.id === stepId);
+        if (!step) return;
+        const main = document.querySelector('[data-bolton-walk-main]');
+        if (!main) return;
+        const completed = new Set(((this.state.detailProgress || {}).completed_steps) || []);
+        const isDone = completed.has(step.id);
+        const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[c]);
+        // Render markdown via marked.js if it's loaded (it is — see index.html).
+        let html = '';
+        if (typeof window.marked === 'object' && typeof window.marked.parse === 'function') {
+            html = window.marked.parse(step.markdown || '');
+        } else if (typeof window.marked === 'function') {
+            html = window.marked(step.markdown || '');
+        } else {
+            // Last-ditch fallback: render as <pre>. Marked is loaded statically;
+            // this path only fires if the CDN is offline.
+            html = `<pre>${escapeHtml(step.markdown || '')}</pre>`;
+        }
+        const assessment = step.assessment;
+        const priorAnswer = ((this.state.detailProgress || {}).assessments || {})[step.id];
+        let assessmentHtml = '';
+        if (assessment) {
+            const options = (assessment.options || []).map((o, i) => {
+                const ans = priorAnswer && priorAnswer.answer_index === i;
+                const cls = ans ? (priorAnswer.correct ? 'is-correct' : 'is-wrong') : '';
+                return `<button type="button" class="bolton-walk__option ${cls}" data-bolton-walk-answer="${i}">
+                    <span class="bolton-walk__option-marker">${String.fromCharCode(65 + i)}</span>
+                    <span class="bolton-walk__option-text">${escapeHtml(o)}</span>
+                </button>`;
+            }).join('');
+            const feedback = priorAnswer
+                ? `<div class="bolton-walk__feedback ${priorAnswer.correct ? 'is-correct' : 'is-wrong'}" data-bolton-walk-feedback>
+                    <strong>${priorAnswer.correct ? 'Correct.' : 'Not quite.'}</strong>
+                    ${assessment.explanation ? ' ' + escapeHtml(assessment.explanation) : ''}
+                </div>`
+                : `<div class="bolton-walk__feedback" data-bolton-walk-feedback hidden></div>`;
+            assessmentHtml = `
+                <div class="bolton-walk__assessment">
+                    <h4>Quick check</h4>
+                    <p class="bolton-walk__question">${escapeHtml(assessment.question)}</p>
+                    <div class="bolton-walk__options">${options}</div>
+                    ${feedback}
+                </div>`;
+        }
+        main.innerHTML = `
+            <article class="bolton-walk__article">
+                <header class="bolton-walk__article-head">
+                    <h3>${escapeHtml(step.title)}</h3>
+                    <span class="bolton-walk__article-time">${step.estimated_minutes} min</span>
+                </header>
+                <div class="bolton-walk__article-body markdown-content">${html}</div>
+                ${assessmentHtml}
+                <footer class="bolton-walk__article-foot">
+                    <button type="button" class="spec-edit-btn ${isDone ? '' : 'spec-edit-btn--save'}"
+                            data-bolton-walk-toggle data-step-id="${escapeHtml(step.id)}">
+                        ${isDone ? '↺ Mark incomplete' : '✓ Mark step complete'}
+                    </button>
+                </footer>
+            </article>`;
+        // Wire assessment + toggle.
+        if (assessment) {
+            main.querySelectorAll('[data-bolton-walk-answer]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const idx = parseInt(btn.dataset.boltonWalkAnswer, 10);
+                    this._submitWalkAssessment(step.id, idx);
+                });
+            });
+        }
+        const toggle = main.querySelector('[data-bolton-walk-toggle]');
+        if (toggle) {
+            toggle.addEventListener('click', () => {
+                this._toggleWalkStep(step.id, !isDone);
+            });
+        }
+    },
+
+    _toggleWalkStep(stepId, complete) {
+        const vulnId = this.state.detailVulnId;
+        if (!vulnId) return;
+        fetch(`/api/bolton/vulns/${encodeURIComponent(vulnId)}/progress/step`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ step_id: stepId, action: complete ? 'complete' : 'undo' }),
+        }).then(r => r.json()).then(body => {
+            if (!body || body.success === false) return;
+            this.state.detailProgress = body.progress;
+            // Re-render walkthrough pane with updated progress, then jump
+            // back to the same step so the operator sees the result without
+            // losing context.
+            this._renderWalkthroughPane(this.state.detailCurriculum, this.state.detailProgress);
+            this._showWalkStep(stepId);
+        }).catch(err => console.warn('[bolton] toggle step failed:', err));
+    },
+
+    _submitWalkAssessment(stepId, answerIndex) {
+        const vulnId = this.state.detailVulnId;
+        if (!vulnId) return;
+        fetch(`/api/bolton/vulns/${encodeURIComponent(vulnId)}/progress/assessment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ step_id: stepId, answer_index: answerIndex }),
+        }).then(r => r.json()).then(body => {
+            if (!body || body.success === false) return;
+            this.state.detailProgress = body.progress;
+            // Re-render this step to show option highlighting + feedback.
+            this._showWalkStep(stepId);
+        }).catch(err => console.warn('[bolton] assessment failed:', err));
+    },
+
     /** Fetch host facts + catalog and render. */
     selectHost(lab, host) {
         if (!lab || !host) return;
@@ -32522,6 +34219,9 @@ APP.bolton = APP.bolton || {
                 const el = document.getElementById(id);
                 if (el) el.hidden = false;
             });
+            // Refresh detection-layer button state for this host's facts +
+            // (cheaply) the rest of the deployment via cached host facts.
+            try { this._refreshDetectionButton(); } catch (_) { /* noop */ }
         }).catch(err => {
             console.warn('[bolton] selectHost failed:', err);
         });
@@ -32558,26 +34258,34 @@ APP.bolton = APP.bolton || {
     },
 
     _renderCategoryChips(catalog) {
-        // Rebuild the category chip row from the unique categories in the catalog.
+        // 2026-05-22 — Rebuilt for the new <select> filter. Populates the
+        // category dropdown from the unique categories in the catalog so
+        // operators only see categories that actually exist on the
+        // current host.
         if (!catalog || !Array.isArray(catalog.vulns)) return;
-        const wrap = document.querySelector('#bolton-filters [data-chip-group="category"]');
-        if (!wrap) return;
+        const select = document.getElementById('bolton-filter-category');
+        if (!select) return;
         const cats = new Set();
         catalog.vulns.forEach(v => { if (v.category) cats.add(v.category); });
         const sorted = [...cats].sort();
-        // Preserve the All chip; reset the rest.
-        wrap.innerHTML = '<button class="bt-chip is-active" data-group="category" data-value="all" type="button">All</button>';
+        const previousValue = select.value;
+        select.innerHTML = '<option value="all">All categories</option>';
         sorted.forEach(c => {
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'bt-chip';
-            b.dataset.group = 'category';
-            b.dataset.value = c;
-            b.textContent = c;
-            wrap.appendChild(b);
+            const opt = document.createElement('option');
+            opt.value = c;
+            opt.textContent = c;
+            select.appendChild(opt);
         });
-        // Re-wire chips that were dynamically added.
+        // Preserve the operator's prior selection if still applicable.
+        if (previousValue && (previousValue === 'all' || sorted.includes(previousValue))) {
+            select.value = previousValue;
+        } else {
+            select.value = 'all';
+            this.state.filters.category = 'all';
+        }
+        // Wire (idempotent) + render pill row.
         this._wireFilters();
+        this._renderFilterPills();
     },
 
     _buildRows(catalog) {
@@ -32593,6 +34301,13 @@ APP.bolton = APP.bolton || {
             mitre: v.mitre_technique,
             rollback_supported: !!v.rollback_supported,
             estimated_time_seconds: v.estimated_time_seconds,
+            // Curriculum / detection signals — drive the "Walkthrough" CTA
+            // and the Detections tab on the detail drawer.
+            has_curriculum: !!v.has_curriculum,
+            curriculum_step_count: v.curriculum_step_count || 0,
+            // 2026-05-22 — preserve searchable strings for the filter box.
+            description: v.description || '',
+            mitre_technique: v.mitre_technique || '',
         }));
     },
 
@@ -32610,7 +34325,12 @@ APP.bolton = APP.bolton || {
                 || v === 'MISSING_SOFTWARE'
                 || v === 'CONFLICTS_WITH_INSTALLED';
         };
+        const needle = (f && f.search) ? String(f.search).toLowerCase() : '';
         const visible = rows.filter(r => {
+            if (needle) {
+                const hay = `${r.id} ${r.name} ${r.description} ${r.mitre_technique}`.toLowerCase();
+                if (!hay.includes(needle)) return false;
+            }
             if (f.category && f.category !== 'all' && r.category !== f.category) return false;
             if (f.state && f.state !== 'all') {
                 if (f.state === 'BLOCKED') {
@@ -32624,7 +34344,21 @@ APP.bolton = APP.bolton || {
         });
         this._renderSections(visible);
         const count = document.getElementById('bolton-active-count');
-        if (count) count.textContent = `${visible.length} of ${rows.length} shown`;
+        if (count) {
+            const filtersActive = !!(
+                needle ||
+                (f.category && f.category !== 'all') ||
+                (f.state && f.state !== 'all') ||
+                (f.coverage && f.coverage !== 'all')
+            );
+            if (!filtersActive) {
+                count.textContent = `${rows.length} bolt-ons`;
+            } else if (visible.length === rows.length) {
+                count.textContent = `${rows.length} match`;
+            } else {
+                count.textContent = `${visible.length} of ${rows.length} match`;
+            }
+        }
     },
 
     _sectionFor(row) {
@@ -32685,6 +34419,18 @@ APP.bolton = APP.bolton || {
                 </div>`;
             }).join('');
             // Wire action buttons.
+            //
+            // 2026-05-22 — Operator feedback: clicking Install / Patch /
+            // Uninstall was wrongly side-effecting the host dropdown by
+            // calling `selectDescriptor` first, which pinned a role-filter
+            // to that vuln's `targets.required_roles`. Users got a "stuck"
+            // 1-of-N filter banner after every install attempt and had to
+            // explicitly clear it. We now only invoke the action; the
+            // dropdown stays on whatever host the operator picked.
+            // selectDescriptor (the host-filter feature) is now reserved
+            // for the "Walkthrough" CTA on incompatible rows where the
+            // operator IS browsing for a compatible host. For known-good
+            // host actions, no side effect.
             target.querySelectorAll('[data-bolton-action]').forEach(btn => {
                 if (btn._boltonWired) return;
                 btn._boltonWired = true;
@@ -32692,26 +34438,19 @@ APP.bolton = APP.bolton || {
                     const action = btn.dataset.boltonAction;
                     const vid = btn.dataset.vulnId;
                     if (!action || !vid) return;
-                    // Capture the row as the selected descriptor so any host
-                    // dropdown re-render after this point will be filtered to
-                    // compatible hosts.
-                    APP.bolton.selectDescriptor && APP.bolton.selectDescriptor(vid);
                     APP.bolton[action] && APP.bolton[action](vid, APP.bolton.state.host);
                 });
             });
-            // Wire row-level click → select descriptor (filters host dropdown).
-            // Click anywhere on a row that isn't an action button / why-link
-            // marks the row's descriptor as the active filter.
+            // 2026-05-22 — Row-level click no longer auto-pins a descriptor
+            // filter. Same reason as the action buttons: the host-pinning
+            // behaviour was surprise UX. Click does nothing now; the
+            // dedicated Walkthrough / action buttons handle the explicit
+            // interactions.
             target.querySelectorAll('.bt-row').forEach(row => {
                 if (row._boltonRowWired) return;
                 row._boltonRowWired = true;
-                row.addEventListener('click', (ev) => {
-                    if (ev.target.closest('[data-bolton-action]')) return;
-                    if (ev.target.closest('[data-bolton-why]')) return;
-                    const vid = row.dataset.vulnId;
-                    if (!vid) return;
-                    APP.bolton.selectDescriptor(vid);
-                });
+                // No-op — keep the listener registered so future code can
+                // add a "row click expands a peek" without re-wiring.
             });
             // Task 51 Item 2 — wire "Why?" / "View conflict" buttons to the
             // tooltip. These were previously inert <span title="…"> shells;
@@ -32732,21 +34471,34 @@ APP.bolton = APP.bolton || {
     _actionsForRow(r) {
         const id = r.id;
         const btn = (lbl, act, cls = '') => `<button class="spec-edit-btn ${cls}" type="button" data-bolton-action="${act}" data-vuln-id="${id}">${lbl}</button>`;
+        // Curriculum CTA — always available when curriculum is attached, even
+        // for states that don't permit install (operators can study before the
+        // host is compatible). Renders the book glyph + the step count.
+        const walkthroughBtn = r.has_curriculum
+            ? `<button class="spec-edit-btn bt-row__walkthrough" type="button" data-bolton-action="openDetail" data-vuln-id="${id}" data-initial-tab="walkthrough" aria-label="Open walkthrough">📖 Walkthrough · ${r.curriculum_step_count || 0}</button>`
+            : '';
+        // Status check button — surfaces the install/uninstall verify probe
+        // result for this bolt-on on this host. Available regardless of
+        // state so operators can confirm "is this thing actually installed"
+        // / "did uninstall really clean up" without dispatching a re-install.
+        const statusBtn = `<button class="spec-edit-btn bt-row__status" type="button" data-bolton-action="checkStatus" data-vuln-id="${id}" title="Run install/uninstall verify probes and show the live state.">🔍 Status</button>`;
         const s = (r.state || '').toUpperCase();
         if (s === 'ALREADY_INSTALLED') {
             return [
+                walkthroughBtn,
+                statusBtn,
                 btn('Patch', 'patch', 'spec-edit-btn--save'),
                 btn('Uninstall', 'uninstall'),
             ].join('');
         }
         if (s === 'PATCHED') {
-            const out = [];
+            const out = [walkthroughBtn, statusBtn];
             if (r.rollback_supported) out.push(btn('Patch revert', 'patchRevert', 'spec-edit-btn--save'));
             out.push(btn('Uninstall', 'uninstall'));
             return out.join('');
         }
         if (s === 'INSTALLABLE') {
-            return btn('Install', 'install', 'spec-edit-btn--save');
+            return [walkthroughBtn, statusBtn, btn('Install', 'install', 'spec-edit-btn--save')].join('');
         }
         // Task 51 Item 2 — Why? / View conflict now render as real <button>s
         // wired to a click handler that opens a positioned tooltip showing
@@ -32876,6 +34628,81 @@ APP.bolton = APP.bolton || {
     uninstall(vulnId, host)    { this._dispatchOp('uninstall',     vulnId, host, {}); },
     patch(vulnId, host)        { this._dispatchOp('patch',         vulnId, host, { run_probe: false }); },
     patchRevert(vulnId, host)  { this._dispatchOp('patch-revert',  vulnId, host, {}); },
+
+    /**
+     * 2026-05-23 — Operator directive: every bolt-on needs a live status
+     * checker. Calls the new GET /status endpoint and renders the result
+     * in an APP.overlay so the operator sees the status token + a
+     * human-readable explanation + the actual verify probe shell scripts
+     * (so they can run the probe by hand for real-deployment ground truth).
+     */
+    async checkStatus(vulnId, host) {
+        const lab = this.state.lab;
+        if (!lab || !host || !vulnId) return;
+        // Local escape helper — top-level escapeHtml may not be on the
+        // APP.bolton receiver; mirror APP.manage._escape's pattern.
+        const esc = (s) => String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        const eyebrow = 'Bolt-on status';
+        const title = `Status · ${vulnId}`;
+        const loadingHtml = `<div style="padding:24px;color:var(--text-secondary)">Checking status of <code>${esc(vulnId)}</code> on <strong>${esc(host)}</strong>…</div>`;
+        if (APP.overlay && typeof APP.overlay.open === 'function') {
+            APP.overlay.open('bolton-status', loadingHtml, { title, eyebrow, wide: true });
+        }
+        let body;
+        try {
+            const r = await fetch(`/api/bolton/labs/${encodeURIComponent(lab)}/hosts/${encodeURIComponent(host)}/status/${encodeURIComponent(vulnId)}`);
+            const d = await r.json();
+            if (!d || d.success === false) {
+                body = `<div style="padding:16px;color:var(--danger-text)">Status check failed: ${esc(d && d.error || 'unknown error')}</div>`;
+            } else {
+                const stateColors = {
+                    installed_and_working: 'var(--success)',
+                    installed_but_broken:  'var(--warning)',
+                    patched:               'var(--info-text, var(--brand))',
+                    not_installed:         'var(--text-secondary)',
+                    removed_with_residue:  'var(--warning)',
+                    unknown:               'var(--text-muted)',
+                };
+                const stateLabel = (d.status || 'unknown').replace(/_/g, ' ').toUpperCase();
+                const stateColor = stateColors[d.status] || 'var(--text-muted)';
+                const escProbe = (p) => {
+                    if (!p || !p.probe) return '<em style="color:var(--text-muted)">(no probe defined)</em>';
+                    return `<pre style="background:var(--bg-terminal);color:var(--text-terminal);padding:10px;border-radius:6px;overflow:auto;white-space:pre-wrap;font-size:11.5px">${esc(p.probe)}</pre>
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">timeout: ${p.timeout_seconds || '?'}s · expect exit ${p.expect_exit_code == null ? '?' : p.expect_exit_code}</div>`;
+                };
+                body = `
+                  <div style="padding:20px;font-size:13px;line-height:1.55">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                      <span class="spec-pill" style="background:${stateColor};color:var(--text-inverse);border-color:${stateColor};font-size:11.5px">${esc(stateLabel)}</span>
+                      <span style="color:var(--text-muted);font-size:11px">${d.is_demo ? 'DEMO MODE · in-memory state' : 'live deployment · cached facts'}</span>
+                    </div>
+                    <p style="margin:0 0 18px;color:var(--text-primary)">${esc(d.human || '')}</p>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+                      <div>
+                        <div style="font-family:var(--font-family-mono);font-size:10.5px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:6px">Install verify probe</div>
+                        ${escProbe(d.install_probe)}
+                      </div>
+                      <div>
+                        <div style="font-family:var(--font-family-mono);font-size:10.5px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:6px">Uninstall verify probe</div>
+                        ${escProbe(d.uninstall_probe)}
+                      </div>
+                    </div>
+                    <div style="margin-top:18px;padding-top:12px;border-top:1px solid var(--border-subtle);font-size:11px;color:var(--text-muted)">
+                      Checked at: <code>${esc(d.checked_at || '')}</code>
+                      · Host: <strong>${esc(d.host || '')}</strong>
+                      · Lab: <strong>${esc(d.lab || '')}</strong>
+                    </div>
+                  </div>`;
+            }
+        } catch (e) {
+            body = `<div style="padding:16px;color:var(--danger-text)">Status fetch error: ${esc(String(e))}</div>`;
+        }
+        if (APP.overlay && typeof APP.overlay.open === 'function') {
+            APP.overlay.open('bolton-status', body, { title, eyebrow, wide: true });
+        }
+    },
 
     // ──────────────────────────────────────────────────────────────────
     // Phase 3a — agentic fallback. Invoked when a job hits STUCK.
@@ -33305,6 +35132,17 @@ if (typeof window !== 'undefined') {
             if (this.isOpen(id)) {
                 const existing = this._stack.find(o => o.id === id);
                 if (existing && existing.body) _renderContent(existing.body, content);
+                // Re-opening with the same id must also refresh title + eyebrow.
+                // Bolton dispatch sequences (uninstall → install) used to leave
+                // the title stuck on the previous op because only the body got
+                // re-rendered.
+                if (existing && existing.header) {
+                    const titleEl = existing.header.querySelector('.app-overlay__title');
+                    const eyebrowEl = existing.header.querySelector('.app-overlay__eyebrow');
+                    if (titleEl && opts.title != null) titleEl.textContent = opts.title;
+                    if (eyebrowEl && opts.eyebrow != null) eyebrowEl.textContent = opts.eyebrow;
+                    existing.options = Object.assign({}, existing.options, opts);
+                }
                 return _handle(this, existing);
             }
 
@@ -34383,3 +36221,58 @@ if (typeof window !== 'undefined') {
     }
 })();
 // === end v3 OVERLAY STACK (Agent C) ====================================
+
+// =============================================================================
+// === ASSET VERSION DRIFT DETECTOR — 2026-05-22 ===============================
+// =============================================================================
+// Polls /api/version/assets every 30s and compares the backend's reported
+// asset version against the version stamped into <meta name="asset-version">
+// when this page loaded. On drift, the global-header refresh button gets
+// `is-stale` (CSS pulses the glyph) and a console message is logged. The
+// operator clicks the button to hard-reload — which bypasses the browser's
+// in-memory JS/CSS cache and pulls fresh code from Flask.
+//
+// Why this exists: Chrome/Safari prefer their in-memory copy of static
+// assets on soft reloads even when the server sends `Cache-Control:
+// no-cache`. The `?v=<hash>` query-string on each asset URL is the real
+// cache-bust — but the operator's browser only sees the new URL after a
+// reload. This drift detector tells them when a reload would help.
+// =============================================================================
+(function () {
+    'use strict';
+    const META = document.querySelector('meta[name="asset-version"]');
+    const PAGE_VERSION = META ? META.getAttribute('content') : null;
+    if (!PAGE_VERSION || PAGE_VERSION === '0') return;
+    const POLL_MS = 30000;
+    let lastSeen = PAGE_VERSION;
+
+    async function checkOnce() {
+        try {
+            const r = await fetch('/api/version/assets', { cache: 'no-store' });
+            if (!r.ok) return;
+            const body = await r.json();
+            const serverVersion = body && body.asset_version;
+            if (!serverVersion) return;
+            lastSeen = serverVersion;
+            if (serverVersion !== PAGE_VERSION) {
+                markStale(serverVersion);
+            }
+        } catch (_) {
+            // Network blip — try again next interval.
+        }
+    }
+
+    function markStale(serverVersion) {
+        const btn = document.getElementById('global-app-refresh');
+        if (!btn) return;
+        if (btn.classList.contains('is-stale')) return;
+        btn.classList.add('is-stale');
+        btn.title = `Backend updated (asset version ${PAGE_VERSION} → ${serverVersion}). Click to reload with fresh JS/CSS.`;
+        // eslint-disable-next-line no-console
+        console.log(`[asset-drift] backend version ${serverVersion} ≠ page version ${PAGE_VERSION} — click Reload to refresh.`);
+    }
+
+    // Kick off after a 5s settle, then poll on POLL_MS interval.
+    setTimeout(checkOnce, 5000);
+    setInterval(checkOnce, POLL_MS);
+})();

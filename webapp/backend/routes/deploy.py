@@ -224,37 +224,44 @@ def _project_has_test_lab(configs_dir, project_stem: str) -> bool:
 
 @bp.route("/active", methods=["GET"])
 def get_active_deployments():
-    """Get all successful deployments, sorted most recent first."""
+    """Get all successful deployments, sorted most recent first.
+
+    2026-05-22 — Always prepends a synthetic ``demo`` deployment record
+    so the operator can showcase the dashboard without provisioning
+    real AWS infrastructure. The demo deployment is served from
+    ``demo_data_service.deployment_state()`` and is filtered out when
+    Terraform/operations endpoints would otherwise act on it.
+    """
+    from webapp.backend.services import demo_data_service
+
     state_dir = os.path.join(str(project_root), "logs", "deployment_state")
 
-    if not os.path.isdir(state_dir):
-        return jsonify({"success": False, "error": "No deployments found", "deployments": []})
-
-    deployments = []
+    deployments: list = []
     configs_dir = project_root / "configs"
-    for fname in os.listdir(state_dir):
-        if not fname.endswith(".state.json"):
-            continue
-        fpath = os.path.join(state_dir, fname)
-        try:
-            with open(fpath) as f:
-                state = json.load(f)
-            if state.get("status") == "success":
-                stem = fname.replace(".state.json", "")
-                state["_filename"] = stem
-                # 2026-05-20 — surface ``enable_test_lab`` on each row so the
-                # frontend's APP.computeVisibleSubPills can flip Bolt-ons on
-                # for c2-* deployments that opted into the test lab. Cheap
-                # one-line grep over the matching per-project tfvars.
-                state["enable_test_lab"] = _project_has_test_lab(configs_dir, stem)
-                deployments.append(state)
-        except (json.JSONDecodeError, IOError):
-            continue
+    if os.path.isdir(state_dir):
+        for fname in os.listdir(state_dir):
+            if not fname.endswith(".state.json"):
+                continue
+            fpath = os.path.join(state_dir, fname)
+            try:
+                with open(fpath) as f:
+                    state = json.load(f)
+                if state.get("status") == "success":
+                    stem = fname.replace(".state.json", "")
+                    state["_filename"] = stem
+                    # 2026-05-20 — surface ``enable_test_lab`` on each row so
+                    # the frontend's APP.computeVisibleSubPills can flip
+                    # Bolt-ons on for c2-* deployments that opted into the
+                    # test lab. Cheap one-line grep over the matching per-
+                    # project tfvars.
+                    state["enable_test_lab"] = _project_has_test_lab(configs_dir, stem)
+                    deployments.append(state)
+            except (json.JSONDecodeError, IOError):
+                continue
 
     deployments.sort(key=lambda d: d.get("completed_at", 0), reverse=True)
-
-    if not deployments:
-        return jsonify({"success": False, "error": "No successful deployments found", "deployments": []})
+    # Synthetic demo deployment — first row so it's the natural showcase.
+    deployments.insert(0, demo_data_service.deployment_state())
 
     return jsonify({"success": True, "deployments": deployments})
 
@@ -2148,6 +2155,47 @@ def destroy():
     # `?force_foreign=1` into a URL is a deliberate friction step.
     force_foreign = request.args.get("force_foreign", "").strip() == "1"
 
+    # ── 2026-05-28 SAFETY: hard-block real terraform-destroy on demo ────
+    # Demo deployments are pure in-memory + synthetic — they MUST NOT
+    # trigger a real `terraform destroy`. Without this guard the legacy
+    # destroy path would (a) attempt to find a real workspace under
+    # `terraform/` keyed off the project name, then (b) shell out to
+    # `terraform destroy`. For project_name="demo" that targets nothing
+    # real but for an operator-flagged demo deployment (`demo-<ts>`,
+    # see Phase 4) it would attempt to destroy the dashboard's own
+    # workspace by accident. Short-circuit by detecting the demo
+    # marker BEFORE we touch terraform; emit an audit row + return
+    # an immediate success envelope mirroring the real shape.
+    try:
+        from webapp.backend.services import demo_data_service
+        _is_demo = demo_data_service.is_demo_project(project_name)
+    except Exception:
+        _is_demo = False
+    if _is_demo:
+        # Clear any in-memory state for the synthetic deployment.
+        try:
+            if project_name in deployment_states:
+                deployment_states.pop(project_name, None)
+        except Exception:
+            pass
+        # Clear the per-project on-disk state file if one was synthesised.
+        try:
+            state_path = STATE_DIR / f"{project_name}.state.json"
+            if state_path.exists():
+                state_path.unlink()
+        except Exception:
+            pass
+        audit_service.write(_audit_actor(), "deploy.destroy_demo",
+                            project=project_name, details={"is_demo": True})
+        return jsonify({
+            "success": True,
+            "is_demo": True,
+            "message": (f"Demo deployment '{project_name}' cleared from "
+                        "memory. No AWS resources were touched."),
+            "project_name": project_name,
+            "status": "destroyed",
+        })
+
     # Check if specific project is running
     if project_name and project_name in deployment_states:
         if deployment_states[project_name].get("status") == "running":
@@ -2171,17 +2219,62 @@ def destroy():
     # =====================================================================
     # SAFETY GUARD — refuse if foreign modules are in the workspace state
     # =====================================================================
+    # 2026-05-22 — CRITICAL FIX after live-fire incident: previous logic
+    # was fail-open. When `_summarize_state_for_safety` failed for any
+    # reason (lock contention, terraform init in progress, transient AWS
+    # API blip), `success=False` was returned and the guard SKIPPED
+    # entirely, letting destroy proceed against state we couldn't read.
+    # That's exactly what triggered the goad_mini dashboard_server tear-
+    # down on 2026-05-22.
+    #
+    # New behaviour: fail-CLOSED. If the state probe didn't succeed AND
+    # we can't prove the workspace is empty/never-deployed, refuse and
+    # ask the operator to re-confirm via `?force_foreign=1`. Only the
+    # explicit "draft workspace never applied" case (empty actual_modules
+    # AND empty foreign list AND no error other than a workspace-not-found
+    # signal) is allowed through.
     if project_name and not force_foreign:
         safe = _sanitize_project_name(project_name)
         if safe:
             summary = _summarize_state_for_safety(safe)
             foreign = summary.get("foreign_modules") or []
-            # Only enforce when we successfully read state AND found
-            # foreign modules. A state_list failure (e.g. workspace
-            # not yet created) should NOT block destroy — it would
-            # break the legitimate "destroy a never-deployed draft"
-            # path.
-            if summary.get("success") and foreign:
+            success = bool(summary.get("success"))
+            err = (summary.get("error") or "").strip().lower()
+            actual = summary.get("actual_modules") or []
+            # Empty-workspace fast-path: we successfully read state AND
+            # state had zero modules → legitimate "destroy a draft that
+            # never applied" path.
+            empty_workspace_ok = success and not foreign and not actual
+            # Indeterminate-state guard: we couldn't read state at all
+            # (lock contention, init failure, etc). Refuse — operator
+            # must force_foreign=1 to override after manual triage.
+            if not success and not empty_workspace_ok:
+                return jsonify({
+                    "success": False,
+                    "error": "state_indeterminate",
+                    "message": (
+                        f"Could not read terraform state for {safe!r} "
+                        f"({err or 'unknown reason'}). Destroy refused — "
+                        "the workspace may be locked or mid-init. Resolve "
+                        "the lock and retry, or pass ?force_foreign=1 to "
+                        "override after manual triage."
+                    ),
+                    "state_summary": summary,
+                    "actions": [
+                        {
+                            "id": "force-anyway",
+                            "label": "Override and destroy anyway (manual triage done)",
+                            "endpoint": "/api/deploy/destroy?force_foreign=1",
+                            "method": "POST",
+                            "description": (
+                                "Bypasses the state-summary guard. Only do this "
+                                "after confirming the workspace lock is stale "
+                                "AND that you've verified what's actually in state."
+                            ),
+                        },
+                    ],
+                }), 409
+            if success and foreign:
                 dtype = summary.get("deployment_type") or "unknown"
                 foreign_list = ", ".join(foreign)
                 return jsonify({
@@ -3262,6 +3355,35 @@ def get_infrastructure():
     try:
         project_name = request.args.get('project')
 
+        # 2026-05-22 — demo deployment bypasses the terraform shell-out path
+        # which costs ~4.6 seconds per call. Returns the same shape with
+        # synthetic outputs so the Manage pane populates instantly.
+        from webapp.backend.services import demo_data_service
+        if demo_data_service.is_demo_project(project_name):
+            state = demo_data_service.deployment_state()
+            o = state.get("outputs", {})
+            return jsonify({
+                "success": True,
+                "has_deployment": True,
+                "is_demo": True,
+                "deployment_mode": "single",
+                "project_name": project_name,
+                "account_id": "0123456789ab",
+                "ansible_inventory": {},
+                "attack_box": {"enabled": False},
+                "bastion": {"public_ip": o.get("bastion_public_ip")},
+                "c2_servers": {"private_ips": o.get("c2_team_server_private_ips", [])},
+                "redirectors": {"public_ips": [o.get("redirector_public_ip")] if o.get("redirector_public_ip") else []},
+                "network": {"vpc_id": "vpc-0demo01"},
+                "security_groups": {"bastion": "sg-0demobastion", "c2": "sg-0democ2"},
+                "summary": {
+                    "c2_server_count": 1,
+                    "redirector_count": 1,
+                    "has_bastion": True,
+                    "has_attack_box": False,
+                },
+            })
+
         # Auto-detect active project if not specified
         if not project_name:
             # Active deployment statuses (not destroyed/error)
@@ -3849,6 +3971,19 @@ def get_instance_status():
         # Get project name from query param
         project_name = request.args.get('project', '').strip()
 
+        # 2026-05-23 — demo project has no real EC2; short-circuit so the
+        # Manage / dashboard surfaces don't pay a wasted boto3 call (and
+        # don't 400 when no project query param is sent).
+        from webapp.backend.services import demo_data_service
+        if demo_data_service.is_demo_project(project_name):
+            return jsonify({
+                "success": True,
+                "is_demo": True,
+                "instances": [],
+                "status_counts": {"running": 0, "stopped": 0, "pending": 0,
+                                  "stopping": 0, "terminated": 0},
+            })
+
         config = _read_project_config(project_name) if project_name else _read_project_config(None)
         aws_region = config.get('aws_region', 'eu-central-1')
 
@@ -3922,15 +4057,27 @@ def get_project_resources(project_name: str):
     When refresh=true, does a full AWS query for all resource types.
     Otherwise returns saved resources from deployment history.
     """
+    # 2026-05-22 — demo deployment short-circuits the AWS query path and
+    # serves canned resources from demo_data_service. No boto3 calls.
+    from webapp.backend.services import demo_data_service
+    if demo_data_service.is_demo_project(project_name):
+        return jsonify({
+            "success": True,
+            "project": project_name,
+            "deployment_type": demo_data_service.DEMO_DEPLOYMENT_TYPE,
+            "resources": demo_data_service.resources(),
+            "total": len(demo_data_service.resources()),
+            "is_demo": True,
+        })
     try:
         import boto3
         from webapp.backend.utils.config_parser import ConfigParser
         from datetime import datetime
-        
+
         # Load saved deployment resources for metadata
         resources_file = project_root / "logs" / "deployment_resources.json"
         deployment_data = {}
-        
+
         if resources_file.exists():
             with open(resources_file, 'r') as f:
                 all_deployments = json.load(f)
@@ -4494,13 +4641,24 @@ def get_terraform_outputs():
         # Get project name from query params
         project_name = request.args.get('project')
 
+        # 2026-05-23 — demo project: short-circuit so Manage doesn't pay a
+        # ~5-second boto3 round-trip describing instances that don't exist.
+        from webapp.backend.services import demo_data_service
+        if demo_data_service.is_demo_project(project_name):
+            state = demo_data_service.deployment_state()
+            return jsonify({
+                "success": True,
+                "is_demo": True,
+                "outputs": state.get("outputs", {"project_name": project_name}),
+            })
+
         # Per-project tfvars first; global only when no project specified.
         config = _read_project_config(project_name)
         aws_region = config.get('aws_region', 'eu-central-1')
 
         if not project_name:
             project_name = config.get('project_name', '')
-        
+
         if not project_name:
             return jsonify({
                 "success": False,
