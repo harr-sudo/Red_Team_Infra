@@ -12,6 +12,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 async function setTheme(page, theme) {
     await page.evaluate((t) => {
@@ -23,10 +24,8 @@ async function setTheme(page, theme) {
 
 async function navigateToDeploySubPill(page) {
     await page.goto('/');
-    await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
-    await page.click('button.tab-btn[data-target="deployments-tab"]');
-    await page.waitForTimeout(120);
-    await page.locator('#subpill-deploy').click();
+    await railNavigate(page, 'deployments-tab');
+    await clickSubPill(page, 'deploy');
     // Give loadConfigSummary + audit fetch time to fire.
     await page.waitForTimeout(700);
 }
@@ -170,8 +169,9 @@ test('Deploy sub-pill: Last applied by attribution row renders with operator dot
 test('Deploy sub-pill: live progress opens APP.overlay when startDeployment fires', async ({ page }) => {
     await navigateToDeploySubPill(page);
     // Stub the deploy POST so we can drive the overlay flow without
-    // actually starting terraform.
-    await page.route('**/api/deploy/deploy', (route) => {
+    // actually starting terraform. Use `*` suffix so the glob matches the
+    // `?project=...` query string the production code appends.
+    await page.route('**/api/deploy/deploy*', (route) => {
         route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -192,12 +192,20 @@ test('Deploy sub-pill: live progress opens APP.overlay when startDeployment fire
     await page.route('**/api/health/cobalt-strike-file', (route) => route.fulfill({ status: 200, body: JSON.stringify({ success: true, has_file: true }) }));
     await page.route('**/api/health/domain-config', (route) => route.fulfill({ status: 200, body: JSON.stringify({ success: true, configured: true }) }));
     await page.route('**/api/health/aws-cli', (route) => route.fulfill({ status: 200, body: JSON.stringify({ success: true, installed: true }) }));
+    // 2026-05-28 — HIGH #6 fix added /aws-check/credentials to startDeployment's
+    // prereq pipeline (commit 9dffae9). Without this stub, the test bails on
+    // STS validation before opening the overlay.
+    await page.route('**/api/aws-check/credentials', (route) => route.fulfill({ status: 200, body: JSON.stringify({ authenticated: true }) }));
     // Bypass confirm() and force the project name + deployment type.
     // 2026-05-21 legacy-audit sweep — prefer V2 IDs (#cfg-*) when present;
     // fall back to the legacy form inputs (#project-name, #deployment-type)
     // only while the legacy block survives in the DOM. Once the parallel
     // frontend agent retires the legacy form per UX_AUDIT M1, the fallback
     // arm becomes a no-op and can be removed.
+    // 2026-05-23 — Also pin draftProject so startDeployment's
+    // effectiveProject() resolves to 'unit_test_project'. Without this,
+    // startDeployment bails before opening the overlay because draft
+    // mode + no draftProject returns null.
     await page.evaluate(() => {
         window.confirm = () => true;
         window.alert = () => undefined;
@@ -209,6 +217,9 @@ test('Deploy sub-pill: live progress opens APP.overlay when startDeployment fire
         setVal('cfg-deployment-type', 'c2-adhoc');
         setVal('project-name', 'unit_test_project');
         setVal('deployment-type', 'c2-adhoc');
+        if (window.APP && window.APP.activeDeployment) {
+            window.APP.activeDeployment.draftProject = 'unit_test_project';
+        }
     });
     // Fire startDeployment
     const ok = await page.evaluate(async () => {
