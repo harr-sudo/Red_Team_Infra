@@ -5901,6 +5901,25 @@ if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function'
             }
         } catch (_) { /* noop — topbar may not be mounted yet */ }
     });
+    // 2026-05-28 — Hide the Dashboard "Try Demo Mode" CTA when the
+    // operator is on a real deployment. Operator directive: "when the
+    // user is NOT on the demo mode deployment, there should be no nudge".
+    // Visible cases:
+    //   - no active deployment (first-time user → demo is the natural entry)
+    //   - already on demo (no-op nudge but consistent surface)
+    // Hidden cases:
+    //   - any real deployment (c2-*, goad-*, combined-*) — don't intrude
+    APP.activeDeployment.subscribe(() => {
+        try {
+            const btn = document.getElementById('dashboard-demo-btn');
+            if (!btn) return;
+            const ad = APP.activeDeployment;
+            const cur = (ad && ad.current) || '';
+            const isReal = cur && cur !== 'demo'
+                && cur !== '__all__' && cur !== '__draft__';
+            btn.hidden = isReal;
+        } catch (_) { /* defensive */ }
+    });
 }
 
 function refreshElasticRulesCard() {
@@ -29343,6 +29362,15 @@ function _cleanupGetKnownExternal() {
 function _cleanupAddKnownExternal(id) { APP.cleanup.addKnown(id); }
 function _cleanupResourceId(item, kind) { return APP.cleanup.resourceId(item, kind); }
 
+// 2026-05-28 — Operator-flagged: Cleanup re-issued the full AWS scan on
+// every sub-pill visit even though results rarely change minute-to-minute.
+// Add a 5-minute in-memory cache shared across visits; the Refresh button
+// (forceRefresh=true) explicitly bypasses it. Cache is per-account/per-
+// region scope so a deployment switch doesn't pollute it (the orphan
+// scan is cross-project anyway).
+const _cleanupOrphanCache = { ts: 0, data: null };
+const _CLEANUP_CACHE_TTL_MS = 5 * 60 * 1000;
+
 async function loadCleanupResources(forceRefresh = false) {
     const list = document.getElementById('cleanup-resource-list');
     if (!list) return;
@@ -29383,6 +29411,33 @@ async function loadCleanupResources(forceRefresh = false) {
         if (refreshBtn) refreshBtn.removeAttribute('data-loading');
         return;
     }
+    // Serve from the 5-minute cache unless the operator clicked Refresh.
+    const now = Date.now();
+    if (!forceRefresh
+        && _cleanupOrphanCache.data
+        && (now - _cleanupOrphanCache.ts) < _CLEANUP_CACHE_TTL_MS) {
+        const data = _cleanupOrphanCache.data;
+        const orphans = _detectOrphans(data);
+        const known = APP.cleanup.readKnown();
+        const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setText('cleanup-orphan-count', orphans.total);
+        setText('cleanup-eip-count', orphans.eips.length);
+        setText('cleanup-acm-count', orphans.acm_certs.length);
+        setText('cleanup-buckets-count', orphans.s3_buckets.length);
+        const refreshedAt = document.getElementById('cleanup-refreshed-at');
+        if (refreshedAt) {
+            refreshedAt.textContent = APP.cleanup.formatRefreshedAt(new Date(_cleanupOrphanCache.ts)) + ' · cached';
+            refreshedAt.hidden = false;
+        }
+        if (orphans.total === 0) {
+            list.innerHTML = _renderCleanupEmptyState(data);
+        } else {
+            list.innerHTML = _renderCleanupGroups(orphans, known);
+            if (APP && typeof APP._staggerOnce === 'function') APP._staggerOnce(list);
+        }
+        if (refreshBtn) refreshBtn.removeAttribute('data-loading');
+        return;
+    }
     if (APP && typeof APP.renderSkeleton === 'function') {
         APP.renderSkeleton('cleanup-resource-list', 'card', 3);
     }
@@ -29390,6 +29445,8 @@ async function loadCleanupResources(forceRefresh = false) {
         const url = '/api/deploy/resources/all-projects' + (forceRefresh ? '?refresh=1' : '');
         const res = await fetch(url);
         const data = await res.json();
+        _cleanupOrphanCache.data = data;
+        _cleanupOrphanCache.ts = Date.now();
         const orphans = _detectOrphans(data);
         const known = APP.cleanup.readKnown();
 

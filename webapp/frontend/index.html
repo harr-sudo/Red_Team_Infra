@@ -416,7 +416,14 @@
                     <!-- 2026-05-22 — demo deployment CTA. Selects the synthetic
                          `demo` deployment so an operator can showcase the full
                          dashboard (Manage, Bolt-ons, Operations, curriculum)
-                         without provisioning anything. -->
+                         without provisioning anything.
+
+                         2026-05-28 — Operator directive: don't nudge demo when
+                         the operator is already on a real deployment. The
+                         APP.activeDeployment subscriber below (wired in
+                         app.js) toggles `hidden` on this button based on
+                         the active deployment — visible only when no
+                         deployment is selected OR demo is already active. -->
                     <button class="dashboard-hero__demo" id="dashboard-demo-btn" type="button"
                             onclick="APP.startDemoMode && APP.startDemoMode()">
                         <span class="dashboard-hero__demo-glyph" aria-hidden="true">▶</span>
