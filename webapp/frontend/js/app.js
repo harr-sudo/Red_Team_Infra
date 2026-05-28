@@ -34665,6 +34665,53 @@ APP.bolton = APP.bolton || {
         return 'spec-pill--warn';
     },
 
+    /**
+     * Per-row state pill (TASTE refresh). Surfaces:
+     *   • a stable kind class (.bt-state-pill--<kind>) for colour
+     *   • a short label specific to the state
+     *   • for MISSING_PREREQ / MISSING_SOFTWARE, the actual prereq/service
+     *     name pulled out of the resolver's `reason` string so operators
+     *     know WHAT is missing without having to open the Why? tooltip.
+     *
+     * The resolver reason strings (bolton_compatibility.py) are stable:
+     *   MISSING_PREREQ:   "Requires bolt-on <id> first (currently INSTALLABLE on <host>)."
+     *                  or "Requires bolt-ons: <id>, <id> (currently not installed on <host>)."
+     *   MISSING_SOFTWARE: "Missing required service(s): <svc>, <svc> on <host>."
+     */
+    _statePillForRow(r) {
+        const s = (r.state || '').toLowerCase();
+        const reason = String(r.reason || '');
+        const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[c]);
+        const pill = (kind, label, titleText) => {
+            const t = titleText ? ` title="${esc(titleText)}"` : '';
+            return `<span class="bt-state-pill bt-state-pill--${kind}"${t}>` +
+                `<span class="bt-state-pill__dot" aria-hidden="true"></span>${esc(label)}</span>`;
+        };
+        if (s === 'already_installed')          return pill('installed', 'Installed');
+        if (s === 'patched')                    return pill('patched', 'Patched');
+        if (s === 'installable')                return pill('available', 'Installable');
+        if (s === 'conflicts_with_installed')   return pill('danger', 'Conflicts', reason);
+        if (s === 'missing_prereq') {
+            const m = reason.match(/Requires bolt-on(?:s)?:?\s+([\w.\-]+)/i);
+            const dep = m ? m[1] : '';
+            const short = dep ? dep.split('.').slice(-1)[0] : '';
+            const label = short ? `Prereq: ${short}` : 'Prereq needed';
+            return pill('warn', label, reason);
+        }
+        if (s === 'missing_software') {
+            const m = reason.match(/Missing required service\(s\):\s+([^.]+?)(?:\s+on\s+|$)/i);
+            const svcs = m ? m[1].trim() : '';
+            const label = svcs ? `Missing: ${svcs}` : 'Missing service';
+            return pill('warn', label, reason);
+        }
+        if (s === 'incompatible_os')   return pill('muted', 'Wrong OS', reason);
+        if (s === 'incompatible_role') return pill('muted', 'Wrong role', reason);
+        if (s.startsWith('incompatible')) return pill('muted', 'Incompatible', reason);
+        return pill('muted', s || 'unknown');
+    },
+
     _renderSections(rows) {
         const buckets = {
             installed: [], available: [], incompatible: [], conflicts: [],
@@ -34687,6 +34734,10 @@ APP.bolton = APP.bolton || {
                 const covPill = `<span class="spec-pill ${this._coveragePillClass(r.coverage)}" style="font-size:9.5px">${escapeHtml(r.coverage)}</span>`;
                 const mitre = r.mitre ? `<span class="spec-pill spec-pill--ttp">${escapeHtml(r.mitre)}</span>` : '';
                 const cat = r.category ? `<span class="spec-pill spec-pill--cat">${escapeHtml(r.category)}</span>` : '';
+                // TASTE refresh — per-state colour pill so operators can scan
+                // by colour. Surfaces the specific prereq / service name out
+                // of r.reason for MISSING_* states (see _statePillForRow).
+                const statePill = this._statePillForRow(r);
                 const actions = this._actionsForRow(r);
                 const hint = r.reason
                     ? escapeHtml(r.reason)
@@ -34695,7 +34746,7 @@ APP.bolton = APP.bolton || {
                 <div class="spec-row bt-row" data-state="${escapeHtml(r.state)}" data-cat="${escapeHtml(r.category || '')}" data-cov="${escapeHtml(r.coverage)}" data-vuln-id="${escapeHtml(r.id)}">
                     <div class="spec-row__head">
                         <div class="bt-row__lead">
-                            <div class="bt-row__eyebrow">${cat}${mitre}${covPill}</div>
+                            <div class="bt-row__eyebrow">${statePill}${cat}${mitre}${covPill}</div>
                         </div>
                         <div class="bt-row__lead">
                             <div class="bt-row__title">${escapeHtml(r.name || r.id)}</div>
