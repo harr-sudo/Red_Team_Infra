@@ -33,15 +33,15 @@ Operator laptop
    │                       ▼
    │             CCRTS VPC — 192.168.57.0/24
    │             ┌────────────────────────────────────────────┐
-   │             │  Public subnet (192.168.57.0/26)           │
-   │             │   • NAT GW                                 │
-   │             │                                            │
-   │             │  Private subnet (192.168.57.0/25)          │
+   │             │  Private subnet (192.168.57.0/26)          │
    │             │   • ccrts-kali        192.168.57.20        │
    │             │   • ccrts-win-ws      192.168.57.30        │
    │             │   • ccrts-dc01        192.168.57.40 (full) │
    │             │   • ccrts-ad-ws01     192.168.57.41 (full) │
    │             │   • ccrts-elk         192.168.57.50        │
+   │             │                                            │
+   │             │  Public subnet  (192.168.57.64/26)         │
+   │             │   • NAT GW (egress only — no lab hosts)    │
    │             └────────────────────────────────────────────┘
    │
    └── (combined-*-ccrts only) ──▶ C2 VPC (10.0.0.0/16)
@@ -62,9 +62,9 @@ Operator laptop
 
 | Block | Purpose |
 |---|---|
-| `192.168.57.0/24` | CCRTS VPC (full block) |
-| `192.168.57.0/26` | Public subnet (NAT GW) |
-| `192.168.57.0/25` | Private subnet (all hosts) |
+| `192.168.57.0/24`  | CCRTS VPC (full block) |
+| `192.168.57.0/26`  | Private subnet — all lab hosts (.20 kali, .30 win-ws, .40 dc01, .41 ad-ws01, .50 elk) |
+| `192.168.57.64/26` | Public subnet — NAT GW egress only, no lab hosts |
 
 No bastion host is provisioned inside the CCRTS VPC. The **dashboard EC2 instance acts as the SSH jump** for every connection into the lab — see [Operator connection guide](#operator-connection-guide) below.
 
