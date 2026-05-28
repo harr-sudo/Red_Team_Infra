@@ -74,8 +74,15 @@ targets:
     - family: linux
       min_version: "22.04"
       max_version: "24.04"
+  # 2026-05-22 — Elastic is a detection LAYER, not a host-role-specific
+  # vuln. The previous `standalone`-only requirement meant the stack
+  # wouldn't install on a domain-joined Linux host (which is what the
+  # test_lab's tllinux01 is). Accept any Linux role — single-node
+  # Elasticsearch + Kibana + Fleet runs fine on any modern Ubuntu host
+  # regardless of whether it's also joined to AD.
   required_roles:
     - standalone
+    - linux_member
   required_services: []
 
 depends_on: []
@@ -132,5 +139,380 @@ cost:
   storage_mb: 30720       # ~30 GB for ES indices
   cpu_pct: 40
   detectability: quiet
+
+curriculum:
+  title: "Elastic Detection Stack — Build the Blue-Team SIEM"
+  summary: >
+    Guided walkthrough for the detection-engineer seat. You will deploy a
+    single-node Elasticsearch 8.x + Kibana + Logstash on tllinux01 via
+    docker-compose, configure a Beats input pipeline, install the Elastic
+    Prebuilt Detection Rules from elastic/detection-rules, trigger a
+    Kerberoasting probe from tlws01, watch the alert fire in Kibana, then
+    tune false positives with a rule exception list. End-to-end validation
+    uses an Atomic Red Team test for T1059.001 to walk the full chain
+    Sysmon -> Winlogbeat -> Logstash -> Elasticsearch -> Kibana alert.
+  learning_objectives:
+    - "Stand up a single-node ES + Kibana + Logstash cluster suitable for a lab SIEM."
+    - "Configure a Logstash Beats input + filter pipeline that parses Winlogbeat events."
+    - "Apply ILM so winlogbeat-* and filebeat-* indices roll over and retain 7 days."
+    - "Install the Elastic Prebuilt Detection Rules from the Kibana UI and enable AD-attack rules."
+    - "Trigger a Kerberoasting probe and verify the alert appears in Security -> Alerts."
+    - "Author a rule exception list to suppress a known-benign false positive."
+    - "Validate the detection chain end-to-end with an Atomic Red Team T1059.001 test."
+  prerequisites:
+    - "tllinux01 (10.99.50.13, Ubuntu 22.04) reachable with sudo and outbound internet."
+    - "Docker Engine + docker compose plugin installed on tllinux01."
+    - "Sysmon (SwiftOnSecurity or sysmon-modular config) already deployed on tldc01/tlws01."
+    - "Winlogbeat 8.x installed on tldc01 + tlws01 (filebeat-shipper bolt-on covers Linux)."
+    - "Operator account with seclab credentials on tlws01 for the Kerberoasting probe."
+  estimated_total_minutes: 45
+  steps:
+    - id: "01-deploy-stack"
+      title: "Deploy Elasticsearch + Kibana via docker-compose on tllinux01"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 1 - Spin up the ES + Kibana single-node cluster
+
+        SSH to the lab's detection host. We run single-node ES with security
+        DISABLED for the lab so operators can iterate quickly without TLS
+        bootstrap pain. Do NOT replicate this in production.
+
+        ```bash
+        ssh ubuntu@10.99.50.13
+        sudo mkdir -p /opt/elastic && cd /opt/elastic
+        sudo tee docker-compose.yml >/dev/null <<'YAML'
+        services:
+          elasticsearch:
+            image: docker.elastic.co/elasticsearch/elasticsearch:8.19.0
+            container_name: es01
+            environment:
+              - discovery.type=single-node
+              - xpack.security.enabled=false
+              - ES_JAVA_OPTS=-Xms2g -Xmx2g
+              - cluster.name=tl-detection
+            ports:
+              - "9200:9200"
+            volumes:
+              - esdata:/usr/share/elasticsearch/data
+            ulimits:
+              memlock: { soft: -1, hard: -1 }
+          kibana:
+            image: docker.elastic.co/kibana/kibana:8.19.0
+            container_name: kibana01
+            environment:
+              - ELASTICSEARCH_HOSTS=http://es01:9200
+              - SERVER_HOST=0.0.0.0
+            ports:
+              - "5601:5601"
+            depends_on: [elasticsearch]
+        volumes:
+          esdata: {}
+        YAML
+        sudo sysctl -w vm.max_map_count=262144
+        sudo docker compose up -d
+        ```
+
+        Verify cluster health turns green/yellow (single-node clusters are
+        always `yellow` because replicas have no second node — that's fine):
+
+        ```bash
+        curl -s http://10.99.50.13:9200/_cluster/health | jq .
+        ```
+
+        Expected: `{ "status": "yellow", "number_of_nodes": 1, ... }`.
+        Then browse to `http://10.99.50.13:5601` and confirm Kibana loads
+        the home page.
+
+        > **Success criteria:** `_cluster/health` returns `status: yellow`
+        > (or `green`) and Kibana home is reachable on `:5601`.
+      assessment:
+        question: "Why does a healthy single-node Elasticsearch cluster report status `yellow` instead of `green`?"
+        options:
+          - "Because security is disabled and ES warns about it."
+          - "Because the primary shards are allocated but replica shards have no second node to live on."
+          - "Because Kibana hasn't connected yet."
+          - "Because the JVM heap is set below the recommended 4 GB."
+        correct_index: 1
+        explanation: >
+          Yellow means all primaries are allocated but at least one replica
+          shard is unassigned. With one node, replicas have nowhere to go,
+          so yellow is the steady state. Disabling security, the missing
+          Kibana, and small heap are unrelated — yellow is purely the
+          replica-allocation story.
+    - id: "02-logstash-pipeline"
+      title: "Install Logstash + Beats input + Winlogbeat filter pipeline"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 2 - Add Logstash as the parsing layer
+
+        Beats can ship straight to Elasticsearch, but Logstash gives us a
+        place to enrich, drop noise, and pin index names. Add it to the
+        same compose file:
+
+        ```bash
+        sudo mkdir -p /opt/elastic/logstash/pipeline
+        sudo tee /opt/elastic/logstash/pipeline/beats.conf >/dev/null <<'CONF'
+        input {
+          beats { port => 5044 }
+        }
+        filter {
+          if [agent][type] == "winlogbeat" {
+            mutate { add_field => { "[@metadata][target_index]" => "winlogbeat-%{+YYYY.MM.dd}" } }
+          } else if [agent][type] == "filebeat" {
+            mutate { add_field => { "[@metadata][target_index]" => "filebeat-%{+YYYY.MM.dd}" } }
+          }
+        }
+        output {
+          elasticsearch {
+            hosts => ["http://es01:9200"]
+            index => "%{[@metadata][target_index]}"
+          }
+        }
+        CONF
+        ```
+
+        Append a Logstash service to `docker-compose.yml` and recreate the
+        stack:
+
+        ```bash
+        sudo tee -a /opt/elastic/docker-compose.yml >/dev/null <<'YAML'
+          logstash:
+            image: docker.elastic.co/logstash/logstash:8.19.0
+            container_name: logstash01
+            volumes:
+              - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+            ports:
+              - "5044:5044"
+            depends_on: [elasticsearch]
+        YAML
+        sudo docker compose up -d
+        sudo docker logs -f logstash01 | grep -i "pipeline started"
+        ```
+
+        Validate the pipeline accepts traffic by curling the Beats input
+        from any lab host:
+
+        ```bash
+        nc -vz 10.99.50.13 5044
+        ```
+
+        > **Success criteria:** `nc` reports `Connection succeeded` and
+        > Logstash logs show `Pipeline started {"pipeline.id"=>"main"}`.
+    - id: "03-ilm-policy"
+      title: "Configure ILM for 7-day retention"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 3 - Rollover policy so the lab doesn't fill the disk
+
+        Open Kibana -> Stack Management -> Index Lifecycle Policies. Click
+        Create policy named `lab-7d`.
+
+        Hot phase: rollover when primary shard reaches `5gb` OR index age
+        hits `1d`. Delete phase: enable, set min age `7d`.
+
+        Or do it via API in one shot:
+
+        ```bash
+        curl -s -X PUT http://10.99.50.13:9200/_ilm/policy/lab-7d \
+          -H 'Content-Type: application/json' -d '{
+            "policy": {
+              "phases": {
+                "hot":    { "actions": { "rollover": { "max_age": "1d", "max_primary_shard_size": "5gb" } } },
+                "delete": { "min_age": "7d", "actions": { "delete": {} } }
+              }
+            }
+          }'
+        ```
+
+        Attach the policy to the Beats index templates:
+
+        ```bash
+        for tpl in winlogbeat filebeat; do
+          curl -s -X PUT "http://10.99.50.13:9200/_index_template/${tpl}-lab" \
+            -H 'Content-Type: application/json' -d "{
+              \"index_patterns\": [\"${tpl}-*\"],
+              \"template\": { \"settings\": { \"index.lifecycle.name\": \"lab-7d\" } },
+              \"priority\": 500
+            }"
+        done
+        ```
+
+        > **Success criteria:** GET `_ilm/policy/lab-7d` returns the policy
+        > and new winlogbeat/filebeat indices show `index.lifecycle.name:
+        > lab-7d` under Stack Management -> Index Management.
+    - id: "04-install-rules"
+      title: "Install the Elastic Prebuilt Detection Rules"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 4 - Pull in the elastic/detection-rules corpus
+
+        Kibana ships the Elastic Prebuilt Detection Rules as a Fleet
+        integration. In Kibana, navigate:
+
+        `Security -> Rules -> Detection rules (SIEM) -> Add Elastic rules`
+
+        Click Install all (the 8.19 corpus carries roughly 1,200+ rules
+        covering Windows, Linux, macOS, cloud and network sources). Once
+        installed, filter by tag and enable at minimum:
+
+        | Tactic | Rule name |
+        |---|---|
+        | Credential Access | `Kerberos Traffic from Unusual Process` (Kerberoasting probe) |
+        | Credential Access | `LSASS Memory Dump Creation` |
+        | Credential Access | `Suspicious Lsass Process Access` |
+        | Credential Access | `Potential Credential Access via LSASS Memory Dump` |
+        | Credential Access | `Potential Kerberos AS-REP Roasting` |
+        | Initial Access | `Suspicious PowerShell Engine ImageLoad` |
+        | Execution | `Auditd Process Executed` (for the filebeat-shipper bolt-on) |
+
+        For air-gapped labs, clone the upstream repo and import via the
+        rules CLI:
+
+        ```bash
+        git clone https://github.com/elastic/detection-rules /opt/detection-rules
+        cd /opt/detection-rules
+        python3 -m pip install -e ".[dev]"
+        python3 -m detection_rules kibana --space default \
+          --kibana-url http://10.99.50.13:5601 import-rules \
+          -d rules/windows
+        ```
+
+        > **Success criteria:** Security -> Rules shows the prebuilt rules
+        > as Installed and the AD-attack rules toggled Enabled.
+      assessment:
+        question: "Which Kibana app surface lets a detection engineer enable the prebuilt rule `Kerberos Traffic from Unusual Process` in a single click?"
+        options:
+          - "Stack Management -> Watcher"
+          - "Observability -> APM -> Services"
+          - "Security -> Rules -> Detection rules (SIEM)"
+          - "Dev Tools -> Console"
+        correct_index: 2
+        explanation: >
+          The Security app's Rules page is the canonical place to install,
+          enable and tune prebuilt detection rules. Watcher is the legacy
+          alerting engine, Observability is for traces/metrics, and Dev
+          Tools is a raw ES query console. Only Security -> Rules manages
+          SIEM rule state with a UI toggle.
+    - id: "05-trigger-and-alert"
+      title: "Trigger a Kerberoasting probe and watch the alert"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 5 - End-to-end signal flow on a real attack
+
+        From an authenticated session on tlws01 (10.99.50.12), request a
+        service ticket for a SPN — the canonical Kerberoasting fingerprint.
+
+        ```powershell
+        # Run as TESTLAB\seclab on tlws01
+        Add-Type -AssemblyName System.IdentityModel
+        New-Object System.IdentityModel.Tokens.KerberosRequestorSecurityToken `
+          -ArgumentList "MSSQLSvc/tldc01.testlab.local:1433"
+        ```
+
+        On tldc01 (10.99.50.10) the DC logs Event 4769 with ticket
+        encryption `0x17` (RC4) — Sysmon picks it up, Winlogbeat ships
+        it to Logstash on 10.99.50.13:5044, Logstash writes
+        `winlogbeat-YYYY.MM.dd`, and the rule engine evaluates within
+        ~5 minutes (default interval).
+
+        Open Kibana -> Security -> Alerts. Filter:
+        `kibana.alert.rule.name : "Kerberos Traffic from Unusual Process"`
+        or `signal.rule.threat.tactic.name : "Credential Access"`.
+
+        You should see one alert with `host.name: tldc01`, the SPN in
+        `winlog.event_data.ServiceName`, and the RC4 ticket flag. Click
+        through to the alert flyout to inspect the source event.
+
+        > **Success criteria:** at least one alert appears in Security ->
+        > Alerts within ~5 minutes of the Kerberoast probe, with
+        > `host.name : tldc01` and `winlog.event_id : 4769`.
+    - id: "06-tune-fp"
+      title: "Tune a false-positive with a rule exception list"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 6 - Suppress the SCOM service-account noise
+
+        Lab Kerberoasting alerts can fire on legitimate service accounts
+        (SQL monitoring, SCOM, vendor health probes). Don't disable the
+        rule — add an exception.
+
+        From the alert flyout, click Take action -> Add rule exception.
+        Or via the detection-engine API:
+
+        ```bash
+        curl -s -X POST http://10.99.50.13:5601/api/detection_engine/rules/{rule_id}/exceptions \
+          -H 'kbn-xsrf: true' -H 'Content-Type: application/json' -d '{
+            "items": [{
+              "list_id": "kerberoast-known-good",
+              "name": "Allowlist SCOM SPN probes",
+              "type": "simple",
+              "entries": [
+                { "field": "user.name",                  "operator": "included", "type": "match", "value": "svc-scom" },
+                { "field": "winlog.event_data.ServiceName","operator":"included","type":"match","value":"MSSQLSvc/tldc01.testlab.local:1433" }
+              ]
+            }]
+          }'
+        ```
+
+        Re-run the Step 5 probe from the SCOM account context — no alert.
+        Re-run from `seclab` — alert still fires. That's the goal: keep
+        signal, kill noise.
+
+        > **Success criteria:** alert count for the rule drops to zero
+        > when probe runs as `svc-scom`, and still triggers for `seclab`.
+      assessment:
+        question: "Why is adding an exception list preferable to disabling the Kerberoasting rule outright when a benign service account triggers it?"
+        options:
+          - "Exception lists ship with the prebuilt rule pack and disabling is not supported."
+          - "Disabling the rule loses ALL detection coverage; an exception suppresses one known-benign pattern while real Kerberoast attempts still fire."
+          - "Disabling triggers a Kibana audit log entry and exceptions don't."
+          - "Exception lists are evaluated client-side in the browser, so they're faster."
+        correct_index: 1
+        explanation: >
+          Exceptions are surgical — they remove one specific known-benign
+          tuple (user + SPN, host, signer, etc.) while leaving the rule
+          armed for every other case. Disabling deletes the entire signal.
+          Audit logging and client-side eval are wrong; the rule engine
+          evaluates exceptions server-side as part of the query.
+    - id: "07-atomic-validation"
+      title: "Verify the chain end-to-end with Atomic Red Team T1059.001"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 7 - Walk the chain Sysmon -> Winlogbeat -> Logstash -> Elastic -> Alert
+
+        Atomic Red Team gives us a tagged, ATT&CK-mapped test we can fire
+        without writing payloads. Use test `T1059.001` (PowerShell
+        execution) on tlws01:
+
+        ```powershell
+        # On tlws01 (10.99.50.12) — install Invoke-AtomicRedTeam first
+        IEX (IWR 'https://raw.githubusercontent.com/redcanaryco/invoke-atomicredteam/master/install-atomicredteam.ps1' -UseBasicParsing)
+        Install-AtomicRedTeam -getAtomics
+        Invoke-AtomicTest T1059.001 -TestNumbers 1
+        ```
+
+        Watch each link:
+
+        1. **Sysmon** logs Event 1 (process create) for `powershell.exe`.
+        2. **Winlogbeat** on tlws01 ships it to `10.99.50.13:5044`.
+        3. **Logstash** routes it to `winlogbeat-YYYY.MM.dd`.
+        4. **Elasticsearch** indexes; verify with:
+           ```bash
+           curl -s 'http://10.99.50.13:9200/winlogbeat-*/_search?q=host.name:tlws01+AND+process.name:powershell.exe&size=1' | jq .
+           ```
+        5. **Kibana** -> Security -> Alerts shows a `Suspicious PowerShell
+           Engine ImageLoad` or `Atomic Red Team Telemetry` hit within
+           5 minutes.
+
+        Run the cleanup so the test doesn't pollute baseline data:
+
+        ```powershell
+        Invoke-AtomicTest T1059.001 -TestNumbers 1 -Cleanup
+        ```
+
+        > **Success criteria:** the same event ID is present in Sysmon
+        > Operational log on tlws01 AND in `winlogbeat-*` on tllinux01
+        > AND a matching alert exists in Security -> Alerts. If any link
+        > is missing, the failure is at that hop — debug there.
 
 status: beta
