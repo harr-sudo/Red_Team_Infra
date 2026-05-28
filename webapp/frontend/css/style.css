@@ -358,6 +358,238 @@ body > header h1 {
     border-radius: var(--radius-sm);
 }
 
+/* 2026-05-23 — Beacon Connect/Disconnect/Refresh trio: equalise so they
+   never desync when one toggles between btn-success/btn-danger/btn-info.
+   Explicit sizing + min-width so the trio reads as a tight action group. */
+.beacon-action-btn {
+    padding: 9px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    min-width: 110px;
+    line-height: 1.25;
+    border-radius: var(--radius);
+    text-align: center;
+}
+
+/* ── Operations · Topology sub-pill (2026-05-23) ───────────────────────── */
+.topology-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px 18px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md, 10px);
+    min-height: 640px;
+}
+.topology-pane__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+}
+
+/* ── View toggle (New · Inline / Old · Full-screen) ──────────────────────
+   Two-segment pill — `is-active` carries the brand-light fill, the
+   other segment stays neutral. Sits in the actions row beside Reset /
+   Refresh so the operator can switch engines without leaving the page. */
+.topology-pane__viewtoggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--bg-input);
+}
+.topology-pane__viewtoggle-btn {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    color: var(--text-secondary);
+    padding: 7px 14px;
+    font-size: 11.5px;
+    font-weight: var(--font-weight-semibold);
+    cursor: pointer;
+    transition: background-color 200ms var(--motion-easing-standard, ease),
+                color 200ms var(--motion-easing-standard, ease);
+}
+.topology-pane__viewtoggle-btn + .topology-pane__viewtoggle-btn {
+    border-left: 1px solid var(--border);
+}
+.topology-pane__viewtoggle-btn:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+.topology-pane__viewtoggle-btn.is-active {
+    background: var(--brand-light);
+    color: var(--text-inverse);
+}
+.topology-pane__actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.topology-pane__eyebrow {
+    display: block;
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+.topology-pane__title {
+    margin: 0 0 4px;
+    font-size: 22px;
+    color: var(--text-primary);
+}
+.topology-pane__sub {
+    margin: 0;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    max-width: 720px;
+}
+.topology-pane__body {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 14px;
+    align-items: stretch;
+}
+.topology-pane__canvas-wrap {
+    position: relative;
+    width: 100%;
+    height: 560px;
+    background: var(--bg-terminal);
+    border-radius: var(--radius-sm, 6px);
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    cursor: grab;
+}
+.topology-pane__canvas-wrap.is-dragging { cursor: grabbing; }
+
+/* ── Side info panel ───────────────────────────────────────────────────── */
+.topology-pane__info {
+    background: var(--bg-elevated, var(--bg-card));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm, 6px);
+    padding: 16px;
+    height: 560px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.topology-pane__info-empty {
+    margin: auto;
+    text-align: center;
+    color: var(--text-muted);
+    padding: 24px 14px;
+}
+.topology-pane__info-empty-glyph {
+    font-size: 28px;
+    color: var(--brand-light);
+    opacity: 0.55;
+    margin-bottom: 10px;
+}
+.topology-pane__info-empty-title {
+    font-size: 13.5px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+.topology-pane__info-empty-body {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+.topology-pane__info-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.topology-pane__info-eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--brand-light);
+    font-weight: 600;
+}
+.topology-pane__info-title {
+    font-size: 16px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    font-family: var(--font-family-mono);
+    word-break: break-all;
+}
+.topology-pane__info-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+.topology-pane__info-grid {
+    display: grid;
+    grid-template-columns: 88px 1fr;
+    row-gap: 8px;
+    column-gap: 12px;
+    font-size: 12px;
+}
+.topology-pane__info-key {
+    color: var(--text-muted);
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding-top: 2px;
+}
+.topology-pane__info-val {
+    color: var(--text-primary);
+    font-family: var(--font-family-mono);
+    word-break: break-all;
+}
+.topology-pane__info-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+@media (max-width: 1100px) {
+    .topology-pane__body {
+        grid-template-columns: 1fr;
+    }
+    .topology-pane__info { height: auto; max-height: 320px; }
+}
+.topology-pane__legend {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    padding: 6px 4px 0;
+}
+.topology-pane__legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.topology-pane__legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+.topology-pane__legend-sep {
+    width: 1px;
+    height: 14px;
+    background: var(--border);
+    margin: 0 6px;
+}
+
 /* ============================================================================
    SECTION CARDS — Unified styling for config/deploy/prereq sections
    ============================================================================ */
@@ -1975,7 +2207,11 @@ input[type="checkbox"] {
 .interact-fullview {
     position: fixed !important;
     top: 120px;  /* default: shows beacon table header above */
-    left: 0;
+    /* 2026-05-23 — must clear the left rail (220px) so the panel doesn't
+       slide under the persistent app-rail. Previously left:0 painted the
+       interact panel behind the rail and truncated the first ~15 chars
+       of every spec-row value ("tlws01" → "ws01"). */
+    left: var(--app-rail-w, 220px);
     right: 0;
     bottom: 0;
     z-index: 50;
@@ -4042,16 +4278,42 @@ body { padding-top: 64px; }
     .global-header__combobox-trigger:hover { transform: none; }
 }
 
-/* ── RESPONSIVE — collapse some chips on narrow viewports ──────────────── */
+/* ── RESPONSIVE — collapse some chips on narrow viewports ────────────────
+   Strategy: at common 1280×720 laptop widths the right cluster naturally
+   wants ~800px which overflows. Shrink the deployment combobox first
+   (truncation is acceptable, deployment names are usually short), reduce
+   right-cluster gaps, and only at smaller widths drop captions. Keep the
+   DEPLOYMENT / MONTHLY BURN / RELOAD / LIGHT labels visible at 1280px+
+   so each chip remains self-explanatory. */
+@media (max-width: 1400px) {
+    .global-header { padding: 0 18px; }
+    .global-header__rail { gap: 10px; }
+    .global-header__combobox-trigger { min-width: 130px; padding-left: 8px; padding-right: 24px; }
+    .global-header__combobox-value { max-width: 120px; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
+    .global-header__chip-label { font-size: 9px; letter-spacing: 0.08em; }
+    .global-header__cost-caption { font-size: 9px; letter-spacing: 0.08em; }
+    .global-header__refresh-label { font-size: 9px; letter-spacing: 0.08em; }
+    .global-header__theme-toggle-label { font-size: 9px; letter-spacing: 0.08em; }
+    .global-header__refresh { padding: 4px 8px; }
+    .global-header__theme-toggle { padding-left: 10px; padding-right: 10px; }
+}
+@media (max-width: 1180px) {
+    /* Below ~1180px the shrunk-label approach hits its floor; drop the
+       non-essential captions entirely so the chip values stay readable. */
+    .global-header__refresh-label { display: none; }
+    .global-header__cost-caption { display: none; }
+    .global-header__combobox-value { max-width: 120px; }
+}
 @media (max-width: 900px) {
     .global-header { padding: 0 16px; }
-    .global-header__rail { gap: 14px; }
-    .global-header__combobox-trigger { min-width: 180px; }
-    .global-header__combobox-value { max-width: 160px; }
+    .global-header__rail { gap: 10px; }
+    .global-header__combobox-trigger { min-width: 130px; }
+    .global-header__combobox-value { max-width: 100px; }
     .global-header__brand-text { display: none; }
+    .global-header__chip-label { display: none; }
 }
 @media (max-width: 640px) {
-    .global-header__chip-label { display: none; }
     .global-header__operator-prefix { display: none; }
 }
 
@@ -4475,6 +4737,8 @@ body { padding-top: 64px; }
     border-radius: 5px;
     cursor: pointer;
     letter-spacing: 0.01em;
+    white-space: nowrap;
+    flex-shrink: 0;
     transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
                 background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
                 color 280ms cubic-bezier(0.4, 0, 0.2, 1),
@@ -5029,6 +5293,75 @@ body { padding-top: 64px; }
     font-size: 13px;
     font-weight: 600;
     color: var(--text-primary);
+}
+
+/* 2026-05-22 — Try Demo Mode hero CTA. TASTE V3 dials 5/6/5:
+   - Tertiary stature: same shape as Resume but with a subtle glyph-tinted
+     left edge so it reads as "experimental / sandbox" without shouting.
+   - 280ms cubic-bezier hover lift (transform translateY(-1px)).
+   - Glyph (▶) uses --brand-light to signal "play / demo".
+   - All palette tokens; dual-theme safe. */
+.dashboard-hero__demo {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    padding: 14px 20px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    color: var(--text-primary);
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                transform 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    /* Subtle inset highlight on the left edge — the "demo" cue without
+       resorting to a saturated background. */
+    box-shadow: inset 3px 0 0 0 color-mix(in srgb, var(--brand-light) 60%, transparent);
+}
+.dashboard-hero__demo:hover {
+    border-color: var(--brand-light);
+    background: var(--bg-card-hover);
+    transform: translateY(-1px);
+}
+.dashboard-hero__demo:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+.dashboard-hero__demo-glyph {
+    color: var(--brand-light);
+    font-size: 18px;
+    line-height: 1;
+    flex-shrink: 0;
+    /* TASTE V3 — one gentle pulse on the glyph (the only "alive" cue on
+       this surface). 3.6s cycle, low-amplitude opacity sweep. */
+    animation: dashboard-demo-pulse 3600ms ease-in-out infinite;
+}
+@keyframes dashboard-demo-pulse {
+    0%, 100% { opacity: 0.7; }
+    50%      { opacity: 1; }
+}
+.dashboard-hero__demo-label {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+.dashboard-hero__demo-sub {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+@media (prefers-reduced-motion: reduce) {
+    .dashboard-hero__demo,
+    .dashboard-hero__demo-glyph {
+        transition: none;
+        animation: none;
+    }
+    .dashboard-hero__demo:hover { transform: none; }
 }
 
 .dashboard-alerts {
@@ -5598,17 +5931,36 @@ body { padding-top: 64px; }
    ============================================================================ */
 
 /* --- Page-level crossfade (every top-level .tab-page activation) ----------- */
+/* 2026-05-22 — Animation removed. Previous opacity-fade animation was
+   getting interrupted by rapid sub-pill switching + render-triggered
+   layout invalidations, stranding the pane at opacity 0 with no resting
+   state to fall back to. The transform fallback alone is enough motion
+   for the V3 dial-set; the opacity fade was the offender. */
 .tab-page {
-    animation: page-enter 220ms cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 1;
+    transform: none;
 }
 @keyframes page-enter {
     from { opacity: 0; transform: translateY(4px); }
     to   { opacity: 1; transform: translateY(0); }
 }
 
-/* --- Sub-pill pane transitions (spring-overshoot fade-in) ------------------ */
+/* --- Sub-pill pane transitions (formerly a spring-overshoot fade-in) ----- */
+/* 2026-05-22 — Animation removed for the same reason as .tab-page above.
+   The keyframe is kept for any code that still references it but is no
+   longer applied. Sub-pill switch feels instant; the spring overshoot
+   wasn't worth the visibility risk. Also adding explicit width:100% +
+   block display so the visible pane fills its .subpill-content
+   container — diagnostic confirmed the pane was collapsing to width:0
+   despite being display:block with width:auto. */
 .subpill-pane {
-    animation: subpill-pane-enter 240ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    opacity: 1;
+    transform: none;
+    display: block;
+    width: 100%;
+}
+.subpill-pane[hidden] {
+    display: none;
 }
 @keyframes subpill-pane-enter {
     from { opacity: 0; transform: translateX(-6px); }
@@ -8031,7 +8383,12 @@ body[data-journey-open="true"] .container > main {
     max-width: 920px;
     margin: 0;
     padding: 0;
-    animation: manage-fade-in 320ms var(--motion-easing-standard) both;
+    /* 2026-05-22 — manage-fade-in animation removed. Same root cause as
+       .tab-page and .subpill-pane above: interrupted opacity animations
+       were leaving the view at opacity 0. Resting state declared
+       explicitly so nothing can strand it. */
+    opacity: 1;
+    transform: none;
 }
 
 /* Eyebrow strip: thin caps label + meta cluster, hairline below */
@@ -8281,6 +8638,50 @@ body[data-journey-open="true"] .container > main {
 }
 
 /* Empty state when no deployment selected */
+/* 2026-05-22 — loading skeleton for the Manage spec-list while the
+   /api/deploy/infrastructure terraform-shell-out (4-5s) is in flight.
+   TASTE V3 dials 5/6/5 — single shimmer, palette tokens, dual-theme. */
+.manage-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 0;
+}
+.manage-skeleton__row {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 16px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+}
+.manage-skeleton__bar {
+    display: inline-block;
+    height: 12px;
+    border-radius: 4px;
+    background: linear-gradient(
+        90deg,
+        var(--bg-card-hover) 0%,
+        color-mix(in srgb, var(--brand-light) 18%, var(--bg-card-hover)) 50%,
+        var(--bg-card-hover) 100%
+    );
+    background-size: 200% 100%;
+    animation: manage-skeleton-shimmer 1600ms ease-in-out infinite;
+}
+.manage-skeleton__bar--short { width: 60%; }
+.manage-skeleton__bar--mid   { width: 45%; }
+.manage-skeleton__bar--long  { width: 80%; }
+@keyframes manage-skeleton-shimmer {
+    0%   { background-position: -100% 0; opacity: 0.65; }
+    50%  { background-position:  200% 0; opacity: 1; }
+    100% { background-position:  200% 0; opacity: 0.65; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .manage-skeleton__bar {
+        animation: none;
+        background: var(--bg-card-hover);
+    }
+}
+
 .manage-empty {
     padding: 36px 24px;
     text-align: center;
@@ -9344,6 +9745,19 @@ details.details-card--v3 > .resource-list-v3__body {
 .ops-beacons-list .spec-row[data-selected="true"] .spec-row__head {
     background: var(--bg-card-hover);
 }
+/* 2026-05-23 — Override the global spec-row__head grid for beacon rows.
+   The base uses `align-items: baseline + 200px 1fr auto 22px` which
+   misaligns 2-line beacon cells against the single-line spec-pill on
+   the right (baseline-align with mixed line counts is visually noisy).
+   Centre-align all four columns so name / meta / pill / chevron sit
+   on a shared centreline. TASTE dial DENSITY-5: consistent rhythm. */
+.ops-beacons-list .spec-row .spec-row__head {
+    align-items: center;
+    grid-template-columns: minmax(180px, 220px) 1fr auto 22px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+    gap: 18px;
+}
 .ops-beacons-list .ops-beacons-row__name {
     display: flex;
     flex-direction: column;
@@ -9984,7 +10398,10 @@ body:has(.app-shell) {
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.12em;
-    min-width: 0;
+    /* min-width: max-content so the breadcrumb always renders its current
+       crumb text (no zero-width collapse). The crumb is short (~80px) and
+       the right cluster shrinks via flex on chip values to make room. */
+    min-width: max-content;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -10831,6 +11248,95 @@ body:has(.app-shell) {
     font-size: 13px;
 }
 
+/* ── Primary host-picker CTA (2026-05-23) ────────────────────────────────
+   Promoted out of the eyebrow corner; this is the bolt-on page's main
+   entry affordance. The catalog stays hidden until a host is picked, so
+   the picker reads as a banner with a brand-light accent ribbon on the
+   left edge + a chunky select. TASTE dial DENSITY-5: comfortable
+   padding, label stacked above the dropdown for breathing room. */
+.bolton-host-picker {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 24px;
+    padding: 18px 22px;
+    margin: 14px 0 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-left: 4px solid var(--brand-light);
+    border-radius: var(--radius-md, 8px);
+    box-shadow: 0 1px 0 0 color-mix(in srgb, var(--brand-light) 14%, transparent);
+}
+.bolton-host-picker__label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    cursor: pointer;
+}
+.bolton-host-picker__eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--brand-light);
+    font-weight: 600;
+}
+.bolton-host-picker__lead {
+    font-size: 15px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    line-height: 1.35;
+}
+.bolton-host-picker__select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong, var(--border));
+    border-radius: 7px;
+    padding: 12px 36px 12px 14px;
+    font-size: 14px;
+    font-weight: var(--font-weight-semibold);
+    min-width: 320px;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='none' stroke='%23808088' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M1 1.5 L6 6.5 L11 1.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    transition: border-color var(--motion-duration-base, 200ms) var(--motion-easing-standard, ease),
+                box-shadow var(--motion-duration-base, 200ms) var(--motion-easing-standard, ease);
+}
+.bolton-host-picker__select:hover {
+    border-color: var(--brand-light);
+}
+.bolton-host-picker__select:focus-visible {
+    outline: none;
+    border-color: var(--brand-light);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+}
+/* Once a host is selected, soften the banner so it doesn't dominate the
+   page — the host hero card below it becomes the focal point. */
+.bolton-host-picker.is-host-selected {
+    padding: 12px 22px;
+    margin: 10px 0 14px;
+    border-left-width: 3px;
+}
+.bolton-host-picker.is-host-selected .bolton-host-picker__lead {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+.bolton-host-picker.is-host-selected .bolton-host-picker__select {
+    padding: 8px 32px 8px 12px;
+    font-size: 13px;
+    min-width: 280px;
+}
+@media (max-width: 900px) {
+    .bolton-host-picker {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    .bolton-host-picker__select { min-width: 100%; }
+}
+
 .bolton-live__placeholder {
     padding: 30px 14px;
     color: var(--text-secondary);
@@ -10883,7 +11389,116 @@ body:has(.app-shell) {
     font-size: 12.5px;
 }
 
-.bolton-live__hero-actions { display: flex; gap: 8px; }
+.bolton-live__hero-actions { display: flex; gap: 8px; align-items: center; }
+
+/* ── Detection-layer button (state-aware) ─────────────────────────────────
+   Four visual states driven by data-detect-state:
+     none     — neutral border + brand-light glyph, prompts the operator
+     partial  — warning border + count, "complete?" label
+     full     — success fill, disabled, ✓ glyph, "enabled" label
+     working  — neutral border + progress fill (--detect-progress 0→100%)
+   Replaces the old `.spec-edit-btn--save` styling which (a) didn't
+   reflect state, (b) flashed raw text during the dispatch loop.
+   TASTE dials 5/6/5 — single calm motion (progress fill), no shimmer. */
+.bolton-detect-btn {
+    --detect-progress: 0%;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: var(--radius-xs);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: var(--font-weight-semibold);
+    cursor: pointer;
+    overflow: hidden;
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                border-color var(--motion-duration-base) var(--motion-easing-standard),
+                color var(--motion-duration-base) var(--motion-easing-standard);
+}
+.bolton-detect-btn:hover:not(:disabled) {
+    background: var(--bg-card-hover);
+    border-color: var(--border-light);
+}
+.bolton-detect-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+}
+.bolton-detect-btn:disabled { cursor: default; }
+
+.bolton-detect__progress {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: var(--detect-progress);
+    background: color-mix(in srgb, var(--brand-light) 22%, transparent);
+    transition: width var(--motion-duration-base) var(--motion-easing-standard);
+    pointer-events: none;
+    z-index: 0;
+}
+.bolton-detect__glyph,
+.bolton-detect__label,
+.bolton-detect__counter { position: relative; z-index: 1; }
+.bolton-detect__counter {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+}
+
+/* State: none — default prompt */
+.bolton-detect-btn[data-detect-state="none"] {
+    border-color: var(--brand-light);
+    color: var(--text-primary);
+}
+.bolton-detect-btn[data-detect-state="none"] .bolton-detect__counter {
+    background: color-mix(in srgb, var(--brand-light) 14%, transparent);
+    color: var(--text-secondary);
+}
+
+/* State: partial — warning border, prompts completion */
+.bolton-detect-btn[data-detect-state="partial"] {
+    border-color: var(--warning);
+    color: var(--text-primary);
+}
+.bolton-detect-btn[data-detect-state="partial"] .bolton-detect__counter {
+    background: color-mix(in srgb, var(--warning) 18%, transparent);
+    color: var(--text-primary);
+}
+
+/* State: full — success fill, disabled */
+.bolton-detect-btn[data-detect-state="full"] {
+    background: color-mix(in srgb, var(--success) 18%, transparent);
+    border-color: var(--success);
+    color: var(--text-primary);
+}
+.bolton-detect-btn[data-detect-state="full"] .bolton-detect__counter {
+    background: color-mix(in srgb, var(--success) 22%, transparent);
+    color: var(--text-primary);
+}
+.bolton-detect-btn[data-detect-state="full"] .bolton-detect__glyph {
+    color: var(--success-text, var(--success));
+}
+
+/* State: working — neutral chrome + animated progress fill */
+.bolton-detect-btn[data-detect-state="working"] {
+    border-color: var(--border);
+    color: var(--text-secondary);
+}
+.bolton-detect-btn[data-detect-state="working"] .bolton-detect__counter {
+    background: color-mix(in srgb, var(--brand-light) 20%, transparent);
+    color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bolton-detect-btn,
+    .bolton-detect__progress { transition: none; }
+}
 
 /* SUMMARY TILES --------------------------------------------------------- */
 .bolton-live__summary {
@@ -10920,43 +11535,184 @@ body:has(.app-shell) {
 }
 
 /* FILTERS --------------------------------------------------------------- */
-/* Single-row chip strip. Three chip groups (category / state / coverage)
-   are separated by a thin vertical divider; the active count sits at the
-   far right. Row labels have been retired — the leading "All …" chip in
-   each group communicates its group identity. */
+/* 2026-05-22 — Filter UI rebuilt. Previous 22-chip flat strip across 3
+   axes flagged by operator as "rubbish multi-selection picker". New UI:
+   one search box + three single-select dropdowns + an active-filter pill
+   row. TASTE V3 dials 5/6/5, palette tokens only, dual-theme. */
 .bolton-live__filters {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
     border-radius: 10px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     margin-bottom: 16px;
-}
-
-.bolton-live__filters-row {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.bolton-filter-bar {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) auto auto;
+    gap: 14px;
+    align-items: end;
+}
+
+.bolton-filter-bar__search {
+    position: relative;
+    display: flex;
     align-items: center;
-    gap: 8px;
+}
+.bolton-filter-bar__search-icon {
+    position: absolute;
+    left: 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    pointer-events: none;
+    line-height: 1;
+}
+.bolton-filter-bar__search-input {
+    width: 100%;
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    padding: 9px 12px 9px 34px;
+    font-family: inherit;
+    font-size: 13px;
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.bolton-filter-bar__search-input::placeholder {
+    color: var(--text-muted);
+}
+.bolton-filter-bar__search-input:focus {
+    outline: none;
+    border-color: var(--brand-light);
+    background: var(--bg-card);
 }
 
-.bolton-live__filters-sep {
-    width: 1px;
-    height: 18px;
-    background: var(--border-subtle);
-    margin: 0 2px;
-    flex: 0 0 auto;
+.bolton-filter-bar__selects {
+    display: flex;
+    gap: 10px;
+    flex-wrap: nowrap;
+}
+.bolton-filter-select {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.bolton-filter-select__label {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+.bolton-filter-select__input {
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    padding: 8px 28px 8px 10px;
+    font-family: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+    min-width: 130px;
+    /* Native <select> chevron via background-image so it inherits the
+       palette colour without an SVG asset. */
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%),
+                      linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 50%, calc(100% - 10px) 50%;
+    background-size: 4px 4px, 4px 4px;
+    background-repeat: no-repeat;
+    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.bolton-filter-select__input:focus {
+    outline: none;
+    border-color: var(--brand-light);
 }
 
-.bolton-live__filters-count {
-    margin-left: auto;
+.bolton-filter-bar__count {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
     font-size: 11.5px;
     color: var(--text-secondary);
+    white-space: nowrap;
+}
+.bolton-filter-bar__clear {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.bolton-filter-bar__clear:hover {
+    background: var(--bg-card-hover);
 }
 
-.bolton-live__chips {
-    display: inline-flex;
+/* Active filter pills row — shows what's applied with × to remove just
+   that axis. Hidden when no filter is active. */
+.bolton-filter-pills {
+    display: flex;
     flex-wrap: wrap;
     gap: 6px;
+    min-height: 0;
+}
+.bolton-filter-pills:empty { display: none; }
+.bolton-filter-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px 4px 4px 10px;
+    font-size: 11.5px;
+    color: var(--text-primary);
+}
+.bolton-filter-pill__close {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 50%;
+    font-family: inherit;
+}
+.bolton-filter-pill__close:hover {
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
+
+@media (max-width: 880px) {
+    .bolton-filter-bar {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
+    .bolton-filter-bar__selects { flex-wrap: wrap; }
+    .bolton-filter-bar__count {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .bolton-filter-bar__search-input,
+    .bolton-filter-select__input,
+    .bolton-filter-bar__clear {
+        transition: none;
+    }
 }
 
 /* SECTIONS -------------------------------------------------------------- */
@@ -11277,9 +12033,14 @@ body:has(.app-shell) {
     transform: translate(-50%, calc(-50% + 8px));
 }
 
-/* Wide variant — for tables / lists that need horizontal room. */
+/* Wide variant — for tables / lists / walkthrough content that need
+   horizontal room. 2026-05-22 — bumped from 880px to 1180px and to a
+   viewport-percentage on smaller screens so the bolt-on curriculum
+   drawer (two-column step list + markdown article) doesn't clip URLs
+   and inline code. */
 .app-overlay__card--wide {
-    max-width: 880px;
+    max-width: min(1180px, calc(100vw - 48px));
+    width: calc(100vw - 48px);
 }
 
 /* ── Header (eyebrow + title left, promote + close right) ──────────────── */
@@ -11339,7 +12100,8 @@ body:has(.app-shell) {
     font: inherit;
     font-size: 11.5px;
     font-weight: var(--font-weight-semibold);
-    transition: background-color 180ms ease, border-color 180ms ease;
+    transition: background-color 280ms var(--bolton-detail-ease),
+                border-color 280ms var(--bolton-detail-ease);
 }
 .app-overlay__promote:hover {
     background: var(--bg-card-hover);
@@ -11383,7 +12145,8 @@ body:has(.app-shell) {
     align-items: center;
     justify-content: center;
     padding: 0;
-    transition: background-color 180ms ease, border-color 180ms ease;
+    transition: background-color 280ms var(--bolton-detail-ease),
+                border-color 280ms var(--bolton-detail-ease);
 }
 .app-overlay__close:hover {
     background: var(--bg-card-hover);
@@ -11497,7 +12260,8 @@ body:has(.app-shell) {
     font-size: 11.5px;
     font-weight: var(--font-weight-semibold);
     flex-shrink: 0;
-    transition: background-color 180ms ease, border-color 180ms ease;
+    transition: background-color 280ms var(--bolton-detail-ease),
+                border-color 280ms var(--bolton-detail-ease);
 }
 .app-overlay__filter-export:hover {
     background: var(--bg-card-hover);
@@ -12684,6 +13448,37 @@ body[data-overlay-depth] .app-topbar {
     gap: 8px;
 }
 .cfg-field__required { color: var(--danger-text); font-weight: 700; }
+
+/* ── Locked-region chip (operator directive: eu-central-1 only) ─────────── */
+.cfg-region-locked {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+}
+.cfg-region-locked__value {
+    font-family: var(--font-family-mono);
+    font-size: 12px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    letter-spacing: 0.02em;
+}
+.cfg-region-locked__caption {
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+.cfg-region-locked__caption code {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+}
+
 .cfg-field__defaulted {
     font-family: var(--font-family-mono);
     font-size: 8.5px;
@@ -13674,5 +14469,565 @@ textarea.cfg-input {
     max-height: 220px;
     overflow: auto;
     white-space: pre-wrap;
+}
+
+/* ─── Reload-app button in the global header ───────────────────────────
+   2026-05-22 — TASTE V3, dual-theme. The button is normally calm; when
+   the version-drift detector finds a mismatch it adds .is-stale which
+   pulses the glyph to draw the operator's attention. Click triggers
+   location.reload(true) to bypass the browser's in-memory cache. */
+.global-header__refresh {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11.5px;
+    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.global-header__refresh:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-light);
+}
+.global-header__refresh-glyph {
+    font-size: 14px;
+    line-height: 1;
+    display: inline-block;
+}
+.global-header__refresh-label {
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+/* Stale state — backend asset version drifted from the version that
+   loaded this page. Pulse the glyph + tint the border to nudge a reload. */
+.global-header__refresh.is-stale {
+    border-color: var(--brand-light);
+    background: color-mix(in srgb, var(--brand-light) 18%, transparent);
+}
+.global-header__refresh.is-stale .global-header__refresh-glyph {
+    animation: refresh-stale-spin 1600ms linear infinite;
+}
+@keyframes refresh-stale-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .global-header__refresh.is-stale .global-header__refresh-glyph {
+        animation: none;
+    }
+    .global-header__refresh {
+        transition: none;
+    }
+}
+
+/* ─── Bolt-on detail drawer (curriculum + detections + install) ───────────
+   Three-tab drawer that opens via APP.overlay.open('bolton-detail', …).
+   TASTE-skill dials 5/6/5 (VARIANCE | MOTION | DENSITY) — calm
+   professional. Single canonical transition timing
+   (280ms cubic-bezier(0.4, 0, 0.2, 1)), one shimmer on the progress bar,
+   spring overshoot on the mark-complete button only. Everything stripped
+   under prefers-reduced-motion. Layer-aware contrast: every colour set
+   against the IMMEDIATE parent surface, not the page background. Vanilla
+   CSS + palette.css tokens only — no raw hex, no JS-driven layout.
+   2026-05-22 — Phase 4 curriculum browser. */
+:root {
+    --bolton-detail-ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --bolton-detail-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.bolton-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 480px;
+}
+.bolton-detail__tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0;
+}
+.bolton-detail__tab {
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    color: var(--text-secondary);
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    transition: background-color 280ms var(--bolton-detail-ease),
+                color 280ms var(--bolton-detail-ease),
+                border-color 280ms var(--bolton-detail-ease);
+}
+.bolton-detail__tab:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+.bolton-detail__tab.is-active {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-color: var(--border);
+    position: relative;
+    top: 1px; /* overlap the underline so the active tab looks attached */
+}
+.bolton-detail__panes {
+    flex: 1;
+}
+.bolton-detail__pane {
+    color: var(--text-primary);
+}
+.bolton-detail__pane[hidden] { display: none; }
+
+/* Install pane — descriptor metadata */
+.bolton-detail__head { margin-bottom: 14px; }
+.bolton-detail__eyebrow {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+.bolton-detail__title {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 8px;
+    color: var(--text-primary);
+}
+.bolton-detail__desc {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 0;
+}
+.bolton-detail__meta {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 6px 16px;
+    margin: 0;
+    font-size: 12.5px;
+}
+.bolton-detail__meta dt {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+.bolton-detail__meta dd {
+    margin: 0;
+    color: var(--text-primary);
+}
+
+/* Detection table */
+.bolton-detail__detection-table {
+    border-collapse: collapse;
+    font-size: 12.5px;
+}
+.bolton-detail__detection-table th,
+.bolton-detail__detection-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+    vertical-align: top;
+}
+.bolton-detail__detection-table th {
+    background: var(--bg-card-hover);
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* Walkthrough pane */
+.bolton-walk {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.bolton-walk__head { display: flex; flex-direction: column; gap: 6px; }
+.bolton-walk__title {
+    font-size: 17px;
+    margin: 0;
+    color: var(--text-primary);
+}
+.bolton-walk__summary {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    margin: 0;
+}
+.bolton-walk__progress {
+    position: relative;
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    height: 22px;
+    overflow: hidden;
+    margin-top: 8px;
+}
+.bolton-walk__progress-bar {
+    height: 100%;
+    background: var(--brand-light);
+    transition: width 280ms var(--bolton-detail-ease);
+    /* TASTE V3 — one gentle shimmer on the progress fill (the major
+       element on this surface). Sweeps a 12% lightness lift across the
+       bar every 3.2s — alive without being theatrical. */
+    background-image: linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--bg-card) 14%, transparent) 50%,
+        transparent 100%
+    );
+    background-size: 200% 100%;
+    background-repeat: no-repeat;
+    animation: bolton-walk-progress-shimmer 3200ms linear infinite;
+}
+@keyframes bolton-walk-progress-shimmer {
+    0%   { background-position: -100% 0; }
+    100% { background-position:  200% 0; }
+}
+.bolton-walk__progress-label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11.5px;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.bolton-walk__body {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 16px;
+    min-height: 360px;
+}
+.bolton-walk__nav {
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+}
+.bolton-walk__nav-block h4 {
+    font-size: 11px;
+    margin: 0 0 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+.bolton-walk__nav-block ul {
+    margin: 0;
+    padding-left: 16px;
+    color: var(--text-primary);
+    line-height: 1.5;
+}
+.bolton-walk__steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.bolton-walk__step-btn {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-primary);
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background-color 150ms ease, border-color 150ms ease;
+}
+.bolton-walk__step-btn:hover {
+    background: var(--bg-card);
+    border-color: var(--border);
+}
+.bolton-walk__step.is-done .bolton-walk__step-btn { color: var(--text-secondary); }
+.bolton-walk__step-check {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+}
+.bolton-walk__step.is-done .bolton-walk__step-check {
+    background: var(--success);
+    border-color: var(--success);
+    color: var(--bg-card);
+}
+.bolton-walk__step-title { flex: 1; }
+.bolton-walk__step-time {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.bolton-walk__main {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 16px 18px;
+    color: var(--text-primary);
+    min-height: 360px;
+}
+.bolton-walk__article-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.bolton-walk__article-head h3 {
+    margin: 0;
+    font-size: 15px;
+    color: var(--text-primary);
+}
+.bolton-walk__article-time {
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+}
+.bolton-walk__article-body {
+    color: var(--text-primary);
+    font-size: 13.5px;
+    line-height: 1.6;
+    /* 2026-05-22 — force long URLs / registry paths / inline code to
+       wrap so the article body never overflows the drawer column. */
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    min-width: 0;
+}
+.bolton-walk__article-body h2,
+.bolton-walk__article-body h3,
+.bolton-walk__article-body h4 {
+    color: var(--text-primary);
+    margin: 18px 0 6px;
+}
+.bolton-walk__article-body p {
+    color: var(--text-primary);
+    margin: 6px 0;
+}
+.bolton-walk__article-body code {
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-family: var(--font-family-mono);
+    font-size: 12.5px;
+    color: var(--text-primary);
+    /* Allow long inline code (registry keys, full paths) to break. */
+    overflow-wrap: anywhere;
+    word-break: break-all;
+}
+.bolton-walk__article-body pre {
+    background: var(--bg-terminal);
+    color: var(--text-terminal);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-family: var(--font-family-mono);
+    font-size: 12px;
+    line-height: 1.5;
+}
+.bolton-walk__article-body pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: inherit;
+}
+.bolton-walk__article-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 12.5px;
+}
+.bolton-walk__article-body th,
+.bolton-walk__article-body td {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+}
+.bolton-walk__article-body th { background: var(--bg-card-hover); }
+.bolton-walk__article-body blockquote {
+    margin: 10px 0;
+    padding: 8px 12px;
+    background: var(--bg-card-hover);
+    border-left: 3px solid var(--brand-light);
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.bolton-walk__assessment {
+    margin-top: 18px;
+    padding: 14px;
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+.bolton-walk__assessment h4 {
+    margin: 0 0 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+.bolton-walk__question {
+    margin: 0 0 10px;
+    font-size: 13.5px;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+.bolton-walk__options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.bolton-walk__option {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    transition: background-color 150ms ease, border-color 150ms ease;
+}
+.bolton-walk__option:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-light);
+}
+.bolton-walk__option-marker {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.bolton-walk__option.is-correct {
+    background: color-mix(in srgb, var(--success) 18%, var(--bg-card));
+    border-color: var(--success);
+}
+.bolton-walk__option.is-correct .bolton-walk__option-marker {
+    background: var(--success);
+    color: var(--bg-card);
+    border-color: var(--success);
+}
+.bolton-walk__option.is-wrong {
+    background: color-mix(in srgb, var(--danger) 18%, var(--bg-card));
+    border-color: var(--danger);
+}
+.bolton-walk__option.is-wrong .bolton-walk__option-marker {
+    background: var(--danger);
+    color: var(--bg-card);
+    border-color: var(--danger);
+}
+.bolton-walk__feedback {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 12.5px;
+    color: var(--text-primary);
+}
+.bolton-walk__feedback.is-correct {
+    background: color-mix(in srgb, var(--success) 14%, var(--bg-card));
+    border: 1px solid var(--success);
+}
+.bolton-walk__feedback.is-wrong {
+    background: color-mix(in srgb, var(--danger) 14%, var(--bg-card));
+    border: 1px solid var(--danger);
+}
+
+.bolton-walk__article-foot {
+    margin-top: 16px;
+    display: flex;
+    justify-content: flex-end;
+}
+/* TASTE V3 — spring overshoot ONLY on micro-feedback (the
+   mark-step-complete button). 280ms cubic-bezier(0.34, 1.56, 0.64, 1)
+   gives a subtle scale-up on hover (1.02) that settles slightly past
+   target before resolving — confined to this single interaction. */
+.bolton-walk__article-foot .spec-edit-btn {
+    transition: transform 280ms var(--bolton-detail-ease-spring),
+                background-color 280ms var(--bolton-detail-ease),
+                border-color 280ms var(--bolton-detail-ease),
+                color 280ms var(--bolton-detail-ease);
+}
+.bolton-walk__article-foot .spec-edit-btn:hover {
+    transform: scale(1.02);
+}
+
+/* TASTE V3 — reduced-motion guard. Strips all continuous loops and
+   transitions across the curriculum drawer surface, leaving only
+   immediate state changes. Required by the V3 design contract. */
+@media (prefers-reduced-motion: reduce) {
+    .bolton-walk__progress-bar {
+        animation: none;
+        background-image: none;
+        transition: none;
+    }
+    .bolton-walk__article-foot .spec-edit-btn,
+    .bolton-detail__tab,
+    .bolton-walk__step-btn,
+    .bolton-walk__option,
+    .bt-row__walkthrough {
+        transition: none;
+    }
+    .bolton-walk__article-foot .spec-edit-btn:hover { transform: none; }
+}
+
+/* Row CTA — Walkthrough button on a bolt-on row */
+.bt-row__walkthrough {
+    background: var(--bg-card-hover) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border) !important;
+}
+.bt-row__walkthrough:hover {
+    background: var(--bg-card) !important;
+    border-color: var(--border-light) !important;
+}
+
+@media (max-width: 900px) {
+    .bolton-walk__body { grid-template-columns: 1fr; }
 }
 

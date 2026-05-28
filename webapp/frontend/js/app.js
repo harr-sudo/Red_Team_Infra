@@ -5646,6 +5646,26 @@ async function _renderDashboardBeaconsWidget() {
         if (typeof BEACON !== 'undefined' && Array.isArray(BEACON.cachedBeacons)) {
             count = BEACON.cachedBeacons.length;
         }
+        // 2026-05-28 — when the cache is empty AND the active deployment
+        // exposes a beacon-list endpoint with a backend bypass (today: only
+        // the demo project), pull beacons directly so the Dashboard widget
+        // reads accurately on first paint without requiring the operator
+        // to visit Operations first.
+        if (count === 0) {
+            try {
+                const active = (APP && APP.activeDeployment
+                    && APP.activeDeployment.current) || '';
+                if (active && active !== '__all__' && active !== '__draft__') {
+                    const r = await fetch(`/api/beacon/list?project=${encodeURIComponent(active)}`);
+                    if (r.ok) {
+                        const body = await r.json();
+                        if (body && Array.isArray(body.beacons)) {
+                            count = body.beacons.length;
+                        }
+                    }
+                }
+            } catch (_) { /* widget is best-effort */ }
+        }
         if (countEl) countEl.textContent = count;
         if (lastEl) lastEl.textContent = count > 0 ? 'recent' : '—';
     } catch (e) { /* placeholder */ }
@@ -10066,7 +10086,9 @@ const BEACON = {
         if (!body) return;
         body.innerHTML = '<div style="padding: 20px; text-align: center;" class="t-muted">Loading listeners...</div>';
         try {
-            const resp = await fetch('/api/beacon/listeners');
+            const activeProject = (window.APP && APP.activeDeployment && APP.activeDeployment.current) || '';
+            const url = activeProject ? `/api/beacon/listeners?project=${encodeURIComponent(activeProject)}` : '/api/beacon/listeners';
+            const resp = await fetch(url);
             const data = await resp.json();
             this._renderListeners(data, body);
             // Cache the results and update timestamp
@@ -10130,7 +10152,11 @@ const BEACON = {
             config.localHostOnly = false;
         }
         try {
-            const resp = await fetch(`/api/beacon/listeners/create/${type}`, {
+            const activeProject = (window.APP && APP.activeDeployment && APP.activeDeployment.current) || '';
+            const createUrl = activeProject
+                ? `/api/beacon/listeners/create/${type}?project=${encodeURIComponent(activeProject)}`
+                : `/api/beacon/listeners/create/${type}`;
+            const resp = await fetch(createUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(config),
@@ -10150,7 +10176,11 @@ const BEACON = {
         if (!confirm(`Delete listener ${lid}?`)) return;
         this._logToConsole('listener_delete ' + lid);
         try {
-            const resp = await fetch(`/api/beacon/listeners/${lid}`, { method: 'DELETE' });
+            const activeProject = (window.APP && APP.activeDeployment && APP.activeDeployment.current) || '';
+            const delUrl = activeProject
+                ? `/api/beacon/listeners/${lid}?project=${encodeURIComponent(activeProject)}`
+                : `/api/beacon/listeners/${lid}`;
+            const resp = await fetch(delUrl, { method: 'DELETE' });
             const data = await resp.json();
             this._logResultToConsole(data.success ? `Listener "${lid}" deleted` : `Error: ${data.error}`, data.success ? 'success' : 'error');
             this.loadListeners();
@@ -25584,9 +25614,16 @@ async function loadToolsProjects(force = false) {
             return;
         }
 
-        // Map deployment states to project format, only include ones with attack boxes
+        // Map deployment states to project format, only include ones with attack boxes.
+        // 2026-05-28 (P2-OC) — also allow `demo` through: the demo carries a synthetic
+        // attack box (10.0.10.30) and tools.py::connection_info short-circuits to a
+        // canned response when project=demo, so the Payloads sub-pill should treat it
+        // like a real c2 deployment for selector purposes.
         const projects = data.deployments
-            .filter(d => d.output?.attack_box_private_ip || d.deployment_type?.includes('c2') || d.deployment_type?.includes('combined'))
+            .filter(d => d.output?.attack_box_private_ip
+                || d.deployment_type?.includes('c2')
+                || d.deployment_type?.includes('combined')
+                || d.deployment_type === 'demo')
             .map(d => ({
                 name: d._filename || d.project_name || 'default',
                 deployment_type: d.deployment_type || 'unknown',
@@ -27226,6 +27263,64 @@ const TERMINAL = {
         const bastionSshIp = outputs.bastion_private_ip || bastionIp;
         const jumpboxSshIp = outputs.jumpbox_private_ip || outputs.jumpbox_public_ip;
 
+        // 2026-05-28 (P2-OC) — Demo deployment: source instance buttons from
+        // the synthetic test_lab_host_inventory + bastion + attack box. All
+        // entries are flagged is_demo so the SSH WebSocket short-circuits
+        // to a local bash with a fake login banner (see terminal.py).
+        const isDemo = !!(this.selectedDeployment && this.selectedDeployment.deployment_type === 'demo')
+            || !!(outputs && outputs.is_demo);
+        if (isDemo) {
+            // Bastion + attack box — synthetic IPs from demo_data_service.
+            const bastionDemoIp = outputs.bastion_private_ip || outputs.bastion_public_ip || '10.0.0.10';
+            instances.push({
+                label: 'Bastion', host: bastionDemoIp, user: 'ubuntu',
+                bastion: null, icon: '🛡', state: 'running', isDemo: true,
+            });
+            const abIpDemo = outputs.attackbox_private_ip || '10.0.10.30';
+            // Attack box is Windows so we tag it but skip SSH (matches real flow).
+            instances.push({
+                label: 'Attack Box', host: abIpDemo, user: 'Administrator',
+                bastion: bastionDemoIp, icon: '🪟', state: 'running', isDemo: true,
+                _windows: true,
+            });
+            // test_lab hosts — pull from inventory map (also exposed as
+            // *_private_ip flat keys via deployment_state outputs).
+            const labMap = (outputs.test_lab_host_inventory && typeof outputs.test_lab_host_inventory === 'object')
+                ? outputs.test_lab_host_inventory
+                : {
+                    tldc01: outputs.tldc01_private_ip || '10.99.50.10',
+                    tlms01: outputs.tlms01_private_ip || '10.99.50.20',
+                    tlws01: outputs.tlws01_private_ip || '10.99.50.30',
+                    tllinux01: outputs.tllinux01_private_ip || '10.99.50.40',
+                };
+            Object.keys(labMap).forEach(host => {
+                const ip = labMap[host];
+                if (!ip) return;
+                const isLinux = /lin/i.test(host);
+                instances.push({
+                    label: host.toUpperCase(),
+                    host: ip,
+                    user: isLinux ? 'ubuntu' : 'ansible',
+                    bastion: bastionDemoIp,
+                    icon: isLinux ? '🐧' : '🏢',
+                    state: 'running',
+                    isDemo: true,
+                });
+            });
+
+            function _escDemo(s) { return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+            const demoPill = `<span style="display:inline-block;margin-left:4px;padding:1px 5px;border-radius:3px;font-size:0.65em;font-weight:600;background:var(--terminal-warning,#d97706);color:#000;">DEMO</span>`;
+            const stateDot = `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--terminal-success);margin-right:4px;" title="running"></span>`;
+            const html = instances.map(inst => {
+                const onClick = inst._windows
+                    ? `alert('Attack Box is Windows — use the RDP tunnel button below (demo).')`
+                    : `TERMINAL.openSSH('${_escDemo(inst.host)}', '${_escDemo(inst.user)}', ${inst.bastion ? "'" + _escDemo(inst.bastion) + "'" : 'null'}, '${_escDemo(inst.label)}', true)`;
+                return `<button class="btn btn-sm btn-info" title="DEMO — local PTY only" onclick="${onClick}">${stateDot}${inst.icon} ${_escDemo(inst.label)}${demoPill}</button>`;
+            }).join('');
+            btnRow.innerHTML = html + `<span style="display:inline-block;margin-left:8px;color:var(--text-muted);font-size:0.75em;">(demo — sessions are local bash with a fake SSH banner)</span>`;
+            return;
+        }
+
         if (bastionSshIp) {
             instances.push({ label: 'Bastion', host: bastionSshIp, user: 'ubuntu', bastion: null, icon: '🛡', state: outputs.bastion_state });
         }
@@ -27360,7 +27455,10 @@ const TERMINAL = {
     },
 
     // ── Open SSH session ──
-    openSSH(host, user, bastion, label) {
+    // 2026-05-28 (P2-OC) — accepts optional `isDemo` flag. When true, the
+    // backend (terminal.py) spawns a local bash with a fake SSH banner
+    // instead of shelling out to ssh.
+    openSSH(host, user, bastion, label, isDemo = false) {
         if (typeof Terminal === 'undefined') return;
 
         // Check if session to this host already exists
@@ -27380,13 +27478,19 @@ const TERMINAL = {
         const term = this._createTerm(id, ws);
 
         ws.onopen = () => {
-            ws.send(JSON.stringify({ host, user, bastion: bastion || null }));
+            const payload = { host, user, bastion: bastion || null };
+            if (isDemo) {
+                payload.is_demo = true;
+                payload.project = 'demo';
+            }
+            ws.send(JSON.stringify(payload));
         };
 
         // Phase 3B.2 — record the operator that opened this session.
         const opener = (APP.operator && APP.operator.current && APP.operator.current.id) || null;
-        this.sessions[id] = { term, ws, type: 'ssh', label: label || host, host, opener };
-        this._addTab(id, label || host, opener);
+        const tabLabel = isDemo ? `${label || host} (demo)` : (label || host);
+        this.sessions[id] = { term, ws, type: 'ssh', label: tabLabel, host, opener, isDemo };
+        this._addTab(id, tabLabel, opener);
         this._switchTo(id);
     },
 
@@ -30009,7 +30113,7 @@ APP.payloads = APP.payloads || {
     _state: {},         // last-known form state for spec-list rendering
 
     init() {
-        if (this._initialized) { this.updateSpec(); return; }
+        if (this._initialized) { this.updateSpec(); this._seedDemoArtifactsIfActive(); return; }
         this._initialized = true;
         // Subscribe to form changes — both selects and radio buttons.
         const wireOnce = (id, evt) => {
@@ -30028,7 +30132,48 @@ APP.payloads = APP.payloads || {
             }
         });
         this.updateSpec();
+        // 2026-05-28 (P2-OC) — pre-seed canned artifacts when demo is the
+        // active deployment so the Payloads card paints non-empty without
+        // the operator having to run a real generator. Backend source:
+        // demo_data_service.payload_artifacts().
+        this._seedDemoArtifactsIfActive();
         this.renderArtifacts();
+    },
+
+    _seedDemoArtifactsIfActive() {
+        try {
+            const cur = APP && APP.activeDeployment && APP.activeDeployment.current;
+            if (cur !== 'demo') return;
+            // Idempotent — don't re-seed if we already have demo artifacts.
+            if (this.artifacts && this.artifacts.some(a => a && a._demo)) return;
+            const canned = [
+                {
+                    name: 'beacon-demo-https-stageless.exe',
+                    size: '281 KB',
+                    kind: 'stageless_pe',
+                    listener: 'demo-https',
+                    _demo: true,
+                },
+                {
+                    name: 'beacon-demo-http-stager.exe',
+                    size: '11 KB',
+                    kind: 'stager_pe',
+                    listener: 'demo-http',
+                    _demo: true,
+                },
+                {
+                    name: 'beacon-demo-https-stageless.dll',
+                    size: '275 KB',
+                    kind: 'stageless_dll',
+                    listener: 'demo-https',
+                    _demo: true,
+                },
+            ];
+            // Prepend so they sort to the top of the list.
+            this.artifacts = canned.concat(this.artifacts || []);
+        } catch (e) {
+            // Best-effort — never break the panel init.
+        }
     },
 
     _readState() {

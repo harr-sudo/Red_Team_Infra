@@ -4,7 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Red Team Infrastructure Manager</title>
-    <link rel="stylesheet" href="css/style.css">
+    <!-- 2026-05-22 — `?v=<hash>` is rendered by Flask from the JS/CSS mtimes
+         so any file change yields a brand-new URL → browser refetches
+         instead of using its in-memory copy on soft reloads. -->
+    <link rel="stylesheet" href="css/style.css?v={{ asset_version or '0' }}">
+    <meta name="asset-version" content="{{ asset_version or '0' }}">
 </head>
 <body>
     <!-- Phase 2B — Shared icon symbol library. Consumers reference glyphs via
@@ -204,6 +208,21 @@
                     </svg>
                 </button>
                 <span id="global-operator-name" hidden>&mdash;</span>
+                <!-- 2026-05-22 — "Reload app" button. Hard-reloads the
+                     window with cache bypass when the operator suspects
+                     the dashboard is showing stale assets, AND auto-flashes
+                     when the backend's asset version differs from the one
+                     that booted the page (drift detection runs every 30s).
+                     -->
+                <button class="global-header__refresh"
+                        id="global-app-refresh"
+                        type="button"
+                        title="Force reload: re-fetch app.js + style.css from the server (bypasses browser cache). Use when the dashboard looks stale after a deploy."
+                        aria-label="Reload app"
+                        onclick="window.location.reload(true) || window.location.reload()">
+                    <span class="global-header__refresh-glyph" aria-hidden="true">↻</span>
+                    <span class="global-header__refresh-label">Reload</span>
+                </button>
                 <!-- Theme toggle (lifted from old location) -->
                 <button class="global-header__theme-toggle"
                         id="global-theme-toggle"
@@ -288,6 +307,9 @@
                             <button class="app-rail__child" type="button"
                                     data-rail-target="operations-tab"
                                     data-rail-subpill="beacons">Beacons</button>
+                            <button class="app-rail__child" type="button"
+                                    data-rail-target="operations-tab"
+                                    data-rail-subpill="topology">Topology</button>
                             <button class="app-rail__child" type="button"
                                     data-rail-target="operations-tab"
                                     data-rail-subpill="terminal">Terminal</button>
@@ -390,6 +412,18 @@
                     <button class="dashboard-hero__resume" id="dashboard-resume-btn" type="button" style="display: none;">
                         <div class="dashboard-hero__resume-label">Resume</div>
                         <div class="dashboard-hero__resume-name" id="dashboard-resume-name">&mdash;</div>
+                    </button>
+                    <!-- 2026-05-22 — demo deployment CTA. Selects the synthetic
+                         `demo` deployment so an operator can showcase the full
+                         dashboard (Manage, Bolt-ons, Operations, curriculum)
+                         without provisioning anything. -->
+                    <button class="dashboard-hero__demo" id="dashboard-demo-btn" type="button"
+                            onclick="APP.startDemoMode && APP.startDemoMode()">
+                        <span class="dashboard-hero__demo-glyph" aria-hidden="true">▶</span>
+                        <div class="dashboard-hero__text">
+                            <div class="dashboard-hero__demo-label">Try Demo Mode</div>
+                            <div class="dashboard-hero__demo-sub">Synthetic deployment · no AWS calls</div>
+                        </div>
                     </button>
                 </section>
 
@@ -758,9 +792,12 @@
                                             <div class="cfg-field">
                                                 <span class="cfg-field__label"><span>Family <span class="cfg-field__required">*</span></span></span>
                                                 <div class="cfg-family-row" id="cfg-family-row">
-                                                    <button class="cfg-family-btn is-active" type="button" data-cfg-family="c2">C2-only</button>
-                                                    <button class="cfg-family-btn" type="button" data-cfg-family="goad">GOAD-only</button>
-                                                    <button class="cfg-family-btn" type="button" data-cfg-family="combined">Combined</button>
+                                                    <button class="cfg-family-btn is-active" type="button" data-cfg-family="c2"
+                                                            title="Public-facing C2 infrastructure. Redirectors + bastion + attack box. No AD targets.">External C2</button>
+                                                    <button class="cfg-family-btn" type="button" data-cfg-family="goad"
+                                                            title="Self-contained training lab. Cobalt Strike + GOAD AD targets. No public redirectors.">Private Lab</button>
+                                                    <button class="cfg-family-btn" type="button" data-cfg-family="combined"
+                                                            title="Public C2 + GOAD lab, VPC-peered. Internet-facing redirectors with private AD targets.">Combined</button>
                                                 </div>
                                             </div>
                                             <div class="cfg-field">
@@ -771,7 +808,7 @@
                                         </div>
                                         <!-- Confirmed-style chip row shown only in stage "sub". -->
                                         <div class="cfg-identity-confirmed" id="cfg-identity-confirmed" data-cfg-identity-confirmed hidden>
-                                            <span class="cfg-identity-confirmed__kv"><span class="cfg-identity-confirmed__k">Family</span><span class="cfg-identity-confirmed__v" id="cfg-identity-confirmed-family">C2</span></span>
+                                            <span class="cfg-identity-confirmed__kv"><span class="cfg-identity-confirmed__k">Family</span><span class="cfg-identity-confirmed__v" id="cfg-identity-confirmed-family">External C2</span></span>
                                             <span class="cfg-identity-confirmed__sep">·</span>
                                             <span class="cfg-identity-confirmed__kv"><span class="cfg-identity-confirmed__k">type</span><span class="cfg-identity-confirmed__v" id="cfg-identity-confirmed-type">c2-adhoc</span></span>
                                             <button class="cfg-identity-confirmed__edit" type="button" id="cfg-identity-edit-btn" data-cfg-identity-edit aria-label="Re-pick family / type"><svg><use href="#cfg-ic-edit"/></svg></button>
@@ -793,12 +830,17 @@
                                                 </div>
                                             </div>
                                             <div class="cfg-field">
-                                                <span class="cfg-field__label"><span>AWS region</span><span class="cfg-field__defaulted">eu-central-1</span></span>
-                                                <select class="cfg-input" id="cfg-region-select">
-                                                    <option value="eu-central-1" selected>eu-central-1 · Frankfurt</option>
-                                                    <option value="us-east-1">us-east-1 · N. Virginia</option>
-                                                    <option value="us-west-2">us-west-2 · Oregon</option>
-                                                </select>
+                                                <span class="cfg-field__label"><span>AWS region</span><span class="cfg-field__defaulted">locked</span></span>
+                                                <!-- 2026-05-23 — operator directive: ALL new infra
+                                                     for this dashboard is pinned to eu-central-1
+                                                     (Frankfurt). The select was replaced with a
+                                                     read-only chip + a hidden input so existing
+                                                     assembleConfig() reads still work. -->
+                                                <div class="cfg-region-locked" role="group" aria-label="AWS region (locked)">
+                                                    <span class="cfg-region-locked__value">eu-central-1 · Frankfurt</span>
+                                                    <span class="cfg-region-locked__caption">All new infra is pinned to <strong>eu-central-1</strong>. Cleanup still scans <code>us-east-1</code> for CloudFront ACM certs (AWS requirement) — no other regions are deployable.</span>
+                                                </div>
+                                                <input type="hidden" id="cfg-region-select" value="eu-central-1">
                                             </div>
                                             <div class="cfg-confirm-row">
                                                 <button class="cfg-btn-confirm" type="button" data-cfg-confirm="identity">Confirm <svg><use href="#cfg-ic-arrow"/></svg></button>
@@ -2111,9 +2153,10 @@ ns-143.awsdns-17.org
                          visible legacy surface. -->
 
                     <div id="config-message" class="message">
+                    </div><!-- /#config-message -->
                     </div><!-- /#configure-edit-pane -->
                     </div><!-- /#configure-scoped-content -->
-                    </div>
+                    </div><!-- /#subpill-pane-configure ← 2026-05-22: missing close added; deploy/manage/cleanup/bolt-ons were nested inside configure pane and inherited its display:none -->
                     <div class="subpill-pane" data-subpill-pane="deploy" id="subpill-pane-deploy" hidden>
                         <!-- 2026-05-21 — All-mode empty state container removed
                              (see Configure pane note). Deploy is per-deployment
@@ -2903,7 +2946,7 @@ ns-143.awsdns-17.org
 
 
                     </div><!-- /#manage-scoped-content -->
-                    </div>
+                    </div><!-- /#subpill-pane-manage ← 2026-05-22: missing close; cleanup + bolt-ons were nesting INSIDE manage pane and going dark when Manage got display:none on sub-pill switch -->
 
                     <!-- D8 Agent B — Cleanup sub-pane (orphan AWS resources)
                          Phase 3c — V3-native rebuild: legacy `.cleanup-*` skeleton replaced
@@ -2986,15 +3029,28 @@ ns-143.awsdns-17.org
                                         Install, patch, or revert vulnerability bolt-ons against the selected host. Compatibility and detection coverage are evaluated live.
                                     </p>
                                 </div>
-                                <div class="bolton-live__eyebrow-actions">
-                                    <select id="bolton-host-select" class="form-select bolton-live__host-select" aria-label="Target host">
-                                        <option value="">Pick a target host…</option>
-                                    </select>
-                                </div>
                             </div>
 
-                            <!-- Empty / loading state placeholder -->
-                            <div id="bolton-empty-state" class="bolton-live__placeholder">
+                            <!-- 2026-05-23 — Host picker promoted out of the eyebrow
+                                 corner into a primary CTA banner. The catalog is gated
+                                 on host selection, so this is the page's main entry
+                                 affordance and should read that way. Operator
+                                 directive: "this dropdown is the main entry point —
+                                 needs prominence + correct placement." -->
+                            <div class="bolton-host-picker" id="bolton-host-picker">
+                                <label class="bolton-host-picker__label" for="bolton-host-select">
+                                    <span class="bolton-host-picker__eyebrow">START HERE</span>
+                                    <span class="bolton-host-picker__lead">Pick a target host to view its bolt-on catalog</span>
+                                </label>
+                                <select id="bolton-host-select" class="bolton-host-picker__select" aria-label="Target host">
+                                    <option value="">— Pick a target host —</option>
+                                </select>
+                            </div>
+
+                            <!-- Empty / loading state placeholder (kept for code paths
+                                 that read it but now superseded visually by the
+                                 host-picker banner above). -->
+                            <div id="bolton-empty-state" class="bolton-live__placeholder" hidden>
                                 <p>Select a host above to view its bolt-on catalog.</p>
                             </div>
 
@@ -3012,6 +3068,19 @@ ns-143.awsdns-17.org
                                     <button class="spec-edit-btn"
                                             type="button"
                                             id="bolton-refresh-facts">Refresh facts</button>
+                                    <!-- 2026-05-22 — one-click detection-layer
+                                         install: fires the 4 infra bolt-ons
+                                         (Elastic Stack + Sysmon + Winlogbeat +
+                                         Filebeat) in dependency order across the
+                                         test_lab so the operator gets full
+                                         detection coverage without clicking
+                                         Install 12 times. -->
+                                    <button class="spec-edit-btn spec-edit-btn--save"
+                                            type="button"
+                                            id="bolton-enable-detection"
+                                            title="One-click install of the Elastic stack + Sysmon/Winlogbeat/Filebeat across every test_lab host">
+                                        🛡 Enable detection layer
+                                    </button>
                                 </div>
                             </section>
 
@@ -3038,29 +3107,59 @@ ns-143.awsdns-17.org
                             <!-- Filter bar — single-row chip strip (category + state umbrella + coverage).
                                  The "Blocked" chip is an umbrella over every non-installable / non-patched
                                  state (INCOMPATIBLE_*, MISSING_*, CONFLICTS_WITH_INSTALLED). -->
+                            <!-- 2026-05-22 — Bolt-on filter UI rebuilt.
+                                 Previously: 22-chip flat strip across 3 axes (Category × State ×
+                                 Coverage) — operator feedback called it "rubbish multi-selection
+                                 picker". Replaced with: 🔍 search input + 3 dropdowns (single-select
+                                 per axis) + an active-filter pill row that shows what's applied.
+                                 TASTE V3 — palette tokens, dual-theme, no raw hex. -->
                             <div class="bolton-live__filters" id="bolton-filters" hidden aria-label="Filters">
-                                <div class="bolton-live__filters-row">
-                                    <div class="bolton-live__chips" data-chip-group="category" aria-label="Category">
-                                        <button class="bt-chip is-active" data-group="category" data-value="all" type="button">All categories</button>
+                                <div class="bolton-filter-bar">
+                                    <div class="bolton-filter-bar__search">
+                                        <span class="bolton-filter-bar__search-icon" aria-hidden="true">🔍</span>
+                                        <input type="search"
+                                               class="bolton-filter-bar__search-input"
+                                               id="bolton-filter-search"
+                                               placeholder="Search vulnerabilities by name, ID, or description…"
+                                               aria-label="Search bolt-on catalog">
                                     </div>
-                                    <span class="bolton-live__filters-sep" aria-hidden="true"></span>
-                                    <div class="bolton-live__chips" data-chip-group="state" aria-label="Compatibility">
-                                        <button class="bt-chip is-active" data-group="state" data-value="all" type="button">All states</button>
-                                        <button class="bt-chip" data-group="state" data-value="ALREADY_INSTALLED" type="button">Installed</button>
-                                        <button class="bt-chip" data-group="state" data-value="INSTALLABLE" type="button">Available</button>
-                                        <button class="bt-chip" data-group="state" data-value="PATCHED" type="button">Patched</button>
-                                        <button class="bt-chip" data-group="state" data-value="BLOCKED" type="button">Blocked</button>
+                                    <div class="bolton-filter-bar__selects">
+                                        <label class="bolton-filter-select">
+                                            <span class="bolton-filter-select__label">Category</span>
+                                            <select id="bolton-filter-category" data-group="category" class="bolton-filter-select__input">
+                                                <option value="all">All categories</option>
+                                            </select>
+                                        </label>
+                                        <label class="bolton-filter-select">
+                                            <span class="bolton-filter-select__label">State</span>
+                                            <select id="bolton-filter-state" data-group="state" class="bolton-filter-select__input">
+                                                <option value="all">All states</option>
+                                                <option value="ALREADY_INSTALLED">Installed</option>
+                                                <option value="INSTALLABLE">Available</option>
+                                                <option value="PATCHED">Patched</option>
+                                                <option value="BLOCKED">Blocked (incompatible / conflicting)</option>
+                                            </select>
+                                        </label>
+                                        <label class="bolton-filter-select">
+                                            <span class="bolton-filter-select__label">Detection</span>
+                                            <select id="bolton-filter-coverage" data-group="coverage" class="bolton-filter-select__input">
+                                                <option value="all">All coverage</option>
+                                                <option value="covered">Covered</option>
+                                                <option value="partial">Partial</option>
+                                                <option value="no-rule">No rule</option>
+                                                <option value="rule-stale">Stale rule</option>
+                                            </select>
+                                        </label>
                                     </div>
-                                    <span class="bolton-live__filters-sep" aria-hidden="true"></span>
-                                    <div class="bolton-live__chips" data-chip-group="coverage" aria-label="Coverage">
-                                        <button class="bt-chip is-active" data-group="coverage" data-value="all" type="button">All coverage</button>
-                                        <button class="bt-chip" data-group="coverage" data-value="covered" type="button">Covered</button>
-                                        <button class="bt-chip" data-group="coverage" data-value="partial" type="button">Partial</button>
-                                        <button class="bt-chip" data-group="coverage" data-value="no-rule" type="button">No-rule</button>
-                                        <button class="bt-chip" data-group="coverage" data-value="rule-stale" type="button">Stale</button>
+                                    <div class="bolton-filter-bar__count">
+                                        <span id="bolton-active-count" aria-live="polite">— shown</span>
+                                        <button type="button" class="bolton-filter-bar__clear" id="bolton-filter-clear" hidden>Clear filters</button>
                                     </div>
-                                    <span class="bolton-live__filters-count" id="bolton-active-count" aria-live="polite">— shown</span>
                                 </div>
+                                <!-- Active filter pills: rendered when ANY axis is set away from 'all'
+                                     OR the search box has text. Each pill has × to remove just that
+                                     filter. Replaces the old multi-selection-as-tag-cloud pattern. -->
+                                <div class="bolton-filter-pills" id="bolton-filter-pills" role="status" aria-label="Active filters"></div>
                             </div>
 
                             <!-- 6-section spec-list (rendered by APP.bolton.render()) -->
@@ -3164,6 +3263,11 @@ ns-143.awsdns-17.org
                             id="subpill-beacons">Beacons</button>
                     <button class="subpill-nav__pill"
                             role="tab"
+                            data-subpill="topology"
+                            aria-selected="false"
+                            id="subpill-topology">Topology</button>
+                    <button class="subpill-nav__pill"
+                            role="tab"
                             data-subpill="terminal"
                             aria-selected="false"
                             id="subpill-terminal">Terminal</button>
@@ -3229,8 +3333,8 @@ ns-143.awsdns-17.org
                         <div style="display: flex; align-items: center; gap: 12px;">
                             <span class="beacon-status-dot" id="beacon-status-dot"></span>
                             <span id="beacon-status-text" style="font-weight: 500; color: var(--text-muted);">Not connected</span>
-                            <button class="btn btn-success" id="beacon-connect-btn" onclick="BEACON.connect()">Connect</button>
-                            <button class="btn btn-sm btn-info" id="beacon-refresh-btn" onclick="BEACON.refreshBeacons()" style="display: none;">Refresh</button>
+                            <button class="btn btn-success beacon-action-btn" id="beacon-connect-btn" onclick="BEACON.connect()">Connect</button>
+                            <button class="btn btn-info beacon-action-btn" id="beacon-refresh-btn" onclick="BEACON.refreshBeacons()" style="display: none;">Refresh</button>
                         </div>
 
                         <!-- Error Detail (shown when connection fails) -->
@@ -3804,6 +3908,65 @@ ns-143.awsdns-17.org
 
                 </div>
                 </div><!-- /#beacons-scoped-content -->
+                    </div>
+                    <!-- 2026-05-23 — Topology sub-pill. Operator complaint:
+                         "where tf is the topology button" — the graph was
+                         buried as a tab inside the beacon detail drawer.
+                         Promoted to a top-level Operations sub-pill so the
+                         attack-path tree is a single click from anywhere in
+                         the app. Renders the same Canvas-2D tree as the
+                         beacon detail Graph tab but full-width with a
+                         legend strip. -->
+                    <div class="subpill-pane" data-subpill-pane="topology" id="subpill-pane-topology" hidden>
+                        <div class="topology-pane">
+                            <header class="topology-pane__header">
+                                <div>
+                                    <span class="topology-pane__eyebrow">OPERATIONS · GRAPH</span>
+                                    <h2 class="topology-pane__title">Beacon Topology</h2>
+                                    <p class="topology-pane__sub">Team server at the hub; every beacon callback branches from it. Solid = HTTPS, dashed = SMB/TCP pivot, dotted = parent→child relay. ★ marks admin beacons. Drag nodes to rearrange · click a node for details.</p>
+                                </div>
+                                <div class="topology-pane__actions">
+                                    <!-- 2026-05-23 — Two topology engines live side-by-side per
+                                         operator directive ("keep them both via a new vs old button"):
+                                           NEW (default)  — inline hub+redirector+spokes, drag-to-rearrange
+                                           OLD (full-screen) — original infrastructure overlay with dot
+                                                               grid, pan/zoom, subnet clustering, AWS
+                                                               icons, side-panel click-to-copy.
+                                         The toggle group makes the active view obvious; the
+                                         "Full-screen" button fires the legacy TOPOLOGY.show(). -->
+                                    <div class="topology-pane__viewtoggle" role="group" aria-label="Topology view mode">
+                                        <button type="button" class="topology-pane__viewtoggle-btn is-active" data-topology-view="new" title="Inline hub-and-spoke view (new)">New · Inline</button>
+                                        <button type="button" class="topology-pane__viewtoggle-btn" data-topology-view="old" title="Open the legacy full-screen infrastructure overlay">Old · Full-screen ↗</button>
+                                    </div>
+                                    <button class="btn btn-secondary beacon-action-btn" type="button" id="topology-reset-btn" title="Reset node positions to auto-layout">Reset layout</button>
+                                    <button class="btn btn-info beacon-action-btn" type="button" id="topology-refresh-btn">Refresh</button>
+                                </div>
+                            </header>
+                            <div class="topology-pane__body">
+                                <div class="topology-pane__canvas-wrap" id="topology-canvas-wrap">
+                                    <canvas id="topology-canvas" style="width:100%;height:100%"></canvas>
+                                </div>
+                                <aside class="topology-pane__info" id="topology-info-panel" aria-live="polite">
+                                    <div class="topology-pane__info-empty" id="topology-info-empty">
+                                        <div class="topology-pane__info-empty-glyph" aria-hidden="true">◉</div>
+                                        <div class="topology-pane__info-empty-title">No node selected</div>
+                                        <div class="topology-pane__info-empty-body">Click any beacon in the graph to see its details and quick actions here.</div>
+                                    </div>
+                                    <div class="topology-pane__info-body" id="topology-info-body" hidden></div>
+                                </aside>
+                            </div>
+                            <div class="topology-pane__legend">
+                                <span class="topology-pane__legend-item"><span class="topology-pane__legend-dot" style="background:var(--success)"></span>Alive</span>
+                                <span class="topology-pane__legend-item"><span class="topology-pane__legend-dot" style="background:var(--warning)"></span>Stale</span>
+                                <span class="topology-pane__legend-item"><span class="topology-pane__legend-dot" style="background:var(--danger)"></span>Dead</span>
+                                <span class="topology-pane__legend-sep"></span>
+                                <span class="topology-pane__legend-item">──── HTTPS</span>
+                                <span class="topology-pane__legend-item">╌╌╌ SMB/TCP pivot</span>
+                                <span class="topology-pane__legend-item">⋯⋯⋯ parent relay</span>
+                                <span class="topology-pane__legend-sep"></span>
+                                <span class="topology-pane__legend-item">★ Admin token</span>
+                            </div>
+                        </div>
                     </div>
                     <div class="subpill-pane" data-subpill-pane="terminal" id="subpill-pane-terminal" hidden>
                 <!-- 2026-05-19 — All-mode empty-state container for Terminal. -->
@@ -4429,9 +4592,9 @@ ns-143.awsdns-17.org
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-    <script src="js/elastic-rules.js"></script>
-    <script src="js/architecture.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/elastic-rules.js?v={{ asset_version or '0' }}"></script>
+    <script src="js/architecture.js?v={{ asset_version or '0' }}"></script>
+    <script src="js/app.js?v={{ asset_version or '0' }}"></script>
 
     <!-- M-Redesign Agent 3 — toast container (bottom-right transient notifications) -->
     <div class="toast-container" id="toast-container" role="region" aria-label="Notifications" aria-live="polite"></div>
