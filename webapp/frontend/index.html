@@ -1429,6 +1429,15 @@
                                     <option value="combined-adhoc-light">Full C2 Ad-Hoc + GOAD Light - ~$545/mo</option>
                                     <option value="combined-full-full">Full C2 Red Team + GOAD Full - ~$780/mo</option>
                                 </optgroup>
+                                <optgroup label="CCRTS Lab (CREST Exam Prep — self-contained)">
+                                    <option value="ccrts-mini">CCRTS Mini: 4 hosts (Kali + Windows + ELK) — ~$210/mo</option>
+                                    <option value="ccrts-full">CCRTS Full: 6 hosts (+ AD DC + AD workstation, ccrts.local) — ~$310/mo</option>
+                                </optgroup>
+                                <optgroup label="Full C2 + CCRTS Lab (Combined)">
+                                    <option value="combined-adhoc-ccrts-mini">C2 Ad-Hoc + CCRTS Mini — ~$415/mo</option>
+                                    <option value="combined-adhoc-ccrts-full">C2 Ad-Hoc + CCRTS Full — ~$485/mo</option>
+                                    <option value="combined-full-ccrts-full">Full C2 + CCRTS Full — ~$580/mo</option>
+                                </optgroup>
                         </select>
                         </div>
                     </div>
@@ -2156,6 +2165,75 @@ ns-143.awsdns-17.org
                         </div>
                     </div>
 
+                    <!-- CCRTS Lab Configuration (shown for ccrts-* and combined-*-ccrts deployments).
+                         Mirrors the GOAD network section. Backend reads these into
+                         the ccrts module variables — VPC CIDR, DC admin password,
+                         low-priv password, optional CREST AMI overrides. -->
+                    <div id="ccrts-config-section" class="section-card section-card--highlight" style="display: none;" data-config-section="ccrts-only">
+                        <h3>CCRTS Lab Configuration</h3>
+                        <p class="t-secondary" style="font-size: 0.88em;">
+                            Settings for the CCRTS exam-mirror lab. The CREST Community AMI is auto-discovered in eu-west-2 and copied to your deployment region — leave the AMI overrides blank unless you've already staged a copy.
+                        </p>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="ccrts-vpc-cidr">CCRTS VPC CIDR:</label>
+                                <input type="text" id="ccrts-vpc-cidr" class="form-input" value="192.168.57.0/24" placeholder="192.168.57.0/24">
+                                <small class="t-secondary">CIDR block for the CCRTS VPC. Must not overlap with C2 (10.0.0.0/16) or GOAD (192.168.56.0/24) when combined.</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="ccrts-dc-admin-password">DC Admin Password:</label>
+                                <input type="password" id="ccrts-dc-admin-password" class="form-input" placeholder="Min 12 chars · used for ccrts.local Domain Administrator" autocomplete="new-password">
+                                <small class="t-secondary">Domain Administrator for the AD DC (CCRTS Full only).</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="ccrts-low-priv-password">Low-priv User Password:</label>
+                                <input type="password" id="ccrts-low-priv-password" class="form-input" placeholder="Min 12 chars · used for the standard domain user" autocomplete="new-password">
+                                <small class="t-secondary">Standard domain user password (workstation login + initial foothold).</small>
+                            </div>
+                        </div>
+                        <details style="margin-top: 14px;">
+                            <summary style="cursor: pointer; color: var(--info-text); font-weight: 500;">Advanced: CREST AMI overrides</summary>
+                            <div style="margin-top: 10px;">
+                                <p class="t-secondary" style="font-size: 0.85em; margin: 0 0 10px 0;">
+                                    Leave blank to auto-discover the latest CREST Community AMI in eu-west-2 and copy it cross-region. Supply your own AMI ID only if you've already staged the CREST AMI in eu-central-1.
+                                </p>
+                                <div class="grid-2">
+                                    <div class="form-group">
+                                        <label for="crest-kali-ami-override">Kali AMI ID (override):</label>
+                                        <input type="text" id="crest-kali-ami-override" class="form-input" placeholder="ami-0123456789abcdef0">
+                                        <small class="t-secondary">CREST Kali workstation AMI in the deployment region.</small>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="crest-windows-ami-override">Windows AMI ID (override):</label>
+                                        <input type="text" id="crest-windows-ami-override" class="form-input" placeholder="ami-0123456789abcdef0">
+                                        <small class="t-secondary">CREST Windows workstation AMI in the deployment region.</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+
+                    <!-- "Add CCRTS Lab" toggle (shown for c2-* deployments only,
+                         mirrors enable_test_lab). When enabled, the CCRTS lab is
+                         provisioned alongside the C2 infrastructure (with its own VPC
+                         + peering). For combined-*-ccrts presets the toggle is hidden
+                         because the preset already opts in. -->
+                    <div id="add-ccrts-lab-section" class="section-card section-card--highlight" style="display: none;" data-config-section="c2-only">
+                        <h3>Add CCRTS Lab to this deployment</h3>
+                        <p class="t-secondary" style="font-size: 0.88em;">
+                            Provision the CCRTS exam-mirror lab in a peered VPC alongside this C2 deployment. Adds ~$210-310/mo depending on host count.
+                        </p>
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                                <input type="checkbox" id="enable-ccrts-lab">
+                                <span><strong>Enable CCRTS Lab</strong> · Kali + Windows + ELK (+ optional AD DC + AD workstation)</span>
+                            </label>
+                            <small class="t-secondary" style="display: block; margin-top: 6px;">
+                                Note: the CCRTS lab is self-contained — Cobalt Strike runs on the Kali workstation from the CREST AMI, NOT on your C2 team server. Your C2 infrastructure is independent.
+                            </small>
+                        </div>
+                    </div>
+
                     <div class="form-group" id="c2-server-count-group">
                         <label for="c2-server-count">C2 Server Count:</label>
                         <input type="number" id="c2-server-count" value="2" min="1">
@@ -2762,6 +2840,24 @@ ns-143.awsdns-17.org
                                 <button class="btn btn-secondary btn-sm" type="button" id="manage-testlab-refresh">Refresh</button>
                             </div>
                             <pre class="manage-testlab-card__log" id="manage-testlab-log" hidden></pre>
+                        </section>
+
+                        <!-- CCRTS connection commands card — shown when the active
+                             deployment is ccrts-* or combined-*-ccrts. Hydrated by
+                             APP.manage._renderCcrtsCard() from terraform outputs
+                             (kali_ssh_tunnel_cmd, windows_rdp_tunnel_cmd, etc.). -->
+                        <section class="manage-testlab-card" id="manage-ccrts-card" hidden aria-label="CCRTS lab connection commands">
+                            <div class="manage-testlab-card__head">
+                                <span class="manage-testlab-card__eyebrow">CCRTS LAB · CONNECTION COMMANDS</span>
+                                <span class="spec-pill spec-pill--draft">
+                                    <span class="spec-pill__dot" aria-hidden="true"></span>
+                                    <span>SELF-CONTAINED</span>
+                                </span>
+                            </div>
+                            <p class="t-secondary" style="font-size: 0.88em; margin: 0 0 12px 0;">
+                                Cobalt Strike runs on the Kali workstation from the CREST AMI. SSH-tunnel into the bastion to reach each host, then forward the relevant port locally.
+                            </p>
+                            <div id="manage-ccrts-commands"></div>
                         </section>
 
                         <!-- Resource summary spec-list (region, account, IPs, SGs, cost, last-touched) -->

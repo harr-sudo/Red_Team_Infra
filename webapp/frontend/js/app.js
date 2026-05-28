@@ -2306,19 +2306,151 @@ APP.computeVisibleSubPills = function (active) {
     // as both a C2 and a GOAD for visibility — has bolt-ons, beacons,
     // payloads, manage, cleanup.
     const isDemo = isExisting && type === 'demo';
+    // 2026-05-28 — CCRTS support. Pure ccrts-* deployments are self-
+    // contained (CS runs on the Kali workstation from the CREST AMI),
+    // so the shared bolt-on catalog + Operations sub-pills DON'T apply.
+    // BUT the operator-explicit UX rule is to KEEP both pills VISIBLE
+    // in the rail with a disabled-state explainer (see
+    // APP.subPillNotApplicableReason). So we include 'bolt-ons' in the
+    // visible set for ccrts-* — the disabled-render path is handled in
+    // APP.bolton.init() + the Operations pane render hooks, not here.
+    const isCcrtsOnly = isExisting && type.startsWith('ccrts-');
     // Cleanup is an orphan-resource viewer that's relevant in every mode —
     // it scans the whole account, not a specific deployment. Always append.
     const base = isDraft
         ? ['configure', 'deploy']
         : isAll
             ? ['manage']
-            : (isDemo || isGoadOnly || isCombined || isC2WithLab)
+            : (isDemo || isGoadOnly || isCombined || isC2WithLab || isCcrtsOnly)
                 ? ['manage', 'bolt-ons']
                 : isC2only
                     ? ['manage']
                     : ['manage']; // empty / unknown — Manage with CTA
     base.push('cleanup');
     return base;
+};
+
+/**
+ * 2026-05-28 — Per-sub-pill "not applicable" explainer for ccrts-only
+ * deployments. Returns a human-readable reason string when the
+ * sub-pill should render a disabled / N/A empty state for the given
+ * deployment type, or null when the sub-pill is fully usable.
+ *
+ * The user's UX rule (CCRTS Lab wiring):
+ *   - Pure ccrts-* deployments use a self-contained exam environment
+ *     (Cobalt Strike runs on the Kali workstation from the CREST AMI).
+ *     Our shared C2 infra + bolt-on catalog target test_lab AD hosts,
+ *     not the CCRTS AD — so Bolt-ons + Operations are disabled WITH an
+ *     explainer (not hidden).
+ *   - combined-*-ccrts deployments DO include real C2 infra → both
+ *     pills remain fully active.
+ *
+ * Callers:
+ *   - subpill-nav__pill / app-rail__child renderers: if non-null, tab
+ *     gets `.subpill-disabled` + a `title=` tooltip.
+ *   - APP.bolton.init() + APP.beacons.init() + Terminal/Payloads
+ *     renderers: if non-null, paint the .not-applicable-empty card
+ *     instead of normal content.
+ *
+ * @param {string} deploymentType - e.g. "ccrts-mini", "combined-adhoc-ccrts-full"
+ * @param {string} subPill        - "bolt-ons" | "operations" | "beacons" | "terminal" | "payloads"
+ * @returns {string|null}
+ */
+APP.subPillNotApplicableReason = function (deploymentType, subPill) {
+    if (!deploymentType) return null;
+    const type = String(deploymentType).toLowerCase();
+    // Only pure ccrts-* deployments trigger N/A. combined-*-ccrts retains
+    // full bolt-on + operations capability because the C2 side is present.
+    if (!type.startsWith('ccrts-')) return null;
+    const sub = String(subPill || '').toLowerCase();
+    const opsSubs = new Set(['operations', 'beacons', 'terminal', 'payloads']);
+    if (sub === 'bolt-ons' || opsSubs.has(sub)) {
+        return 'Not applicable for CCRTS Lab — self-contained exam environment (CS runs on the Kali workstation from the CREST AMI). Switch to the C2 side from the dropdown to access this surface.';
+    }
+    return null;
+};
+
+/**
+ * 2026-05-28 — Render the canonical "Not applicable for CCRTS Lab
+ * deployments" empty-state card used by Bolt-ons + Operations panes
+ * when the active deployment is pure ccrts-*.
+ *
+ * The card style + body copy come from the operator's explicit UX rule
+ * (CCRTS Lab wiring). Combined-*-ccrts retains full surface access, so
+ * the card is never shown for those deployments.
+ *
+ * @returns {string} HTML for a single .not-applicable-empty card.
+ */
+APP._renderNotApplicableEmpty = function () {
+    return `
+        <div class="not-applicable-empty">
+            <div class="not-applicable-empty__icon" aria-hidden="true">ⓘ</div>
+            <h3>Not applicable for CCRTS Lab deployments</h3>
+            <p>The CCRTS Lab is a self-contained exam-mirror environment. Cobalt Strike runs on the Kali workstation itself (from the CREST AMI), so our shared C2 infrastructure and beacon catalog don't apply here. The bolt-on catalog targets our test_lab AD hosts, not the CCRTS AD.</p>
+            <p class="not-applicable-empty__hint">For combined-*-ccrts deployments, the C2 side has full Bolt-ons + Operations support — switch the deployment dropdown to the combined preset.</p>
+        </div>
+    `;
+};
+
+/**
+ * 2026-05-28 — Render the not-applicable empty state into the active
+ * Operations sub-pill pane (Beacons / Terminal / Payloads / Topology)
+ * for ccrts-* deployments. We DON'T wipe the pane wholesale because
+ * the pane scaffolding includes the sticky deployment selector and
+ * navigation chrome we want to keep. Instead we hide everything inside
+ * the pane and append/replace a single `.not-applicable-empty` card.
+ *
+ * @param {string} subPillName - "beacons" | "terminal" | "payloads" | "topology"
+ */
+APP._renderOperationsNotApplicable = function (subPillName) {
+    const paneId = `subpill-pane-${subPillName}`;
+    const pane = document.getElementById(paneId);
+    if (!pane) return;
+    // Replace any prior CCRTS empty-card first (idempotent).
+    let card = pane.querySelector(':scope > .not-applicable-empty');
+    if (card) card.remove();
+    // Hide every direct child so the empty-state card is the only
+    // visible content. We track which children we hid so a future
+    // restoration can un-hide them.
+    Array.from(pane.children).forEach((child) => {
+        if (!child.hasAttribute('data-ccrts-hidden')) {
+            // Preserve the original hidden state so we don't accidentally
+            // un-hide things that were already hidden.
+            child.setAttribute('data-ccrts-prev-hidden', child.hidden ? '1' : '0');
+            child.setAttribute('data-ccrts-hidden', '1');
+        }
+        child.hidden = true;
+    });
+    card = document.createElement('div');
+    card.innerHTML = APP._renderNotApplicableEmpty();
+    // Promote the inner .not-applicable-empty out of the wrapper div so
+    // the pane padding wraps the card directly.
+    const inner = card.firstElementChild;
+    if (inner) pane.appendChild(inner);
+};
+
+/**
+ * 2026-05-28 — Undo APP._renderOperationsNotApplicable() on a pane.
+ * Called when the operator switches back from ccrts-* to a deployment
+ * type that supports the surface — restores the original child
+ * visibility so the canonical pane content can re-render.
+ *
+ * Idempotent: a no-op when the pane was never CCRTS-stripped.
+ */
+APP._restoreOperationsPane = function (subPillName) {
+    const paneId = `subpill-pane-${subPillName}`;
+    const pane = document.getElementById(paneId);
+    if (!pane) return;
+    const card = pane.querySelector(':scope > .not-applicable-empty');
+    if (card) card.remove();
+    Array.from(pane.children).forEach((child) => {
+        if (child.hasAttribute('data-ccrts-hidden')) {
+            const wasHidden = child.getAttribute('data-ccrts-prev-hidden') === '1';
+            child.hidden = wasHidden;
+            child.removeAttribute('data-ccrts-hidden');
+            child.removeAttribute('data-ccrts-prev-hidden');
+        }
+    });
 };
 
 /**
@@ -2350,7 +2482,13 @@ APP.computeOperationsVisible = function (active) {
     // 2026-05-22 — demo mode exposes Operations so beacons/terminal/payloads
     // can be showcased without a real C2 server provisioned.
     const isDemo = type === 'demo';
-    return isC2only || isCombined || isDemo;
+    // 2026-05-28 — Pure ccrts-* deployments KEEP Operations visible per the
+    // operator's UX rule: the panes render a disabled / N/A empty-state
+    // explainer (see APP.subPillNotApplicableReason). Hiding would defeat
+    // the explainer's purpose of educating operators why the surface is
+    // self-contained on CCRTS.
+    const isCcrtsOnly = type.startsWith('ccrts-');
+    return isC2only || isCombined || isDemo || isCcrtsOnly;
 };
 
 /**
@@ -2389,6 +2527,15 @@ APP.subPills = APP.subPills || {
         // dependent CSS keeps working, but `hidden` makes the button not
         // render at all (display:none semantics) and removes it from the
         // tab order without needing aria-hidden.
+        // 2026-05-28 — CCRTS N/A reason resolver. Pure ccrts-* deployments
+        // keep bolt-ons (and Operations) VISIBLE in the rail but DISABLED
+        // with an explainer tooltip — per the operator's explicit UX rule.
+        const deployType = (APP.activeDeployment && APP.activeDeployment.deployment_type) || '';
+        const naReasonFor = (name) =>
+            (typeof APP.subPillNotApplicableReason === 'function')
+                ? APP.subPillNotApplicableReason(deployType, name)
+                : null;
+
         const pills = tabPage.querySelectorAll('.subpill-nav__pill[data-subpill]');
         pills.forEach((pill) => {
             const name = pill.dataset.subpill;
@@ -2400,6 +2547,19 @@ APP.subPills = APP.subPills || {
             } else {
                 pill.setAttribute('hidden', '');
                 pill.setAttribute('aria-hidden', 'true');
+            }
+            // CCRTS N/A marker — applied on top of visibility so the pill
+            // renders dimmed with a tooltip but is still navigable (so the
+            // operator can read the full explainer in the pane).
+            const naReason = naReasonFor(name);
+            if (naReason) {
+                pill.classList.add('subpill-disabled');
+                pill.setAttribute('data-subpill-disabled', 'true');
+                pill.setAttribute('title', naReason);
+            } else {
+                pill.classList.remove('subpill-disabled');
+                pill.removeAttribute('data-subpill-disabled');
+                if (pill.getAttribute('title')) pill.removeAttribute('title');
             }
         });
 
@@ -2420,6 +2580,17 @@ APP.subPills = APP.subPills || {
             } else {
                 child.setAttribute('hidden', '');
                 child.setAttribute('aria-hidden', 'true');
+            }
+            // 2026-05-28 — CCRTS N/A marker on rail children (mirrors pill behavior).
+            const naReason = naReasonFor(name);
+            if (naReason) {
+                child.classList.add('subpill-disabled');
+                child.setAttribute('data-subpill-disabled', 'true');
+                child.setAttribute('title', naReason);
+            } else {
+                child.classList.remove('subpill-disabled');
+                child.removeAttribute('data-subpill-disabled');
+                if (child.getAttribute('title')) child.removeAttribute('title');
             }
         });
 
@@ -2471,6 +2642,28 @@ APP.subPills = APP.subPills || {
         if (snap && !opsVisible && APP.currentPage === 'operations-tab') {
             try { APP.navigateTo('deployments-tab', 'manage'); } catch (_) { /* noop */ }
         }
+
+        // 2026-05-28 — Per-Operations-child N/A markers for CCRTS. The whole
+        // group stays visible (per operator UX rule) but every individual
+        // child (Beacons, Terminal, Payloads, Topology) gets a dim treatment
+        // + tooltip when the active deployment is pure ccrts-*. Pane
+        // renderers also paint a not-applicable empty state.
+        const opsRailChildren = document.querySelectorAll(
+            '.app-rail__child[data-rail-target="operations-tab"][data-rail-subpill]'
+        );
+        opsRailChildren.forEach((child) => {
+            const name = child.dataset.railSubpill;
+            const naReason = naReasonFor(name);
+            if (naReason) {
+                child.classList.add('subpill-disabled');
+                child.setAttribute('data-subpill-disabled', 'true');
+                child.setAttribute('title', naReason);
+            } else {
+                child.classList.remove('subpill-disabled');
+                child.removeAttribute('data-subpill-disabled');
+                if (child.getAttribute('title')) child.removeAttribute('title');
+            }
+        });
 
         // Toggle scoped/all-mode containers in each sub-pill pane so the
         // per-pane rendering matches the dropdown state (Configure/Deploy
@@ -3022,6 +3215,26 @@ APP._runSubPillInit = function (parentTabName, subPillName) {
             }
         }
     } else if (parentTabName === 'operations-tab') {
+        // 2026-05-28 — CCRTS N/A short-circuit. Pure ccrts-* deployments
+        // are self-contained (CS runs on the Kali WS from the CREST AMI),
+        // so the shared Operations surfaces don't apply. Replace each
+        // pane's content with the canonical not-applicable empty state
+        // and bail before the heavy init paths fire (which would
+        // otherwise poll /api/beacons against an empty backend).
+        try {
+            const _depType = (APP.activeDeployment && APP.activeDeployment.deployment_type) || '';
+            const _naReason = (typeof APP.subPillNotApplicableReason === 'function')
+                ? APP.subPillNotApplicableReason(_depType, subPillName) : null;
+            if (_naReason) {
+                APP._renderOperationsNotApplicable(subPillName);
+                return;
+            }
+            // Restore the pane if a previous activation under a ccrts-* deployment
+            // stripped it. Idempotent — no-op when no prior strip happened.
+            if (typeof APP._restoreOperationsPane === 'function') {
+                APP._restoreOperationsPane(subPillName);
+            }
+        } catch (_) { /* fall through to normal init */ }
         // D4.5 — Operations sub-pill init. Mirrors the legacy flat-tab
         // loadPageContent() switch cases (beacon / terminal / tools) which
         // were removed in D4.2-D4.4 when the subtrees were re-parented.
@@ -4854,13 +5067,16 @@ async function _refreshGlobalDeployments() {
         if (!APP.activeDeployment.isUserVisibleProject(d.project_name)) return;
         const li = document.createElement('li');
         li.className = 'global-header__combobox-option';
-        // 2026-05-28 — Demo distinction in dropdown. Both flavours of demo
-        // (the static `demo` showcase + the demo-draft-* walkthrough) get
-        // a `--demo` modifier and a guide-accent DEMO badge in place of
-        // the regular running pill — so the operator can never confuse a
-        // synthetic project with a real one in the picker.
+        // 2026-05-28 — Demo distinction in dropdown. All flavours of demo
+        // (the static `demo` showcase + the demo-draft-* walkthrough + the
+        // type-specific demo rows like `demo-ccrts` exposed by the backend's
+        // deployment_state_ccrts()) get a `--demo` modifier and a guide-
+        // accent DEMO badge in place of the regular running pill — so the
+        // operator can never confuse a synthetic project with a real one
+        // in the picker. The /^demo-/ prefix match covers existing
+        // demo-draft-* IDs AND the new demo-ccrts row.
         const _isDemoRow = d.project_name === 'demo'
-            || /^demo-draft-/.test(d.project_name)
+            || /^demo-/.test(d.project_name)
             || d.is_demo === true
             || d.is_demo_draft === true;
         if (_isDemoRow) li.className += ' deploy-option--demo';
@@ -4912,7 +5128,10 @@ async function _refreshGlobalDeployments() {
         // before the project name so the operator always sees "you're in
         // demo mode" without having to open the picker. textContent → DOM
         // rewrite so the chip is a real element (not a unicode hack).
-        const _isDemoSel = selected === 'demo' || /^demo-draft-/.test(selected);
+        // 2026-05-28 — Broaden the demo-prefix regex to cover demo-ccrts
+        // and any future demo-<flavor> rows the backend exposes via
+        // /api/deploy/active (e.g. deployment_state_ccrts()).
+        const _isDemoSel = selected === 'demo' || /^demo-/.test(selected);
         if (_isDemoSel) {
             valueEl.textContent = '';
             const chip = document.createElement('span');
@@ -12663,6 +12882,130 @@ const DEPLOYMENT_CONFIGS = {
         bestFor: 'Full-scale red team exercises with realistic AD targets',
         phases: ['🚀 Staging', '⚡ Post-Ex', '🔒 Long-Haul'],
         architectureNote: '🔥 Full Infrastructure: Beacons route through redirectors. Realistic C2 operations.'
+    },
+    // ─────────────────────────────────────────────────────────────────
+    // CCRTS Lab — self-contained CREST exam prep environment.
+    // The Kali workstation runs Cobalt Strike from the CREST AMI itself
+    // (Pearson-VUE licensed). This means our shared C2 infrastructure
+    // and bolt-on catalog DO NOT apply to pure ccrts-* deployments —
+    // see APP.subPillNotApplicableReason() for the operator-facing
+    // disabled-state explainer that gates Bolt-ons + Operations.
+    // ─────────────────────────────────────────────────────────────────
+    'ccrts-mini': {
+        title: 'CCRTS Lab Mini (Exam Prep)',
+        color: 'var(--brand)',
+        type: 'ccrts',
+        c2Mode: null,
+        goadLab: null,
+        requiresDomain: false,
+        requiresCS: false, // CCRTS uses CREST's Pearson-VUE-licensed CS on the Kali AMI
+        architecture: 'ccrts-only',
+        selfContained: true,
+        components: [
+            { icon: '🐉', label: 'Kali Workstation', value: '1 (CS-on-host)' },
+            { icon: '🖥️', label: 'Windows WS', value: '1' },
+            { icon: '📊', label: 'ELK Stack', value: '1' },
+            { icon: '🔗', label: 'Bastion', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$210/mo' }
+        ],
+        details: '4-host self-contained exam-mirror environment. CS runs on the Kali workstation from the CREST Community AMI (Pearson-VUE licensed). No AD.',
+        bestFor: 'CREST CCRTS exam prep — tradecraft drills without AD',
+        architectureNote: '🎓 Self-contained exam mirror. Operator runs CS client locally → tunnel to Kali. Bolt-ons + shared Operations do not apply.'
+    },
+    'ccrts-full': {
+        title: 'CCRTS Lab Full (Exam Prep + AD)',
+        color: 'var(--brand)',
+        type: 'ccrts',
+        c2Mode: null,
+        goadLab: null,
+        requiresDomain: false,
+        requiresCS: false,
+        architecture: 'ccrts-only',
+        selfContained: true,
+        components: [
+            { icon: '🐉', label: 'Kali Workstation', value: '1 (CS-on-host)' },
+            { icon: '🖥️', label: 'Windows WS', value: '1' },
+            { icon: '🏰', label: 'AD DC', value: '1 (ccrts.local)' },
+            { icon: '👤', label: 'AD Workstation', value: '1' },
+            { icon: '📊', label: 'ELK Stack', value: '1' },
+            { icon: '🔗', label: 'Bastion', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$310/mo' }
+        ],
+        details: '6-host self-contained exam-mirror with AD (ccrts.local). Full Kerberos + AD attack surface. CS runs on the Kali workstation.',
+        bestFor: 'Full CREST CCRTS exam prep — including AD attacks',
+        architectureNote: '🎓 Self-contained exam mirror with AD. Operator runs CS client locally → tunnel to Kali. Bolt-ons + shared Operations do not apply.'
+    },
+    'combined-adhoc-ccrts-mini': {
+        title: 'C2 Ad-Hoc + CCRTS Mini',
+        color: 'var(--brand)',
+        type: 'combined-ccrts',
+        c2Mode: 'adhoc',
+        goadLab: null,
+        serverCount: 1,
+        requiresDomain: true,
+        requiresCS: true,
+        architecture: 'combined-ccrts',
+        components: [
+            { icon: '🎯', label: 'C2 Server', value: '1' },
+            { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '🛡️', label: 'Bastion', value: '1' },
+            { icon: '🐉', label: 'Kali WS', value: '1' },
+            { icon: '🖥️', label: 'Windows WS', value: '1' },
+            { icon: '📊', label: 'ELK', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$415/mo' }
+        ],
+        details: 'Full C2 infrastructure + CCRTS Mini lab. C2 side has its own attack box; CCRTS side runs CS on the Kali workstation.',
+        bestFor: 'Exam prep alongside real C2 tradecraft',
+        architectureNote: '🔥 Combined: shared C2 infra (with bolt-ons + operations) + self-contained CCRTS lab on a peered VPC.'
+    },
+    'combined-adhoc-ccrts-full': {
+        title: 'C2 Ad-Hoc + CCRTS Full',
+        color: 'var(--brand)',
+        type: 'combined-ccrts',
+        c2Mode: 'adhoc',
+        goadLab: null,
+        serverCount: 1,
+        requiresDomain: true,
+        requiresCS: true,
+        architecture: 'combined-ccrts',
+        components: [
+            { icon: '🎯', label: 'C2 Server', value: '1' },
+            { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '🛡️', label: 'Bastion', value: '1' },
+            { icon: '🐉', label: 'Kali WS', value: '1' },
+            { icon: '🖥️', label: 'Windows WS', value: '1' },
+            { icon: '🏰', label: 'CCRTS AD', value: '2 VMs' },
+            { icon: '📊', label: 'ELK', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$485/mo' }
+        ],
+        details: 'Full C2 infrastructure + CCRTS Full lab (with AD). Best of both worlds for engagement-style prep.',
+        bestFor: 'Full CREST prep with real C2 tradecraft alongside',
+        architectureNote: '🔥 Combined: shared C2 infra (with bolt-ons + operations) + self-contained CCRTS-with-AD lab on a peered VPC.'
+    },
+    'combined-full-ccrts-full': {
+        title: 'Full C2 Red Team + CCRTS Full',
+        color: 'var(--brand)',
+        type: 'combined-ccrts',
+        c2Mode: 'full-red-team',
+        goadLab: null,
+        serverCount: 3,
+        requiresDomain: true,
+        requiresCS: true,
+        architecture: 'combined-ccrts',
+        components: [
+            { icon: '🎯', label: 'C2 Servers', value: '3' },
+            { icon: '🔀', label: 'Redirectors', value: '2' },
+            { icon: '🛡️', label: 'Bastion', value: '1' },
+            { icon: '🐉', label: 'Kali WS', value: '1' },
+            { icon: '🖥️', label: 'Windows WS', value: '1' },
+            { icon: '🏰', label: 'CCRTS AD', value: '2 VMs' },
+            { icon: '📊', label: 'ELK', value: '1' },
+            { icon: '💰', label: 'Est. Cost', value: '~$580/mo' }
+        ],
+        details: 'Phased C2 (Staging/Post-Ex/Long-Haul) + CCRTS Full lab. Heaviest combined preset — full red team tradecraft + exam prep.',
+        bestFor: 'Senior operator engagements + CREST prep on the same stack',
+        phases: ['🚀 Staging', '⚡ Post-Ex', '🔒 Long-Haul'],
+        architectureNote: '🔥 Combined: phased C2 (with bolt-ons + operations) + self-contained CCRTS-with-AD lab on a peered VPC.'
     }
 };
 
@@ -12683,7 +13026,14 @@ const PROJECT_NAME_PREFIXES = {
     // Combined
     'combined-adhoc-mini': 'c2_goad_mini',
     'combined-adhoc-light': 'c2_goad_light',
-    'combined-full-full': 'c2_goad_full'
+    'combined-full-full': 'c2_goad_full',
+    // CCRTS Lab (self-contained — CS runs on Kali from CREST AMI)
+    'ccrts-mini': 'ccrts_mini',
+    'ccrts-full': 'ccrts_full',
+    // Combined C2 + CCRTS (C2 side remains a full C2 with bolt-ons + ops)
+    'combined-adhoc-ccrts-mini': 'c2_ccrts_mini',
+    'combined-adhoc-ccrts-full': 'c2_ccrts_full',
+    'combined-full-ccrts-full': 'c2_ccrts_full_redteam'
 };
 
 /**
@@ -12703,7 +13053,14 @@ const DEPLOYMENT_TIMES = {
     // Combined (C2 + GOAD)
     'combined-adhoc-mini': { min: 20, max: 30 },
     'combined-adhoc-light': { min: 25, max: 40 },
-    'combined-full-full': { min: 30, max: 45 }
+    'combined-full-full': { min: 30, max: 45 },
+    // CCRTS Lab (AMI copy from eu-west-2 → deployment region is the cold-start tail)
+    'ccrts-mini': { min: 25, max: 50 },
+    'ccrts-full': { min: 35, max: 60 },
+    // Combined C2 + CCRTS (CCRTS AMI copy runs in parallel with C2 provisioning)
+    'combined-adhoc-ccrts-mini': { min: 40, max: 70 },
+    'combined-adhoc-ccrts-full': { min: 40, max: 70 },
+    'combined-full-ccrts-full': { min: 40, max: 70 }
 };
 
 /**
@@ -12943,21 +13300,25 @@ function updateDeploymentType() {
         }
         
         // Enable/disable server count based on type
+        // 2026-05-28 — Pure 'ccrts' deployments have no shared C2 team server
+        // (CS runs on the Kali workstation from the CREST AMI), so hide the
+        // server-count + instance-type groups for both 'goad' and 'ccrts'.
+        const noC2Server = config.type === 'goad' || config.type === 'ccrts';
         const editable = config.serverCountEditable || false;
         serverCountInput.disabled = !editable;
         if (serverCountGroup) {
             serverCountGroup.style.opacity = editable ? '1' : '0.6';
-            serverCountGroup.style.display = config.type === 'goad' ? 'none' : 'block';
+            serverCountGroup.style.display = noC2Server ? 'none' : 'block';
         }
-        
+
         // Show/hide C2-specific fields based on type
         const instanceTypeSelect = document.getElementById('c2-instance-type');
         if (instanceTypeSelect) {
-            instanceTypeSelect.disabled = config.type === 'goad';
+            instanceTypeSelect.disabled = noC2Server;
         }
         if (instanceTypeGroup) {
-            instanceTypeGroup.style.opacity = config.type === 'goad' ? '0.6' : '1';
-            instanceTypeGroup.style.display = config.type === 'goad' ? 'none' : 'block';
+            instanceTypeGroup.style.opacity = noC2Server ? '0.6' : '1';
+            instanceTypeGroup.style.display = noC2Server ? 'none' : 'block';
         }
         
         // Handle key_pair_name field based on deployment type
@@ -13000,7 +13361,7 @@ function updateDeploymentType() {
         // Show/hide Decoy theme section for C2 deployments (has redirectors)
         const decoySection = document.getElementById('decoy-theme-section');
         if (decoySection) {
-            const hasC2 = config.type === 'c2' || config.type === 'combined';
+            const hasC2 = config.type === 'c2' || config.type === 'combined' || config.type === 'combined-ccrts';
             decoySection.style.display = hasC2 ? 'block' : 'none';
         }
 
@@ -13015,20 +13376,22 @@ function updateDeploymentType() {
         // Show/hide SSL config section for C2 deployments
         const sslSection = document.getElementById('ssl-config-section');
         if (sslSection) {
-            const hasC2 = config.type === 'c2' || config.type === 'combined';
+            const hasC2 = config.type === 'c2' || config.type === 'combined' || config.type === 'combined-ccrts';
             sslSection.style.display = hasC2 ? 'block' : 'none';
         }
 
         // Show/hide Domain Fronting section for C2 deployments
         const domainFrontingSection = document.getElementById('domain-fronting-section');
         if (domainFrontingSection) {
-            const hasC2 = config.type === 'c2' || config.type === 'combined';
+            const hasC2 = config.type === 'c2' || config.type === 'combined' || config.type === 'combined-ccrts';
             domainFrontingSection.style.display = hasC2 ? 'block' : 'none';
         }
 
         // Show/hide File Portal section — only for deployments with redirectors (C2 and Combined)
         const supportsFilePortal = ['c2-adhoc', 'c2-purple', 'c2-full',
-            'combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full'].includes(deploymentType);
+            'combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full',
+            // 2026-05-28 — combined-*-ccrts retain redirectors (C2 side intact).
+            'combined-adhoc-ccrts-mini', 'combined-adhoc-ccrts-full', 'combined-full-ccrts-full'].includes(deploymentType);
         const fpSection = document.getElementById('file-portal-section');
         if (fpSection) {
             fpSection.style.display = supportsFilePortal ? 'block' : 'none';
@@ -13039,6 +13402,24 @@ function updateDeploymentType() {
         if (goadNetworkSection) {
             const hasGoad = config.type === 'goad' || config.type === 'combined';
             goadNetworkSection.style.display = hasGoad ? 'block' : 'none';
+        }
+
+        // 2026-05-28 — CCRTS Lab config section (VPC CIDR, DC password,
+        // low-priv password, CREST AMI overrides). Shown for pure ccrts-*
+        // and combined-*-ccrts (which include the CCRTS lab).
+        const ccrtsConfigSection = document.getElementById('ccrts-config-section');
+        if (ccrtsConfigSection) {
+            const hasCcrts = config.type === 'ccrts' || config.type === 'combined-ccrts';
+            ccrtsConfigSection.style.display = hasCcrts ? 'block' : 'none';
+        }
+
+        // 2026-05-28 — "Add CCRTS Lab to this deployment" toggle. Only
+        // shown for c2-* presets (where CCRTS isn't already opted-in).
+        // Hidden for ccrts-* (the lab IS the deployment) and combined-*-ccrts
+        // (already opted-in by the preset).
+        const addCcrtsLabSection = document.getElementById('add-ccrts-lab-section');
+        if (addCcrtsLabSection) {
+            addCcrtsLabSection.style.display = (config.type === 'c2') ? 'block' : 'none';
         }
 
         // Show/hide Attack Box config section (available for all deployment types)
@@ -32117,6 +32498,73 @@ APP.manage._scopeProjectViews = function (projectName) {
 };
 
 /** Pull live data + render the hero / spec-list. Re-entrant. */
+/**
+ * 2026-05-28 — Render the CCRTS connection-commands card from
+ * terraform outputs. Shown for ccrts-* and combined-*-ccrts deployments
+ * (the operator needs the same tunnel commands either way).
+ *
+ * Expected outputs (added by the CCRTS terraform module — backend agent
+ * exposes these via /api/deploy/outputs):
+ *   - kali_ssh_tunnel_cmd            — SSH tunnel to Kali workstation
+ *   - windows_rdp_tunnel_cmd         — RDP tunnel to Windows workstation
+ *   - dc_winrm_tunnel_cmd            — WinRM tunnel to AD DC (ccrts-full only)
+ *   - ad_workstation_winrm_tunnel_cmd — WinRM tunnel to AD workstation (ccrts-full only)
+ *   - kibana_tunnel_cmd              — HTTP tunnel to Kibana on the ELK host
+ *
+ * Each command renders via renderCopyableCommand() with a per-command
+ * label so operators can copy → paste → connect without leaving the pane.
+ *
+ * @param {string} deployType - active deployment_type (lowercased)
+ * @param {object} outputs    - bundle.outputsRes.outputs (terraform outputs)
+ */
+APP.manage._renderCcrtsCard = function (deployType, outputs) {
+    const card = document.getElementById('manage-ccrts-card');
+    if (!card) return;
+    const type = String(deployType || '').toLowerCase();
+    const isCcrts = type.startsWith('ccrts-') || type.includes('-ccrts-');
+    if (!isCcrts) {
+        card.hidden = true;
+        return;
+    }
+    const safeOutputs = outputs || {};
+    const getVal = (key) => {
+        const o = safeOutputs[key];
+        if (o == null) return '';
+        // Outputs may be wrapped { value: ... } or already unwrapped.
+        return (typeof o === 'object' && 'value' in o) ? (o.value || '') : (o || '');
+    };
+    // Build the per-command list — only render rows whose terraform output
+    // is non-empty so ccrts-mini (no AD) doesn't paint stale DC rows.
+    const commands = [
+        { label: 'Kali Workstation (SSH tunnel — CS team server runs here):', cmd: getVal('kali_ssh_tunnel_cmd') },
+        { label: 'Windows Workstation (RDP tunnel):', cmd: getVal('windows_rdp_tunnel_cmd') },
+        { label: 'AD Domain Controller (WinRM tunnel):', cmd: getVal('dc_winrm_tunnel_cmd') },
+        { label: 'AD Workstation (WinRM tunnel):', cmd: getVal('ad_workstation_winrm_tunnel_cmd') },
+        { label: 'Kibana (HTTP tunnel — ELK stack):', cmd: getVal('kibana_tunnel_cmd') },
+    ].filter(row => row.cmd && String(row.cmd).trim());
+    const target = document.getElementById('manage-ccrts-commands');
+    if (!target) return;
+    if (commands.length === 0) {
+        // Outputs not ready yet (deployment in progress) — surface a
+        // helpful placeholder instead of an empty card. The full
+        // commands appear once terraform apply finishes.
+        target.innerHTML = `
+            <div class="manage-empty" role="status">
+                <p class="manage-empty__title">Connection commands not available yet</p>
+                <p class="manage-empty__body">Terraform outputs are not yet hydrated — they appear here once <code class="code-inline">terraform apply</code> finishes provisioning the CCRTS hosts.</p>
+            </div>
+        `;
+    } else if (typeof renderCopyableCommand === 'function') {
+        target.innerHTML = commands.map(r => renderCopyableCommand(r.label, r.cmd)).join('');
+    } else {
+        // Fallback if renderCopyableCommand isn't loaded for some reason.
+        target.innerHTML = commands.map(r =>
+            `<div style="margin-bottom: 10px;"><div style="color: var(--text-secondary); font-size: 0.9em; margin-bottom: 4px;">${r.label}</div><code class="code-inline" style="display: block; padding: 8px; word-break: break-all;">${r.cmd}</code></div>`
+        ).join('');
+    }
+    card.hidden = false;
+};
+
 APP.manage.render = async function () {
     const view = document.getElementById('manage-view');
     const heroName = document.getElementById('manage-hero-name');
@@ -32145,6 +32593,10 @@ APP.manage.render = async function () {
         // No project → no integrity warning possible. Hide unconditionally
         // so a stale banner from a previous scoped view doesn't linger.
         APP.manage._renderForeignModulesBanner(null);
+        // Also hide the CCRTS connection card if a stale render left it up.
+        if (typeof APP.manage._renderCcrtsCard === 'function') {
+            try { APP.manage._renderCcrtsCard('', {}); } catch (_) {}
+        }
         return;
     }
 
@@ -32276,6 +32728,13 @@ APP.manage._paintFromBundle = function (bundle) {
     // Reactive show/hide of the GOAD section + scoped resource / history views.
     APP.manage._evaluateGoadSection(deployType);
     APP.manage._scopeProjectViews(project);
+
+    // 2026-05-28 — CCRTS connection-commands card. Rendered for both
+    // pure ccrts-* and combined-*-ccrts deployments — operators always
+    // need the Kali / Windows / DC / Kibana tunnel commands.
+    if (typeof APP.manage._renderCcrtsCard === 'function') {
+        try { APP.manage._renderCcrtsCard(deployType, outputs); } catch (_) { /* fail-quiet */ }
+    }
 };
 
 /**
@@ -33569,6 +34028,34 @@ APP.bolton = APP.bolton || {
     init() {
         const root = document.querySelector('[data-bolton-root]');
         if (!root) return;
+        // 2026-05-28 — Cache the original bolt-on root markup on first init
+        // so we can restore it when the operator switches back from a
+        // ccrts-* deployment (which replaces the root with an N/A empty
+        // state). Without this, the canonical hero/summary/filters/etc.
+        // would never come back.
+        if (this._originalRootHtml == null) {
+            this._originalRootHtml = root.innerHTML;
+        }
+        // CCRTS N/A short-circuit. Pure ccrts-* deployments use a self-
+        // contained exam environment (CS runs on the Kali WS from the
+        // CREST AMI). Our shared bolt-on catalog targets the test_lab AD
+        // hosts, not the CCRTS AD — so render an explainer empty state
+        // INSTEAD of the live catalog UI.
+        const _depType = (APP.activeDeployment && APP.activeDeployment.deployment_type) || '';
+        const _naReason = (typeof APP.subPillNotApplicableReason === 'function')
+            ? APP.subPillNotApplicableReason(_depType, 'bolt-ons') : null;
+        if (_naReason) {
+            root.innerHTML = APP._renderNotApplicableEmpty();
+            return;
+        }
+        // If we previously replaced the root with the empty-state markup
+        // (operator switched from ccrts-* back to a normal deployment),
+        // restore the canonical content and force a re-wire of the fresh
+        // DOM nodes.
+        if (root.querySelector('.not-applicable-empty')) {
+            root.innerHTML = this._originalRootHtml;
+            this._initialized = false;
+        }
         if (!this._initialized) {
             this._initialized = true;
             this._wireSelector();
@@ -33594,6 +34081,30 @@ APP.bolton = APP.bolton || {
                     this.state.rows = [];
                     this.state.selectedDescriptorId = null;
                     this.state.selectedDescriptor = null;
+                    // 2026-05-28 — CCRTS N/A re-check on dropdown change. If
+                    // the operator just switched TO a ccrts-* deployment,
+                    // replace the bolt-on root with the explainer card and
+                    // bail before loadHosts queries DOM that we're about to
+                    // overwrite. If they switched AWAY from ccrts-*, restore
+                    // the canonical root markup so loadHosts has its picker
+                    // and hero to populate.
+                    const _root = document.querySelector('[data-bolton-root]');
+                    const _depType = (APP.activeDeployment && APP.activeDeployment.deployment_type) || '';
+                    const _naReason = (typeof APP.subPillNotApplicableReason === 'function')
+                        ? APP.subPillNotApplicableReason(_depType, 'bolt-ons') : null;
+                    if (_root && _naReason) {
+                        _root.innerHTML = APP._renderNotApplicableEmpty();
+                        return;
+                    }
+                    if (_root && this._originalRootHtml != null && _root.querySelector('.not-applicable-empty')) {
+                        _root.innerHTML = this._originalRootHtml;
+                        this._initialized = false; // force re-wire of fresh DOM
+                        // Re-run init to wire the fresh DOM. init() is idempotent
+                        // and will fall through to loadHosts() once wired —
+                        // returning here avoids the double-loadHosts below.
+                        this.init();
+                        return;
+                    }
                     // Hide the host-scoped UI until a host is picked again.
                     ['bolton-hero', 'bolton-summary', 'bolton-filters', 'bolton-sections'].forEach(id => {
                         const el = document.getElementById(id);

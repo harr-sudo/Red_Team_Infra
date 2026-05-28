@@ -15486,3 +15486,132 @@ textarea.cfg-input {
     .bolton-walk__body { grid-template-columns: 1fr; }
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   CCRTS Lab — Not-Applicable + Disabled Sub-Pill treatments (2026-05-28)
+   ──────────────────────────────────────────────────────────────────────
+   The CCRTS Lab is a self-contained CREST exam-mirror environment where
+   Cobalt Strike runs on the Kali workstation from the CREST AMI. Our
+   shared C2 infrastructure + bolt-on catalog DON'T apply to pure ccrts-*
+   deployments. Per the operator's UX rule, we KEEP Bolt-ons + Operations
+   visible in the rail (so the surface is discoverable) but render them
+   in a disabled / not-applicable state — both at the rail/pill level
+   AND inside the pane itself via APP._renderNotApplicableEmpty().
+
+   Used by:
+     - .not-applicable-empty       — pane-level empty state card
+     - .subpill-disabled           — dimmed sub-pill nav / rail child
+       + [data-subpill-disabled]   — attribute hook for the same
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Pane-level empty state — rendered into [data-bolton-root] (Bolt-ons)
+   and into the Operations sub-pill panes (Beacons / Terminal / Payloads /
+   Topology) when the active deployment is pure ccrts-*. Mirrors the
+   spacing + chrome of the existing `.manage-empty` + `.empty-state`
+   primitives so the card sits naturally inside any pane. Colors use
+   theme-flipping variables so contrast holds in both modes. */
+.not-applicable-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 48px 32px;
+    margin: 24px auto;
+    max-width: 640px;
+    background: var(--bg-card);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+}
+.not-applicable-empty__icon {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 16px;
+    border-radius: 50%;
+    background: var(--info-bg);
+    color: var(--info-text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    font-weight: 600;
+    border: 1px solid var(--border-subtle);
+}
+.not-applicable-empty h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 12px 0;
+}
+.not-applicable-empty p {
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin: 0 0 10px 0;
+    max-width: 540px;
+}
+.not-applicable-empty__hint {
+    font-size: 12.5px !important;
+    color: var(--text-muted) !important;
+    margin-top: 12px !important;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+    width: 100%;
+    max-width: 540px;
+}
+
+/* Disabled / N/A sub-pill treatment — applied to .subpill-nav__pill and
+   .app-rail__child via JS (see APP.subPillNotApplicableReason +
+   applyFromState). The pill stays clickable (so the operator can read
+   the full explainer inside the pane) but visually signals "this surface
+   is gated for the current deployment". Cursor stays the default pointer
+   (vs. not-allowed) because we WANT the click — the pane render handles
+   the explainer. */
+.subpill-nav__pill.subpill-disabled,
+.app-rail__child.subpill-disabled {
+    opacity: 0.55;
+    position: relative;
+}
+.subpill-nav__pill.subpill-disabled:hover,
+.app-rail__child.subpill-disabled:hover {
+    opacity: 0.8;
+}
+/* Small "N/A" badge appended to the disabled pill. Uses ::after so we
+   don't have to thread the badge through every JS render path. */
+.subpill-nav__pill.subpill-disabled::after,
+.app-rail__child.subpill-disabled::after {
+    content: 'N/A';
+    margin-left: 8px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--info-bg);
+    color: var(--info-text);
+    border: 1px solid var(--border-subtle);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1.4;
+    vertical-align: middle;
+    /* Override the .is-active::after underline rule for sub-pills — when
+       a disabled pill is also is-active (operator clicked into it to read
+       the explainer), the badge wins over the brand underline. */
+    position: static;
+    height: auto;
+    background-color: var(--info-bg);
+}
+
+/* When a disabled pill is ALSO the active pill, suppress the brand
+   underline so the N/A badge reads cleanly. The pane content (the
+   .not-applicable-empty card) is the operator-facing signal here. */
+.subpill-nav__pill.subpill-disabled.is-active::after {
+    /* Re-assert the badge styling and override the .is-active::after
+       underline geometry from the base rule. */
+    content: 'N/A';
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    height: auto;
+    background: var(--info-bg);
+    border-radius: 8px;
+}
