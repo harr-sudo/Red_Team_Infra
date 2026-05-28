@@ -87,6 +87,38 @@ This page provides a visual index of all architecture diagrams generated for the
 
 ---
 
+## CCRTS-Lab (CREST Exam Mirror)
+
+> **Status:** Diagrams pending — regen task scheduled. Placeholder paths shown below.
+
+### CCRTS Mini — Kali + Windows + ELK (no AD)
+**Pending — diagram regen task scheduled** (`../../generated-diagrams/ccrts-mini-architecture.png`)
+**Cost**: ~$210/month | **Hosts**: 4 (ccrts-kali, ccrts-win-ws, ccrts-elk, NAT) | **VPC**: 192.168.57.0/24
+[📖 Full Documentation](../CCRTS_LAB.md)
+
+---
+
+### CCRTS Full — Kali + Windows + AD + ELK
+**Pending — diagram regen task scheduled** (`../../generated-diagrams/ccrts-full-architecture.png`)
+**Cost**: ~$310/month | **Hosts**: 6 (mini + ccrts-dc01 + ccrts-ad-ws01) | **AD Domain**: ccrts.local
+[📖 Full Documentation](../CCRTS_LAB.md)
+
+---
+
+### Combined: C2 Ad-Hoc + CCRTS Mini
+**Pending — diagram regen task scheduled** (`../../generated-diagrams/combined-c2-ccrts-mini.png`)
+**Cost**: ~$415/month | **VPC Peering**: ✅ (C2 10.0.0.0/16 ↔ CCRTS 192.168.57.0/24)
+[📖 Full Documentation](../CCRTS_LAB.md#combined-modes--when-to-use-what)
+
+---
+
+### Combined: C2 Full + CCRTS Full
+**Pending — diagram regen task scheduled** (`../../generated-diagrams/combined-full-ccrts-full.png`)
+**Cost**: ~$580/month | **VPC Peering**: ✅ | **Complete Engagement + Exam Mirror**
+[📖 Full Documentation](../CCRTS_LAB.md#combined-modes--when-to-use-what)
+
+---
+
 ## Component Architectures
 
 ### Windows Attack Box - Standalone Module Architecture

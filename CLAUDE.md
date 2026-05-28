@@ -73,11 +73,28 @@ generated-diagrams/         # Architecture diagrams (PNG)
 
 ## Deployment Modes
 
-The `deployment_type` variable drives all architecture decisions. There are 11 options across 3 categories:
+The `deployment_type` variable drives all architecture decisions. There are 16 options across 4 categories:
 
 - **C2-Only:** `c2-adhoc` (1 server), `c2-purple` (2 servers, redundancy), `c2-full` (3 servers, phase-based)
 - **GOAD-Only:** `goad-mini`, `goad-light`, `goad-sccm`, `goad-full`, `goad-nha` (standalone AD labs)
-- **Combined:** `combined-adhoc-mini`, `combined-adhoc-light`, `combined-full-full` (C2 + GOAD with VPC peering)
+- **Combined (C2 + GOAD):** `combined-adhoc-mini`, `combined-adhoc-light`, `combined-full-full` (C2 + GOAD with VPC peering)
+- **CCRTS-Lab:** `ccrts-mini`, `ccrts-full` (exam-mirror lab) plus `combined-adhoc-ccrts-mini`, `combined-adhoc-ccrts-full`, `combined-full-ccrts-full` (C2 + CCRTS with VPC peering)
+
+### CCRTS Lab
+
+CREST Certified Red Team Specialist exam-mirror lab. Provisions the publicly available CREST Community AMIs (owner account `126620636130`) by copying them from `eu-west-2` into `eu-central-1` via `aws_ami_copy` — no infrastructure is provisioned in the source region, only metadata reads and storage-layer snapshot copies.
+
+- **Module location:** `terraform/modules/ccrts_lab/`
+- **VPC CIDR:** `192.168.57.0/24` (chosen to avoid collision with C2 `10.0.0.0/16`, GOAD `192.168.56.0/24`, test_lab `10.99.50.0/24`)
+- **Hosts:** `ccrts-kali` (.20), `ccrts-win-ws` (.30), `ccrts-dc01` (.40, full only), `ccrts-ad-ws01` (.41, full only), `ccrts-elk` (.50)
+- **AD domain:** `ccrts.local` / NetBIOS `CCRTS` (full deployments only)
+- **First-deploy timing:** 20-30 min for cross-region AMI copy on first apply; subsequent applies are no-ops until CREST publishes a new image
+- **Bolt-on flag:** `enable_ccrts_lab = true` attaches the lab to any `c2-*` deployment (mirrors `enable_test_lab`)
+- **Self-contained UX:** Pure `ccrts-*` deployments do **not** support the Bolt-ons or Operations sub-pills — CS lives on the Kali workstation directly and the framework's shared C2 tooling does not apply. The frontend renders both pills as disabled with an explainer. `combined-*-ccrts` deployments retain full bolt-ons + operations integration because the C2 side is present.
+- **Connection model:** No bastion inside the CCRTS VPC — operator tunnels through the dashboard EC2 (`ssh -L <local>:192.168.57.X:<port> ubuntu@<dashboard-eip>`)
+- **Cost overhead:** ~$5-10/mo per copied AMI in EBS snapshot storage in the operator's account, plus ~$1 one-time data transfer per copy
+
+See `docs/CCRTS_LAB.md` for the full operator guide.
 
 ## Key Commands
 
@@ -221,6 +238,8 @@ Separate IAM roles per VPC (C2 vs GOAD). See `docs/S3_CONFUSED_DEPUTY_FIX.md`.
 | `terraform/modules/dashboard_server/main.tf` | Dashboard server EC2 + VPC + IAM + S3 state |
 | `terraform/modules/deployment_storage/main.tf` | S3 storage, IAM, secrets (confused deputy protection) |
 | `terraform/modules/c2_team_server/main.tf` | Cobalt Strike server provisioning |
+| `terraform/modules/ccrts_lab/main.tf` | CCRTS lab module orchestration (CREST AMI copy + VPC + EC2) |
+| `docs/CCRTS_LAB.md` | CCRTS-Lab operator guide |
 | `webapp/backend/app.py` | Flask API entry point (server-only, loopback guard) |
 | `webapp/backend/routes/deploy.py` | Deployment API endpoints |
 | `webapp/backend/services/terraform_service.py` | Terraform integration logic |
@@ -259,5 +278,5 @@ No automated test suite. Validation is done via:
 - GOAD labs provide **isolated, vulnerable AD environments** for practice
 - The project prioritizes **operational security** — C2 servers are never directly internet-facing
 - Redirectors act as traffic proxies with domain categorization support
-- When modifying Terraform modules, always consider the impact across all 11 deployment types
+- When modifying Terraform modules, always consider the impact across all 16 deployment types
 - The web app is a local-only management interface, not a production web service

@@ -250,6 +250,27 @@ Integrated vulnerable Active Directory environments for testing your C2 infrastr
 See [GOAD Integration Plan](./docs/GOAD_INTEGRATION_PLAN.md) for setup details.
 See [GOAD Quick Start](./docs/GOAD_QUICK_START.md) for deployment instructions.
 
+### 🎓 CCRTS-Lab (CREST Exam Mirror)
+
+AWS-hosted rehearsal environment that mirrors the **CCRTS** (CREST Certified Red Team Specialist) exam estate. Uses the publicly available CREST Community AMIs (account `126620636130`) copied cross-region into `eu-central-1`, optionally augmented with an AD estate and an ELK stack for detection rule iteration.
+
+| Lab | Hosts | Description | Est. Cost |
+|-----|-------|-------------|-----------|
+| **ccrts-mini** | 4 | Kali + Windows workstation + ELK + NAT (no AD) | ~$210/mo |
+| **ccrts-full** | 6 | mini + DC (ccrts.local) + member workstation | ~$310/mo |
+| **combined-adhoc-ccrts-mini** | C2 ad-hoc + ccrts-mini | C2 ops with rehearsal lab attached | ~$415/mo |
+| **combined-adhoc-ccrts-full** | C2 ad-hoc + ccrts-full | C2 ops with full exam mirror | ~$485/mo |
+| **combined-full-ccrts-full** | C2 full red team + ccrts-full | Full engagement + exam mirror | ~$580/mo |
+
+**Key Features:**
+- 🇬🇧 CREST Community AMIs (Kali + Windows) auto-discovered and copied to `eu-central-1`
+- 🏰 Optional `ccrts.local` AD estate (DC + domain-joined Win11 workstation)
+- 📊 Single-node ELK stack for detection rule development
+- 🔐 Self-contained — connects through the dashboard EC2 jump host (no public-facing services)
+- ⚠️ Cobalt Strike not included — exam CS is licensed only inside Pearson VUE; bring your own
+
+See [CCRTS-Lab Operator Guide](./docs/CCRTS_LAB.md) for deployment, connection, and upgrade details.
+
 ## Documentation
 
 ### Essential Guides (Start Here)
@@ -262,6 +283,7 @@ See [GOAD Quick Start](./docs/GOAD_QUICK_START.md) for deployment instructions.
 - **[Domain Requirements](./docs/DOMAIN_REQUIREMENTS.md)** ⚠️ - **REQUIRED PREREQUISITE** - Domain registration guide
 - **[Cobalt Strike Deployment](./docs/COBALT_STRIKE_DEPLOYMENT.md)** 📦 - **REQUIRED PREREQUISITE** - Cobalt Strike file upload and deployment automation
 - **[GOAD Quick Start](./docs/GOAD_QUICK_START.md)** 🏰 - **Deploy vulnerable AD labs** - Quick setup for GOAD environments
+- **[CCRTS-Lab Operator Guide](./docs/CCRTS_LAB.md)** 🎓 - **CREST exam mirror** - CREST Community AMI lab with optional AD + ELK
 - **[Quick Reference](./docs/QUICK_REFERENCE.md)** - Quick commands and checklists
 - **[GitHub Setup Guide](./docs/GITHUB_SETUP.md)** - Setting up GitHub integration (recommended for team collaboration)
 
