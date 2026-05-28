@@ -266,11 +266,27 @@ def check_ssh_key():
 
 @bp.route('/github-cli', methods=['GET'])
 def check_github_cli():
-    """Check if user is logged into GitHub CLI and has access to the tools repo"""
+    """Check if user is logged into GitHub CLI and has access to the tools repo.
+
+    2026-05-28 — Real-pipeline audit fix (HIGH #13): the tools repo
+    used to be hard-coded to `harr-sudo/red-team-tools` so every
+    operator other than the project author saw a permanent red-X in
+    Settings even though the tools repo is OPTIONAL (only consulted
+    when `tools_repo_https_token` is set in tfvars). Resolution order:
+      1. `?repo=owner/name` query arg (operator override).
+      2. `TOOLS_REPO` env var on the dashboard server.
+      3. Skip the repo-access probe entirely — just report `gh auth`
+         status. Authenticating with GitHub is itself optional, and a
+         hard-coded probe against someone else's private repo is worse
+         signal than no probe at all.
+    """
+    import os as _os
     import re
-    
-    TOOLS_REPO = "harr-sudo/red-team-tools"
-    TOOLS_REPO_URL = f"https://github.com/{TOOLS_REPO}"
+
+    TOOLS_REPO = (request.args.get("repo")
+                  or _os.environ.get("TOOLS_REPO")
+                  or "").strip()
+    TOOLS_REPO_URL = f"https://github.com/{TOOLS_REPO}" if TOOLS_REPO else ""
     
     try:
         # Run gh auth status to check if logged in
@@ -300,7 +316,23 @@ def check_github_cli():
             elif 'ssh' in output.lower():
                 account_type = 'ssh'
             
-            # Now check if user has access to the private tools repo
+            # No configured tools repo → just return gh-auth status as
+            # success; skip the repo-access probe entirely. Operator can
+            # set TOOLS_REPO=<owner/name> env on the dashboard server
+            # or pass ?repo=... if they actually use a private repo.
+            if not TOOLS_REPO:
+                return jsonify({
+                    "success": True,
+                    "authenticated": True,
+                    "has_repo_access": None,  # not probed
+                    "username": username,
+                    "account_type": account_type,
+                    "message": ("GitHub CLI authenticated. No tools repo "
+                                "configured (set TOOLS_REPO env var or "
+                                "?repo= to enable a private-repo probe)."),
+                })
+
+            # Now check if user has access to the configured tools repo
             repo_access_result = subprocess.run(
                 ["gh", "repo", "view", TOOLS_REPO, "--json", "name,visibility"],
                 capture_output=True,

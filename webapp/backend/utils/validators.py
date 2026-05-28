@@ -169,10 +169,16 @@ class ConfigValidator:
         if not is_goad_only and not config.get('key_pair_name'):
             errors.append("key_pair_name is required for C2/Combined deployments (GOAD-only auto-generates keys)")
         
-        # Validate engagement type
-        engagement_type = config.get('engagement_type', '')
-        if engagement_type and not ConfigValidator.validate_engagement_type(engagement_type):
-            errors.append(f"Invalid engagement_type: {engagement_type}")
+        # 2026-05-28 — Real-pipeline audit fix (HIGH #12): `engagement_type`
+        # was renamed to `deployment_type` long ago but legacy tfvars +
+        # `templates` endpoint still carry it. Previously this validator
+        # bounced the entire save with "Invalid engagement_type" for any
+        # leftover field, breaking template loads. Strip + ignore instead.
+        if 'engagement_type' in config and 'deployment_type' not in config:
+            # Promote silently for backwards compat if the new field is absent.
+            config['deployment_type'] = config.pop('engagement_type')
+        elif 'engagement_type' in config:
+            config.pop('engagement_type', None)
         
         # Validate deployment mode
         deployment_mode = config.get('c2_deployment_mode', '')

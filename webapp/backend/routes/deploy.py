@@ -1639,7 +1639,22 @@ def run_destroy(project_name: str = None):
 
         state["progress_percent"] = 100
         state["completed_at"] = time.time()
-        _persist_state(project_name, state)
+
+        # 2026-05-28 — Real-pipeline audit fix (CRITICAL #5): persist
+        # destroyed deployments with status="destroyed" (NOT "success")
+        # so /api/deploy/active's `status == "success"` filter (line ~249)
+        # naturally excludes them. Previously a destroyed deployment kept
+        # its file with status="success" forever — the top-bar dropdown
+        # showed ghost entries indefinitely with stale outputs.
+        # In-memory deployment_states[project] retains status="success"
+        # for the current polling cycle so the frontend's destroy UI sees
+        # the final success state correctly — only the on-disk record
+        # gets the destroyed flag.
+        persisted_state = dict(state)
+        if state["status"] == "success":
+            persisted_state["status"] = "destroyed"
+            persisted_state["destroyed_at"] = state["completed_at"]
+        _persist_state(project_name, persisted_state)
 
     except Exception as e:
         state["status"] = "error"
@@ -2538,11 +2553,39 @@ def purge_resources():
     This runs terraform destroy with -refresh=false to clean up orphaned resources.
     """
     global deployment_state
-    
+
     # Get request data
     data = request.get_json() or {}
     project_name = data.get("project_name")
-    
+    force_foreign = request.args.get("force_foreign", "").strip() == "1"
+
+    # ── 2026-05-28 SAFETY: demo deployments must NEVER hit terraform. ────
+    # Mirrors the destroy guard. Purge does the same dangerous shellout
+    # so it gets the same short-circuit.
+    try:
+        from webapp.backend.services import demo_data_service
+        _is_demo = demo_data_service.is_demo_project(project_name)
+    except Exception:
+        _is_demo = False
+    if _is_demo:
+        try:
+            if project_name in deployment_states:
+                deployment_states.pop(project_name, None)
+            state_path = STATE_DIR / f"{project_name}.state.json"
+            if state_path.exists():
+                state_path.unlink()
+        except Exception:
+            pass
+        audit_service.write(_audit_actor(), "deploy.purge_demo",
+                            project=project_name, details={"is_demo": True})
+        return jsonify({
+            "success": True,
+            "is_demo": True,
+            "message": (f"Demo deployment '{project_name}' cleared. "
+                        "No AWS resources were touched."),
+            "project_name": project_name,
+        })
+
     # Check if specific project is running
     if project_name and project_name in deployment_states:
         if deployment_states[project_name].get("status") == "running":
@@ -2555,13 +2598,93 @@ def purge_resources():
             "success": False,
             "error": "Operation already in progress"
         }), 400
-    
+
     # Require confirmation
     if data.get("confirm") != "PURGE":
         return jsonify({
             "success": False,
             "error": "Confirmation required. Send confirm: 'PURGE'"
         }), 400
+
+    # ── 2026-05-28 CRITICAL #4: foreign-modules safety guard. ───────────
+    # /api/deploy/destroy has this guard (line ~2275). /api/deploy/purge
+    # didn't — same teardown risk via a different button. Mirror the
+    # exact fail-closed check here so an operator clicking "Force Purge"
+    # on a workspace contaminated with foreign modules (e.g. an
+    # accidentally-pinned dashboard_server module) gets the same refusal
+    # + Detach action they'd get on Destroy.
+    if project_name and not force_foreign:
+        safe = _sanitize_project_name(project_name)
+        if safe:
+            summary = _summarize_state_for_safety(safe)
+            foreign = summary.get("foreign_modules") or []
+            success_probe = bool(summary.get("success"))
+            err = (summary.get("error") or "").strip().lower()
+            actual = summary.get("actual_modules") or []
+            empty_workspace_ok = success_probe and not foreign and not actual
+            if not success_probe and not empty_workspace_ok:
+                return jsonify({
+                    "success": False,
+                    "error": "state_indeterminate",
+                    "message": (
+                        f"Could not read terraform state for {safe!r} "
+                        f"({err or 'unknown reason'}). Purge refused — the "
+                        "workspace may be locked or mid-init. Resolve the "
+                        "lock and retry, or pass ?force_foreign=1 to "
+                        "override after manual triage."
+                    ),
+                    "state_summary": summary,
+                    "actions": [{
+                        "id": "force-anyway",
+                        "label": "Override and purge anyway (manual triage done)",
+                        "endpoint": "/api/deploy/purge?force_foreign=1",
+                        "method": "POST",
+                        "description": (
+                            "Bypasses the state-summary guard. Only do "
+                            "this after verifying the lock is stale AND "
+                            "you've reviewed what's in state."
+                        ),
+                    }],
+                }), 409
+            if success_probe and foreign:
+                dtype = summary.get("deployment_type") or "unknown"
+                foreign_list = ", ".join(foreign)
+                return jsonify({
+                    "success": False,
+                    "error": "foreign_modules_in_state",
+                    "message": (
+                        f"This workspace contains modules that aren't "
+                        f"part of the {dtype} deployment: {foreign_list}. "
+                        "Purging would damage shared infrastructure."
+                    ),
+                    "deployment_type": dtype,
+                    "foreign_modules": foreign,
+                    "expected_modules": summary.get("expected_modules") or [],
+                    "actual_modules": summary.get("actual_modules") or [],
+                    "actions": [
+                        {
+                            "id": "detach-foreign",
+                            "label": "Detach foreign modules from this workspace's state",
+                            "endpoint": f"/api/deploy/detach-foreign/{safe}",
+                            "method": "POST",
+                            "description": (
+                                "Removes the foreign modules from terraform's "
+                                "state tracking for THIS workspace only. "
+                                "Does NOT touch AWS. After this, Purge is safe."
+                            ),
+                        },
+                        {
+                            "id": "force-anyway",
+                            "label": "I understand — purge everything including foreign modules",
+                            "endpoint": "/api/deploy/purge?force_foreign=1",
+                            "method": "POST",
+                            "description": (
+                                "Last-resort escape hatch. Will purge the "
+                                "foreign modules too. Explicit opt-in via URL flag."
+                            ),
+                        },
+                    ],
+                }), 409
     
     # Initialize state for this project
     if project_name:

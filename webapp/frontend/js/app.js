@@ -16824,6 +16824,24 @@ async function fetchAndUpdateDeploymentStatus() {
                 try { _refreshGlobalDeployments(); } catch (_) { /* noop */ }
             }
 
+            // 2026-05-28 — Real-pipeline audit fix (HIGH #7): invalidate the
+            // Manage view's per-project cache after a successful (or failed)
+            // deploy so the operator switching to Manage immediately sees
+            // the new outputs / "live infrastructure" pill instead of the
+            // stale "no live infrastructure" rendered from the 60s cache.
+            if (status.status === 'success' || status.status === 'error') {
+                try {
+                    if (APP && APP.manage && typeof APP.manage.invalidate === 'function') {
+                        APP.manage.invalidate(finishedProject);
+                    }
+                    // Same logic for the shared outputs cache used by the
+                    // legacy TOPOLOGY overlay + Connection Info card.
+                    if (typeof _invalidateOutputsCache === 'function') {
+                        _invalidateOutputsCache(finishedProject);
+                    }
+                } catch (_) { /* defensive — don't block deploy completion */ }
+            }
+
             // Auto-trigger setup check 3 minutes after successful deploy
             if (status.status === 'success' && !window._setupCheckScheduled) {
                 window._setupCheckScheduled = true;
@@ -18434,6 +18452,20 @@ function pollDestructionStatus(projectName = null) {
                 } else if (status.status === 'success') {
                     clearInterval(pollInterval);
                     disableDeployButton(false);
+
+                    // 2026-05-28 — Real-pipeline audit fix (HIGH #7 mirror):
+                    // invalidate Manage + outputs caches after a successful
+                    // destroy so the operator returning to Manage sees the
+                    // empty/destroyed state immediately instead of stale
+                    // cached infra readings.
+                    try {
+                        if (APP && APP.manage && typeof APP.manage.invalidate === 'function') {
+                            APP.manage.invalidate(trackedProject);
+                        }
+                        if (typeof _invalidateOutputsCache === 'function') {
+                            _invalidateOutputsCache(trackedProject);
+                        }
+                    } catch (_) { /* defensive */ }
 
                     const pr = status.purge_result;
                     if (pr) {

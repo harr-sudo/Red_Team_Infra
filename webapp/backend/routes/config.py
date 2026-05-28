@@ -146,6 +146,21 @@ def update_config():
 
         config = data['config']
 
+        # 2026-05-23 — operator directive: all new infra is pinned to
+        # eu-central-1. Force the region on save so the wizard, legacy form,
+        # or any future caller can't accidentally write a different region
+        # into configs/<project>.tfvars. CloudFront ACM lives in us-east-1
+        # but it's provisioned by the domain_fronting module, not from
+        # operator-supplied aws_region.
+        if isinstance(config, dict):
+            existing = (config.get("aws_region") or "").strip()
+            if existing and existing != "eu-central-1":
+                # Don't fail — silently coerce + flag in the response so the
+                # UI can surface a notice. Failing would block tests + legacy
+                # callers that still ship the field.
+                config["_aws_region_coerced_from"] = existing
+            config["aws_region"] = "eu-central-1"
+
         # Validate configuration
         is_valid, errors = ConfigValidator.validate_config(config)
         if not is_valid:
@@ -234,31 +249,35 @@ def validate_config():
 
 @bp.route('/templates', methods=['GET'])
 def get_templates():
-    """Get configuration templates for different engagement types"""
+    """Get configuration templates for different deployment types.
+
+    2026-05-28 — Real-pipeline audit fix (HIGH #15): templates used to
+    carry the legacy ``engagement_type`` field which the validator
+    rejected — every template load produced an immediately-invalid
+    config. Switched to ``deployment_type`` (the current canonical name)
+    matching DEPLOYMENT_CONFIGS keys in the frontend.
+    """
     templates = {
-        "adhoc": {
-            "engagement_type": "adhoc",
-            "c2_deployment_mode": "",
+        "c2-adhoc": {
+            "deployment_type": "c2-adhoc",
             "c2_server_count": 1,
-            "c2_server_instance_type": "t3.medium"
+            "c2_server_instance_type": "t3.medium",
         },
-        "purple-team": {
-            "engagement_type": "purple-team",
-            "c2_deployment_mode": "",
+        "c2-purple": {
+            "deployment_type": "c2-purple",
             "c2_server_count": 2,
-            "c2_server_instance_type": "t3.medium"
+            "c2_server_instance_type": "t3.medium",
         },
-        "full-red-team": {
-            "engagement_type": "full-red-team",
-            "c2_deployment_mode": "",
-            "c2_server_count": 2,
-            "c2_server_instance_type": "t3.medium"
-        }
+        "c2-full": {
+            "deployment_type": "c2-full",
+            "c2_server_count": 3,
+            "c2_server_instance_type": "t3.medium",
+        },
     }
-    
+
     return jsonify({
         "success": True,
-        "templates": templates
+        "templates": templates,
     })
 
 @bp.route('/example', methods=['GET'])
