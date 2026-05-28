@@ -5998,16 +5998,33 @@ APP.demoRibbon = (function () {
     let _wired = false;
     function refresh() {
         const ad = APP.activeDeployment;
-        const isDemo = !!(ad && typeof ad.isDemoDraft === 'function' && ad.isDemoDraft());
+        // Two flavours of demo state:
+        //   isDemoDraft   — operator clicked "Provision a Demo Deployment"
+        //                   and is walking the Configure/Deploy/Manage tour.
+        //                   Tour ribbon stays visible across the 3 walkthrough
+        //                   panes; leaf panes (Bolt-ons / Operations sub-pills)
+        //                   show the corner DEMO pill instead.
+        //   isDemoStatic  — operator picked the pre-existing 'demo' deployment
+        //                   ("Try Demo Mode"). Leaf-pane pills still apply
+        //                   (so the operator never confuses synthetic data
+        //                   with real infra), but the walkthrough ribbons
+        //                   are NOT shown — there's nothing to walk through.
+        const isDemoDraft = !!(ad && typeof ad.isDemoDraft === 'function' && ad.isDemoDraft());
+        const cur = (ad && ad.current) || '';
+        const isDemoStatic = cur === 'demo' && !isDemoDraft;
+        const anyDemo = isDemoDraft || isDemoStatic;
+        // Walkthrough ribbons — only on demo-draft.
         document.querySelectorAll('[data-demo-ribbon]').forEach(el => {
-            if (isDemo) {
-                el.removeAttribute('hidden');
-            } else {
-                el.setAttribute('hidden', '');
-            }
+            if (isDemoDraft) el.removeAttribute('hidden');
+            else el.setAttribute('hidden', '');
+        });
+        // Corner pills on leaf panes — visible on either demo flavour.
+        document.querySelectorAll('[data-demo-pill]').forEach(el => {
+            if (anyDemo) el.removeAttribute('hidden');
+            else el.setAttribute('hidden', '');
         });
         if (!_wired) {
-            // Delegate click handling once. The skip buttons carry
+            // Delegate click handling once. Skip buttons carry
             // data-demo-skip-to="<subpill-name>" so a single listener
             // dispatches to APP.navigateTo for every ribbon.
             document.addEventListener('click', (evt) => {

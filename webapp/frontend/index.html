@@ -671,8 +671,9 @@
                              subscriber so it can never leak onto real
                              deployments. -->
                         <div class="demo-ribbon" data-demo-ribbon="configure" data-demo-skip-target="deploy" hidden>
-                            <span class="demo-ribbon__eyebrow">DEMO</span>
-                            <span class="demo-ribbon__text">This is a synthetic walkthrough — no AWS resources are provisioned.</span>
+                            <span class="demo-ribbon__eyebrow">GUIDED TOUR</span>
+                            <span class="demo-ribbon__step">Step 1 of 3</span>
+                            <span class="demo-ribbon__text">Fill in the synthetic config — no AWS resources are provisioned.</span>
                             <button class="demo-ribbon__skip" type="button" data-demo-skip-to="deploy">Skip to Deploy &rarr;</button>
                         </div>
                         <!-- 2026-05-21 — All-mode empty state container removed.
@@ -2194,8 +2195,9 @@ ns-143.awsdns-17.org
                     <div class="subpill-pane" data-subpill-pane="deploy" id="subpill-pane-deploy" hidden>
                         <!-- Phase 4 — DEMO ribbon (see Configure pane note). -->
                         <div class="demo-ribbon" data-demo-ribbon="deploy" data-demo-skip-target="manage" hidden>
-                            <span class="demo-ribbon__eyebrow">DEMO</span>
-                            <span class="demo-ribbon__text">This is a synthetic walkthrough — no AWS resources are provisioned.</span>
+                            <span class="demo-ribbon__eyebrow">GUIDED TOUR</span>
+                            <span class="demo-ribbon__step">Step 2 of 3</span>
+                            <span class="demo-ribbon__text">Apply runs a synthetic 30s tick — no terraform, no AWS.</span>
                             <button class="demo-ribbon__skip" type="button" data-demo-skip-to="manage">Skip to Manage &rarr;</button>
                         </div>
                         <!-- 2026-05-21 — All-mode empty state container removed
@@ -2673,9 +2675,10 @@ ns-143.awsdns-17.org
                     <div class="subpill-pane" data-subpill-pane="manage" id="subpill-pane-manage" hidden>
                         <!-- Phase 4 — DEMO ribbon (see Configure pane note). -->
                         <div class="demo-ribbon" data-demo-ribbon="manage" data-demo-skip-target="bolt-ons" hidden>
-                            <span class="demo-ribbon__eyebrow">DEMO</span>
-                            <span class="demo-ribbon__text">This is a synthetic walkthrough — no AWS resources are provisioned.</span>
-                            <button class="demo-ribbon__skip" type="button" data-demo-skip-to="bolt-ons">Skip to Bolt-ons &rarr;</button>
+                            <span class="demo-ribbon__eyebrow">GUIDED TOUR</span>
+                            <span class="demo-ribbon__step">Step 3 of 3</span>
+                            <span class="demo-ribbon__text">Your synthetic deployment — populated with canned topology + beacons.</span>
+                            <button class="demo-ribbon__skip" type="button" data-demo-skip-to="bolt-ons">Explore Bolt-ons &rarr;</button>
                         </div>
                         <!-- 2026-05-19 (deployments nav restructure) — All-mode
                              fleet view. Visible when APP.activeDeployment.isAll();
@@ -3062,11 +3065,8 @@ ns-143.awsdns-17.org
                          Mirrors webapp/frontend/preview/page-bolton-target.html with
                          live wiring to /api/bolton/*. JS controller is APP.bolton. -->
                     <div class="subpill-pane" data-subpill-pane="bolt-ons" id="subpill-pane-bolt-ons" hidden>
-                        <!-- Phase 4 — DEMO ribbon (see Configure pane note). -->
-                        <div class="demo-ribbon" data-demo-ribbon="bolt-ons" hidden>
-                            <span class="demo-ribbon__eyebrow">DEMO</span>
-                            <span class="demo-ribbon__text">This is a synthetic walkthrough — no AWS resources are provisioned.</span>
-                        </div>
+                        <!-- 2026-05-28 polish: leaf pane gets a corner pill, not a ribbon. -->
+                        <span class="demo-corner-pill" data-demo-pill="bolt-ons" title="Synthetic data — no AWS resources are provisioned." hidden>Demo</span>
                         <!-- 2026-05-21 — All-mode empty state container removed
                              (see Configure pane note). Bolt-ons are
                              per-deployment only; the pill is hidden in All mode. -->
@@ -3330,11 +3330,8 @@ ns-143.awsdns-17.org
                 </div>
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="beacons" id="subpill-pane-beacons">
-                        <!-- Phase 4 — DEMO ribbon (see Configure pane note). -->
-                        <div class="demo-ribbon" data-demo-ribbon="beacons" hidden>
-                            <span class="demo-ribbon__eyebrow">DEMO</span>
-                            <span class="demo-ribbon__text">This is a synthetic walkthrough — no AWS resources are provisioned.</span>
-                        </div>
+                        <!-- 2026-05-28 polish: leaf pane gets a corner pill, not a ribbon. -->
+                        <span class="demo-corner-pill" data-demo-pill="beacons" title="Synthetic beacons — no real Cobalt Strike connection." hidden>Demo</span>
                 <!-- 2026-05-19 — All-mode aggregate fleet container. Populated by
                      APP.beacons.renderFleet() when APP.activeDeployment.isAll(). -->
                 <div id="beacons-all-mode-empty" hidden></div>
@@ -3974,11 +3971,8 @@ ns-143.awsdns-17.org
                          beacon detail Graph tab but full-width with a
                          legend strip. -->
                     <div class="subpill-pane" data-subpill-pane="topology" id="subpill-pane-topology" hidden>
-                        <!-- Phase 4 — DEMO ribbon (see Configure pane note). -->
-                        <div class="demo-ribbon" data-demo-ribbon="topology" hidden>
-                            <span class="demo-ribbon__eyebrow">DEMO</span>
-                            <span class="demo-ribbon__text">This is a synthetic walkthrough — no AWS resources are provisioned.</span>
-                        </div>
+                        <!-- 2026-05-28 polish: leaf pane gets a corner pill, not a ribbon. -->
+                        <span class="demo-corner-pill" data-demo-pill="topology" title="Synthetic topology — drag nodes to rearrange." hidden>Demo</span>
                         <div class="topology-pane">
                             <header class="topology-pane__header">
                                 <div>
@@ -4030,11 +4024,8 @@ ns-143.awsdns-17.org
                         </div>
                     </div>
                     <div class="subpill-pane" data-subpill-pane="terminal" id="subpill-pane-terminal" hidden>
-                        <!-- Phase 4 — DEMO ribbon (see Configure pane note). -->
-                        <div class="demo-ribbon" data-demo-ribbon="terminal" hidden>
-                            <span class="demo-ribbon__eyebrow">DEMO</span>
-                            <span class="demo-ribbon__text">This is a synthetic walkthrough — no AWS resources are provisioned.</span>
-                        </div>
+                        <!-- 2026-05-28 polish: leaf pane gets a corner pill, not a ribbon. -->
+                        <span class="demo-corner-pill" data-demo-pill="terminal" title="Local bash with a fake SSH login banner — no real instance connection." hidden>Demo</span>
                 <!-- 2026-05-19 — All-mode empty-state container for Terminal. -->
                 <div id="terminal-all-mode-empty" hidden></div>
                 <div id="terminal-scoped-content">
@@ -4083,11 +4074,8 @@ ns-143.awsdns-17.org
                 </div><!-- /#terminal-scoped-content -->
                     </div>
                     <div class="subpill-pane" data-subpill-pane="payloads" id="subpill-pane-payloads" hidden>
-                        <!-- Phase 4 — DEMO ribbon (see Configure pane note). -->
-                        <div class="demo-ribbon" data-demo-ribbon="payloads" hidden>
-                            <span class="demo-ribbon__eyebrow">DEMO</span>
-                            <span class="demo-ribbon__text">This is a synthetic walkthrough — no AWS resources are provisioned.</span>
-                        </div>
+                        <!-- 2026-05-28 polish: leaf pane gets a corner pill, not a ribbon. -->
+                        <span class="demo-corner-pill" data-demo-pill="payloads" title="Synthetic payloads — transfer is mocked, no S3 / SSM calls." hidden>Demo</span>
                 <!-- 2026-05-19 — All-mode aggregate history container for Payloads. -->
                 <div id="payloads-all-mode-empty" hidden></div>
                 <div id="payloads-scoped-content">

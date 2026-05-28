@@ -224,6 +224,16 @@
     --burgundy-light: var(--color-primary-bright);  /* legacy alias */
     --burgundy-dark: var(--color-primary-dim);      /* legacy alias */
 
+    /* ── GUIDE accent (2026-05-28) ──────────────────────────────────
+       Distinct from brand-light (olive) / warning (amber) / success
+       (green). Reserved EXCLUSIVELY for demo-walkthrough hint surfaces
+       (tour ribbon, corner pill) so the operator's eye learns "soft
+       teal = synthetic / guidance". Dark-theme default; light-theme
+       override below in the [data-theme="light"] block. */
+    --guide-accent:      #5BB5C7;
+    --guide-accent-soft: color-mix(in srgb, var(--guide-accent) 16%, transparent);
+    --guide-accent-text: #5BB5C7;
+
     --accent:        var(--color-secondary);
     --accent-muted:  var(--color-secondary-dim);
     --accent-dim:    var(--color-secondary-dim);
@@ -294,6 +304,11 @@
     --burgundy:      #0E1F27;          /* legacy alias */
     --burgundy-light: #162D38;         /* legacy alias */
     --burgundy-dark: #091620;          /* legacy alias */
+
+    /* Guide accent — darker teal for AA on cream backgrounds in light mode. */
+    --guide-accent:      #1F6B7A;
+    --guide-accent-soft: color-mix(in srgb, var(--guide-accent) 16%, transparent);
+    --guide-accent-text: #145361;
 
     /* Light-mode accent: shifted darker so it passes >=4.5:1 on
        bg-card (cream) AND bg-section. Was #6B7D4A / #5A6C3C / #4E6030 —
