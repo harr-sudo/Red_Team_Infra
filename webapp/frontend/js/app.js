@@ -35605,18 +35605,55 @@ APP.bolton = APP.bolton || {
     },
 
     /** Open the progress overlay using Agent C's APP.overlay if available;
-     * fall back to a minimal inline progress panel when it's not. */
+     * fall back to a minimal inline progress panel when it's not.
+     *
+     * 2026-05-28 — UX fix: previously the "Dispatching..." headline never
+     * swapped to a terminal state (✓/✗), the log dumped the same log_tail
+     * blob every poll (duplicates), and the operator could only close via
+     * the small ✕. New structure:
+     *   - [data-bolton-op-banner] flips status via data-status attribute,
+     *     swapping between "Dispatching..." / "✓ Complete" / "✗ Failed"
+     *     with matching colour treatment (--success-bg / --danger-bg / etc).
+     *   - Per-line dedupe so log_tail repeats don't pile up.
+     *   - [data-bolton-op-footer] surfaces a Close button on terminal status. */
     _openProgress(op, vulnId, host) {
-        const title = `${op[0].toUpperCase() + op.slice(1)} · ${vulnId}`;
+        const opLabel = op[0].toUpperCase() + op.slice(1).replace(/-/g, ' ');
+        const title = `${opLabel} · ${vulnId}`;
         const body = `<div id="bolton-progress-body">
-            <p style="margin:0 0 12px;color:var(--text-secondary);font-size:13px">
-                Dispatching <strong>${op}</strong> for <code>${vulnId}</code> on host <strong>${host}</strong>…
-            </p>
+            <div class="bolton-op__banner" data-bolton-op-banner data-status="running">
+                <span class="bolton-op__banner-icon" aria-hidden="true">⟳</span>
+                <div class="bolton-op__banner-body">
+                    <div class="bolton-op__banner-title">Dispatching ${opLabel.toLowerCase()}…</div>
+                    <div class="bolton-op__banner-subtitle">
+                        <code>${vulnId}</code> on host <strong>${host}</strong>
+                    </div>
+                </div>
+            </div>
             <div class="bi-log" id="bolton-progress-log" role="log" aria-live="polite"></div>
+            <div class="bolton-op__footer" data-bolton-op-footer hidden>
+                <button class="btn btn-primary" type="button" data-bolton-op-close>Close</button>
+            </div>
         </div>`;
+        // Reset per-open state used by _setProgressStatus + _setProgressTerminal
+        this._progressSeenLines = new Set();
+        this._progressOp = opLabel;
+        this._progressVulnId = vulnId;
+        this._progressHost = host;
         if (APP.overlay && typeof APP.overlay.open === 'function') {
-            // Agent C signature: open(id, content, opts)
-            APP.overlay.open('bolton-progress', body, { title, eyebrow: 'Bolt-on operation' });
+            // wide so log lines + code snippets aren't clipped at 680px
+            APP.overlay.open('bolton-progress', body, { title, eyebrow: 'Bolt-on operation', wide: true });
+            // Wire close button (delegated so it survives re-renders)
+            const root = document.getElementById('bolton-progress-body');
+            if (root && !root._closeWired) {
+                root._closeWired = true;
+                root.addEventListener('click', (ev) => {
+                    if (ev.target.closest('[data-bolton-op-close]')) {
+                        if (APP.overlay && typeof APP.overlay.close === 'function') {
+                            APP.overlay.close('bolton-progress');
+                        }
+                    }
+                });
+            }
             return;
         }
         // Fallback: append a lightweight scrim takeover to the document body.
@@ -35649,13 +35686,68 @@ APP.bolton = APP.bolton || {
         }
     },
 
+    /** Append log lines. Splits multi-line input on \n and dedupes against
+     * lines already shown, so the per-poll log_tail repeat doesn't pile up. */
     _setProgressStatus(msg) {
         const log = document.getElementById('bolton-progress-log');
         if (!log) return;
-        const line = document.createElement('div');
-        line.className = 'bi-log__line';
-        line.textContent = msg;
-        log.appendChild(line);
+        if (!this._progressSeenLines) this._progressSeenLines = new Set();
+        const raw = String(msg == null ? '' : msg);
+        const lines = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        let appended = false;
+        lines.forEach(line => {
+            if (this._progressSeenLines.has(line)) return;
+            this._progressSeenLines.add(line);
+            const lineEl = document.createElement('div');
+            lineEl.className = 'bi-log__line';
+            lineEl.textContent = line;
+            log.appendChild(lineEl);
+            appended = true;
+        });
+        if (appended) log.scrollTop = log.scrollHeight;
+    },
+
+    /** 2026-05-28 — Flip the status banner + surface the Close button when
+     * the job reaches a terminal state. Called from _pollJob. */
+    _setProgressTerminal(status, payload) {
+        const banner = document.querySelector('[data-bolton-op-banner]');
+        const footer = document.querySelector('[data-bolton-op-footer]');
+        const op = this._progressOp || 'Operation';
+        const vulnId = this._progressVulnId || '';
+        const host = this._progressHost || '';
+        const map = {
+            SUCCEEDED: {
+                ds: 'success', icon: '✓',
+                title: `${op} complete`,
+                sub: `<code>${vulnId}</code> on host <strong>${host}</strong> — done`,
+            },
+            FAILED: {
+                ds: 'failed', icon: '✗',
+                title: `${op} failed`,
+                sub: (payload && payload.error) ? String(payload.error) : 'See log for details',
+            },
+            STUCK: {
+                ds: 'stuck', icon: '⏸',
+                title: `${op} stuck`,
+                sub: 'Job stopped responding — invoke the agent below for remediation options',
+            },
+            AS_PATCHED_BUT_VULN: {
+                ds: 'warn', icon: '⚠',
+                title: 'Patched but still vulnerable',
+                sub: 'Patch applied but the verify probe still reports the vulnerability — re-check manually',
+            },
+        };
+        const cfg = map[String(status).toUpperCase()] || map.FAILED;
+        if (banner) {
+            banner.setAttribute('data-status', cfg.ds);
+            banner.innerHTML = `
+                <span class="bolton-op__banner-icon" aria-hidden="true">${cfg.icon}</span>
+                <div class="bolton-op__banner-body">
+                    <div class="bolton-op__banner-title">${cfg.title}</div>
+                    <div class="bolton-op__banner-subtitle">${cfg.sub}</div>
+                </div>`;
+        }
+        if (footer) footer.hidden = false;
     },
 
     _pollJob(jobId, attempts = 0) {
@@ -35668,8 +35760,14 @@ APP.bolton = APP.bolton || {
                     return;
                 }
                 const status = String(payload.status || '').toUpperCase();
-                this._setProgressStatus(`[${status}] ${payload.log_tail ? payload.log_tail.slice(-200) : ''}`);
+                // Append new log lines only — _setProgressStatus dedupes
+                // internally so repeated polls don't pile up duplicates.
+                // (Previously we prefixed each poll with [STATUS] which
+                // produced ~20+ identical lines by the end of a job.)
+                if (payload.log_tail) this._setProgressStatus(payload.log_tail);
                 if (['SUCCEEDED', 'FAILED', 'STUCK', 'AS_PATCHED_BUT_VULN'].includes(status)) {
+                    // Flip the banner + show the Close button before anything else
+                    try { this._setProgressTerminal(status, payload); } catch (_) { /* noop */ }
                     // Phase 3a — stuck jobs get the agent invocation panel.
                     if (status === 'STUCK') {
                         try { this._showAgentPanel(jobId); } catch (_) { /* noop */ }
