@@ -12,6 +12,7 @@ import select
 import socket
 import struct
 import fcntl
+import ipaddress
 import termios
 import subprocess
 import threading
@@ -41,13 +42,100 @@ bp = Blueprint('terminal', __name__)
 sock = Sock()
 
 
-def _is_host_reachable(host, port=22, timeout=2):
-    """Check if a host is directly reachable (e.g., via VPC peering on the server)."""
+def _direct_ssh_allowlist():
+    """Parse DIRECT_SSH_ALLOWLIST_CIDRS env var into a list of IPv4 networks.
+
+    Default is `0.0.0.0/0` for backwards compatibility — but when the
+    default is used we log a warning at probe time so operators notice
+    that the bastion-skip heuristic is wide open. Set the env var to a
+    comma-separated list of "public" prefixes (e.g.
+    `203.0.113.0/24,198.51.100.0/24`) to restrict.
+    """
+    raw = (os.environ.get("DIRECT_SSH_ALLOWLIST_CIDRS") or "0.0.0.0/0").strip()
+    nets = []
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(tok, strict=False))
+        except ValueError:
+            # Bad CIDR — skip silently rather than refuse to serve terminals
+            try:
+                print(f"[terminal] WARNING: ignoring bad CIDR in DIRECT_SSH_ALLOWLIST_CIDRS: {tok!r}")
+            except Exception:
+                pass
+    if not nets:
+        nets = [ipaddress.ip_network("0.0.0.0/0")]
+    return nets
+
+
+_DIRECT_SSH_DEFAULT_WARNED = False
+
+
+def _is_host_reachable(host, port=22, timeout=1.5):
+    """Decide if `host` should be SSHed to directly (skip bastion ProxyJump).
+
+    HIGH #14 fix (2026-05-28): the previous probe accepted *any* TCP
+    connect on port 22 within 2s, which caused false positives for
+    private IPs that happened to have a path from the dashboard server
+    but that the operator wanted to reach via bastion. Two tightenings:
+
+    1. The host's IP must fall inside an operator-supplied allow-list of
+       CIDR prefixes (env: `DIRECT_SSH_ALLOWLIST_CIDRS`, defaults to
+       `0.0.0.0/0` for backwards-compat — but logged so it's noticeable).
+    2. The TCP probe timeout is tightened to 1.5s to fail-fast on
+       unreachable private-IP targets.
+
+    When the probe rejects (either gate), the SSH command will route via
+    bastion ProxyJump. We log a clear "Falling back to bastion ProxyJump"
+    line so operators can debug routing decisions.
+    """
+    global _DIRECT_SSH_DEFAULT_WARNED
+
+    nets = _direct_ssh_allowlist()
+    if (len(nets) == 1 and str(nets[0]) == "0.0.0.0/0"
+            and not _DIRECT_SSH_DEFAULT_WARNED):
+        _DIRECT_SSH_DEFAULT_WARNED = True
+        try:
+            print(
+                "[terminal] WARNING: DIRECT_SSH_ALLOWLIST_CIDRS unset — "
+                "any IP that answers TCP/22 will skip the bastion. Set "
+                "DIRECT_SSH_ALLOWLIST_CIDRS to restrict to public prefixes."
+            )
+        except Exception:
+            pass
+
+    # CIDR allow-list check first — cheap, no network call.
+    try:
+        host_ip = ipaddress.ip_address(host)
+        if not any(host_ip in n for n in nets):
+            try:
+                print(
+                    f"[terminal] {host} is not in DIRECT_SSH_ALLOWLIST_CIDRS "
+                    "— falling back to bastion ProxyJump."
+                )
+            except Exception:
+                pass
+            return False
+    except ValueError:
+        # Hostname (not an IP literal). Allow it to proceed to the TCP
+        # probe — operator likely typed a DNS name they expect to route
+        # directly, and we can't easily CIDR-check it without DNS.
+        pass
+
     try:
         conn = socket.create_connection((host, port), timeout=timeout)
         conn.close()
         return True
     except (ConnectionRefusedError, socket.timeout, OSError):
+        try:
+            print(
+                f"[terminal] TCP probe to {host}:{port} failed within "
+                f"{timeout}s — falling back to bastion ProxyJump."
+            )
+        except Exception:
+            pass
         return False
 
 # Track active sessions for cleanup

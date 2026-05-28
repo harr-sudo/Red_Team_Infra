@@ -17631,6 +17631,13 @@ async function startDeployment() {
     }
     
     // Check AWS credentials are valid
+    // HIGH #6 fix (2026-05-28): the previous gate only checked
+    // /api/health/aws-cli (binary on PATH) — it never validated that the
+    // configured credentials could actually call STS. Operators with
+    // expired SSO sessions or rotated keys would get 30-60s into
+    // `terraform apply` before NoCredentialProviders. We now also call the
+    // STS-backed /api/aws-check/credentials endpoint and require
+    // authenticated === true before letting the apply start.
     try {
         const awsCheck = await fetch(`${API_BASE}/health/aws-cli`);
         const awsData = await awsCheck.json();
@@ -17641,8 +17648,25 @@ async function startDeployment() {
         missing.push('AWS CLI');
     }
 
+    let credsErrorMessage = null;
+    try {
+        const credsCheck = await fetch(`${API_BASE}/aws-check/credentials`);
+        const credsData = await credsCheck.json();
+        if (!credsData || credsData.authenticated !== true) {
+            credsErrorMessage = (credsData && (credsData.error || credsData.message))
+                || 'AWS credentials could not be validated against STS.';
+            missing.push('AWS credentials (STS validation failed)');
+        }
+    } catch (e) {
+        credsErrorMessage = `Could not reach /aws-check/credentials: ${e && e.message ? e.message : e}`;
+        missing.push('AWS credentials (STS validation failed)');
+    }
+
     if (missing.length > 0) {
-        alert(`⚠️ Prerequisites missing!\n\nPlease complete:\n- ${missing.join('\n- ')}`);
+        const extra = credsErrorMessage
+            ? `\n\nAWS credentials error:\n${credsErrorMessage}\n\nFix in Settings -> AWS Credentials (or refresh your SSO session) and try again.`
+            : '';
+        alert(`⚠️ Prerequisites missing!\n\nPlease complete:\n- ${missing.join('\n- ')}${extra}`);
         return;
     }
 
@@ -18083,6 +18107,35 @@ async function destroyInfrastructure(projectName = null) {
             }
             // Start polling for destruction status
             pollDestructionStatus(projectName);
+        } else if (response.status === 409 && data.error === 'foreign_modules_in_state') {
+            // HIGH #11 fix (2026-05-28): the legacy Destroy click target used
+            // to render the raw error string here, leaving the operator with
+            // no Detach option. Mirror the behavior of
+            // executeDestroyConfirmation() — show the structured recovery
+            // modal so the operator can detach or force-destroy.
+            const list = (data.foreign_modules || []).join(', ') || '(unknown)';
+            if (overviewDiv) {
+                overviewDiv.innerHTML = `
+                    <div class="status-display warning">
+                        <p><strong>Foreign modules in state:</strong> ${list}.</p>
+                        <p style="font-size: 0.9em; color: var(--text-secondary);">
+                            Destroying this workspace would damage shared infrastructure.
+                            Choose a recovery option in the dialog above.
+                        </p>
+                    </div>
+                `;
+            }
+            disableDeployButton(false);
+            if (projectName && window.APP && APP.manage
+                && typeof APP.manage._handleForeignModulesError === 'function') {
+                APP.manage._handleForeignModulesError(projectName, data);
+            } else if (typeof showMessage === 'function') {
+                showMessage(
+                    `Cannot destroy: foreign modules in state (${list}). ` +
+                    `Open the Manage page to detach or force-destroy.`,
+                    'error'
+                );
+            }
         } else {
             if (overviewDiv) {
                 overviewDiv.innerHTML = `

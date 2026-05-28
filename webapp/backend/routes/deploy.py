@@ -1140,10 +1140,34 @@ def run_deployment(project_name: str = None):
         update_phase("outputs", project_name)
         result = service.output()
         complete_phase("outputs", project_name)
-        
+
+        # CRITICAL #3 fix (2026-05-28): `service.output()` can fail silently —
+        # e.g., when terraform-output returns non-zero because the state has no
+        # outputs declared, or the workspace race (CRITICAL #1 + #2) selected
+        # the wrong workspace and that one has no state. Previously this code
+        # blindly read `result["outputs"]` and persisted an empty dict, which
+        # rendered as a green "Deployment complete" with an empty connection
+        # block in the Manage hero. Surface the failure both in the log stream
+        # and as a structured `output_warning` so the UI can show "outputs
+        # unavailable — re-run terraform output manually" instead.
+        output_warning = None
+        if not result.get("success"):
+            stderr_snippet = (result.get("stderr") or "").strip().splitlines()[:3]
+            stderr_summary = " | ".join(stderr_snippet) if stderr_snippet else "no stderr"
+            output_warning = (
+                "Terraform outputs unavailable after apply — connection details "
+                "may not render in Manage. Re-run `terraform output -json` "
+                f"manually in workspace '{service.workspace_name}'. ({stderr_summary})"
+            )
+            try:
+                print(f"[deploy] WARNING [{project_name}]: {output_warning}")
+            except Exception:
+                pass
+            add_log(output_warning, "warning", project_name)
+
         # Decrypt Windows attack box password from EC2Launch v2 if applicable
         sensitive_outputs = {}
-        all_outputs = result.get("outputs", {})
+        all_outputs = result.get("outputs", {}) or {}
         attack_box_id = all_outputs.get("attack_box_instance_id", {}).get("value")
         if attack_box_id:
             win_pwd = get_windows_password(attack_box_id, service)
@@ -1157,6 +1181,10 @@ def run_deployment(project_name: str = None):
         state["completed_at"] = time.time()
         all_outputs.update(sensitive_outputs)
         state["output"] = all_outputs
+        if output_warning:
+            # Persist so the Manage hero can read it and surface an
+            # actionable banner instead of an empty connection block.
+            state["output_warning"] = output_warning
         elapsed = int(state["completed_at"] - state["started_at"])
         add_log(f"Deployment completed successfully in {elapsed // 60}m {elapsed % 60}s", "success", project_name)
         _persist_state(project_name, state)
@@ -3721,20 +3749,44 @@ def get_deployment_details():
     """
     Get comprehensive deployment details including IPs, credentials, and access instructions.
     This is the primary endpoint for the Deployment Manager UI.
+
+    HIGH #8 fix (2026-05-28): now project-aware. The previous implementation
+    used the module-level `terraform_service` (default workspace), so any
+    Manage-page lookup against a per-project deployment either returned
+    empty or — worse — cross-contaminated by reading whichever workspace
+    happened to be selected at the time (CRITICAL #1 + #2 race). Reading
+    `?project=<name>` and routing through `get_service_for_project()`
+    pins the lookup to the correct workspace + tfvars file.
     """
     try:
+        project_name = request.args.get("project") or None
+
+        # Per-project services have their own workspace + tfvars file.
+        # `get_service_for_project()` returns a TerraformService scoped to
+        # `configs/<project>.tfvars` and workspace=<project>, falling back
+        # to the legacy default workspace when no project is given.
+        if project_name:
+            service = get_service_for_project(project_name)
+        else:
+            service = terraform_service
+
         # Check if Terraform state exists
-        state_file = terraform_service.terraform_dir / "terraform.tfstate"
-        
+        # Per-project workspaces store state under terraform.tfstate.d/<ws>/
+        # — use the helper so we honor that layout.
+        try:
+            state_file = service.get_state_file_path()
+        except Exception:
+            state_file = service.terraform_dir / "terraform.tfstate"
+
         if not state_file.exists():
             return jsonify({
                 "success": False,
                 "error": "No deployment found",
                 "has_deployment": False
             })
-        
-        # Get Terraform outputs
-        output_result = terraform_service.output()
+
+        # Get Terraform outputs (project-scoped — see comment above)
+        output_result = service.output()
         
         if not output_result.get("success"):
             return jsonify({
@@ -5023,22 +5075,51 @@ def get_terraform_outputs():
                 pass
             return {}
 
-        # Run DNS and password fetch in parallel
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        # HIGH #9 fix (2026-05-28): also fetch the full `terraform output`
+        # payload in parallel and fold it into the response under
+        # `terraform_outputs`. The boto3 EC2 scan above only knows about
+        # instances — it misses CloudFront distributions, ACM cert ARNs,
+        # the Route53 zone id, GOAD lab creds, the deployment S3 bucket
+        # name, and Secrets Manager ARNs. Downstream consumers can now
+        # read either the legacy flat keys (jumpbox_public_ip, etc.) or
+        # the structured terraform output map.
+        def _fetch_terraform_outputs():
+            try:
+                tf_service = get_service_for_project(project_name)
+                tf_service.ensure_workspace()
+                tf_res = tf_service.output()
+                if tf_res.get("success"):
+                    return tf_res.get("outputs", {}) or {}
+            except Exception as _e:
+                try:
+                    print(f"[deploy] /outputs terraform-fold-in failed: {_e}")
+                except Exception:
+                    pass
+            return {}
+
+        # Run DNS, password fetch, and terraform-output fold-in in parallel
+        terraform_outputs = {}
+        with ThreadPoolExecutor(max_workers=3) as executor:
             dns_future = executor.submit(_fetch_dns)
             pwd_future = executor.submit(_fetch_password)
+            tf_future = executor.submit(_fetch_terraform_outputs)
 
-            for future in as_completed([dns_future, pwd_future], timeout=30):
+            for future in as_completed([dns_future, pwd_future, tf_future], timeout=30):
                 try:
-                    outputs.update(future.result())
+                    res = future.result()
+                    if future is tf_future:
+                        terraform_outputs = res or {}
+                    else:
+                        outputs.update(res)
                 except Exception:
                     pass
 
         return jsonify({
             "success": True,
-            "outputs": outputs
+            "outputs": outputs,
+            "terraform_outputs": terraform_outputs,
         })
-        
+
     except Exception as e:
         return jsonify({
             "success": False,
