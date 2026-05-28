@@ -31,6 +31,38 @@ def cost_summary():
     if not project:
         return jsonify({"success": False, "error": "Missing 'project' parameter"}), 400
 
+    # 2026-05-28 — demo bypass: never invoke Cost Explorer for the
+    # synthetic deployment. CE has hard daily caps + non-zero per-call
+    # cost; we already short-circuit demo across the rest of the API
+    # surface. Return a canned $0 envelope shaped like the real one so
+    # the Settings → Cost Tracker panel renders cleanly.
+    try:
+        from webapp.backend.services import demo_data_service
+        if demo_data_service.is_demo_project(project):
+            demo_cost = demo_data_service.cost_summary() if hasattr(
+                demo_data_service, "cost_summary") else {}
+            return jsonify({
+                "success": True,
+                "is_demo": True,
+                "project": project,
+                "actual_costs": {
+                    "available": True,
+                    "total": demo_cost.get("monthly_total", 0.0),
+                    "currency": "USD",
+                    "daily_costs": [],
+                    "source": "demo",
+                },
+                "budget": {
+                    "monthly_limit": 500.0,
+                    "used": demo_cost.get("monthly_total", 0.0),
+                    "remaining": 500.0 - demo_cost.get("monthly_total", 0.0),
+                    "percent": (demo_cost.get("monthly_total", 0.0) / 500.0 * 100) if 500.0 else 0,
+                },
+            })
+    except Exception:
+        # Fall through to real path on any demo helper failure.
+        pass
+
     try:
         result = _service.get_cost_summary(project, force_refresh=force)
         return jsonify(result)
@@ -80,11 +112,34 @@ def aggregate():
             region=region_filter,
             include_destroyed=include_destroyed,
         )
+        deployments = list(agg.get('deployments') or [])
+        # 2026-05-28 — surface the demo project's synthetic monthly burn
+        # in the aggregate so Dashboard's Cost Trend tile shows a
+        # realistic ~$184/mo entry when the operator is exploring with
+        # the demo deployment active. Real Cost Explorer is never hit.
+        try:
+            from webapp.backend.services import demo_data_service
+            if hasattr(demo_data_service, "cost_summary"):
+                demo_cost = demo_data_service.cost_summary()
+                if demo_cost and not any(
+                    (d.get("project_name") == demo_cost.get("project_name"))
+                    for d in deployments
+                ):
+                    deployments.append({
+                        "project_name": demo_cost.get("project_name"),
+                        "monthly": demo_cost.get("monthly_total", 0.0),
+                        "status": "running",
+                        "is_demo": True,
+                    })
+        except Exception:
+            # Demo fold-in failures must not break the real aggregate.
+            pass
+        monthly_total = sum(float(d.get("monthly", 0) or 0) for d in deployments)
         return jsonify({
             'success': True,
-            'monthly_total': agg['monthly_total'],
+            'monthly_total': monthly_total,
             'currency': agg.get('currency', 'USD'),
-            'deployments': agg['deployments'],
+            'deployments': deployments,
             'region_filter': agg.get('region_filter'),
             'computed_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         })

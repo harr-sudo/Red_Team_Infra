@@ -1653,7 +1653,47 @@ def get_deployment_status():
     """Get current deployment status with enhanced progress info"""
     # Check if requesting specific project status
     project_name = request.args.get('project')
-    
+
+    # 2026-05-28 — demo bypass. Dashboard's Architecture widget reads
+    # `deployment_type` from this endpoint; without the bypass it gets
+    # an empty fallback state with deployment_type=None and the widget
+    # never resolves a diagram. Return a deployment_state shape with
+    # `models_deployment_type` surfaced under the legacy `deployment_type`
+    # key (the widget reads either) so the c2-adhoc architecture image
+    # resolves.
+    try:
+        from webapp.backend.services import demo_data_service
+        _is_demo = demo_data_service.is_demo_project(project_name)
+    except Exception:
+        _is_demo = False
+    if _is_demo:
+        demo_state = demo_data_service.deployment_state()
+        return jsonify({
+            "success": True,
+            "is_demo": True,
+            "status": {
+                "status": demo_state.get("status", "success"),
+                "step": demo_state.get("step", "complete"),
+                "output": demo_state.get("output", {}),
+                "error": None,
+                "deployment_type": demo_state.get("models_deployment_type")
+                                   or demo_state.get("deployment_type"),
+                "deployed": True,
+                "progress_percent": demo_state.get("progress_percent", 100),
+                "current_phase": demo_state.get("current_phase", "operational"),
+                "current_phase_name": demo_state.get("current_phase", "operational"),
+                "phases": DEPLOYMENT_PHASES,
+                "phases_completed": demo_state.get("phases_completed", []),
+                "total_resources": demo_state.get("total_resources", 0),
+                "resources_completed": demo_state.get("resources_completed", 0),
+                "elapsed_seconds": 0,
+                "elapsed_formatted": "0m 0s",
+                "logs": [],
+                "purge_result": None,
+                "project_name": project_name,
+            },
+        })
+
     if project_name and project_name in deployment_states:
         state = deployment_states[project_name]
     elif project_name:
