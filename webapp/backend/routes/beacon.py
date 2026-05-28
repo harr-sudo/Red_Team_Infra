@@ -435,6 +435,8 @@ def net_recon(bid, subcmd):
             "success": False,
             "error": f"Invalid subcommand. Valid: {', '.join(valid)}",
         }), 400
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.net_recon(bid, subcmd))
     target = request.json.get("target") if request.json else None
     return jsonify(beacon_service.net_command(bid, subcmd, target))
 
@@ -445,6 +447,9 @@ def net_portscan(bid):
     targets = data.get("targets", "")
     ports = data.get("ports", "")
     method = data.get("method", "arp")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.portscan(bid, targets or "10.99.50.0/24",
+                                                  ports or "22,80,445,3389", method))
     if not targets or not ports:
         return jsonify({"success": False, "error": "Targets and ports required"}), 400
     return jsonify(beacon_service.portscan(bid, targets, ports, method))
@@ -456,6 +461,8 @@ def pivot_socks_start(bid):
     data = request.json or {}
     port = data.get("port")
     version = data.get("version", "socks5")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.socks_start(bid, port or 1080, version))
     if not port:
         return jsonify({"success": False, "error": "Port required"}), 400
     return jsonify(beacon_service.socks_start(bid, port, version))
@@ -463,6 +470,8 @@ def pivot_socks_start(bid):
 
 @bp.route("/<bid>/socks/stop", methods=["POST"])
 def pivot_socks_stop(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.socks_stop(bid))
     return jsonify(beacon_service.socks_stop(bid))
 
 
@@ -472,6 +481,9 @@ def pivot_rportfwd_start(bid):
     bind_port = data.get("bindPort")
     fwd_host = data.get("forwardHost")
     fwd_port = data.get("forwardPort")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.rportfwd_start(
+            bid, bind_port or 8080, fwd_host or "127.0.0.1", fwd_port or 8080))
     if not all([bind_port, fwd_host, fwd_port]):
         return jsonify({
             "success": False,
@@ -483,9 +495,31 @@ def pivot_rportfwd_start(bid):
 @bp.route("/<bid>/rportfwd/stop", methods=["POST"])
 def pivot_rportfwd_stop(bid):
     bind_port = (request.json or {}).get("bindPort")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.rportfwd_stop(bid, bind_port or 0))
     if not bind_port:
         return jsonify({"success": False, "error": "bindPort required"}), 400
     return jsonify(beacon_service.rportfwd_stop(bid, bind_port))
+
+
+@bp.route("/socks", methods=["GET"])
+def pivot_socks_list():
+    """Server-wide list of active SOCKS proxies. Demo-aware."""
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.list_socks())
+    if hasattr(beacon_service, "list_socks"):
+        return jsonify(beacon_service.list_socks())
+    return jsonify({"success": True, "socks": [], "data": []})
+
+
+@bp.route("/rportfwds", methods=["GET"])
+def pivot_rportfwd_list():
+    """Server-wide list of active reverse port forwards. Demo-aware."""
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.list_rportfwds())
+    if hasattr(beacon_service, "list_rportfwds"):
+        return jsonify(beacon_service.list_rportfwds())
+    return jsonify({"success": True, "rportfwds": [], "data": []})
 
 
 # ── Listeners (server-level) ──
@@ -574,6 +608,9 @@ def config_spawnto(bid):
     data = request.json or {}
     arch = data.get("arch", "x64")
     path = data.get("path", "")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.config_write(bid, "spawnto",
+                                                      {"arch": arch, "path": path}))
     if not path:
         return jsonify({"success": False, "error": "Path required"}), 400
     return jsonify(beacon_service.set_spawnto(bid, arch, path))
@@ -582,6 +619,8 @@ def config_spawnto(bid):
 @bp.route("/<bid>/config/ppid", methods=["POST"])
 def config_ppid(bid):
     pid = (request.json or {}).get("pid")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.config_write(bid, "ppid", pid))
     if pid is None:
         return jsonify({"success": False, "error": "PID required"}), 400
     return jsonify(beacon_service.set_ppid(bid, pid))
@@ -589,12 +628,16 @@ def config_ppid(bid):
 
 @bp.route("/<bid>/config/ppid", methods=["DELETE"])
 def config_ppid_clear(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.config_write(bid, "ppid", None))
     return jsonify(beacon_service.clear_ppid(bid))
 
 
 @bp.route("/<bid>/config/blockdlls", methods=["POST"])
 def config_blockdlls(bid):
     enabled = (request.json or {}).get("enabled", True)
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.config_write(bid, "blockdlls", enabled))
     return jsonify(beacon_service.set_blockdlls(bid, enabled))
 
 
@@ -603,6 +646,9 @@ def config_argue(bid):
     data = request.json or {}
     command = data.get("command", "")
     args = data.get("args", "")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.config_write(bid, "argue",
+                                                      {"command": command, "args": args}))
     if not command:
         return jsonify({"success": False, "error": "Command required"}), 400
     if not args:
@@ -616,6 +662,8 @@ def config_dnsmode(bid):
     valid_modes = ["dns", "dns6", "dnsTxt"]
     if mode not in valid_modes:
         return jsonify({"success": False, "error": f"Invalid mode. Valid: {', '.join(valid_modes)}"}), 400
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.config_write(bid, "dnsmode", mode))
     return jsonify(beacon_service.set_dns_mode(bid, mode))
 
 
@@ -625,10 +673,12 @@ def bof_execute(bid):
     """Execute a BOF with typed arguments."""
     data = request.json or {}
     bof = data.get("bof", "")
-    if not bof:
-        return jsonify({"success": False, "error": "BOF reference required"}), 400
     method = data.get("method", "pack")  # string, pack, or packed
     entrypoint = data.get("entrypoint", "go")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.bof_execute(bid, bof or "demo.bof", entrypoint, method))
+    if not bof:
+        return jsonify({"success": False, "error": "BOF reference required"}), 400
     arguments = data.get("arguments")
     files = data.get("files")
     if method == "string":
@@ -648,12 +698,16 @@ def list_artifacts():
 # ── Token Store (BETA) ──
 @bp.route("/<bid>/tokenstore/list", methods=["POST"])
 def token_store_list(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.token_store_list(bid))
     return jsonify(beacon_service.token_store_list(bid))
 
 
 @bp.route("/<bid>/tokenstore/steal", methods=["POST"])
 def token_store_steal(bid):
     pid = (request.json or {}).get("pid")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.token_store_action(bid, "steal", pid=pid))
     if not pid:
         return jsonify({"success": False, "error": "PID required"}), 400
     return jsonify(beacon_service.token_store_steal(bid, int(pid)))
@@ -662,6 +716,8 @@ def token_store_steal(bid):
 @bp.route("/<bid>/tokenstore/use", methods=["POST"])
 def token_store_use(bid):
     token_id = (request.json or {}).get("id")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.token_store_action(bid, "use", id=token_id))
     if token_id is None:
         return jsonify({"success": False, "error": "Token ID required"}), 400
     return jsonify(beacon_service.token_store_use(bid, int(token_id)))
@@ -670,6 +726,8 @@ def token_store_use(bid):
 @bp.route("/<bid>/tokenstore/steal-and-use", methods=["POST"])
 def token_store_steal_and_use(bid):
     pid = (request.json or {}).get("pid")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.token_store_action(bid, "steal-and-use", pid=pid))
     if not pid:
         return jsonify({"success": False, "error": "PID required"}), 400
     return jsonify(beacon_service.token_store_steal_and_use(bid, int(pid)))
@@ -678,6 +736,8 @@ def token_store_steal_and_use(bid):
 @bp.route("/<bid>/tokenstore/remove", methods=["POST"])
 def token_store_remove(bid):
     ids = (request.json or {}).get("ids", [])
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.token_store_action(bid, "remove", ids=ids))
     if not ids:
         return jsonify({"success": False, "error": "Token IDs required"}), 400
     return jsonify(beacon_service.token_store_remove(bid, ids))
@@ -685,12 +745,16 @@ def token_store_remove(bid):
 
 @bp.route("/<bid>/tokenstore/remove-all", methods=["POST"])
 def token_store_remove_all(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.token_store_action(bid, "remove-all"))
     return jsonify(beacon_service.token_store_remove_all(bid))
 
 
 # ── Credential Vault ──
 @bp.route("/data/credentials", methods=["GET"])
 def credentials_list():
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.list_vault_credentials())
     return jsonify(beacon_service.list_credentials())
 
 
@@ -705,23 +769,35 @@ def credentials_add():
 
 @bp.route("/data/credentials/<cred_id>", methods=["GET"])
 def credentials_get(cred_id):
+    if _is_demo_request():
+        rows = demo_beacon_data.list_vault_credentials().get("credentials", [])
+        for c in rows:
+            if c["id"] == cred_id:
+                return jsonify({"success": True, "credential": c, "is_demo": True})
+        return jsonify({"success": False, "error": "not found", "is_demo": True}), 404
     return jsonify(beacon_service.get_credential(cred_id))
 
 
 @bp.route("/data/credentials/<cred_id>", methods=["DELETE"])
 def credentials_delete(cred_id):
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.delete_vault_credential(cred_id))
     return jsonify(beacon_service.delete_credential(cred_id))
 
 
 # ── C2 Host Management (BETA) ──
 @bp.route("/<bid>/c2/hosts", methods=["GET"])
 def c2_hosts_get(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.list_c2_hosts(bid))
     return jsonify(beacon_service.get_c2_hosts(bid))
 
 
 @bp.route("/<bid>/c2/hosts", methods=["POST"])
 def c2_hosts_add(bid):
     infos = (request.json or {}).get("infos", [])
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.add_c2_host(bid, infos))
     if not infos:
         return jsonify({"success": False, "error": "Host info required"}), 400
     return jsonify(beacon_service.add_c2_host(bid, infos))
@@ -730,6 +806,8 @@ def c2_hosts_add(bid):
 @bp.route("/<bid>/c2/hosts", methods=["PUT"])
 def c2_hosts_update(bid):
     infos = (request.json or {}).get("infos", [])
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.c2_host_action(bid, "update", infos=infos))
     if not infos:
         return jsonify({"success": False, "error": "Host update info required"}), 400
     return jsonify(beacon_service.update_c2_host(bid, infos))
@@ -738,6 +816,8 @@ def c2_hosts_update(bid):
 @bp.route("/<bid>/c2/hosts", methods=["DELETE"])
 def c2_hosts_delete(bid):
     hostnames = (request.json or {}).get("hostnames", [])
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.remove_c2_host(bid, hostnames))
     if not hostnames:
         return jsonify({"success": False, "error": "Hostnames required"}), 400
     return jsonify(beacon_service.delete_c2_host(bid, hostnames))
@@ -746,6 +826,8 @@ def c2_hosts_delete(bid):
 @bp.route("/<bid>/c2/hosts/hold", methods=["POST"])
 def c2_hosts_hold(bid):
     hostnames = (request.json or {}).get("hostnames", [])
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.c2_host_action(bid, "hold", hostnames=hostnames))
     if not hostnames:
         return jsonify({"success": False, "error": "Hostnames required"}), 400
     return jsonify(beacon_service.hold_c2_host(bid, hostnames))
@@ -754,6 +836,8 @@ def c2_hosts_hold(bid):
 @bp.route("/<bid>/c2/hosts/release", methods=["POST"])
 def c2_hosts_release(bid):
     hostnames = (request.json or {}).get("hostnames", [])
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.c2_host_action(bid, "release", hostnames=hostnames))
     if not hostnames:
         return jsonify({"success": False, "error": "Hostnames required"}), 400
     return jsonify(beacon_service.release_c2_host(bid, hostnames))
@@ -764,42 +848,64 @@ def c2_hosts_reset(bid):
     data = request.json or {}
     action = data.get("action", "all")
     hostnames = data.get("hostnames")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.c2_host_action(bid, "reset",
+                                                        action=action,
+                                                        hostnames=hostnames))
     return jsonify(beacon_service.reset_c2_host(bid, action, hostnames))
 
 
 @bp.route("/<bid>/c2/hosts/profiles", methods=["GET"])
 def c2_host_profiles(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify({"success": True, "is_demo": True, "profiles": [
+            {"name": "demo-jquery", "active": True},
+        ]})
     return jsonify(beacon_service.get_c2_host_profiles(bid))
 
 
 @bp.route("/<bid>/c2/failover", methods=["GET"])
 def c2_failover_get(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify({"success": True, "is_demo": True, "enabled": True,
+                        "notifications": []})
     return jsonify(beacon_service.get_failover_notification(bid))
 
 
 @bp.route("/<bid>/c2/failover/enable", methods=["POST"])
 def c2_failover_enable(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.c2_host_action(bid, "failover.enable"))
     return jsonify(beacon_service.enable_failover_notification(bid))
 
 
 @bp.route("/<bid>/c2/failover/disable", methods=["POST"])
 def c2_failover_disable(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.c2_host_action(bid, "failover.disable"))
     return jsonify(beacon_service.disable_failover_notification(bid))
 
 
 # ── Beacon Gate & Syscall (BETA) ──
 @bp.route("/<bid>/config/beacongate/enable", methods=["POST"])
 def config_beacongate_enable(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.config_write(bid, "beacongate", True))
     return jsonify(beacon_service.enable_beacon_gate(bid))
 
 
 @bp.route("/<bid>/config/beacongate/disable", methods=["POST"])
 def config_beacongate_disable(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.config_write(bid, "beacongate", False))
     return jsonify(beacon_service.disable_beacon_gate(bid))
 
 
 @bp.route("/<bid>/config/syscall", methods=["GET"])
 def config_syscall_get(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify({"success": True, "is_demo": True, "method": "Indirect",
+                        "data": "Indirect"})
     return jsonify(beacon_service.get_syscall_method(bid))
 
 
@@ -809,6 +915,8 @@ def config_syscall_set(bid):
     valid = ["None", "Direct", "Indirect"]
     if method not in valid:
         return jsonify({"success": False, "error": f"Invalid method. Valid: {', '.join(valid)}"}), 400
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.config_write(bid, "syscall", method))
     return jsonify(beacon_service.set_syscall_method(bid, method))
 
 
@@ -816,6 +924,8 @@ def config_syscall_set(bid):
 @bp.route("/payloads/generate/stageless", methods=["POST"])
 def payload_generate_stageless():
     config = request.json or {}
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.generate_payload("stageless", config))
     required = ["listenerName", "architecture", "exitFunction", "systemCallMethod", "output", "useListenerGuardRails"]
     for field in required:
         if field not in config:
@@ -826,6 +936,8 @@ def payload_generate_stageless():
 @bp.route("/payloads/generate/stager", methods=["POST"])
 def payload_generate_stager():
     config = request.json or {}
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.generate_payload("stager", config))
     for field in ["listenerName", "architecture", "output"]:
         if not config.get(field):
             return jsonify({"success": False, "error": f"{field} required"}), 400
@@ -836,6 +948,15 @@ def payload_generate_stager():
 def payload_download(filename):
     """Download a generated payload binary."""
     from flask import Response
+    if _is_demo_request() or filename.startswith("demo-"):
+        body = demo_beacon_data.get_payload_bytes(filename)
+        if body is None:
+            return jsonify({"success": False, "error": "demo payload not found"}), 404
+        return Response(
+            body,
+            mimetype="application/octet-stream",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
     result = beacon_service.get_payload(filename)
     if not result.get("success"):
         return jsonify(result)
@@ -849,16 +970,22 @@ def payload_download(filename):
 # ── Server Config ──
 @bp.route("/server/killdate", methods=["GET"])
 def server_killdate():
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.server_killdate())
     return jsonify(beacon_service.get_killdate())
 
 
 @bp.route("/server/profile", methods=["GET"])
 def server_profile():
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.server_profile())
     return jsonify(beacon_service.get_malleable_profile())
 
 
 @bp.route("/server/info", methods=["GET"])
 def server_info():
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.server_info())
     return jsonify(beacon_service.get_system_information())
 
 
@@ -880,28 +1007,39 @@ def server_ip():
 # ── Beacon Management ──
 @bp.route("/<bid>/delete", methods=["DELETE"])
 def beacon_delete(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        # Return success but DO NOT remove from the in-memory demo beacon list.
+        return jsonify(demo_beacon_data.beacon_management(bid, "delete"))
     return jsonify(beacon_service.delete_beacon(bid))
 
 
 @bp.route("/<bid>/clear-queue", methods=["POST"])
 def beacon_clear_queue(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.beacon_management(bid, "clear-queue"))
     return jsonify(beacon_service.clear_command_queue(bid))
 
 
 @bp.route("/<bid>/checkin", methods=["POST"])
 def beacon_checkin(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.beacon_management(bid, "checkin"))
     return jsonify(beacon_service.force_checkin(bid))
 
 
 @bp.route("/<bid>/note", methods=["POST"])
 def beacon_note(bid):
     note = (request.json or {}).get("note", "")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.beacon_management(bid, "note", note=note))
     return jsonify(beacon_service.set_beacon_note(bid, note))
 
 
-@bp.route("/<bid>/info", methods=["POST"])
+@bp.route("/<bid>/info", methods=["POST", "GET"])
 def beacon_info(bid):
-    """Get beacon memory diagnostics."""
+    """Get beacon memory diagnostics. GET added for demo-info panels."""
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.beacon_info(bid))
     return jsonify(beacon_service.get_beacon_info(bid))
 
 
@@ -918,49 +1056,90 @@ def listeners_update(listener_type, name):
 # ── Screenshots Gallery (server-wide) ──
 @bp.route("/data/screenshots", methods=["GET"])
 def screenshots_list_all():
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.list_all_screenshots())
     return jsonify(beacon_service.list_all_screenshots())
 
 
 @bp.route("/data/screenshots/<screenshot_id>", methods=["GET"])
 def screenshots_get(screenshot_id):
+    if _is_demo_request() or screenshot_id.startswith("ss-"):
+        # No real PNG bytes; gallery degradation is acceptable for demo.
+        return jsonify({"success": True, "is_demo": True, "id": screenshot_id,
+                        "content": None})
     return jsonify(beacon_service.get_screenshot(screenshot_id))
 
 
 @bp.route("/data/screenshots/<screenshot_id>", methods=["DELETE"])
 def screenshots_delete(screenshot_id):
+    if _is_demo_request() or screenshot_id.startswith("ss-"):
+        return jsonify({"success": True, "is_demo": True, "id": screenshot_id,
+                        "message": "demo no-op"})
     return jsonify(beacon_service.delete_screenshot(screenshot_id))
 
 
 # ── Keystrokes (server-wide) ──
 @bp.route("/data/keystrokes", methods=["GET"])
 def keystrokes_list_all():
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.list_all_keystrokes())
     return jsonify(beacon_service.list_all_keystrokes())
 
 
 @bp.route("/<bid>/keystrokes", methods=["GET"])
 def keystrokes_list_beacon(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        # Return server-wide keystrokes filtered to this bid.
+        all_rows = demo_beacon_data.list_all_keystrokes().get("keystrokes", [])
+        rows = [k for k in all_rows if k.get("bid") == bid]
+        return jsonify({"success": True, "is_demo": True,
+                        "keystrokes": rows, "data": rows})
     return jsonify(beacon_service.list_beacon_keystrokes(bid))
 
 
 @bp.route("/data/keystrokes/<keystroke_id>", methods=["DELETE"])
 def keystrokes_delete(keystroke_id):
+    if _is_demo_request() or keystroke_id.startswith("ks-"):
+        return jsonify({"success": True, "is_demo": True, "id": keystroke_id,
+                        "message": "demo no-op"})
     return jsonify(beacon_service.delete_keystrokes(keystroke_id))
 
 
 # ── Downloads Manager (server-wide) ──
 @bp.route("/data/downloads", methods=["GET"])
 def downloads_list_all():
+    if _is_demo_request():
+        return jsonify(demo_beacon_data.list_all_downloads())
     return jsonify(beacon_service.list_all_downloads())
 
 
 @bp.route("/data/downloads/<download_id>", methods=["GET"])
 def downloads_get(download_id):
+    if _is_demo_request() or download_id.startswith("dl-"):
+        rows = demo_beacon_data.list_all_downloads().get("downloads", [])
+        for d in rows:
+            if d["id"] == download_id:
+                return jsonify({"success": True, "is_demo": True, "download": d})
+        return jsonify({"success": False, "error": "not found", "is_demo": True}), 404
     return jsonify(beacon_service.get_download(download_id))
 
 
 @bp.route("/data/downloads/<download_id>", methods=["DELETE"])
 def downloads_delete(download_id):
+    if _is_demo_request() or download_id.startswith("dl-"):
+        return jsonify(demo_beacon_data.cancel_download(download_id))
     return jsonify(beacon_service.delete_download(download_id))
+
+
+@bp.route("/data/downloads/<download_id>/cancel", methods=["POST"])
+def downloads_cancel_by_id(download_id):
+    """Server-wide cancel of an in-progress download by ID. Demo-aware."""
+    if _is_demo_request() or download_id.startswith("dl-"):
+        return jsonify(demo_beacon_data.cancel_download(download_id))
+    if hasattr(beacon_service, "cancel_download_by_id"):
+        return jsonify(beacon_service.cancel_download_by_id(download_id))
+    return jsonify({"success": False,
+                    "error": "cancel by ID not implemented for live mode"}), 501
 
 
 # ── Spawn/Inject Variants (BETA) ──
@@ -970,6 +1149,8 @@ def downloads_delete(download_id):
 
 @bp.route("/<bid>/spawn/hashdump", methods=["POST"])
 def spawn_hashdump(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.spawn_or_inject(bid, "spawn.hashdump"))
     return jsonify(beacon_service.spawn_hashdump(bid))
 
 
@@ -977,6 +1158,9 @@ def spawn_hashdump(bid):
 def inject_hashdump(bid):
     data = request.json or {}
     pid = data.get("pid")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.spawn_or_inject(bid, "inject.hashdump",
+                                                         pid=pid, arch=data.get("arch", "x64")))
     if not pid:
         return jsonify({"success": False, "error": "PID required"}), 400
     return jsonify(beacon_service.inject_hashdump(bid, int(pid), data.get("arch", "x64")))
@@ -984,6 +1168,8 @@ def inject_hashdump(bid):
 
 @bp.route("/<bid>/spawn/logonpasswords", methods=["POST"])
 def spawn_logonpasswords(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.spawn_or_inject(bid, "spawn.logonpasswords"))
     return jsonify(beacon_service.spawn_logonpasswords(bid))
 
 
@@ -991,6 +1177,9 @@ def spawn_logonpasswords(bid):
 def inject_logonpasswords(bid):
     data = request.json or {}
     pid = data.get("pid")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.spawn_or_inject(bid, "inject.logonpasswords",
+                                                         pid=pid, arch=data.get("arch", "x64")))
     if not pid:
         return jsonify({"success": False, "error": "PID required"}), 400
     return jsonify(beacon_service.inject_logonpasswords(bid, int(pid), data.get("arch", "x64")))
@@ -998,6 +1187,8 @@ def inject_logonpasswords(bid):
 
 @bp.route("/<bid>/spawn/screenshot", methods=["POST"])
 def spawn_screenshot(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.spawn_or_inject(bid, "spawn.screenshot"))
     return jsonify(beacon_service.spawn_screenshot(bid))
 
 
@@ -1005,6 +1196,9 @@ def spawn_screenshot(bid):
 def inject_screenshot(bid):
     data = request.json or {}
     pid = data.get("pid")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.spawn_or_inject(bid, "inject.screenshot",
+                                                         pid=pid, arch=data.get("arch", "x64")))
     if not pid:
         return jsonify({"success": False, "error": "PID required"}), 400
     return jsonify(beacon_service.inject_screenshot(bid, int(pid), data.get("arch", "x64")))
@@ -1012,6 +1206,8 @@ def inject_screenshot(bid):
 
 @bp.route("/<bid>/spawn/keylogger", methods=["POST"])
 def spawn_keylogger(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.spawn_or_inject(bid, "spawn.keylogger"))
     return jsonify(beacon_service.spawn_keylogger(bid))
 
 
@@ -1019,6 +1215,9 @@ def spawn_keylogger(bid):
 def inject_keylogger(bid):
     data = request.json or {}
     pid = data.get("pid")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.spawn_or_inject(bid, "inject.keylogger",
+                                                         pid=pid, arch=data.get("arch", "x64")))
     if not pid:
         return jsonify({"success": False, "error": "PID required"}), 400
     return jsonify(beacon_service.inject_keylogger(bid, int(pid), data.get("arch", "x64")))
@@ -1545,6 +1744,8 @@ def inject_net_user_detail(bid):
 
 @bp.route("/<bid>/net/domain", methods=["POST"])
 def net_domain(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.net_recon(bid, "domain"))
     return jsonify(beacon_service.net_domain(bid))
 
 
