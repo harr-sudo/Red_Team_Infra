@@ -94,4 +94,397 @@ cost:
   cpu_pct: 2
   detectability: quiet
 
+curriculum:
+  title: "Sysmon — High-signal endpoint telemetry deployment"
+  summary: >
+    Defensive walkthrough of deploying Sysinternals Sysmon on tlws01
+    (and optionally tldc01 / tlms01) with a curated configuration. You
+    will install the driver, choose between SwiftOnSecurity and Olaf
+    Hartong's sysmon-modular configs, verify EID 1/3/11/22 are firing,
+    and tune the noisiest rules before shipping to Elastic.
+  learning_objectives:
+    - "Install Sysmon as a kernel driver + service with an XML configuration."
+    - "Distinguish SwiftOnSecurity (single-file, opinionated) from sysmon-modular (composable, per-technique modules)."
+    - "Validate that critical event IDs (1, 3, 7, 11, 13, 22) are emitting to the Microsoft-Windows-Sysmon/Operational channel."
+    - "Identify noisy default rules and tune them out before they swamp the SOC."
+  prerequisites:
+    - "SYSTEM beacon (or admin RDP) on tlws01 — Sysmon install requires admin"
+    - "elastic-detection-stack bolt-on installed on tllinux01 (resolver dependency)"
+    - "winlogbeat-shipper bolt-on staged but not yet installed (deploy after Sysmon)"
+  estimated_total_minutes: 30
+  steps:
+    - id: "01-download-sysmon"
+      title: "Download Sysmon from Sysinternals"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 1 — Get the current Sysmon binary
+
+        Current canonical download URL:
+        https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon
+
+        Direct zip:
+        https://download.sysinternals.com/files/Sysmon.zip
+
+        From an admin PowerShell on tlws01:
+
+        ```powershell
+        $url = 'https://download.sysinternals.com/files/Sysmon.zip'
+        $dst = "$env:TEMP\Sysmon.zip"
+        Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
+        Expand-Archive -Path $dst -DestinationPath C:\Tools\Sysmon -Force
+        # Files: Sysmon.exe (32-bit), Sysmon64.exe, Sysmon64a.exe (ARM64), Eula.txt
+        ```
+
+        Verify Authenticode signature:
+
+        ```powershell
+        Get-AuthenticodeSignature C:\Tools\Sysmon\Sysmon64.exe | Select Status, SignerCertificate
+        # Status should be Valid; signer = Microsoft Corporation
+        ```
+
+        > **Note** — Sysmon is signed by Microsoft and shipped via
+        > Sysinternals (a Microsoft subsidiary). Enterprise WDAC /
+        > AppLocker baselines almost always allow it. Sysmon ARM64
+        > (Sysmon64a.exe) exists for Surface and Snapdragon-on-Windows
+        > hosts since v14.
+    - id: "02-choose-config"
+      title: "Pick a configuration: SwiftOnSecurity vs sysmon-modular"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 2 — Choose your config
+
+        Sysmon without a config emits almost nothing. The config XML
+        defines which events to log and which to suppress. Two
+        community-maintained baselines dominate.
+
+        ### Option A — SwiftOnSecurity
+
+        https://github.com/SwiftOnSecurity/sysmon-config
+
+        Single ~3000-line `sysmonconfig-export.xml`. Opinionated, focused
+        on threat hunting, written from a SOC analyst perspective. Good
+        defaults for general-purpose endpoints.
+
+        ```powershell
+        Invoke-WebRequest `
+            -Uri 'https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml' `
+            -OutFile C:\Tools\Sysmon\sysmonconfig.xml -UseBasicParsing
+        ```
+
+        Pros: ready to deploy, well-tested, single file.
+        Cons: monolithic; tuning requires editing the big XML.
+
+        ### Option B — Olaf Hartong sysmon-modular
+
+        https://github.com/olafhartong/sysmon-modular
+
+        Per-EID modules (e.g. `1_process_creation/`, `3_network_connection/`)
+        organized by MITRE technique. A merge script builds a final XML
+        from selected modules.
+
+        ```powershell
+        git clone https://github.com/olafhartong/sysmon-modular C:\Tools\sysmon-modular
+        cd C:\Tools\sysmon-modular
+        # Build a config including only specific MITRE techniques + base modules
+        .\Merge-SysmonXml.ps1 -AsString | Out-File C:\Tools\Sysmon\sysmonconfig.xml -Encoding utf8
+        ```
+
+        Recommended modules for the lab's red-team scenarios:
+        - `1_process_creation/include_office.xml` — catches winword/excel
+          spawning children (macro detection)
+        - `3_network_connection/include_office.xml` — outbound from Office
+        - `7_image_load/include_office.xml` — DLL sideloading into Office
+        - `10_process_access/include_lsass.xml` — credential dumping
+          (mimikatz, comsvcs.dll MiniDump)
+        - `11_file_create/include_office.xml` — Office writing executables
+        - `13_registry_event/include_persistence.xml` — Run keys, services
+        - `22_dns_query/include_suspicious.xml` — DGA / known C2 IOCs
+
+        Pros: surgical tuning, MITRE-mapped, easy to add/remove signal.
+        Cons: requires PowerShell merge step + understanding which
+        modules to include.
+
+        For this walkthrough, **use sysmon-modular** with the modules
+        listed above — it gives the highest signal:noise ratio for the
+        attacks the other bolt-ons stage.
+    - id: "03-install-sysmon"
+      title: "Install Sysmon as a kernel driver + service"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 3 — Install + start
+
+        From an admin PowerShell on tlws01:
+
+        ```powershell
+        cd C:\Tools\Sysmon
+        .\Sysmon64.exe -accepteula -i sysmonconfig.xml
+        ```
+
+        Expected output:
+
+        ```
+        System Monitor v15.15 - System activity monitor
+        Sysinternals - www.sysinternals.com
+
+        SYSMON64 installed.
+        SysmonDrv installed.
+        Starting SysmonDrv.
+        SysmonDrv started.
+        Starting SYSMON64..
+        SYSMON64 started.
+        ```
+
+        Verify driver + service:
+
+        ```powershell
+        Get-Service Sysmon64
+        # Status   Name               DisplayName
+        # ------   ----               -----------
+        # Running  Sysmon64           Sysmon64
+
+        Get-Service SysmonDrv
+        # Status   Name               DisplayName
+        # ------   ----               -----------
+        # Running  SysmonDrv          Sysmon
+
+        # Verify driver
+        sc.exe qc SysmonDrv | findstr BINARY_PATH_NAME
+        # BINARY_PATH_NAME   : C:\Windows\SysmonDrv.sys
+        ```
+
+        Verify the event channel was registered:
+
+        ```powershell
+        Get-WinEvent -ListLog Microsoft-Windows-Sysmon/Operational |
+          Select LogName, IsEnabled, RecordCount, MaximumSizeInBytes
+        # IsEnabled : True
+        # RecordCount : (growing)
+        # MaximumSizeInBytes : 67108864 (64MB default — bump to 1GB for prod)
+        ```
+
+        Increase the channel size so Winlogbeat has time to ship events
+        even during bursts:
+
+        ```powershell
+        wevtutil sl Microsoft-Windows-Sysmon/Operational /ms:1073741824
+        # Sets max size to 1GB
+        ```
+
+        > **Note** — Sysmon's driver is loaded via the boot driver group
+        > so it starts before user-mode malware can. The altitude
+        > (385201) is between most AV minifilters and the filesystem.
+    - id: "04-verify-events-firing"
+      title: "Verify EID 1, 3, 11, 22 are emitting"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 4 — Generate test events + confirm capture
+
+        Trigger one event per critical EID and confirm it appears in the
+        Sysmon channel.
+
+        ### EID 1 — Process Create
+
+        ```powershell
+        Start-Process notepad.exe
+        Get-WinEvent -LogName Microsoft-Windows-Sysmon/Operational `
+            -MaxEvents 10 | Where-Object { $_.Id -eq 1 } | Select-Object -First 1 | Format-List
+        # Should show notepad.exe with CommandLine, ParentImage, User, Hashes, etc.
+        ```
+
+        ### EID 3 — Network Connection
+
+        ```powershell
+        Test-NetConnection 10.99.50.13 -Port 9200
+        Get-WinEvent -LogName Microsoft-Windows-Sysmon/Operational `
+            -MaxEvents 50 | Where-Object { $_.Id -eq 3 } | Select-Object -First 3 | Format-List
+        ```
+
+        ### EID 11 — File Create
+
+        ```powershell
+        New-Item -Path C:\Temp\sysmon-test.txt -ItemType File -Force
+        Get-WinEvent -LogName Microsoft-Windows-Sysmon/Operational `
+            -MaxEvents 50 | Where-Object { $_.Id -eq 11 } | Select-Object -First 3 | Format-List
+        # Note: SwiftOnSecurity's default config suppresses most File Creates;
+        # if no event, you likely have the default-suppress rule active.
+        ```
+
+        ### EID 22 — DNS Query
+
+        ```powershell
+        Resolve-DnsName www.bing.com
+        Get-WinEvent -LogName Microsoft-Windows-Sysmon/Operational `
+            -MaxEvents 50 | Where-Object { $_.Id -eq 22 } | Select-Object -First 3 | Format-List
+        ```
+
+        ### EID 7 — Image Loaded (DLL)
+
+        Sparse on most configs because of noise; the sysmon-modular
+        `include_office.xml` filters to specifically interesting parents.
+        Verify by triggering a known DLL load:
+
+        ```powershell
+        powershell.exe -NoProfile -Command "Get-Process"
+        Get-WinEvent -LogName Microsoft-Windows-Sysmon/Operational `
+            -MaxEvents 100 | Where-Object { $_.Id -eq 7 } | Select-Object -First 3
+        ```
+
+        ### Quick EID coverage summary
+
+        ```powershell
+        Get-WinEvent -LogName Microsoft-Windows-Sysmon/Operational -MaxEvents 1000 |
+          Group-Object Id | Sort-Object Count -Descending | Format-Table Count, Name
+        # Expected (rough order on a freshly-loaded host):
+        # Count Name
+        # ----- ----
+        #   400 1     (process creates)
+        #   200 3     (network connections)
+        #   150 22    (DNS queries)
+        #   100 11    (file creates — config-dependent)
+        #    50 13    (registry events)
+        #    20 12    (registry create/delete)
+        #    10 7     (image loads — heavily filtered)
+        ```
+      assessment:
+        question: "Your test of EID 11 (File Create) returns zero events even though you ran New-Item. Most likely cause?"
+        options:
+          - "Sysmon is broken — reinstall."
+          - "The config has a broad 'exclude FileCreate' rule covering common paths like C:\\Temp or your test path matches a default-suppress filter. Edit the config to remove the exclusion for the test path or test from a path the config does include."
+          - "EID 11 requires a separate driver."
+          - "File creates are only logged for executables."
+        correct_index: 1
+        explanation: >
+          Both SwiftOnSecurity and sysmon-modular suppress most File
+          Create events by default because raw FileCreate is extremely
+          noisy on Windows (every browser cache write, every Office
+          temp file, every log rotation). Configs use 'include' lists for
+          high-value paths (System32, Program Files, Office Startup,
+          PowerShell profiles). Your C:\Temp test file is below the
+          include filter. Either change your test path or check the
+          config's RuleGroup name="FileCreate" section.
+    - id: "05-tune-noisy-rules"
+      title: "Tune noisy rules before shipping to Elastic"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 5 — Reduce noise before Winlogbeat
+
+        If you ship raw Sysmon to Elastic without tuning, the noisy EIDs
+        will dominate your index. Common culprits:
+
+        ### EID 3 — Network Connection from svchost.exe, Backup agents
+
+        Add an exclude rule for known-clean parents:
+
+        ```xml
+        <RuleGroup name="NetworkConnect" groupRelation="or">
+          <NetworkConnect onmatch="exclude">
+            <Image condition="end with">\svchost.exe</Image>
+            <Image condition="end with">\MsMpEng.exe</Image>
+            <Image condition="end with">\OneDrive.exe</Image>
+          </NetworkConnect>
+        </RuleGroup>
+        ```
+
+        ### EID 22 — DNS Query for Microsoft telemetry domains
+
+        ```xml
+        <RuleGroup name="DnsQuery" groupRelation="or">
+          <DnsQuery onmatch="exclude">
+            <QueryName condition="end with">.windows.com</QueryName>
+            <QueryName condition="end with">.microsoft.com</QueryName>
+            <QueryName condition="end with">.windowsupdate.com</QueryName>
+          </DnsQuery>
+        </RuleGroup>
+        ```
+
+        ### EID 13 — RegistryValueSet from system processes
+
+        ```xml
+        <RuleGroup name="RegistryEvent" groupRelation="or">
+          <RegistryEvent onmatch="exclude">
+            <Image condition="end with">\TiWorker.exe</Image>
+            <Image condition="end with">\TrustedInstaller.exe</Image>
+          </RegistryEvent>
+        </RuleGroup>
+        ```
+
+        Update the live config without re-installing:
+
+        ```powershell
+        cd C:\Tools\Sysmon
+        # Edit sysmonconfig.xml, then:
+        .\Sysmon64.exe -c sysmonconfig.xml
+        # Output: Configuration file updated.
+        ```
+
+        Verify the new rules took effect:
+
+        ```powershell
+        .\Sysmon64.exe -c
+        # Dumps the live config — diff against your file to confirm.
+        ```
+
+        > **Operational rule** — never edit sysmonconfig.xml in place on
+        > a production host. Version-control the config (git), build via
+        > the sysmon-modular merge script, and push via GPO Scheduled
+        > Task or your config-management system (Ansible win_get_url +
+        > win_command).
+    - id: "06-verify-telemetry-in-kibana"
+      title: "Verify Sysmon events reach Kibana"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 6 — End-to-end telemetry check
+
+        Sysmon writes to the local Windows event channel; Winlogbeat (next
+        bolt-on) ships the channel to Elastic. Before installing
+        Winlogbeat, confirm Sysmon is producing data:
+
+        ```powershell
+        # Count events per minute over the last 5 minutes
+        $cutoff = (Get-Date).AddMinutes(-5)
+        Get-WinEvent -LogName Microsoft-Windows-Sysmon/Operational |
+          Where-Object { $_.TimeCreated -gt $cutoff } |
+          Group-Object { $_.TimeCreated.ToString('yyyy-MM-dd HH:mm') } |
+          Sort-Object Name | Format-Table Count, Name
+        # Expect 50-500 events/minute on an idle workstation,
+        # 1000-5000+ on a busy server.
+        ```
+
+        Once Winlogbeat is installed (next bolt-on), verify in Kibana
+        (https://10.99.50.13:5601):
+
+        1. **Discover** -> index `winlogbeat-*`
+        2. Filter: `winlog.channel : "Microsoft-Windows-Sysmon/Operational"`
+        3. Filter: `host.name : tlws01.testlab.local`
+        4. Expected: events flowing within 30s of generation
+
+        Build a quick saved search per EID for SOC use:
+
+        | Name | Query |
+        |---|---|
+        | Sysmon EID 1 — Process Create | `winlog.event_id : 1 AND winlog.channel : "Microsoft-Windows-Sysmon/Operational"` |
+        | Sysmon EID 3 — Network Connection | `winlog.event_id : 3 AND winlog.channel : "Microsoft-Windows-Sysmon/Operational"` |
+        | Sysmon EID 10 — Process Access (LSASS) | `winlog.event_id : 10 AND process.target.executable : "*lsass.exe"` |
+        | Sysmon EID 11 — File Create (Office) | `winlog.event_id : 11 AND process.executable : ("*\winword.exe" or "*\excel.exe")` |
+
+        At this point Sysmon is correctly deployed, tuned, and shipping.
+        The downstream detection rules in the Elastic stack will fire
+        on the events generated by the other bolt-ons in this catalog.
+      assessment:
+        question: "What's the most important reason to tune Sysmon's config BEFORE installing Winlogbeat (not after)?"
+        options:
+          - "Tuning after install requires a reboot."
+          - "Unfiltered Sysmon can emit 10,000+ events/minute on a busy server. Shipping that to Elastic raw spikes storage cost, blows out the index, swamps the rules engine with junk, and the SOC stops trusting the data within days. Tune at the source — Sysmon's filter — before the data leaves the host."
+          - "Winlogbeat can't be reconfigured after install."
+          - "Elastic charges per event."
+        correct_index: 1
+        explanation: >
+          Sysmon's filter is the cheapest, most-effective noise-reduction
+          point in the pipeline. Every event suppressed at Sysmon saves
+          (a) Winlogbeat CPU, (b) network bandwidth, (c) Elastic ingest
+          cost, (d) storage, and (e) SOC analyst attention. Tuning at
+          Elastic's ingest pipeline or query-time is exponentially more
+          expensive than excluding noisy parents in the Sysmon XML. The
+          first rule of telemetry: tune at the source.
+
 status: beta

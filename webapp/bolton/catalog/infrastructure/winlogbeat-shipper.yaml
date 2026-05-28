@@ -98,4 +98,483 @@ cost:
   cpu_pct: 5
   detectability: quiet
 
+curriculum:
+  title: "Winlogbeat — Ship Windows Security + Sysmon + PowerShell to Elastic"
+  summary: >
+    Defensive walkthrough of installing Elastic Winlogbeat on tlws01 and
+    configuring it to forward Windows Security, Sysmon, and PowerShell
+    event channels to the Elasticsearch cluster on tllinux01:9200. You
+    will install the MSI, edit winlogbeat.yml, set up the index template,
+    enroll, verify events in Kibana, and tune the highest-volume rules.
+  learning_objectives:
+    - "Install Winlogbeat as a Windows service with the official MSI."
+    - "Configure winlogbeat.yml to ship the Security, Sysmon, and PowerShell channels with sensible filters."
+    - "Set up the index template + ILM policy on Elastic so winlogbeat-* rolls over correctly."
+    - "Verify end-to-end: event generated on tlws01 -> Winlogbeat ships -> Elasticsearch indexes -> Kibana queryable."
+    - "Tune the noisiest channels (Security EID 4663 — file access) before they overwhelm storage."
+  prerequisites:
+    - "SYSTEM beacon (or admin RDP) on tlws01 — Winlogbeat install requires admin"
+    - "sysmon bolt-on installed first (so Sysmon channel exists)"
+    - "elastic-detection-stack bolt-on installed on tllinux01 (Elasticsearch on :9200, Kibana on :5601)"
+    - "Network reachability: tlws01 -> tllinux01:9200 (TCP)"
+  estimated_total_minutes: 35
+  steps:
+    - id: "01-download-winlogbeat"
+      title: "Download Winlogbeat MSI"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 1 — Get the Winlogbeat MSI
+
+        Elastic ships Winlogbeat as an MSI installer (preferred over the
+        zip — it registers the service automatically and follows the
+        standard Windows uninstall path).
+
+        Current version reference:
+        https://www.elastic.co/guide/en/beats/winlogbeat/current/winlogbeat-installation-configuration.html
+
+        Direct download (replace version with your stack's version —
+        ALWAYS match Winlogbeat major to your Elasticsearch major):
+
+        ```powershell
+        # If your stack is Elastic 8.15.x:
+        $version = '8.15.3'
+        $url = "https://artifacts.elastic.co/downloads/beats/winlogbeat/winlogbeat-$version-windows-x86_64.msi"
+        Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\winlogbeat.msi" -UseBasicParsing
+
+        # Install silently
+        Start-Process msiexec.exe -ArgumentList '/i',"$env:TEMP\winlogbeat.msi",'/quiet','/norestart' -Wait
+        ```
+
+        Default install paths:
+
+        ```
+        C:\Program Files\Elastic\Beats\<version>\winlogbeat\
+        C:\ProgramData\Elastic\Beats\winlogbeat\
+        ```
+
+        Verify the service is registered:
+
+        ```powershell
+        Get-Service winlogbeat
+        # Status   Name        DisplayName
+        # ------   ----        -----------
+        # Stopped  winlogbeat  winlogbeat
+        ```
+
+        Service is registered but not running yet — start it after the
+        config is in place.
+
+        > **Version-match rule** — Winlogbeat 8.x talks to Elasticsearch
+        > 8.x via the same protocol version. Cross-major (e.g.
+        > Winlogbeat 7 -> ES 8) works in degraded mode but is
+        > unsupported. Always upgrade Beats to match the stack.
+    - id: "02-configure-winlogbeat-yml"
+      title: "Configure winlogbeat.yml"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 2 — Edit winlogbeat.yml
+
+        Config lives at:
+
+        ```
+        C:\Program Files\Elastic\Beats\<version>\winlogbeat\winlogbeat.yml
+        ```
+
+        Replace the default file with this minimal but production-ready
+        config:
+
+        ```yaml
+        # ============================== Winlogbeat inputs ===========================
+        winlogbeat.event_logs:
+          - name: Security
+            # Filter out the noisiest Security events — keep auth, process,
+            # and account-management focus. Adjust per your environment.
+            ignore_older: 72h
+            event_id: 4624,4625,4634,4647,4648,4672,4688,4697,4698,4699,4700,4702,4720,4722,4724,4725,4726,4732,4738,4756,4768,4769,4776
+            tags: ["security", "auth"]
+
+          - name: System
+            ignore_older: 72h
+            tags: ["system"]
+
+          - name: Application
+            ignore_older: 72h
+            tags: ["application"]
+
+          - name: Microsoft-Windows-Sysmon/Operational
+            ignore_older: 72h
+            tags: ["sysmon"]
+            processors:
+              - script:
+                  lang: javascript
+                  id: sysmon
+                  file: ${path.home}/module/sysmon/config/winlogbeat-sysmon.js
+
+          - name: Microsoft-Windows-PowerShell/Operational
+            ignore_older: 72h
+            event_id: 4103,4104,4105,4106
+            tags: ["powershell"]
+
+          - name: Windows PowerShell
+            ignore_older: 72h
+            event_id: 400,403,600,800
+            tags: ["powershell-classic"]
+
+        # ============================== Elasticsearch output ========================
+        output.elasticsearch:
+          hosts: ["http://10.99.50.13:9200"]
+          # For TLS:
+          # hosts: ["https://10.99.50.13:9200"]
+          # ssl.certificate_authorities: ["C:/ProgramData/Elastic/Beats/winlogbeat/ca.crt"]
+          # ssl.verification_mode: certificate
+          # username: "winlogbeat_writer"
+          # password: "${ELASTIC_WRITER_PASSWORD}"
+
+          # Index strategy — data-stream is current best practice for ES 8.x
+          # Don't set 'index:' when using data streams; let Winlogbeat use
+          # its built-in winlogbeat-<version> data stream.
+
+        # ============================== Kibana setup ================================
+        setup.kibana:
+          host: "http://10.99.50.13:5601"
+
+        # ============================== Logging =====================================
+        logging.level: info
+        logging.to_files: true
+        logging.files:
+          path: C:\ProgramData\Elastic\Beats\winlogbeat\Logs
+          name: winlogbeat
+          keepfiles: 7
+          permissions: 0644
+
+        # ============================== Processors =================================
+        processors:
+          - add_host_metadata: ~
+          - add_cloud_metadata: ~
+        ```
+
+        Save and validate the YAML:
+
+        ```powershell
+        cd "C:\Program Files\Elastic\Beats\$version\winlogbeat"
+        .\winlogbeat.exe test config
+        # Expected: "Config OK"
+
+        .\winlogbeat.exe test output
+        # Expected:
+        # elasticsearch: http://10.99.50.13:9200...
+        #   parse url... OK
+        #   connection...
+        #     parse host... OK
+        #     dns lookup... OK
+        #     addresses: 10.99.50.13
+        #     dial up... OK
+        #   TLS... WARN secure connection disabled
+        #   talk to server... OK
+        #   version: 8.15.3
+        ```
+      assessment:
+        question: "Why does the config use `event_id: 4624,4625,4648,...` for the Security channel instead of forwarding everything?"
+        options:
+          - "Winlogbeat can only ship 100 events per second."
+          - "The Security channel emits enormous volume — every file access (4663), every registry access (4656), every privileged operation. Most of it is not actionable. Selecting EIDs with detection value (auth, account-mgmt, process-create, service-install) reduces ingest by 95%+ without losing signal."
+          - "Elastic charges per event ID."
+          - "It's required syntax."
+        correct_index: 1
+        explanation: >
+          On a domain controller, the Security channel can hit 10,000+
+          events/minute steady-state. The bulk of that is 4663 file
+          access (often SACL-noisy on file servers) and 4656 handle
+          requests. The 25-ish EIDs in the example config cover all the
+          attacker-relevant signal (logons, account changes, service
+          installs, scheduled tasks, Kerberos, NTLM) with maybe 5% of
+          the volume. Selective forwarding at the agent is the cheapest
+          and most-effective filter point.
+    - id: "03-load-index-template-and-ilm"
+      title: "Load Elastic index template + ILM policy"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 3 — Set up Elasticsearch side
+
+        Winlogbeat's `setup` command pushes the index template, ingest
+        pipeline, and Kibana dashboards to Elastic. Run once per stack
+        version:
+
+        ```powershell
+        cd "C:\Program Files\Elastic\Beats\$version\winlogbeat"
+        .\winlogbeat.exe setup --index-management
+        # Loaded index template
+        # Index setup finished.
+
+        .\winlogbeat.exe setup --pipelines
+        # Pipelines successfully loaded
+
+        .\winlogbeat.exe setup --dashboards
+        # Loading dashboards (Kibana must be running and reachable)
+        # Loaded dashboards
+        ```
+
+        Verify on Elastic (from Kali or any host that can reach the API):
+
+        ```bash
+        # Index template
+        curl -s http://10.99.50.13:9200/_index_template/winlogbeat-* | jq '.index_templates[].name'
+        # "winlogbeat-8.15.3"
+
+        # ILM policy
+        curl -s http://10.99.50.13:9200/_ilm/policy/winlogbeat | jq '.winlogbeat.policy.phases'
+        # Default phases: hot (rollover @ 50GB / 30d) -> delete @ 90d
+        ```
+
+        For lab purposes, tune the ILM to delete faster (lab disks are
+        small):
+
+        ```bash
+        curl -X PUT http://10.99.50.13:9200/_ilm/policy/winlogbeat \
+          -H 'Content-Type: application/json' \
+          -d '{
+                "policy": {
+                  "phases": {
+                    "hot":    { "actions": { "rollover": { "max_size": "10gb", "max_age": "7d" } } },
+                    "delete": { "min_age": "14d", "actions": { "delete": {} } }
+                  }
+                }
+              }'
+        ```
+
+        > **Operational note** — the `winlogbeat.exe setup` command is
+        > NOT idempotent across major version upgrades. After upgrading
+        > Winlogbeat to a new major, re-run setup to get the new
+        > template version. Index templates apply to NEW indices only;
+        > existing indices keep their old mappings until rollover.
+    - id: "04-start-service-verify-shipping"
+      title: "Start the service + watch events flow"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 4 — Start Winlogbeat + verify
+
+        ```powershell
+        Start-Service winlogbeat
+        Get-Service winlogbeat
+        # Status   Name        DisplayName
+        # ------   ----        -----------
+        # Running  winlogbeat  winlogbeat
+        ```
+
+        Tail the Winlogbeat log on tlws01:
+
+        ```powershell
+        Get-Content C:\ProgramData\Elastic\Beats\winlogbeat\Logs\winlogbeat -Tail 50 -Wait
+        # Expected within 30s:
+        # {"level":"info","timestamp":"...","logger":"publisher","message":"Connection to backoff(elasticsearch(http://10.99.50.13:9200)) established"}
+        # {"level":"info","timestamp":"...","logger":"monitoring","message":"Non-zero metrics in the last 30s","output.events.acked":N}
+        ```
+
+        On Elastic side, count indexed docs:
+
+        ```bash
+        # Total docs in the winlogbeat data stream
+        curl -s "http://10.99.50.13:9200/winlogbeat-*/_count?q=host.name:tlws01" | jq
+        # {"count":12345,"_shards":...}
+
+        # Last document timestamp
+        curl -s -X POST "http://10.99.50.13:9200/winlogbeat-*/_search?size=1" \
+          -H 'Content-Type: application/json' \
+          -d '{"sort":[{"@timestamp":"desc"}],"query":{"match":{"host.name":"tlws01"}}}' | \
+          jq '.hits.hits[0]._source["@timestamp"]'
+        # Should be within the last few seconds
+        ```
+
+        Generate a known event to confirm end-to-end:
+
+        ```powershell
+        # On tlws01 — trigger a 4624 logon by running a command as another user
+        # (or simply trigger Sysmon EID 1 with notepad)
+        Start-Process notepad
+        ```
+
+        Within 10-30s, query in Kibana:
+
+        ```
+        # Kibana -> Discover -> winlogbeat-*
+        host.name : "tlws01" and process.name : "notepad.exe"
+        ```
+
+        Document should be visible.
+
+        > **Detection callout** — *Winlogbeat Agent Connectivity Lost*
+        > (defender's-side rule, fires when an expected host stops
+        > shipping for > 15min). Worth adding for production — silent
+        > Winlogbeat = blind SOC.
+    - id: "05-tune-noisy-channels"
+      title: "Tune noisy channels + verify volume is sane"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 5 — Reduce noise after first 24h of data
+
+        Once Winlogbeat has been running for a day, look at which event
+        IDs dominate the index:
+
+        ```bash
+        curl -s -X POST "http://10.99.50.13:9200/winlogbeat-*/_search?size=0" \
+          -H 'Content-Type: application/json' \
+          -d '{
+                "query": {"match": {"host.name": "tlws01"}},
+                "aggs": {
+                  "by_channel": {
+                    "terms": {"field": "winlog.channel", "size": 10},
+                    "aggs": {
+                      "by_eid": {"terms": {"field": "winlog.event_id", "size": 10}}
+                    }
+                  }
+                }
+              }' | jq '.aggregations.by_channel.buckets'
+        ```
+
+        Common offenders to tune:
+
+        | EID | Channel | Reason | Action |
+        |---|---|---|---|
+        | 4663 | Security | SACL file-access — fires per-handle on audited paths | Remove from event_id list unless you have specific SACL hunts |
+        | 5145 | Security | Network share access — fires per file under SACL | Same; usually too noisy |
+        | 4656 | Security | Handle requested — fires before every 4663 | Exclude unless investigating |
+        | 4103 | PowerShell | Pipeline execution — fires per pipeline element | Keep but consider sampling on busy hosts |
+        | EID 3 | Sysmon | Network connections — svchost, MsMpEng, OneDrive | Tune in Sysmon config (previous bolt-on), not Winlogbeat |
+
+        Apply tuning by editing winlogbeat.yml's `event_id:` filter and
+        restart:
+
+        ```powershell
+        Restart-Service winlogbeat
+        ```
+
+        For aggressive volume reduction, use the `drop_event` processor
+        to filter at the Beat:
+
+        ```yaml
+        processors:
+          - drop_event:
+              when:
+                or:
+                  - equals:
+                      winlog.event_id: "4656"
+                  - and:
+                      - equals:
+                          winlog.event_id: "4663"
+                      - not:
+                          regexp:
+                            winlog.event_data.ObjectName: "(?i).*\\\\(SAM|SYSTEM|SECURITY|NTDS).*"
+        ```
+
+        This example drops all 4656 events and drops 4663 unless the
+        accessed object is a sensitive registry hive or NTDS — keeps the
+        HiveNightmare-detection signal while killing the file-access
+        noise.
+
+        Verify volume drop:
+
+        ```bash
+        # Before vs after, events per hour
+        curl -s -X POST "http://10.99.50.13:9200/winlogbeat-*/_search?size=0" \
+          -H 'Content-Type: application/json' \
+          -d '{
+                "query": {"bool": {"filter": [
+                  {"match": {"host.name": "tlws01"}},
+                  {"range": {"@timestamp": {"gte": "now-1h"}}}
+                ]}}
+              }' | jq '.hits.total.value'
+        ```
+
+        Aim for < 50,000 events/hour per workstation, < 500,000 per DC.
+        If you're seeing more, keep tuning.
+
+        > **Detection callout** — once Winlogbeat is correctly tuned and
+        > shipping, every other bolt-on in this catalog generates
+        > telemetry that the Elastic detection rules can fire on.
+        > Validate by re-running the PrintNightmare or PetitPotam
+        > walkthrough and watching the alert appear in Kibana within
+        > 60s of the exploit firing.
+      assessment:
+        question: "After tuning, your tlws01 still ships 500k events/hour. Where do you cut next?"
+        options:
+          - "Disable Winlogbeat — too expensive."
+          - "Profile the index with the aggs query (event_id counts), identify the top 3 EIDs, and either (a) drop them with a processor, (b) remove from event_id filter, or (c) move the noise to Sysmon's filter if the source is Sysmon. Storage cost compounds — find the top contributor and kill or sample it."
+          - "Add more Elastic nodes."
+          - "Reduce ILM retention to 1 day."
+        correct_index: 1
+        explanation: >
+          The Pareto principle applies hard to event volume — typically
+          3-5 EIDs account for 80%+ of all events. Profile, identify,
+          drop or sample. Adding nodes is fighting the wrong end of the
+          problem; reducing retention hides the data you do want. The
+          right move is to fix the source: stop shipping what you'll
+          never query. Sample (1-in-N) the EIDs you sometimes need;
+          drop the ones you never do.
+    - id: "06-verify-detections-firing"
+      title: "Confirm detection rules fire on Sysmon-via-Winlogbeat data"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 6 — End-to-end detection validation
+
+        The whole point of Sysmon + Winlogbeat is for the Elastic
+        detection rules to fire on attacker behaviour. Confirm the
+        pipeline works end-to-end by triggering a known-loud detection
+        and watching it land in Kibana's Detections view.
+
+        From the attacker beacon on tlws01 (or any local shell), trigger
+        a Sysmon EID 11 + EID 1 chain that maps to a known rule:
+
+        ```powershell
+        # Mimicking the macro-doc child-process pattern
+        Start-Process -FilePath 'winword.exe' -ArgumentList '/q' -PassThru
+        Start-Sleep 2
+        # Simulate winword spawning calc (mimic the macro chain)
+        # Use Sysmon's process-tree to make the parent/child link explicit:
+        $word = Get-Process winword
+        # On a real lab, the macro itself spawns calc — for validation
+        # without Office, use this:
+        $p = [System.Diagnostics.Process]::Start('calc.exe')
+        ```
+
+        Within 60s, in Kibana (https://10.99.50.13:5601):
+
+        1. Navigate to **Security -> Detections**
+        2. Filter `host.name : tlws01`
+        3. Look for *Suspicious MS Office Child Process* if you used
+           Word, or any related rule
+
+        If the rule does NOT fire:
+
+        ```bash
+        # Check whether the event made it to ES at all
+        curl -s -X POST "http://10.99.50.13:9200/winlogbeat-*/_search?size=1" \
+          -H 'Content-Type: application/json' \
+          -d '{
+                "query": {"bool": {"filter": [
+                  {"match": {"host.name": "tlws01"}},
+                  {"match": {"event.code": "1"}},
+                  {"match": {"process.name": "calc.exe"}}
+                ]}},
+                "sort": [{"@timestamp": "desc"}]
+              }' | jq '.hits.hits[0]._source | {timestamp:."@timestamp", parent:.process.parent.name, child:.process.name}'
+        ```
+
+        If the event is in ES but no detection fired, the rule isn't
+        enabled — go to **Security -> Detection rules** and enable the
+        appropriate rule.
+
+        If the event isn't in ES at all, debug back up the chain:
+
+        1. Sysmon channel on tlws01: `Get-WinEvent -LogName
+           Microsoft-Windows-Sysmon/Operational -MaxEvents 5` — events present?
+        2. Winlogbeat log: `Get-Content
+           C:\ProgramData\Elastic\Beats\winlogbeat\Logs\winlogbeat -Tail 50`
+           — recent connection errors?
+        3. ES side: `curl http://10.99.50.13:9200/_cat/indices?v` —
+           winlogbeat-* indices present + growing?
+
+        This troubleshooting flow applies to every detection in the
+        catalog — Sysmon + Winlogbeat is the substrate that everything
+        else depends on.
+
 status: beta

