@@ -31,28 +31,20 @@
             -moz-osx-font-smoothing: grayscale;
         }
 
-        /* ── DEMO LABEL STRIP ─────────────────────────────────────────── */
-        .demo-label {
-            position: fixed;
-            top: calc(var(--rti-topbar-h) + 6px);
-            left: calc(var(--rti-rail-w) + 14px);
-            z-index: 60;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
+        /* ── DEMO LABEL CHIP (lives inside the topbar, beside the brand) ─ */
+        .rti-topbar__demo {
+            display: inline-flex; align-items: center; gap: 7px;
             padding: 4px 10px;
             background: var(--guide-accent-soft);
             border: 1px solid color-mix(in srgb, var(--guide-accent) 40%, transparent);
             border-radius: 999px;
             font-family: var(--font-family-mono);
-            font-size: 10.5px;
-            font-weight: 600;
+            font-size: 10.5px; font-weight: 600;
             color: var(--guide-accent-text);
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            pointer-events: none;
+            letter-spacing: 0.08em; text-transform: uppercase;
+            white-space: nowrap;
         }
-        .demo-label__dot {
+        .rti-topbar__demo-dot {
             width: 6px; height: 6px;
             border-radius: 50%;
             background: var(--guide-accent);
@@ -841,6 +833,10 @@
         <div class="rti-topbar__brand">
             <span class="rti-topbar__mark" aria-hidden="true"></span>
             <span class="rti-topbar__title">Red Team Infra</span>
+            <span class="rti-topbar__demo">
+                <span class="rti-topbar__demo-dot" aria-hidden="true"></span>
+                A — Modal overlay (interactive)
+            </span>
             <span class="rti-topbar__chip">
                 <span class="rti-topbar__chip-dot" aria-hidden="true"></span>
                 demo
@@ -916,11 +912,6 @@
             <span class="rti-subpill__sep">·</span>
             <button class="rti-subpill" type="button">Operations</button>
         </div>
-
-        <span class="demo-label">
-            <span class="demo-label__dot" aria-hidden="true"></span>
-            A — Current overlay modal
-        </span>
 
         <!-- ── BACKDROP CATALOG ─────────────────────────────────────── -->
         <main class="bw-catalog" aria-label="Bolt-on catalog">

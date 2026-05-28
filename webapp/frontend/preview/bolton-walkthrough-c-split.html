@@ -17,8 +17,9 @@
             --rti-topbar-h:   50px;
             --rti-rail-w:     220px;
             --rti-subpill-h:  44px;
-            --split-left:     38%;
+            --split-left:     45%;
             --split-handle-w: 6px;
+            --steprail-w:     140px;
             --motion-ease-walk: cubic-bezier(0.25, 0.46, 0.45, 0.94);
         }
 
@@ -34,13 +35,9 @@
             overflow: hidden;
         }
 
-        /* ── DEMO LABEL ───────────────────────────────────────────────── */
-        .demo-label {
-            position: fixed;
-            top: calc(var(--rti-topbar-h) + 6px);
-            left: calc(var(--rti-rail-w) + 14px);
-            z-index: 60;
-            display: inline-flex; align-items: center; gap: 8px;
+        /* ── DEMO LABEL CHIP (lives inside the topbar, beside the brand) ─ */
+        .rti-topbar__demo {
+            display: inline-flex; align-items: center; gap: 7px;
             padding: 4px 10px;
             background: var(--guide-accent-soft);
             border: 1px solid color-mix(in srgb, var(--guide-accent) 40%, transparent);
@@ -49,9 +46,9 @@
             font-size: 10.5px; font-weight: 600;
             color: var(--guide-accent-text);
             letter-spacing: 0.08em; text-transform: uppercase;
-            pointer-events: none;
+            white-space: nowrap;
         }
-        .demo-label__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--guide-accent); }
+        .rti-topbar__demo-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--guide-accent); }
 
         /* ── TOP BAR ─────────────────────────────────────────────────── */
         .rti-topbar {
@@ -210,9 +207,9 @@
         }
         .bw-handle__grip span {
             display: block;
-            width: 2px; height: 2px;
+            width: 3px; height: 3px;
             border-radius: 50%;
-            background: var(--text-secondary);
+            background: var(--brand-light);
         }
         .bw-handle:hover { background: color-mix(in srgb, var(--guide-accent) 14%, var(--bg-section)); }
         .bw-handle:hover .bw-handle__grip { opacity: 1; transform: scaleY(1.4); }
@@ -221,10 +218,10 @@
         .bw-split.is-dragging .bw-handle__grip { opacity: 1; transform: scaleY(1.6); }
         .bw-split.is-dragging .bw-handle__grip span { background: var(--guide-accent); }
 
-        /* ── LEFT: CATALOG PANE ─────────────────────────────────────── */
+        /* ── LEFT: CATALOG PANE (cool tint to distinguish from walkthrough) ─ */
         .bw-cat {
             display: flex; flex-direction: column;
-            background: var(--bg-container);
+            background: color-mix(in srgb, var(--bg-body) 90%, var(--brand) 6%);
             min-height: 0;
             overflow: hidden;
             container-type: inline-size;
@@ -292,7 +289,7 @@
             display: flex; flex-wrap: wrap; gap: 6px;
             padding: 12px 22px;
             border-bottom: 1px solid var(--border-subtle);
-            background: var(--bg-container);
+            background: color-mix(in srgb, var(--bg-body) 90%, var(--brand) 6%);
             flex-shrink: 0;
         }
         .bw-cat__chip {
@@ -338,8 +335,10 @@
         .bw-cat__row:hover { border-color: var(--border-light); transform: translateY(-1px); }
         .bw-cat__row.is-selected {
             border-color: var(--guide-accent);
-            background: color-mix(in srgb, var(--guide-accent) 8%, var(--bg-card));
-            box-shadow: inset 3px 0 0 var(--guide-accent);
+            background: color-mix(in srgb, var(--guide-accent) 12%, var(--bg-card));
+            box-shadow:
+                inset 4px 0 0 var(--guide-accent),
+                inset 0 0 0 1px color-mix(in srgb, var(--guide-accent) 30%, transparent);
         }
         .bw-cat__row.is-hidden { display: none; }
         .bw-cat__row-title {
@@ -374,6 +373,8 @@
         .bw-pill--success { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
         .bw-pill--warn { background: var(--warning-bg); color: var(--warning-text); border-color: var(--warning-border); }
         .bw-pill--danger { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-border); }
+        .bw-pill--info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+        .bw-pill--neutral { background: var(--bg-section); color: var(--text-secondary); border-color: var(--border-subtle); }
         .bw-cat__row-status {
             font-family: var(--font-family-mono);
             font-size: 10px;
@@ -405,33 +406,63 @@
             .bw-cat__row-title { font-size: 13.5px; }
         }
 
-        /* ── RIGHT: WALKTHROUGH PANE ────────────────────────────────── */
+        /* ── RIGHT: WALKTHROUGH PANE (warm, standard) ─────────────────── */
         .bw-walk {
             display: flex; flex-direction: row;
-            background: var(--bg-body);
+            background: var(--bg-card);
             min-height: 0;
             overflow: hidden;
             container-type: inline-size;
             container-name: walk;
         }
 
-        /* Step rail (left side of walkthrough pane) */
+        /* Step rail (slim left edge of walkthrough pane, collapsible) */
         .bw-rail {
-            width: 180px;
+            width: var(--steprail-w);
             flex-shrink: 0;
             border-right: 1px solid var(--border-subtle);
             background: var(--bg-section);
             display: flex; flex-direction: column;
             overflow: hidden;
+            transition: width 240ms var(--motion-ease-walk);
+        }
+        .bw-rail.is-collapsed {
+            width: 36px;
         }
         .bw-rail__head {
-            padding: 14px 14px 10px;
+            padding: 10px 12px;
             border-bottom: 1px solid var(--border-subtle);
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 6px;
             font-family: var(--font-family-mono);
             font-size: 9.5px; font-weight: 700;
             color: var(--text-secondary);
             letter-spacing: 0.14em; text-transform: uppercase;
         }
+        .bw-rail__head-label {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .bw-rail.is-collapsed .bw-rail__head-label { display: none; }
+        .bw-rail__toggle {
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            width: 24px; height: 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: inline-flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
+            transition: border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        color var(--motion-duration-base) var(--motion-ease-walk),
+                        transform 240ms var(--motion-ease-walk);
+        }
+        .bw-rail__toggle:hover { border-color: var(--guide-accent); color: var(--guide-accent-text); }
+        .bw-rail__toggle svg { width: 11px; height: 11px; }
+        .bw-rail.is-collapsed .bw-rail__toggle { transform: rotate(180deg); }
         .bw-rail__list {
             list-style: none;
             margin: 0; padding: 8px 6px;
@@ -461,12 +492,27 @@
         }
         .bw-rail__step:hover { background: var(--bg-card-hover); color: var(--text-primary); }
         .bw-rail__step.is-current {
-            background: color-mix(in srgb, var(--guide-accent) 12%, var(--bg-card-hover));
+            background: color-mix(in srgb, var(--guide-accent) 16%, var(--bg-card-hover));
             color: var(--text-primary);
             border-left-color: var(--guide-accent);
         }
+        .bw-rail__step.is-done {
+            background: color-mix(in srgb, var(--success-bg) 70%, transparent);
+        }
+        .bw-rail__step.is-done:hover { background: var(--success-bg); }
         .bw-rail__step.is-future { opacity: 0.55; }
         .bw-rail__step.is-future:hover { opacity: 1; }
+        .bw-rail.is-collapsed .bw-rail__step {
+            display: flex;
+            grid-template-columns: 22px;
+            padding: 6px 3px;
+            justify-content: center;
+            width: calc(100% - 2px);
+            border-left-width: 2px;
+        }
+        .bw-rail.is-collapsed .bw-rail__step-text { display: none; }
+        .bw-rail.is-collapsed .bw-rail__list { padding: 8px 2px; }
+        .bw-rail.is-collapsed .bw-rail__foot { display: none; }
         .bw-rail__step-num {
             width: 22px; height: 22px;
             border-radius: 50%;
@@ -545,15 +591,15 @@
             flex: 1;
             min-width: 0;
             display: flex; flex-direction: column;
-            background: var(--bg-body);
+            background: var(--bg-card);
         }
 
-        /* Sticky context header */
+        /* Sticky context header — accent strip on its bottom border */
         .bw-sticky {
             position: sticky; top: 0;
             z-index: 5;
-            background: var(--bg-body);
-            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-card);
+            border-bottom: 2px solid color-mix(in srgb, var(--guide-accent) 35%, transparent);
             padding: 14px 24px 0;
             flex-shrink: 0;
         }
@@ -643,18 +689,24 @@
         }
         .bw-tab {
             appearance: none; background: transparent; border: 0;
-            border-bottom: 2px solid transparent;
+            border-bottom: 3px solid transparent;
             color: var(--text-secondary);
             font-family: var(--font-family-mono);
             font-size: 11px; font-weight: 600;
             letter-spacing: 0.08em; text-transform: uppercase;
-            padding: 9px 14px 11px;
+            padding: 9px 14px 10px;
             cursor: pointer;
             transition: color var(--motion-duration-base) var(--motion-ease-walk),
-                        border-color var(--motion-duration-base) var(--motion-ease-walk);
+                        border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        background-color var(--motion-duration-base) var(--motion-ease-walk);
         }
         .bw-tab:hover { color: var(--text-primary); }
-        .bw-tab.is-active { color: var(--text-primary); border-bottom-color: var(--brand-light); }
+        .bw-tab.is-active {
+            color: var(--text-primary);
+            font-weight: 700;
+            border-bottom-color: var(--guide-accent);
+            background: color-mix(in srgb, var(--guide-accent) 8%, transparent);
+        }
 
         /* Body scroller */
         .bw-walk__body {
@@ -662,6 +714,7 @@
             flex: 1;
             min-height: 0;
             padding: 24px 24px 32px;
+            background: var(--bg-card);
         }
 
         /* ── ARTICLE BODY ───────────────────────────────────────────── */
@@ -890,15 +943,21 @@
         }
         .bw-btn--primary {
             background: var(--guide-accent);
-            color: #001216;
+            color: var(--text-inverse);
             border-color: var(--guide-accent);
             font-weight: 700;
-            padding: 10px 20px;
+            padding: 12px 22px;
+            min-height: 44px;
+            font-size: 13px;
+            letter-spacing: 0.02em;
+            box-shadow: 0 1px 0 color-mix(in srgb, var(--guide-accent) 60%, transparent),
+                        inset 0 1px 0 color-mix(in srgb, #ffffff 15%, transparent);
         }
         .bw-btn--primary:hover {
-            background: color-mix(in srgb, var(--guide-accent) 85%, white);
-            border-color: color-mix(in srgb, var(--guide-accent) 85%, white);
-            color: #001216;
+            background: color-mix(in srgb, var(--guide-accent) 88%, white);
+            border-color: color-mix(in srgb, var(--guide-accent) 88%, white);
+            color: var(--text-inverse);
+            transform: translateY(-1px);
         }
         .bw-btn--complete {
             background: var(--success-bg);
@@ -1227,6 +1286,10 @@
         <div class="rti-topbar__brand">
             <span class="rti-topbar__mark" aria-hidden="true"></span>
             <span class="rti-topbar__title">Red Team Infra</span>
+            <span class="rti-topbar__demo">
+                <span class="rti-topbar__demo-dot" aria-hidden="true"></span>
+                C — Split panel (interactive)
+            </span>
             <span class="rti-topbar__chip">
                 <span class="rti-topbar__chip-dot" aria-hidden="true"></span>
                 demo
@@ -1302,13 +1365,8 @@
             <button class="rti-subpill" type="button">Operations</button>
         </div>
 
-        <span class="demo-label">
-            <span class="demo-label__dot" aria-hidden="true"></span>
-            C — Split panel (interactive)
-        </span>
-
         <!-- ════════════════════════════════════════════════════════════
-             SPLIT: catalog | handle | walkthrough
+             SPLIT: catalog | handle | walkthrough (rail nested inside)
              ════════════════════════════════════════════════════════════ -->
         <div class="bw-split" id="bw-split">
             <!-- LEFT: catalog pane -->
@@ -1356,9 +1414,17 @@
 
             <!-- RIGHT: walkthrough pane -->
             <section class="bw-walk" aria-label="Walkthrough" id="bwWalk">
-                <!-- Step rail (left of walkthrough body) -->
+                <!-- Step rail (slim left edge of walkthrough pane, collapsible) -->
                 <nav class="bw-rail" aria-label="Step list" id="stepRail">
-                    <div class="bw-rail__head">Steps</div>
+                    <div class="bw-rail__head">
+                        <span class="bw-rail__head-label">Steps</span>
+                        <button id="railToggle" class="bw-rail__toggle" type="button"
+                                aria-label="Collapse step rail" title="Collapse">
+                            <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                                <path d="M6.5 1.5L3 5l3.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                    </div>
                     <ul class="bw-rail__list" id="stepRailList">
                         <!-- populated by JS -->
                     </ul>
@@ -1404,7 +1470,8 @@
 
 const LS_STATE = 'boltonPreviewState';
 const LS_SPLIT = 'boltonSplitRatio';
-const DEFAULT_RATIO = 0.38;
+const LS_RAIL  = 'boltonStepRailCollapsed';
+const DEFAULT_RATIO = 0.45;
 
 // ─── VULN DATA ─────────────────────────────────────────────────────────
 const VULNS = [
@@ -1969,7 +2036,7 @@ const VULNS = [
         pills: [
             { text: 'AD Identity', cls: '' },
             { text: 'T1558.004', cls: '' },
-            { text: 'Covered', cls: 'bw-pill--success' },
+            { text: 'Covered', cls: 'bw-pill--info' },
         ],
         detection: {
             coverage: 'covered',
@@ -2170,7 +2237,7 @@ const VULNS = [
         pills: [
             { text: 'Network', cls: '' },
             { text: 'T1557.001', cls: '' },
-            { text: 'Covered', cls: 'bw-pill--success' },
+            { text: 'Covered', cls: 'bw-pill--info' },
         ],
         detection: {
             coverage: 'covered',
@@ -2272,7 +2339,7 @@ const VULNS = [
         pills: [
             { text: 'Known CVE', cls: '' },
             { text: 'T1068', cls: '' },
-            { text: 'Covered', cls: 'bw-pill--success' },
+            { text: 'Covered', cls: 'bw-pill--info' },
         ],
         detection: {
             coverage: 'covered',
@@ -2468,10 +2535,10 @@ function applySplitRatio(ratio, persist = true) {
     const totalW = rect.width;
 
     // Constraints:
-    //  catalog min: 280px, max: 50%
+    //  catalog min: 320px (was 280), max: 55%
     //  walkthrough min: 480px
-    const catMin = 280 / totalW;
-    const catMaxByPct = 0.5;
+    const catMin = 320 / totalW;
+    const catMaxByPct = 0.55;
     const catMaxByWalk = 1 - (480 / totalW);
     const catMax = Math.min(catMaxByPct, catMaxByWalk);
 
@@ -2487,6 +2554,36 @@ function applySplitRatio(ratio, persist = true) {
 }
 
 window.addEventListener('resize', () => applySplitRatio(state.splitRatio));
+
+/* ═══════════════════════════════════════════════════════════════════════
+   STEP RAIL COLLAPSE (inside walkthrough pane)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function initStepRailCollapse() {
+    const rail = document.getElementById('stepRail');
+    const toggle = document.getElementById('railToggle');
+    if (!rail || !toggle) return;
+
+    const collapsed = localStorage.getItem(LS_RAIL) === '1';
+    setRailCollapsed(collapsed);
+
+    toggle.addEventListener('click', () => {
+        const isNowCollapsed = !rail.classList.contains('is-collapsed');
+        setRailCollapsed(isNowCollapsed);
+    });
+}
+
+function setRailCollapsed(collapsed) {
+    const rail = document.getElementById('stepRail');
+    const toggle = document.getElementById('railToggle');
+    if (!rail) return;
+    rail.classList.toggle('is-collapsed', collapsed);
+    if (toggle) {
+        toggle.setAttribute('aria-label', collapsed ? 'Expand step rail' : 'Collapse step rail');
+        toggle.setAttribute('title', collapsed ? 'Expand' : 'Collapse');
+    }
+    try { localStorage.setItem(LS_RAIL, collapsed ? '1' : '0'); } catch (_) {}
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
    CATALOG (left pane)
@@ -3271,6 +3368,7 @@ function escapeHtml(str) {
 
 document.addEventListener('DOMContentLoaded', () => {
     initSplit();
+    initStepRailCollapse();
     initCatalogControls();
     initKeyboard();
     renderCatalog();
