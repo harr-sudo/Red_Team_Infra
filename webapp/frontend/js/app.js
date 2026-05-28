@@ -2153,6 +2153,22 @@ APP.activeDeployment = (function () {
         set draftProject(v) { _draftProject = (typeof v === 'string' && v) ? v : null; },
         isAll() { return _current === ALL_SENTINEL; },
         isDraft() { return _current === DRAFT_SENTINEL; },
+        /**
+         * Phase 4 — true when the operator is walking the synthetic
+         * "+ Provision a Demo Deployment" flow. Resolved from either:
+         *   * a module-level marker set by APP.startDemoDraftFlow (so the
+         *     ribbon + skip buttons paint immediately on Configure entry
+         *     before any state file exists)
+         *   * a project name matching demo-draft-* (the load-bearing
+         *     signal once Deploy Apply has spawned the synthetic state)
+         *   * the literal "demo" showcase project (so the ribbon also
+         *     paints over the static demo for consistency)
+         */
+        isDemoDraft() {
+            if (typeof APP !== 'undefined' && APP._demoDraftActive === true) return true;
+            const cur = _current || '';
+            return cur === 'demo' || /^demo-draft-/.test(cur);
+        },
         isExisting() {
             return !!_current && _current !== DRAFT_SENTINEL && _current !== ALL_SENTINEL;
         },
@@ -4556,6 +4572,39 @@ APP.startDemoMode = function () {
     }
 };
 
+/**
+ * Phase 4 — "+ Provision a Demo Deployment" entry point. Pins a fresh
+ * demo-draft-<base36-ts> project, sets the demo-draft mode flags, and
+ * lands on Configure. Subsequent surfaces (Configure save, Deploy Apply,
+ * Manage, Operations) detect the demo-draft state via
+ * APP.activeDeployment.isDemoDraft() and route through their synthetic
+ * branches.
+ *
+ * Distinct from APP.startDemoMode (which pins the static `demo` showcase
+ * deployment). This one walks the full provisioning flow with a 30s
+ * simulated Apply tick.
+ */
+APP.startDemoDraftFlow = function () {
+    if (!APP.activeDeployment || typeof APP.activeDeployment.set !== 'function') return;
+    const projectName = 'demo-draft-' + Date.now().toString(36);
+    // Pin as the active deployment (NOT the draft sentinel — the demo
+    // walkthrough should look like a real, named draft). The generalized
+    // backend is_demo_project() matches the "demo-draft-*" prefix.
+    APP.activeDeployment.set(projectName);
+    if (APP.activeDeployment.draftProject !== undefined) {
+        APP.activeDeployment.draftProject = projectName;
+    }
+    // Module-level marker so isDemoDraft() returns true even before the
+    // backend has spawned a state file. The draft-prefix check is the
+    // load-bearing signal once a state file exists.
+    APP._demoDraftActive = true;
+    APP._demoDraftProject = projectName;
+    try { if (APP.demoRibbon && APP.demoRibbon.refresh) APP.demoRibbon.refresh(); } catch (_) {}
+    if (typeof APP.navigateTo === 'function') {
+        APP.navigateTo('deployments-tab', 'configure');
+    }
+};
+
 APP.startNewDeployment = function () {
     // 2026-05-21 — delegate to the canonical draft-flow entry point so the
     // Dashboard hero CTA enters DRAFT mode the same way the global "+ New"
@@ -5909,18 +5958,79 @@ if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function'
     //   - already on demo (no-op nudge but consistent surface)
     // Hidden cases:
     //   - any real deployment (c2-*, goad-*, combined-*) — don't intrude
+    //
+    // Phase 4 — same rule applies to the new "+ Provision a Demo Deployment"
+    // CTA: hidden when the operator is on any real deployment. A demo-draft-*
+    // deployment in progress counts as "demo-ish" so the CTA stays visible
+    // (acceptance criterion #8).
     APP.activeDeployment.subscribe(() => {
         try {
-            const btn = document.getElementById('dashboard-demo-btn');
-            if (!btn) return;
             const ad = APP.activeDeployment;
             const cur = (ad && ad.current) || '';
+            const isDemoDraftCur = /^demo-draft-/.test(cur);
             const isReal = cur && cur !== 'demo'
-                && cur !== '__all__' && cur !== '__draft__';
-            btn.hidden = isReal;
+                && cur !== '__all__' && cur !== '__draft__'
+                && !isDemoDraftCur;
+            const btn = document.getElementById('dashboard-demo-btn');
+            if (btn) btn.hidden = isReal;
+            const draftBtn = document.getElementById('dashboard-demo-draft-btn');
+            if (draftBtn) draftBtn.hidden = isReal;
         } catch (_) { /* defensive */ }
     });
+
+    // Phase 4 — DEMO ribbon visibility subscriber. Toggles every
+    // [data-demo-ribbon] node based on APP.activeDeployment.isDemoDraft()
+    // so the operator can never confuse a walkthrough surface with a real
+    // deployment. APP.demoRibbon.refresh() can be called directly from
+    // startDemoDraftFlow for immediate paint.
+    APP.activeDeployment.subscribe(() => {
+        try { if (APP.demoRibbon && APP.demoRibbon.refresh) APP.demoRibbon.refresh(); }
+        catch (_) { /* noop — ribbons may not be mounted yet */ }
+    });
 }
+
+/**
+ * Phase 4 — DEMO ribbon controller. Single source of truth for ribbon
+ * visibility + skip-button wiring. Mounted once per page load; refreshes
+ * on every activeDeployment change.
+ */
+APP.demoRibbon = (function () {
+    let _wired = false;
+    function refresh() {
+        const ad = APP.activeDeployment;
+        const isDemo = !!(ad && typeof ad.isDemoDraft === 'function' && ad.isDemoDraft());
+        document.querySelectorAll('[data-demo-ribbon]').forEach(el => {
+            if (isDemo) {
+                el.removeAttribute('hidden');
+            } else {
+                el.setAttribute('hidden', '');
+            }
+        });
+        if (!_wired) {
+            // Delegate click handling once. The skip buttons carry
+            // data-demo-skip-to="<subpill-name>" so a single listener
+            // dispatches to APP.navigateTo for every ribbon.
+            document.addEventListener('click', (evt) => {
+                const btn = evt.target && evt.target.closest
+                    ? evt.target.closest('[data-demo-skip-to]') : null;
+                if (!btn) return;
+                const target = btn.getAttribute('data-demo-skip-to');
+                if (!target) return;
+                if (typeof APP.navigateTo === 'function') {
+                    APP.navigateTo('deployments-tab', target);
+                }
+            });
+            _wired = true;
+        }
+    }
+    return { refresh };
+})();
+// First paint on DOMContentLoaded so ribbons reflect any persisted
+// demo-draft state (e.g. operator reloaded mid-walkthrough). The
+// subscriber above also re-paints on every activeDeployment change.
+document.addEventListener('DOMContentLoaded', () => {
+    try { APP.demoRibbon.refresh(); } catch (_) {}
+});
 
 function refreshElasticRulesCard() {
     const countEl = document.getElementById('elastic-rules-count');
@@ -14697,15 +14807,27 @@ async function saveConfig() {
             enable_cs_rest_api: document.getElementById('enable-rest-api')?.checked || false
         };
 
+        // Phase 4 — demo-draft saves go through the synthetic backend
+        // branch (validate, never persist) so the operator's config dir
+        // stays clean. Real saves keep the legacy { config } shape.
+        const _saveIsDemoDraft = APP.activeDeployment
+            && typeof APP.activeDeployment.isDemoDraft === 'function'
+            && APP.activeDeployment.isDemoDraft();
+        const _savePayload = _saveIsDemoDraft ? { config, is_demo_draft: true } : { config };
         const response = await fetch(`${API_BASE}/config/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ config })
+            body: JSON.stringify(_savePayload)
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
+            if (data.is_demo) {
+                showMessage('Configuration accepted (demo — not persisted)', 'success');
+                if (APP && APP.toast) APP.toast('Demo configuration accepted', 'success');
+                return;
+            }
             showMessage('Configuration saved successfully!', 'success');
             // M-Redesign Agent 3 — also emit a toast for cross-page visibility
             // (operators often save then immediately navigate away).
@@ -17548,6 +17670,45 @@ async function startDeployment() {
     const active = APP.activeDeployment && APP.activeDeployment.effectiveProject
         ? APP.activeDeployment.effectiveProject() : null;
     const isAll = APP.activeDeployment && APP.activeDeployment.isAll && APP.activeDeployment.isAll();
+    // ── Phase 4: synthetic demo-draft Apply ──────────────────────────
+    // When the operator clicks Apply during a demo-draft walkthrough,
+    // bypass the entire prereq pipeline (CS file, domain, AWS CLI, SSH
+    // key) and POST is_demo_draft=true to the backend, which spawns a
+    // 30s simulated tick. Polling + the progress overlay re-use the
+    // existing real-Apply pipeline so the operator gets the same visual
+    // feedback they would in a live deployment.
+    const isDemoDraft = APP.activeDeployment
+        && typeof APP.activeDeployment.isDemoDraft === 'function'
+        && APP.activeDeployment.isDemoDraft();
+    if (isDemoDraft) {
+        const projectName = APP._demoDraftProject
+            || (APP.activeDeployment && APP.activeDeployment.current)
+            || ('demo-draft-' + Date.now().toString(36));
+        window.currentDeploymentProject = projectName;
+        if (window.activeDeploymentProjects) {
+            window.activeDeploymentProjects.add(projectName);
+            sessionStorage.setItem('activeDeploymentProject', projectName);
+            sessionStorage.setItem('activeDeploymentProjects', JSON.stringify([...window.activeDeploymentProjects]));
+        }
+        try {
+            const resp = await fetch(`${API_BASE}/deploy/deploy?project=${encodeURIComponent(projectName)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ project_name: projectName, is_demo_draft: true })
+            });
+            const data = await resp.json();
+            if (data && data.success) {
+                try { _openDeployProgressOverlay(projectName); } catch (_) { /* inline fallback */ }
+                if (typeof pollDeploymentStatus === 'function') pollDeploymentStatus(projectName);
+                if (APP && APP.toast) APP.toast(`Demo deployment "${projectName}" started`, 'success');
+            } else {
+                if (APP && APP.toast) APP.toast('Demo deploy failed: ' + ((data && data.error) || 'unknown'), 'danger', 6000);
+            }
+        } catch (e) {
+            if (APP && APP.toast) APP.toast('Demo deploy error: ' + e.message, 'danger', 6000);
+        }
+        return;
+    }
     if (!active || isAll) {
         if (APP && APP.toast) APP.toast('Save your draft first (Configure → Save), or pick a saved deployment from the top bar.', 'danger', 6000);
         return;
@@ -32557,10 +32718,17 @@ APP.manageDrawer = APP.manageDrawer || {
         if (!config) return;
         try {
             const url = `/api/config/?project=${encodeURIComponent(this._project || '')}`;
+            // Phase 4 — demo-draft saves go to the synthetic backend
+            // branch (validate, never persist) so the operator's config
+            // dir stays clean during walkthroughs.
+            const _isDemo = APP.activeDeployment
+                && typeof APP.activeDeployment.isDemoDraft === 'function'
+                && APP.activeDeployment.isDemoDraft();
+            const _payload = _isDemo ? { config, is_demo_draft: true } : { config };
             const resp = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ config }),
+                body: JSON.stringify(_payload),
             });
             const data = await resp.json();
             if (!resp.ok || !data.success) {
@@ -32568,7 +32736,9 @@ APP.manageDrawer = APP.manageDrawer || {
                 throw new Error((data && data.error) ? data.error + errs : 'Save failed');
             }
             this._config = config;
-            if (typeof showSuccess === 'function') showSuccess('Configuration saved');
+            if (typeof showSuccess === 'function') {
+                showSuccess(data.is_demo ? 'Demo configuration accepted (not persisted)' : 'Configuration saved');
+            }
             this.close();
             // Refresh the Manage view since we wrote new config.
             if (APP.manage && typeof APP.manage.render === 'function') {
@@ -32604,10 +32774,15 @@ APP.manageDrawer = APP.manageDrawer || {
         if (!config) return false;
         try {
             const url = `/api/config/?project=${encodeURIComponent(this._project || '')}`;
+            // Phase 4 — demo-draft flag for the synthetic backend branch.
+            const _isDemo = APP.activeDeployment
+                && typeof APP.activeDeployment.isDemoDraft === 'function'
+                && APP.activeDeployment.isDemoDraft();
+            const _payload = _isDemo ? { config, is_demo_draft: true } : { config };
             const resp = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ config }),
+                body: JSON.stringify(_payload),
             });
             const data = await resp.json();
             if (!resp.ok || !data.success) {

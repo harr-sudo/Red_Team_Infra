@@ -870,6 +870,140 @@ def get_file_info(filepath):
         "path": str(filepath)
     }
 
+# =============================================================================
+# Phase 4 — Demo-draft synthetic deployment tick
+# =============================================================================
+# Walks the canonical DEPLOYMENT_PHASES list over ~30s, emitting realistic
+# per-phase log lines and flipping the persisted state to is_demo=True so
+# the generalized is_demo_project() resolves the walkthrough deployment
+# everywhere downstream (Manage, Bolt-ons, Operations sub-pills). No
+# terraform shell-out, no AWS calls — purely in-memory + on-disk state.
+#
+# Per-phase log scripts are intentionally verbose so the operator sees a
+# convincing "real deployment" tick — operator UX intent: this surface
+# MUST feel like the production deploy progress overlay so the muscle
+# memory transfers. Total elapsed: ~30s (init 2s + validate 2s + plan 3s
+# + apply 20s + outputs 3s).
+
+DEMO_DRAFT_PHASE_LOGS = {
+    "init": [
+        ("Initializing Terraform backend (s3)...", "info", 0.4),
+        ("Reading workspace configuration...", "info", 0.4),
+        ("Provider plugins: aws v5.x, null v3.x, random v3.x", "info", 0.4),
+        ("Backend ready, workspace pinned: demo-walkthrough", "success", 0.4),
+    ],
+    "validate": [
+        ("Validating terraform configuration...", "info", 0.4),
+        ("Module: vpc — valid", "info", 0.3),
+        ("Module: security — valid", "info", 0.3),
+        ("Module: c2_team_server — valid", "info", 0.3),
+        ("Configuration valid — no syntax or reference errors", "success", 0.4),
+    ],
+    "plan": [
+        ("Generating execution plan...", "info", 0.5),
+        ("Refreshing state from backend...", "info", 0.5),
+        ("Plan: 47 to add, 0 to change, 0 to destroy", "success", 0.5),
+        ("Estimated cost delta: $0.12/hr (eu-central-1)", "info", 0.5),
+    ],
+    "apply": [
+        ("[+] aws_vpc.main: Creating... (vpc-0demo01)", "info", 1.0),
+        ("[+] aws_internet_gateway.main: Creating... (igw-0demo01)", "info", 0.9),
+        ("[+] aws_subnet.public[0]: Creating... (subnet-0pub0demo)", "info", 0.9),
+        ("[+] aws_subnet.private[0]: Creating... (subnet-0priv0demo)", "info", 0.9),
+        ("[+] aws_nat_gateway.main: Still creating... [10s elapsed]", "info", 1.2),
+        ("[+] aws_security_group.bastion: Creating... (sg-0bastion0demo)", "info", 0.9),
+        ("[+] aws_security_group.c2: Creating... (sg-0c20demo)", "info", 0.9),
+        ("[+] aws_iam_role.ec2_ssm: Creating...", "info", 0.8),
+        ("[+] aws_instance.bastion: Creating... (i-0demobastion01)", "info", 1.0),
+        ("[+] aws_instance.c2_team_server[0]: Creating... (i-0demots01)", "info", 1.0),
+        ("[+] aws_instance.redirector: Creating... (i-0demoredir01)", "info", 1.0),
+        ("[+] aws_eip.bastion: Creating... (eipalloc-0demo01)", "info", 0.8),
+        ("[+] aws_route53_record.c2: Creating...", "info", 0.8),
+        ("[+] null_resource.bootstrap_cs: Provisioning... (Cobalt Strike install)", "info", 1.5),
+        ("[+] null_resource.bootstrap_redirector: Provisioning... (nginx config)", "info", 1.5),
+        ("[+] null_resource.bootstrap_attack_box: Provisioning... (Windows attack box)", "info", 1.5),
+        ("Apply complete! Resources: 47 added, 0 changed, 0 destroyed.", "success", 0.8),
+    ],
+    "outputs": [
+        ("Retrieving terraform outputs...", "info", 0.5),
+        ("bastion_public_ip = 203.0.113.10", "info", 0.5),
+        ("redirector_public_ip = 203.0.113.50", "info", 0.5),
+        ("c2_team_server_private_ips = [\"10.0.10.20\"]", "info", 0.5),
+        ("attackbox_public_ip = 203.0.113.30", "info", 0.5),
+        ("cs_connection_info = { rest_api_enabled = true, host = 10.0.10.20, port = 50050 }", "success", 0.5),
+    ],
+}
+
+
+def run_demo_draft_deployment(project_name: str):
+    """Synthetic ~30s tick through DEPLOYMENT_PHASES — Phase 4.
+
+    No terraform, no AWS — pure progress simulation. Writes the demo
+    fixture output dict onto the state at completion so Manage +
+    Operations sub-pills paint with the canonical demo bundle.
+    """
+    if project_name not in deployment_states:
+        return
+    state = deployment_states[project_name]
+    try:
+        for phase in DEPLOYMENT_PHASES:
+            update_phase(phase["name"], project_name)
+            scripted = DEMO_DRAFT_PHASE_LOGS.get(phase["name"], [])
+            for message, log_type, delay in scripted:
+                # Re-check at every step so a cancel can break us out early.
+                if state.get("status") != "running":
+                    return
+                time.sleep(delay)
+                add_log(message, log_type, project_name)
+            complete_phase(phase["name"], project_name)
+
+        # Inject canonical demo output bundle so Manage hero +
+        # Operations sub-pills render populated data even though no
+        # AWS resources exist. Pulled from the static `demo` fixture
+        # so both walkthrough + static demos render the same topology.
+        try:
+            from webapp.backend.services import demo_data_service
+            _demo_state = demo_data_service.deployment_state()
+            state["output"] = _demo_state.get("output", {})
+            state["outputs"] = _demo_state.get("outputs", {})
+            state["models_deployment_type"] = _demo_state.get("models_deployment_type")
+            state["models_description"] = _demo_state.get("models_description")
+            state["enable_test_lab"] = _demo_state.get("enable_test_lab", True)
+        except Exception as _e:
+            add_log(f"[demo] could not load demo fixture bundle: {_e}",
+                    "warning", project_name)
+
+        state["status"] = "success"
+        state["step"] = "complete"
+        state["completed_at"] = time.time()
+        state["progress_percent"] = 100
+        state["is_demo"] = True
+        state["is_demo_draft"] = True
+        elapsed = int(state["completed_at"] - (state.get("started_at") or state["completed_at"]))
+        add_log(
+            f"Demo deployment completed successfully in {elapsed // 60}m {elapsed % 60}s "
+            f"(simulated — no AWS resources provisioned)",
+            "success",
+            project_name,
+        )
+        _persist_state(project_name, state)
+        try:
+            audit_service.write(
+                "demo",
+                "deploy.demo_draft.complete",
+                project=project_name,
+                details={"is_demo": True, "duration_seconds": elapsed},
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        state["status"] = "error"
+        state["error"] = f"Demo walkthrough failed: {e}"
+        state["completed_at"] = time.time()
+        add_log(f"Demo walkthrough error: {e}", "error", project_name)
+        _persist_state(project_name, state)
+
+
 def run_deployment(project_name: str = None):
     """Run deployment in background thread with enhanced progress tracking"""
     global deployment_state
@@ -1704,12 +1838,25 @@ def get_deployment_status():
     # `models_deployment_type` surfaced under the legacy `deployment_type`
     # key (the widget reads either) so the c2-adhoc architecture image
     # resolves.
+    #
+    # Phase 4 — demo-draft EXCEPTION: walkthrough deployments need their
+    # real in-memory tick state surfaced (status=running, progress,
+    # current_phase, live log buffer) so the operator sees the synthetic
+    # Apply animate. Only the literal "demo" showcase project should
+    # short-circuit to the static fixture. Demo-draft entries fall
+    # through to the normal deployment_states[project_name] lookup below
+    # — they're still flagged is_demo in their state file so downstream
+    # bypasses (outputs, beacon, terminal) keep working.
     try:
         from webapp.backend.services import demo_data_service
         _is_demo = demo_data_service.is_demo_project(project_name)
     except Exception:
         _is_demo = False
-    if _is_demo:
+    _is_demo_draft_status = (
+        isinstance(project_name, str)
+        and project_name.startswith("demo-draft-")
+    )
+    if _is_demo and not _is_demo_draft_status:
         demo_state = demo_data_service.deployment_state()
         return jsonify({
             "success": True,
@@ -2038,9 +2185,73 @@ def get_machine_info():
 def deploy():
     """Start deployment for a specific project"""
     global deployment_state
-    
+
     # Get request data
     data = request.get_json() or {}
+
+    # ── Phase 4: synthetic walkthrough deploy ───────────────────────────
+    # When the operator launches "+ Provision a Demo Deployment" from the
+    # Dashboard, the body carries is_demo_draft=true OR project_name
+    # starts with "demo-draft-". Skip ALL prereq checks (no CS file, no
+    # domain, no AWS CLI, no IAM) and spawn a background thread that
+    # walks DEPLOYMENT_PHASES over ~30s with realistic per-phase logs.
+    # No terraform shell-out, no tfvars read, no AWS calls.
+    _body_demo_flag = bool(data.get("is_demo_draft")) if isinstance(data, dict) else False
+    _body_project = (data.get("project_name") or "").strip() if isinstance(data, dict) else ""
+    _query_project = (request.args.get("project") or "").strip()
+    _candidate_name = _body_project or _query_project
+    _is_demo_draft = _body_demo_flag or _candidate_name.startswith("demo-draft-")
+    if _is_demo_draft:
+        if not _candidate_name:
+            return jsonify({
+                "success": False,
+                "error": "demo-draft deploy requires project_name"
+            }), 400
+        project_name = _candidate_name
+        # Idempotent — if the synthetic tick is already running for this
+        # draft, return the same envelope so the frontend Apply button
+        # doesn't double-spawn.
+        if project_name in deployment_states and deployment_states[project_name].get("status") == "running":
+            return jsonify({
+                "success": True,
+                "is_demo": True,
+                "message": f"Demo deployment '{project_name}' is already in progress",
+                "project_name": project_name,
+                "deployment_type": "demo",
+            })
+        # Fresh state — mirrors create_empty_state() but flagged is_demo
+        # so the persisted JSON triggers is_demo_project() downstream.
+        deployment_states[project_name] = create_empty_state()
+        state = deployment_states[project_name]
+        state["status"] = "running"
+        state["step"] = "Initializing demo walkthrough..."
+        state["started_at"] = time.time()
+        state["progress_percent"] = 0
+        state["error"] = None
+        state["logs"] = []
+        state["is_demo"] = True
+        state["is_demo_draft"] = True
+        state["deployment_type"] = "demo"
+        _persist_state(project_name, state)
+        try:
+            audit_service.write(
+                _audit_actor(),
+                "deploy.demo_draft.start",
+                project=project_name,
+                details={"is_demo": True, "is_demo_draft": True},
+            )
+        except Exception:
+            pass
+        thread = threading.Thread(target=run_demo_draft_deployment, args=(project_name,))
+        thread.daemon = True
+        thread.start()
+        return jsonify({
+            "success": True,
+            "is_demo": True,
+            "message": "Demo deployment started",
+            "project_name": project_name,
+            "deployment_type": "demo",
+        })
 
     # Load configuration to get project name
     from webapp.backend.utils.config_parser import ConfigParser

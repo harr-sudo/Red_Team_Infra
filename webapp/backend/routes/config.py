@@ -146,6 +146,44 @@ def update_config():
 
         config = data['config']
 
+        # ── Phase 4: demo-draft save (no persistence) ───────────────────
+        # When the walkthrough flow is active the operator should still
+        # get a real validation experience (so they see the same error
+        # surfaces a real Configure would produce), but we MUST NOT write
+        # configs/<project>.tfvars — that file would pollute the operator's
+        # config directory and could be picked up by a subsequent real
+        # deploy. Detected via either:
+        #   * body.is_demo_draft=True (frontend flag)
+        #   * ?project=demo-draft-* OR config.project_name=demo-draft-*
+        _body_demo_flag = bool(data.get("is_demo_draft"))
+        _query_project = (request.args.get("project") or "").strip()
+        _body_project = ""
+        if isinstance(config, dict):
+            _body_project = (config.get("project_name") or "").strip()
+        _is_demo_draft = (
+            _body_demo_flag
+            or _query_project.startswith("demo-draft-")
+            or _body_project.startswith("demo-draft-")
+        )
+        if _is_demo_draft:
+            # Run validation so the operator sees real errors if the form
+            # is malformed — but never persist.
+            is_valid, errors = ConfigValidator.validate_config(config)
+            if not is_valid:
+                return jsonify({
+                    "success": False,
+                    "error": "Validation failed",
+                    "errors": errors,
+                    "is_demo": True,
+                }), 400
+            return jsonify({
+                "success": True,
+                "is_demo": True,
+                "message": "Demo configuration accepted (not persisted)",
+                "tfvars_path": None,
+                "ssh_key_included": False,
+            })
+
         # 2026-05-23 — operator directive: all new infra is pinned to
         # eu-central-1. Force the region on save so the wizard, legacy form,
         # or any future caller can't accidentally write a different region

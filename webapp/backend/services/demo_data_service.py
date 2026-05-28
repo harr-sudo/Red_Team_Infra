@@ -566,18 +566,64 @@ def host_facts(host: str) -> dict[str, Any] | None:
 
 
 def is_demo_project(project_name: str | None) -> bool:
-    """Single source of truth for the demo-or-not branch in route handlers."""
+    """Single source of truth for the demo-or-not branch in route handlers.
+
+    Matches any of:
+      * The literal ``demo`` showcase project (static fully-populated dashboard).
+      * A walkthrough draft whose name matches ``demo-draft-<slug>``
+        (Phase 4 — "+ Provision a Demo Deployment" flow). The slug is the
+        operator's session-scoped timestamp (base36), so the regex stays
+        permissive: alphanumerics + dashes.
+      * Any project whose persisted deployment state JSON flags itself as
+        ``is_demo`` or ``is_demo_draft``. This is the load-bearing check
+        for the Phase 4 synthetic apply — the demo-draft handler writes
+        ``is_demo: True`` into the state file once the simulated 30s tick
+        finishes, so downstream surfaces (Manage, Bolt-ons, Operations
+        sub-pills) resolve it the same way they resolve the static demo.
+    """
     if not project_name:
         return False
-    is_demo = str(project_name).strip().lower() == DEMO_PROJECT
-    # Lazy seed the operator's audit log with synthetic demo rows the
-    # first time any endpoint resolves a demo project. The seed is
-    # defensive — if audit_service.write fails (or anything else
-    # explodes) we silently flip the flag so we don't retry on every
-    # request.
-    if is_demo:
+    name = str(project_name).strip()
+    lower = name.lower()
+    # Path A — literal "demo".
+    if lower == DEMO_PROJECT:
         seed_demo_audit_entries()
-    return is_demo
+        return True
+    # Path B — demo-draft-* walkthrough deployments.
+    # Pattern is intentionally permissive: lower-cased letters, digits,
+    # and dashes after the prefix. The frontend generates
+    # ``demo-draft-<base36-timestamp>`` so this matches without imposing
+    # tighter shape constraints that would silently break future slug
+    # schemes.
+    import re as _re
+    if _re.match(r"^demo-draft-[a-z0-9-]+$", lower):
+        return True
+    # Path C — state-file flagged. Best-effort: if the per-project state
+    # file carries is_demo / is_demo_draft we honor it. Never raises —
+    # is_demo_project is called on hot paths and a missing/corrupt state
+    # file must NOT cause demo detection to fail open and trigger real
+    # terraform calls.
+    try:
+        from pathlib import Path as _Path
+        # Mirror routes/deploy.py:_state_file_path sanitization.
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        # Project root: services/ → backend/ → webapp/ → repo root.
+        _root = _Path(__file__).parent.parent.parent.parent
+        _state = _root / "logs" / "deployment_state" / f"{safe}.state.json"
+        if _state.exists():
+            import json as _json
+            with open(_state, "r") as _f:
+                _data = _json.load(_f)
+            if isinstance(_data, dict) and (
+                _data.get("is_demo") is True
+                or _data.get("is_demo_draft") is True
+            ):
+                return True
+    except Exception:
+        # Silent fallthrough — never let state-file IO break demo
+        # detection on the hot path.
+        pass
+    return False
 
 
 # ──────────────────────────────────────────────────────────────────────
