@@ -226,3 +226,40 @@ enable_dns_validation = true  # Enable DNS validation for ACM certificates
 # portal_username       = "operator"
 # portal_password       = "YourSecurePassword123"
 # portal_session_timeout = 30
+
+# =============================================================================
+# CCRTS Lab Configuration (CREST exam-mirror lab)
+# =============================================================================
+# Set deployment_type = "ccrts-mini" or "ccrts-full" for a stand-alone lab,
+# or one of "combined-adhoc-ccrts-mini" / "combined-adhoc-ccrts-full" /
+# "combined-full-ccrts-full" for a C2 + CCRTS peered deployment.
+#
+# CREST Community AMIs (owner 126620636130) are published in eu-west-2 only.
+# A second AWS provider alias reads the latest AMI IDs and aws_ami_copy moves
+# the underlying snapshots into eu-central-1. NO infrastructure is provisioned
+# in eu-west-2 — only metadata reads + storage-layer snapshot copies.
+#
+# Operator access flows ONLY through the dashboard server — the lab hosts have
+# no inbound internet exposure.
+#
+# ccrts_vpc_cidr            = "192.168.57.0/24"
+# ccrts_public_subnet_cidr  = "192.168.57.64/26"
+# ccrts_private_subnet_cidr = "192.168.57.0/26"
+#
+# # Optional: override the lab size when used as a bolt-on
+# # ccrts_lab_size = "ccrts-mini"
+#
+# # Optional: enable the CCRTS lab as a bolt-on on a c2-* deployment without
+# # switching deployment_type. Mutually compatible with c2-adhoc / c2-purple /
+# # c2-full.
+# # enable_ccrts_lab = false
+#
+# # Optional: skip the cross-region aws_ami_copy by supplying a pre-staged AMI
+# # in the deploy region (e.g. you've already copied them once for an earlier
+# # run and want to save the snapshot transfer time).
+# # crest_kali_ami_override    = ""
+# # crest_windows_ami_override = ""
+#
+# # Lab credentials (weak by design — CCRTS exam-mirror)
+# # ccrts_dc_admin_password = "P@ssw0rd1!"
+# # ccrts_low_priv_password = "Welcome1!"

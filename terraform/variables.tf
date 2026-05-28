@@ -44,10 +44,14 @@ variable "deployment_type" {
       "c2-adhoc", "c2-purple", "c2-full",
       # GOAD-Only modes (with CS on jumpbox)
       "goad-mini", "goad-light", "goad-sccm", "goad-full", "goad-nha",
+      # CCRTS-Only modes (CREST exam-mirror lab; CS-on-Kali from the CREST AMI)
+      "ccrts-mini", "ccrts-full",
       # Combined modes (C2 + GOAD with VPC peering)
-      "combined-adhoc-mini", "combined-adhoc-light", "combined-full-full"
+      "combined-adhoc-mini", "combined-adhoc-light", "combined-full-full",
+      # Combined modes (C2 + CCRTS with VPC peering)
+      "combined-adhoc-ccrts-mini", "combined-adhoc-ccrts-full", "combined-full-ccrts-full"
     ], var.deployment_type)
-    error_message = "Invalid deployment_type. Must be one of: c2-adhoc, c2-purple, c2-full, goad-mini, goad-light, goad-sccm, goad-full, goad-nha, combined-adhoc-mini, combined-adhoc-light, combined-full-full"
+    error_message = "Invalid deployment_type. Must be one of: c2-adhoc, c2-purple, c2-full, goad-mini, goad-light, goad-sccm, goad-full, goad-nha, ccrts-mini, ccrts-full, combined-adhoc-mini, combined-adhoc-light, combined-full-full, combined-adhoc-ccrts-mini, combined-adhoc-ccrts-full, combined-full-ccrts-full"
   }
 }
 
@@ -82,6 +86,76 @@ variable "goad_private_subnet_cidr" {
   description = "CIDR block for GOAD private subnet"
   type        = string
   default     = "192.168.56.0/26"
+}
+
+# =============================================================================
+# CCRTS Lab Configuration
+# =============================================================================
+# CCRTS = CREST Registered Tester for Simulated Targeted Attacks.
+# Self-contained exam-mirror lab in eu-central-1. CREST Community AMIs
+# (owner 126620636130) are auto-copied from eu-west-2 via aws_ami_copy.
+# Operator access flows ONLY through the dashboard server (no direct internet
+# ingress on the lab hosts).
+
+variable "ccrts_vpc_cidr" {
+  description = "CIDR block for the CCRTS lab VPC"
+  type        = string
+  default     = "192.168.57.0/24"
+}
+
+variable "ccrts_public_subnet_cidr" {
+  description = "CIDR block for the CCRTS public subnet (NAT egress only)"
+  type        = string
+  default     = "192.168.57.64/26"
+}
+
+variable "ccrts_private_subnet_cidr" {
+  description = "CIDR block for the CCRTS private subnet (lab hosts)"
+  type        = string
+  default     = "192.168.57.0/26"
+}
+
+variable "ccrts_lab_size" {
+  description = "Explicit CCRTS lab variant. Auto-derived from deployment_type if empty. Values: ccrts-mini, ccrts-full."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.ccrts_lab_size == "" || contains(["ccrts-mini", "ccrts-full"], var.ccrts_lab_size)
+    error_message = "ccrts_lab_size must be one of: ccrts-mini, ccrts-full, or empty (auto-configure)."
+  }
+}
+
+variable "enable_ccrts_lab" {
+  description = "Optional bolt-on flag for c2-* deployments — when true on a c2-* deployment_type, the CCRTS lab is provisioned alongside (combined behaviour) without needing to switch to a combined-* deployment_type."
+  type        = bool
+  default     = false
+}
+
+variable "crest_kali_ami_override" {
+  description = "Pre-staged Kali AMI ID in the deploy region. Skips cross-region copy."
+  type        = string
+  default     = ""
+}
+
+variable "crest_windows_ami_override" {
+  description = "Pre-staged CREST Windows workstation AMI ID in the deploy region. Skips cross-region copy."
+  type        = string
+  default     = ""
+}
+
+variable "ccrts_dc_admin_password" {
+  description = "CCRTS domain Administrator password (ccrts.local). Used only by ccrts-full."
+  type        = string
+  default     = "P@ssw0rd1!"
+  sensitive   = true
+}
+
+variable "ccrts_low_priv_password" {
+  description = "CCRTS low-privilege user password (CCRTS\\jdoe). Used only by ccrts-full."
+  type        = string
+  default     = "Welcome1!"
+  sensitive   = true
 }
 
 # =============================================================================
@@ -268,7 +342,7 @@ variable "vpc_cidr" {
 variable "availability_zones" {
   description = "List of availability zones. If empty, will use first AZ in the selected region."
   type        = list(string)
-  default     = []  # Empty = auto-detect from region
+  default     = [] # Empty = auto-detect from region
 }
 
 variable "public_subnet_cidrs" {
@@ -349,7 +423,7 @@ variable "user_public_key" {
   description = "User's SSH public key for jumpbox access (Ed25519 or RSA format). User generates key locally with: ssh-keygen -t ed25519 -f ~/.ssh/goad_key"
   type        = string
   default     = ""
-  
+
   validation {
     condition     = var.user_public_key == "" || can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)\\s+[A-Za-z0-9+/=]+", var.user_public_key))
     error_message = "user_public_key must be a valid SSH public key (ssh-ed25519, ssh-rsa, or ecdsa format) or empty"
