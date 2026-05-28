@@ -8,6 +8,12 @@ Registered with url_prefix='/api/beacon' in app.py.
 from flask import Blueprint, g, jsonify, request
 from webapp.backend.services.beacon_service import beacon_service
 from webapp.backend.services import audit_service
+from webapp.backend.services import demo_beacon_data
+
+
+def _is_demo_request() -> bool:
+    """Server-wide demo guard: ?project=demo on the query string."""
+    return request.args.get("project") == "demo"
 
 
 def _audit_actor():
@@ -20,7 +26,25 @@ bp = Blueprint("beacon", __name__)
 
 @bp.route("/health", methods=["GET"])
 def health():
-    """Check REST API connection health."""
+    """Check REST API connection health.
+
+    2026-05-23 — Treat the demo project as "always connected" so the
+    Operations sub-pills (Beacons / Terminal / Payloads) light up without
+    a real CS REST API. Frontend passes ``?project=demo`` for the demo
+    deployment via APP.activeDeployment.
+    """
+    from webapp.backend.services import demo_data_service
+    project = request.args.get("project")
+    if demo_data_service.is_demo_project(project):
+        return jsonify({
+            "status": "connected",
+            "authenticated": True,
+            "reachable": True,
+            "is_demo": True,
+            "server_version": "demo · synthetic",
+            "host": "demo-localhost",
+            "port": 50050,
+        })
     result = beacon_service.health_check()
     status = "connected" if result["authenticated"] else (
         "reachable" if result["reachable"] else "disconnected"
@@ -48,7 +72,20 @@ def configure():
 
 @bp.route("/list", methods=["GET"])
 def list_beacons():
-    """List all active beacons."""
+    """List all active beacons.
+
+    2026-05-22 — When the frontend has the ``demo`` deployment active, it
+    appends ``?project=demo``. We short-circuit the live CS REST API path
+    and serve canned beacons from demo_data_service.
+    """
+    from webapp.backend.services import demo_data_service
+    project = request.args.get("project")
+    if demo_data_service.is_demo_project(project):
+        return jsonify({
+            "success": True,
+            "beacons": demo_data_service.beacon_list(),
+            "is_demo": True,
+        })
     result = beacon_service.list_beacons()
     return jsonify(result)
 
@@ -56,6 +93,14 @@ def list_beacons():
 @bp.route("/<bid>", methods=["GET"])
 def get_beacon(bid):
     """Get beacon details."""
+    # Demo beacons all carry the ``demo-`` prefix on the bid; detect on
+    # that so callers don't need to thread the project name through.
+    from webapp.backend.services import demo_data_service
+    if bid.startswith("demo-"):
+        detail = demo_data_service.beacon_detail(bid)
+        if detail is None:
+            return jsonify({"success": False, "error": "demo beacon not found"}), 404
+        return jsonify({"success": True, "beacon": detail, "is_demo": True})
     result = beacon_service.get_beacon(bid)
     return jsonify(result)
 
@@ -68,6 +113,20 @@ def console_command(bid):
 
     if not command:
         return jsonify({"success": False, "error": "No command provided"}), 400
+
+    # Demo beacons short-circuit to the canned-output dispatcher so the
+    # console UI lights up without a live CS REST API. Mirrors the
+    # existing guard at beacon.py:90 for GET /<bid>.
+    if bid.startswith("demo-"):
+        from webapp.backend.services import demo_beacon_ops
+        result = demo_beacon_ops.dispatch_demo_command(bid, command)
+        audit_service.write(
+            _audit_actor(),
+            "beacon.exec",
+            target=bid,
+            details={"cmd": command, "is_demo": True},
+        )
+        return jsonify(result)
 
     result = beacon_service.console_command(bid, command)
     if isinstance(result, dict) and result.get("success", True) is not False:
@@ -83,6 +142,10 @@ def console_command(bid):
 @bp.route("/<bid>/tasks", methods=["GET"])
 def get_tasks(bid):
     """Get beacon task summary."""
+    # Demo guard — serve in-memory demo task feed for demo-* beacons.
+    if bid.startswith("demo-"):
+        from webapp.backend.services import demo_beacon_ops
+        return jsonify(demo_beacon_ops.get_demo_tasks_for_beacon(bid))
     result = beacon_service.get_beacon_tasks(bid)
     return jsonify(result)
 
@@ -107,6 +170,13 @@ def get_all_tasks():
 @bp.route("/task/<task_id>", methods=["GET"])
 def get_task_detail(task_id):
     """Get detailed task output."""
+    # Demo guard — task IDs from demo dispatcher carry the demo-task- prefix.
+    if task_id.startswith("demo-task-"):
+        from webapp.backend.services import demo_beacon_ops
+        demo_result = demo_beacon_ops.get_demo_task(task_id)
+        if demo_result is None:
+            return jsonify({"success": False, "error": f"demo task '{task_id}' not found", "is_demo": True}), 404
+        return jsonify(demo_result)
     result = beacon_service.get_task_detail(task_id)
     return jsonify(result)
 
@@ -132,6 +202,11 @@ def set_sleep(bid):
     if jitter < 0 or jitter > 99:
         return jsonify({"success": False, "error": "jitter must be between 0 and 99"}), 400
 
+    # Demo guard — record sleep override in-memory + emit ack task.
+    if bid.startswith("demo-"):
+        from webapp.backend.services import demo_beacon_ops
+        return jsonify(demo_beacon_ops.set_demo_sleep(bid, sleep_time, jitter))
+
     result = beacon_service.set_sleep(bid, sleep_time, jitter)
     return jsonify(result)
 
@@ -140,17 +215,23 @@ def set_sleep(bid):
 @bp.route("/<bid>/fs/ls", methods=["POST"])
 def file_ls(bid):
     path = request.json.get("path") if request.json else None
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.list_directory(bid, path))
     return jsonify(beacon_service.list_directory(bid, path))
 
 
 @bp.route("/<bid>/fs/drives", methods=["POST"])
 def file_drives(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.list_drives(bid))
     return jsonify(beacon_service.get_drives(bid))
 
 
 @bp.route("/<bid>/fs/mkdir", methods=["POST"])
 def file_mkdir(bid):
     folder = (request.json or {}).get("folder", "") or (request.json or {}).get("path", "")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.fs_noop(bid, "mkdir", folder))
     if not folder:
         return jsonify({"success": False, "error": "folder required"}), 400
     return jsonify(beacon_service.make_directory(bid, folder))
@@ -159,6 +240,8 @@ def file_mkdir(bid):
 @bp.route("/<bid>/fs/rm", methods=["POST"])
 def file_rm(bid):
     path = (request.json or {}).get("path", "")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.fs_noop(bid, "rm", path))
     if not path:
         return jsonify({"success": False, "error": "Path required"}), 400
     return jsonify(beacon_service.remove_file(bid, path))
@@ -167,6 +250,8 @@ def file_rm(bid):
 @bp.route("/<bid>/fs/download", methods=["POST"])
 def file_download(bid):
     path = (request.json or {}).get("path", "")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.fs_noop(bid, "download", path))
     if not path:
         return jsonify({"success": False, "error": "Path required"}), 400
     return jsonify(beacon_service.download_file(bid, path))
@@ -176,6 +261,8 @@ def file_download(bid):
 def file_upload(bid):
     data = request.json or {}
     file_ref = data.get("file", "")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.fs_noop(bid, "upload", file_ref))
     if not file_ref:
         return jsonify({"success": False, "error": "file reference required (e.g. @files/name or @artifacts/path)"}), 400
     return jsonify(beacon_service.upload_file(bid, file_ref))
@@ -184,12 +271,16 @@ def file_upload(bid):
 # ── Process Browser ──
 @bp.route("/<bid>/ps", methods=["POST"])
 def process_list(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.list_processes(bid))
     return jsonify(beacon_service.list_processes(bid))
 
 
 @bp.route("/<bid>/kill", methods=["POST"])
 def process_kill(bid):
     pid = (request.json or {}).get("pid")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.kill_process(bid, pid or 0))
     if not pid:
         return jsonify({"success": False, "error": "PID required"}), 400
     return jsonify(beacon_service.kill_process(bid, pid))
@@ -198,16 +289,22 @@ def process_kill(bid):
 # ── Screenshots ──
 @bp.route("/<bid>/screenshot", methods=["POST"])
 def screenshot_take(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.take_screenshot(bid))
     return jsonify(beacon_service.take_screenshot(bid))
 
 
 @bp.route("/<bid>/screenwatch", methods=["POST"])
 def screenshot_watch(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.start_screenwatch(bid))
     return jsonify(beacon_service.start_screenwatch(bid))
 
 
 @bp.route("/<bid>/screenshots", methods=["GET"])
 def screenshot_list(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.list_beacon_screenshots(bid))
     return jsonify(beacon_service.list_screenshots(bid))
 
 
@@ -218,6 +315,8 @@ def token_make(bid):
     domain = data.get("domain", "")
     user = data.get("user", "")
     password = data.get("password", "")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.make_token(bid, domain, user, password))
     if not all([domain, user, password]):
         return jsonify({"success": False, "error": "Domain, user, and password required"}), 400
     return jsonify(beacon_service.make_token(bid, domain, user, password))
@@ -226,6 +325,8 @@ def token_make(bid):
 @bp.route("/<bid>/token/steal", methods=["POST"])
 def token_steal(bid):
     pid = (request.json or {}).get("pid")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.steal_token(bid, pid or 0))
     if not pid:
         return jsonify({"success": False, "error": "PID required"}), 400
     return jsonify(beacon_service.steal_token(bid, pid))
@@ -233,39 +334,53 @@ def token_steal(bid):
 
 @bp.route("/<bid>/token/rev2self", methods=["POST"])
 def token_rev2self(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.rev2self(bid))
     return jsonify(beacon_service.rev2self(bid))
 
 
 @bp.route("/<bid>/getuid", methods=["POST"])
 def beacon_getuid(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.get_uid(bid))
     return jsonify(beacon_service.get_uid(bid))
 
 
 # ── Jobs & Downloads ──
 @bp.route("/<bid>/jobs", methods=["GET"])
 def jobs_list(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.list_jobs(bid))
     return jsonify(beacon_service.list_jobs(bid))
 
 
 @bp.route("/<bid>/jobs/<jid>/stop", methods=["POST"])
 def jobs_kill(bid, jid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.stop_job(jid))
     return jsonify(beacon_service.kill_job(bid, jid))
 
 
 @bp.route("/<bid>/downloads", methods=["GET"])
 def downloads_list(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.list_beacon_downloads(bid))
     return jsonify(beacon_service.list_downloads(bid))
 
 
 @bp.route("/<bid>/downloads/active", methods=["GET"])
 def downloads_active(bid):
     """List in-progress file transfers for this beacon."""
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.list_active_downloads())
     return jsonify(beacon_service.list_active_downloads(bid))
 
 
 @bp.route("/<bid>/downloads/cancel", methods=["POST"])
 def downloads_cancel(bid):
     path = (request.json or {}).get("path", "")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.cancel_download(path or "demo"))
     if not path:
         return jsonify({"success": False, "error": "File path required"}), 400
     return jsonify(beacon_service.cancel_download(bid, path))
@@ -274,11 +389,15 @@ def downloads_cancel(bid):
 # ── Credentials ──
 @bp.route("/<bid>/creds/hashdump", methods=["POST"])
 def creds_hashdump(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.hashdump(bid))
     return jsonify(beacon_service.hashdump(bid))
 
 
 @bp.route("/<bid>/creds/logonpasswords", methods=["POST"])
 def creds_logonpasswords(bid):
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.logonpasswords(bid))
     return jsonify(beacon_service.logonpasswords(bid))
 
 
@@ -287,6 +406,8 @@ def creds_dcsync(bid):
     data = request.json or {}
     domain = data.get("domain", "")
     user = data.get("user", "")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.dcsync(bid, domain or "TESTLAB.local", user))
     if not domain:
         return jsonify({"success": False, "error": "Domain required"}), 400
     return jsonify(beacon_service.dcsync(bid, domain, user))
@@ -295,6 +416,8 @@ def creds_dcsync(bid):
 @bp.route("/<bid>/creds/mimikatz", methods=["POST"])
 def creds_mimikatz(bid):
     args = (request.json or {}).get("args", "")
+    if demo_beacon_data.is_demo_bid(bid):
+        return jsonify(demo_beacon_data.cred_subcommand(bid, "mimikatz", args))
     if not args:
         return jsonify({"success": False, "error": "Mimikatz arguments required"}), 400
     return jsonify(beacon_service.mimikatz(bid, args))
@@ -366,18 +489,49 @@ def pivot_rportfwd_stop(bid):
 
 
 # ── Listeners (server-level) ──
+def _is_demo_listener_request() -> bool:
+    """Detect demo project for listener routes (project-scoped, not bid)."""
+    from webapp.backend.services import demo_data_service
+    return demo_data_service.is_demo_project(request.args.get("project"))
+
+
 @bp.route("/listeners", methods=["GET"])
 def listeners_list():
+    if _is_demo_listener_request():
+        from webapp.backend.services import demo_beacon_ops
+        return jsonify(demo_beacon_ops.list_demo_listeners())
     return jsonify(beacon_service.list_listeners())
 
 
 @bp.route("/listeners/<lid>", methods=["GET"])
 def listeners_get(lid):
+    if _is_demo_listener_request():
+        from webapp.backend.services import demo_beacon_ops
+        return jsonify(demo_beacon_ops.get_demo_listener(lid))
     return jsonify(beacon_service.get_listener(lid))
+
+
+@bp.route("/listeners/<lid>", methods=["PATCH"])
+def listeners_patch(lid):
+    if _is_demo_listener_request():
+        from webapp.backend.services import demo_beacon_ops
+        return jsonify(demo_beacon_ops.update_demo_listener(lid, request.json or {}))
+    # Real path: no generic PATCH on beacon_service; defer to the
+    # listener-type/name PUT route. Surface a clear error so non-demo
+    # callers know to use the typed endpoint.
+    return jsonify({
+        "success": False,
+        "error": "PATCH not supported in live mode — use PUT /listeners/update/<type>/<name>",
+    }), 400
 
 
 @bp.route("/listeners/<lid>", methods=["DELETE"])
 def listeners_delete(lid):
+    if _is_demo_listener_request():
+        from webapp.backend.services import demo_beacon_ops
+        result = demo_beacon_ops.delete_demo_listener(lid)
+        audit_service.write(_audit_actor(), "beacon.listener_delete", target=lid, details={"is_demo": True})
+        return jsonify(result)
     result = beacon_service.delete_listener(lid)
     if isinstance(result, dict) and result.get("success", True) is not False:
         audit_service.write(_audit_actor(), "beacon.listener_delete", target=lid)
@@ -393,6 +547,16 @@ def listeners_create(listener_type):
             "error": f"Invalid type. Valid: {', '.join(valid_types)}",
         }), 400
     config = request.json or {}
+    if _is_demo_listener_request():
+        from webapp.backend.services import demo_beacon_ops
+        result = demo_beacon_ops.create_demo_listener(listener_type, config)
+        audit_service.write(
+            _audit_actor(),
+            "beacon.listener_create",
+            target=(config.get("name") if isinstance(config, dict) else None),
+            details={"type": listener_type, "is_demo": True},
+        )
+        return jsonify(result)
     result = beacon_service.create_listener(listener_type, config)
     if isinstance(result, dict) and result.get("success", True) is not False:
         audit_service.write(
@@ -700,6 +864,16 @@ def server_info():
 
 @bp.route("/server/ip", methods=["GET"])
 def server_ip():
+    # 2026-05-23 — demo deployment short-circuit. The legacy TOPOLOGY
+    # overlay verifies beacon data ownership by comparing this IP
+    # against the deployment's team-server private IP. The demo doesn't
+    # have a real CS instance, so without this shortcut the IP probe
+    # returns the wrong value and the legacy overlay discards the
+    # synthetic beacons.
+    from webapp.backend.services import demo_data_service
+    project = request.args.get("project")
+    if demo_data_service.is_demo_project(project):
+        return jsonify({"success": True, "data": "10.0.10.20", "is_demo": True})
     return jsonify(beacon_service.get_teamserver_ip())
 
 
