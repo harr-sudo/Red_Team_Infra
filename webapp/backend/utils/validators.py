@@ -11,21 +11,63 @@ GOAD_ONLY_DEPLOYMENT_TYPES = [
     'goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha'
 ]
 
+# CCRTS-Lab deployment types — self-contained exam-mirror lab using
+# CREST Community AMIs. The pure ccrts-* variants ship with their own
+# CS-on-Kali distribution (no team server / redirector infra) so they
+# do NOT support bolt-ons or operations from the dashboard. The combined
+# variants pair a CCRTS lab with a real C2 deployment via VPC peering —
+# the C2 side keeps full dashboard support.
+CCRTS_ONLY_DEPLOYMENT_TYPES = ['ccrts-mini', 'ccrts-full']
+COMBINED_CCRTS_DEPLOYMENT_TYPES = [
+    'combined-adhoc-ccrts-mini',
+    'combined-adhoc-ccrts-full',
+    'combined-full-ccrts-full',
+]
+ALL_CCRTS_DEPLOYMENT_TYPES = (
+    CCRTS_ONLY_DEPLOYMENT_TYPES + COMBINED_CCRTS_DEPLOYMENT_TYPES
+)
+
 # Deployment types that require a domain name
+# Pure ccrts-* deployments are intentionally absent — the CCRTS lab is
+# fully self-contained and reachable only via the dashboard server jump
+# (no public DNS / SSL). combined-*-ccrts ARE listed because the C2 half
+# still needs a domain for redirectors + SSL.
 DOMAIN_REQUIRED_DEPLOYMENT_TYPES = [
     'c2-adhoc', 'c2-purple', 'c2-full',
-    'combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full'
-]
+    'combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full',
+] + COMBINED_CCRTS_DEPLOYMENT_TYPES
 
 
 class ConfigValidator:
     """Validator for Terraform configuration"""
-    
+
     @staticmethod
     def is_goad_only_deployment(deployment_type: str) -> bool:
-        """Check if deployment type is GOAD-only (auto-generates SSH keys)"""
+        """Check if deployment type is GOAD-only (auto-generates SSH keys).
+
+        Defensive: explicitly excludes CCRTS-Lab variants even though
+        they're not listed in GOAD_ONLY_DEPLOYMENT_TYPES — keeps the
+        helper consistent for callers that grep on the name.
+        """
+        if deployment_type in ALL_CCRTS_DEPLOYMENT_TYPES:
+            return False
         return deployment_type in GOAD_ONLY_DEPLOYMENT_TYPES
-    
+
+    @staticmethod
+    def is_ccrts_only_deployment(deployment_type: str) -> bool:
+        """True for the standalone CCRTS lab variants (no C2 infra)."""
+        return deployment_type in CCRTS_ONLY_DEPLOYMENT_TYPES
+
+    @staticmethod
+    def is_combined_ccrts_deployment(deployment_type: str) -> bool:
+        """True for combined-*-ccrts-* variants (C2 + CCRTS via VPC peering)."""
+        return deployment_type in COMBINED_CCRTS_DEPLOYMENT_TYPES
+
+    @staticmethod
+    def is_ccrts_deployment(deployment_type: str) -> bool:
+        """True if the deployment touches the CCRTS lab in any form."""
+        return deployment_type in ALL_CCRTS_DEPLOYMENT_TYPES
+
     @staticmethod
     def requires_domain(deployment_type: str) -> bool:
         """Check if deployment type requires domain configuration"""
@@ -114,9 +156,13 @@ class ConfigValidator:
         errors = []
         
         deployment_type = config.get('deployment_type', '')
-        
-        # GOAD-only deployments don't require domain configuration
+
+        # GOAD-only and pure CCRTS deployments don't require domain config —
+        # both run self-contained (GOAD via jumpbox+CS, CCRTS via dashboard
+        # server jump + CS-on-Kali).
         if ConfigValidator.is_goad_only_deployment(deployment_type):
+            return True, []
+        if ConfigValidator.is_ccrts_only_deployment(deployment_type):
             return True, []
         
         # C2 and Combined deployments require domain
@@ -150,12 +196,82 @@ class ConfigValidator:
         return len(errors) == 0, errors
 
     @staticmethod
+    def validate_ccrts_config(config: Dict) -> Tuple[bool, List[str]]:
+        """Validate CCRTS-Lab specific configuration.
+
+        Rules:
+          * `enable_ccrts_lab=true` is only valid on a pure ``c2-*``
+            deployment_type — mirrors the `enable_test_lab` gating in
+            terraform/main.tf. On ``ccrts-*`` / ``combined-*-ccrts-*``
+            the CCRTS lab is the deployment itself (always on), and on
+            ``goad-*`` / ``combined-*-mini|light|full`` the flag is
+            meaningless. Setting it elsewhere is a config bug we want
+            to surface BEFORE terraform spends time planning.
+          * When the operator pins a pre-staged AMI via
+            ``crest_kali_ami_override`` or ``crest_windows_ami_override``
+            the value MUST look like an AWS AMI ID (`ami-` + hex).
+            Anything else will silently break `aws_ami_copy` with a
+            cryptic "InvalidAMIID.NotFound" 20 minutes into the plan.
+          * For pure ``ccrts-*`` deployments the project_name should use
+            the ``ccrts_<size>_*`` prefix (consistency with the existing
+            ``c2_adhoc_*`` / ``goad_mini_*`` naming conventions). Soft
+            warning only — we still accept the save so existing demo /
+            test projects don't break.
+        """
+        errors: List[str] = []
+        deployment_type = (config.get('deployment_type') or '').strip()
+
+        # enable_ccrts_lab is c2-only — same posture as enable_test_lab.
+        enable_ccrts_lab = config.get('enable_ccrts_lab', False)
+        if enable_ccrts_lab and not deployment_type.startswith('c2-'):
+            errors.append(
+                "enable_ccrts_lab=true is only valid on c2-* deployments. "
+                "For a standalone CCRTS lab choose deployment_type "
+                "'ccrts-mini' or 'ccrts-full'; for C2+CCRTS choose a "
+                "'combined-*-ccrts-*' variant."
+            )
+
+        # AMI ID format check for the override knobs. AWS AMI IDs are
+        # `ami-` followed by 8 (legacy) or 17 (current) lowercase hex
+        # chars — accept both lengths with a simple length-agnostic regex.
+        ami_pattern = re.compile(r'^ami-[0-9a-f]+$')
+        kali_override = (config.get('crest_kali_ami_override') or '').strip()
+        if kali_override and not ami_pattern.match(kali_override):
+            errors.append(
+                f"crest_kali_ami_override must be a valid AMI ID "
+                f"(e.g. 'ami-0123456789abcdef0'), got: {kali_override}"
+            )
+        win_override = (config.get('crest_windows_ami_override') or '').strip()
+        if win_override and not ami_pattern.match(win_override):
+            errors.append(
+                f"crest_windows_ami_override must be a valid AMI ID "
+                f"(e.g. 'ami-0123456789abcdef0'), got: {win_override}"
+            )
+
+        # Project name prefix check (only enforced for pure ccrts-*).
+        if deployment_type in CCRTS_ONLY_DEPLOYMENT_TYPES:
+            project_name = (config.get('project_name') or '').strip()
+            if project_name:
+                size = deployment_type.split('-', 1)[1]  # mini | full
+                expected_prefix = f'ccrts_{size}_'
+                if not project_name.startswith(expected_prefix):
+                    errors.append(
+                        f"project_name for {deployment_type} should start "
+                        f"with '{expected_prefix}' (matching the "
+                        f"c2_adhoc_* / goad_mini_* convention), got: "
+                        f"{project_name}"
+                    )
+
+        return len(errors) == 0, errors
+
+    @staticmethod
     def validate_config(config: Dict) -> Tuple[bool, List[str]]:
         """Validate complete configuration"""
         errors = []
-        
+
         deployment_type = config.get('deployment_type', '')
         is_goad_only = ConfigValidator.is_goad_only_deployment(deployment_type)
+        is_ccrts_only = ConfigValidator.is_ccrts_only_deployment(deployment_type)
         
         # Required fields for ALL deployments
         if not config.get('project_name'):
@@ -164,10 +280,13 @@ class ConfigValidator:
         if not config.get('environment'):
             errors.append("environment is required")
         
-        # key_pair_name is only required for C2 and Combined deployments
-        # GOAD-only deployments auto-generate their own SSH keys
-        if not is_goad_only and not config.get('key_pair_name'):
-            errors.append("key_pair_name is required for C2/Combined deployments (GOAD-only auto-generates keys)")
+        # key_pair_name is only required for C2 and Combined deployments.
+        # GOAD-only deployments auto-generate their own SSH keys, and
+        # pure ccrts-* deployments build a lab-scoped key pair from
+        # user_public_key (operator never SSHes directly — the dashboard
+        # server is the jump).
+        if not is_goad_only and not is_ccrts_only and not config.get('key_pair_name'):
+            errors.append("key_pair_name is required for C2/Combined deployments (GOAD-only/CCRTS-only auto-generates keys)")
         
         # 2026-05-28 — Real-pipeline audit fix (HIGH #12): `engagement_type`
         # was renamed to `deployment_type` long ago but legacy tfvars +
@@ -208,11 +327,19 @@ class ConfigValidator:
         if redirector_type and redirector_type not in valid_redirector_types:
             errors.append(f"Unusual proxy_redirector_instance_type: {redirector_type}. Common: {', '.join(valid_redirector_types[:3])}")
 
-        # Validate VPC CIDR (only for C2/Combined which create their own VPC)
-        if not is_goad_only:
+        # Validate VPC CIDR (only for C2/Combined which create their own VPC).
+        # Pure ccrts-* deployments use the ccrts_vpc_cidr knob instead and
+        # are validated by validate_ccrts_config / the terraform module's
+        # built-in cidrnetmask() validation.
+        if not is_goad_only and not is_ccrts_only:
             vpc_cidr = config.get('vpc_cidr', '')
             if vpc_cidr and not ConfigValidator.validate_ip_cidr(vpc_cidr):
                 errors.append(f"Invalid VPC CIDR: {vpc_cidr}")
+        # ccrts_vpc_cidr is optional (defaults to 192.168.57.0/24 in the
+        # module) but if supplied it must be a valid CIDR.
+        ccrts_vpc_cidr = (config.get('ccrts_vpc_cidr') or '').strip()
+        if ccrts_vpc_cidr and not ConfigValidator.validate_ip_cidr(ccrts_vpc_cidr):
+            errors.append(f"Invalid ccrts_vpc_cidr: {ccrts_vpc_cidr}")
         
         # Validate domain configuration (conditional based on deployment type)
         domain_valid, domain_errors = ConfigValidator.validate_domain_config(config)
@@ -224,13 +351,24 @@ class ConfigValidator:
         if not attack_box_valid:
             errors.extend(attack_box_errors)
 
+        # Validate CCRTS-specific configuration (AMI overrides, prefix,
+        # enable_ccrts_lab gating). Runs on EVERY save so misuses of the
+        # flag on non-c2 deployments are caught even when ccrts isn't the
+        # active type.
+        ccrts_valid, ccrts_errors = ConfigValidator.validate_ccrts_config(config)
+        if not ccrts_valid:
+            errors.extend(ccrts_errors)
+
         # Validate SSL / Let's Encrypt admin email
-        # Required when: C2/Combined deployment + SSL enabled + letsencrypt provider + not domain fronting
+        # Required when: C2/Combined deployment + SSL enabled + letsencrypt
+        # provider + not domain fronting. Pure ccrts-* skipped — the lab is
+        # internal-only behind the dashboard jump, no public TLS surface.
         enable_ssl = config.get('enable_ssl', True)
         ssl_provider = config.get('ssl_provider', 'letsencrypt')
         enable_domain_fronting = config.get('enable_domain_fronting', False)
 
-        if not is_goad_only and enable_ssl and ssl_provider == 'letsencrypt' and not enable_domain_fronting:
+        if (not is_goad_only and not is_ccrts_only and enable_ssl
+                and ssl_provider == 'letsencrypt' and not enable_domain_fronting):
             admin_email = config.get('admin_email', '').strip()
             if not admin_email:
                 errors.append("admin_email is required for Let's Encrypt SSL (use a burner email for OPSEC)")

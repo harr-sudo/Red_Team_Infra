@@ -88,6 +88,13 @@ _TEST_LAB_MODULES: Set[str] = {
     "test_lab",
 }
 
+# CCRTS-Lab modules. Pure ccrts-* deployments only get ``ccrts_lab``
+# plus the BASE set (vpc / security / cs_storage). combined-*-ccrts-*
+# additionally gets the full C2 + vpc_peering stack (handled below).
+_CCRTS_MODULES: Set[str] = {
+    "ccrts_lab",
+}
+
 
 def expected_modules_for(
     deployment_type: str | None,
@@ -109,6 +116,17 @@ def expected_modules_for(
             expected |= _TEST_LAB_MODULES
     elif dtype.startswith("goad-"):
         expected |= _GOAD_MODULES
+    elif dtype.startswith("ccrts-"):
+        # Pure CCRTS lab — only the lab module + BASE. No c2 / goad /
+        # peering modules expected.
+        expected |= _CCRTS_MODULES
+    elif "ccrts" in dtype and dtype.startswith("combined-"):
+        # combined-*-ccrts-* — C2 + CCRTS via VPC peering. No GOAD.
+        expected |= _C2_MODULES
+        expected |= _CCRTS_MODULES
+        expected |= _COMBINED_MODULES
+        if enable_test_lab:
+            expected |= _TEST_LAB_MODULES
     elif dtype.startswith("combined-"):
         expected |= _C2_MODULES
         expected |= _GOAD_MODULES

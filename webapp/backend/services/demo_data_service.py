@@ -31,6 +31,16 @@ DEMO_PROJECT = "demo"
 # Unique sentinel used by is_demo_project + route short-circuits.
 DEMO_DEPLOYMENT_TYPE = "demo"
 DEMO_LAB_NAME = "demo"
+# CCRTS-Lab demo — a second showcase row that models the self-contained
+# exam-mirror lab (no C2 infra). Surfaces in the deployments dropdown
+# alongside the original c2-adhoc demo so operators preparing for the
+# CREST CCRTS exam can poke at the lab UX without provisioning AWS.
+DEMO_CCRTS_PROJECT = "demo-ccrts"
+DEMO_CCRTS_DEPLOYMENT_TYPE = "demo"   # same sentinel — is_demo_project gates everything off the literal name
+DEMO_CCRTS_MODELS_DEPLOYMENT_TYPE = "ccrts-full"
+DEMO_CCRTS_MODELS_DESCRIPTION = (
+    "CCRTS exam-mirror lab (ccrts-full) — Kali + Win11 + DC + AD-joined WS + ELK"
+)
 # The real-world architecture the demo models — surfaces in the Manage
 # hero + topology badge so the operator knows "this is what you'd get
 # from a c2-adhoc deployment with enable_test_lab=true". The CS REST API
@@ -201,6 +211,163 @@ def deployment_state() -> dict[str, Any]:
             "c2_server_port": 50050,
             "c2_listener_port": 443,
         },
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# CCRTS-Lab demo deployment
+# ──────────────────────────────────────────────────────────────────────
+
+def deployment_state_ccrts() -> dict[str, Any]:
+    """Synthetic ccrts-full deployment record.
+
+    Mirrors the production CCRTS lab inventory exactly:
+
+      * ccrts-kali       192.168.57.20  (Kali on CREST AMI, CS-on-Kali)
+      * ccrts-win-ws     192.168.57.30  (Win11 / Server 2022 workstation)
+      * ccrts-dc01       192.168.57.40  (Server 2022, DC for ccrts.local)
+      * ccrts-ad-ws01    192.168.57.41  (Win11, AD-joined workstation)
+      * ccrts-elk        192.168.57.50  (Ubuntu 22.04, ELK 8.19)
+
+    Bastion is intentionally absent — the dashboard server IS the jump
+    for CCRTS deployments. All operator access tunnels are described in
+    the output bundle as ``ssh -L <port>:<lab-host>:<port> ubuntu@<dashboard-eip>``.
+
+    UX contract: pure ccrts-* deployments do NOT support bolt-ons or
+    operations (CS lives on Kali, not on a separate team server). The
+    frontend keys off the ``category`` field below to suppress those
+    sub-pills — same mechanism as goad-only deployments.
+    """
+    now = _now()
+    now_ts = now.timestamp()
+    return {
+        "project_name": DEMO_CCRTS_PROJECT,
+        "_filename": DEMO_CCRTS_PROJECT,
+        "deployment_type": DEMO_CCRTS_DEPLOYMENT_TYPE,
+        "models_deployment_type": DEMO_CCRTS_MODELS_DEPLOYMENT_TYPE,
+        "models_description": DEMO_CCRTS_MODELS_DESCRIPTION,
+        "status": "success",
+        "step": "complete",
+        # Category flag the frontend reads to decide whether Operations
+        # / Bolt-ons sub-pills are visible (`ccrts-only` → hide; `combined`
+        # → show because the C2 side is present; `c2-only` / `goad-only`
+        # follow the existing patterns).
+        "category": "ccrts-only",
+        "output": {
+            "vpc_id": {"value": "vpc-demo-ccrts-0001", "type": "string"},
+            "vpc_cidr": {"value": "192.168.57.0/24", "type": "string"},
+            "deployment_type": {
+                "value": DEMO_CCRTS_MODELS_DEPLOYMENT_TYPE,
+                "type": "string",
+            },
+            # Inventory of lab VMs — used by the Manage hero to paint the
+            # host roster. Each entry mirrors what an operator would see
+            # after a real ccrts-full apply.
+            "lab_vms": {
+                "value": [
+                    {
+                        "name": "ccrts-kali",
+                        "role": "kali_attacker",
+                        "os": "Kali Linux (CREST CCRTS AMI)",
+                        "private_ip": "192.168.57.20",
+                        "instance_id": "i-democcrtskali01",
+                        "notes": "CS-on-Kali pre-installed; operator SSH target",
+                    },
+                    {
+                        "name": "ccrts-win-ws",
+                        "role": "workstation",
+                        "os": "Windows 11 / Server 2022",
+                        "private_ip": "192.168.57.30",
+                        "instance_id": "i-democcrtsws01",
+                        "notes": "Local admin: goadmin / P@ssw0rd1!",
+                    },
+                    {
+                        "name": "ccrts-dc01",
+                        "role": "domain_controller",
+                        "os": "Windows Server 2022",
+                        "private_ip": "192.168.57.40",
+                        "instance_id": "i-democcrtsdc01",
+                        "notes": "DC for ccrts.local — only present in ccrts-full",
+                    },
+                    {
+                        "name": "ccrts-ad-ws01",
+                        "role": "ad_workstation",
+                        "os": "Windows 11",
+                        "private_ip": "192.168.57.41",
+                        "instance_id": "i-democcrtsadws01",
+                        "notes": "Domain-joined ccrts.local — only in ccrts-full",
+                    },
+                    {
+                        "name": "ccrts-elk",
+                        "role": "siem",
+                        "os": "Ubuntu 22.04",
+                        "private_ip": "192.168.57.50",
+                        "instance_id": "i-democcrtselk01",
+                        "notes": "ELK 8.19 on :9200 (ES) / :5601 (Kibana)",
+                    },
+                ],
+                "type": "list",
+            },
+            # Operator access — every tunnel routes through the dashboard
+            # server's EIP. The literal `<dashboard-eip>` placeholder is
+            # rendered as-is in the UI so the operator copies + substitutes.
+            "kali_ssh_tunnel_cmd": {
+                "value": "ssh -L 2222:192.168.57.20:22 ubuntu@<dashboard-eip>",
+                "type": "string",
+            },
+            "windows_rdp_tunnel_cmd": {
+                "value": "ssh -L 33389:192.168.57.30:3389 ubuntu@<dashboard-eip>",
+                "type": "string",
+            },
+            "dc_winrm_tunnel_cmd": {
+                "value": "ssh -L 55985:192.168.57.40:5985 ubuntu@<dashboard-eip>",
+                "type": "string",
+            },
+            "ad_workstation_winrm_tunnel_cmd": {
+                "value": "ssh -L 55986:192.168.57.41:5985 ubuntu@<dashboard-eip>",
+                "type": "string",
+            },
+            "kibana_tunnel_cmd": {
+                "value": "ssh -L 5601:192.168.57.50:5601 ubuntu@<dashboard-eip>",
+                "type": "string",
+            },
+        },
+        "output_summary": (
+            "demo-ccrts — synthetic CCRTS exam-mirror lab "
+            "(5 VMs on 192.168.57.0/24, dashboard-routed access)"
+        ),
+        "error": None,
+        "started_at": now_ts - 90 * 60,           # 90m ago
+        "completed_at": now_ts - 75 * 60,         # 75m ago
+        "progress_percent": 100,
+        "current_phase": "operational",
+        "phases_completed": [
+            "vpc", "security", "iam", "ccrts_lab",
+            "ami_copy", "ad_provisioning", "elk_bootstrap",
+        ],
+        "logs": [],
+        "total_resources": 32,
+        "resources_completed": 32,
+        "aws_region": "eu-central-1",
+        # Top-level flat outputs for the legacy topology overlay (same
+        # convention as deployment_state()).
+        "outputs": {
+            "project_name": DEMO_CCRTS_PROJECT,
+            "deployment_type": DEMO_CCRTS_MODELS_DEPLOYMENT_TYPE,
+            "aws_region": "eu-central-1",
+            "vpc_id": "vpc-demo-ccrts-0001",
+            "vpc_cidr": "192.168.57.0/24",
+            "ccrts_kali_private_ip": "192.168.57.20",
+            "ccrts_win_ws_private_ip": "192.168.57.30",
+            "ccrts_dc01_private_ip": "192.168.57.40",
+            "ccrts_ad_ws01_private_ip": "192.168.57.41",
+            "ccrts_elk_private_ip": "192.168.57.50",
+            "ccrts_lab_domain": "ccrts.local",
+        },
+        "is_demo": True,
+        # Echoes `category` at the top level so legacy resolvers that
+        # haven't been updated still see the flag.
+        "ccrts_only": True,
     }
 
 
@@ -588,6 +755,10 @@ def is_demo_project(project_name: str | None) -> bool:
     # Path A — literal "demo".
     if lower == DEMO_PROJECT:
         seed_demo_audit_entries()
+        return True
+    # Path A2 — CCRTS-Lab showcase row (demo-ccrts). Same in-memory
+    # treatment as the original demo: no AWS calls, no terraform.
+    if lower == DEMO_CCRTS_PROJECT:
         return True
     # Path B — demo-draft-* walkthrough deployments.
     # Pattern is intentionally permissive: lower-cased letters, digits,

@@ -100,6 +100,59 @@ DEPLOYMENT_TYPE_MAP = {
         'requires_cs': True,
         'description': 'C2 Full + GOAD Full (Full C2 + GOAD Lab)',
     },
+
+    # CCRTS-Lab modes (CREST CCRTS exam preparation)
+    # Pure ccrts-* runs CS-on-Kali from the CREST Community AMI — no
+    # separate team server / redirector / domain. Bolt-ons + operations
+    # surfaces are disabled in the dashboard.
+    'ccrts-mini': {
+        'type': 'ccrts-only',
+        'ccrts_lab': 'CCRTS-Mini',
+        'requires_domain': False,
+        'requires_cs': False,
+        'supports_boltons': False,
+        'supports_operations': False,
+        'description': 'CCRTS Mini (4 hosts: Kali + Win-WS + ELK + NAT)',
+    },
+    'ccrts-full': {
+        'type': 'ccrts-only',
+        'ccrts_lab': 'CCRTS-Full',
+        'requires_domain': False,
+        'requires_cs': False,
+        'supports_boltons': False,
+        'supports_operations': False,
+        'description': 'CCRTS Full (6 hosts: +DC + AD-joined WS on ccrts.local)',
+    },
+    'combined-adhoc-ccrts-mini': {
+        'type': 'combined-ccrts',
+        'c2_mode': 'single',
+        'ccrts_lab': 'CCRTS-Mini',
+        'requires_domain': True,
+        'requires_cs': True,
+        'supports_boltons': True,
+        'supports_operations': True,
+        'description': 'C2 Ad-Hoc + CCRTS Mini (Full C2 + CCRTS Lab via VPC peering)',
+    },
+    'combined-adhoc-ccrts-full': {
+        'type': 'combined-ccrts',
+        'c2_mode': 'single',
+        'ccrts_lab': 'CCRTS-Full',
+        'requires_domain': True,
+        'requires_cs': True,
+        'supports_boltons': True,
+        'supports_operations': True,
+        'description': 'C2 Ad-Hoc + CCRTS Full (Full C2 + CCRTS Lab via VPC peering)',
+    },
+    'combined-full-ccrts-full': {
+        'type': 'combined-ccrts',
+        'c2_mode': 'phases',
+        'ccrts_lab': 'CCRTS-Full',
+        'requires_domain': True,
+        'requires_cs': True,
+        'supports_boltons': True,
+        'supports_operations': True,
+        'description': 'C2 Full + CCRTS Full (Phase C2 + CCRTS Lab via VPC peering)',
+    },
 }
 
 
@@ -178,6 +231,19 @@ class ConfigParser:
             'Proxy/Redirector Configuration': ['proxy_redirector_count', 'proxy_redirector_instance_type', 'proxy_redirector_ami_id', 'proxy_redirector_root_volume_size', 'proxy_redirector_iam_instance_profile_name', 'proxy_redirector_user_data', 'malleable_profile', 'custom_profile_content', 'custom_c2_uris', 'decoy_theme'],
             'File Portal Configuration': ['enable_file_portal', 'portal_username', 'portal_password', 'portal_session_timeout'],
             'Attack Box Configuration': ['enable_attack_box', 'attack_box_instance_type', 'attack_box_root_volume_size', 'attack_box_admin_password'],
+            'CCRTS Lab Configuration': [
+                'enable_ccrts_lab',
+                'ccrts_lab_size',
+                'ccrts_vpc_cidr',
+                'ccrts_public_subnet_cidr',
+                'ccrts_private_subnet_cidr',
+                'ccrts_dc_admin_password',
+                'ccrts_low_priv_password',
+                'ccrts_windows_admin_password',
+                'crest_kali_ami_override',
+                'crest_windows_ami_override',
+                'crest_ami_source_region',
+            ],
             'Tools Configuration': ['tools_repo_url', 'tools_repo_branch', 'tools_repo_ssh_key', 'tools_repo_https_token'],
             'Monitoring Configuration': ['enable_detailed_monitoring'],
             'Tags': ['tags'],

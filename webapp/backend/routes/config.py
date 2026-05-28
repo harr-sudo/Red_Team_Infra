@@ -311,6 +311,46 @@ def get_templates():
             "c2_server_count": 3,
             "c2_server_instance_type": "t3.medium",
         },
+        # CCRTS-Lab templates — pure lab + combined-*-ccrts variants.
+        # The ccrts_lab_size knob is mirrored from deployment_type so the
+        # terraform module picks the right host count without operators
+        # having to set both fields by hand.
+        "ccrts-mini": {
+            "deployment_type": "ccrts-mini",
+            "ccrts_lab_size": "ccrts-mini",
+            "ccrts_vpc_cidr": "192.168.57.0/24",
+            "project_name": "ccrts_mini_dev_lab_01",
+        },
+        "ccrts-full": {
+            "deployment_type": "ccrts-full",
+            "ccrts_lab_size": "ccrts-full",
+            "ccrts_vpc_cidr": "192.168.57.0/24",
+            "project_name": "ccrts_full_dev_lab_01",
+        },
+        "combined-adhoc-ccrts-mini": {
+            "deployment_type": "combined-adhoc-ccrts-mini",
+            "c2_server_count": 1,
+            "c2_server_instance_type": "t3.medium",
+            "ccrts_lab_size": "ccrts-mini",
+            "ccrts_vpc_cidr": "192.168.57.0/24",
+            "enable_ccrts_lab": False,
+        },
+        "combined-adhoc-ccrts-full": {
+            "deployment_type": "combined-adhoc-ccrts-full",
+            "c2_server_count": 1,
+            "c2_server_instance_type": "t3.medium",
+            "ccrts_lab_size": "ccrts-full",
+            "ccrts_vpc_cidr": "192.168.57.0/24",
+            "enable_ccrts_lab": False,
+        },
+        "combined-full-ccrts-full": {
+            "deployment_type": "combined-full-ccrts-full",
+            "c2_server_count": 3,
+            "c2_server_instance_type": "t3.medium",
+            "ccrts_lab_size": "ccrts-full",
+            "ccrts_vpc_cidr": "192.168.57.0/24",
+            "enable_ccrts_lab": False,
+        },
     }
 
     return jsonify({

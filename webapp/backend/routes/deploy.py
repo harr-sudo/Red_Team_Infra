@@ -260,7 +260,10 @@ def get_active_deployments():
                 continue
 
     deployments.sort(key=lambda d: d.get("completed_at", 0), reverse=True)
-    # Synthetic demo deployment — first row so it's the natural showcase.
+    # Synthetic demo deployments — both prepended so they're the first
+    # two rows of the showcase. Order: c2-adhoc demo first (matches the
+    # historical "demo" entry operators are used to), CCRTS demo second.
+    deployments.insert(0, demo_data_service.deployment_state_ccrts())
     deployments.insert(0, demo_data_service.deployment_state())
 
     return jsonify({"success": True, "deployments": deployments})
@@ -2306,12 +2309,28 @@ def deploy():
     GOAD_ONLY_TYPES = ['goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha']
     C2_ONLY_TYPES = ['c2-adhoc', 'c2-purple', 'c2-full']
     COMBINED_TYPES = ['combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full']
-    
-    # All deployments with CS need the CS file uploaded
-    requires_cobalt_strike = True
-    
-    # Only C2 and Combined need domain
-    requires_domain = deployment_type in C2_ONLY_TYPES or deployment_type in COMBINED_TYPES
+    # CCRTS-Lab: pure ccrts-* ships its own CS-on-Kali (no upload), no
+    # public domain. combined-*-ccrts-* keeps the C2-side prereqs.
+    CCRTS_ONLY_TYPES = ['ccrts-mini', 'ccrts-full']
+    COMBINED_CCRTS_TYPES = [
+        'combined-adhoc-ccrts-mini',
+        'combined-adhoc-ccrts-full',
+        'combined-full-ccrts-full',
+    ]
+
+    is_ccrts_only = deployment_type in CCRTS_ONLY_TYPES
+
+    # All deployments with CS need the CS file uploaded — EXCEPT pure
+    # ccrts-* which boot CS from the CREST Community Kali AMI directly.
+    requires_cobalt_strike = not is_ccrts_only
+
+    # Only C2 / Combined / combined-ccrts need a public domain. Pure
+    # ccrts-* is internal-only behind the dashboard server jump.
+    requires_domain = (
+        deployment_type in C2_ONLY_TYPES
+        or deployment_type in COMBINED_TYPES
+        or deployment_type in COMBINED_CCRTS_TYPES
+    )
     
     # Check prerequisite: Cobalt Strike file
     if requires_cobalt_strike:
