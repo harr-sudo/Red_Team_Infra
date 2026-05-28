@@ -266,6 +266,39 @@
     </header>
 
     <nav class="hub-sidebar" aria-label="Demo navigation">
+        <!-- Bolt-on walkthrough — 4 alternative layouts (compare side-by-side) -->
+        <section class="hub-sidebar__section hub-sidebar__section-decision">
+            <span class="hub-sidebar__section-label">Bolt-on walkthrough (compare layouts)<span class="hub-sidebar__pending-pill">DECISION PENDING</span></span>
+            <button class="hub-sidebar__item" data-url="/preview/bolton-walkthrough-a-modal.html"
+                    data-title="Walkthrough A — Current overlay modal"
+                    data-eyebrow="BOLT-ON WALKTHROUGH · A · MODAL"
+                    data-hypothesis="Status quo: bolt-on catalog visible behind a scrim-backed modal overlay (~1180px wide centered card). Shows what we have today — step rail + tabs + article + footer all inside the modal.">
+                <span class="hub-sidebar__item-name">A · Current modal overlay</span>
+                <span class="hub-sidebar__item-hint">Status quo · scrim + 1180px card</span>
+            </button>
+            <button class="hub-sidebar__item is-pick" data-url="/preview/bolton-walkthrough-b-fullswap.html"
+                    data-title="Walkthrough B — Full content swap (Recommended)"
+                    data-eyebrow="BOLT-ON WALKTHROUGH · B · FULL SWAP"
+                    data-hypothesis="Catalog is REPLACED by the walkthrough in the same content column. Breadcrumb back to catalog, step-dots top-right, full-width article, footer with Next + Mark complete. No overlay, no scrim.">
+                <span class="hub-sidebar__item-name">B · Full content swap (Recommended)</span>
+                <span class="hub-sidebar__item-hint">★ Picked direction · full-width article + breadcrumb</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/bolton-walkthrough-c-split.html"
+                    data-title="Walkthrough C — Split panel (catalog + walkthrough)"
+                    data-eyebrow="BOLT-ON WALKTHROUGH · C · SPLIT"
+                    data-hypothesis="38% catalog on the left (filter chips, host selector, 7-8 vuln rows) · 62% walkthrough on the right. Both panes scroll independently — pick a different vuln without losing your place.">
+                <span class="hub-sidebar__item-name">C · Split panel</span>
+                <span class="hub-sidebar__item-hint">38/62 columns · independent scroll</span>
+            </button>
+            <button class="hub-sidebar__item" data-url="/preview/bolton-walkthrough-d-stacked.html"
+                    data-title="Walkthrough D — Stacked / dockable (devtools-style)"
+                    data-eyebrow="BOLT-ON WALKTHROUGH · D · STACKED"
+                    data-hypothesis="Top 35% = catalog table · drag handle · bottom 65% = walkthrough. Mirrors browser devtools — catalog stays scannable while the active walkthrough is always in view below.">
+                <span class="hub-sidebar__item-name">D · Stacked devtools</span>
+                <span class="hub-sidebar__item-hint">35/65 rows · visible drag handle</span>
+            </button>
+        </section>
+
         <!-- Configure flow redesign (NEW) — 3 structurally distinct shapes -->
         <section class="hub-sidebar__section hub-sidebar__section-decision">
             <span class="hub-sidebar__section-label">Configure flow redesign (NEW)<span class="hub-sidebar__pending-pill">DECISION PENDING</span></span>

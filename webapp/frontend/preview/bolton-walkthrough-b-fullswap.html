@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Bolt-on walkthrough · B — Full content swap (recommended)</title>
+    <link rel="stylesheet" href="/css/palette.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ════════════════════════════════════════════════════════════════════
+           BOLT-ON WALKTHROUGH — LAYOUT B · FULL CONTENT SWAP (Recommended)
+           Dials: 5/6/5. Walkthrough takes the full content column.
+           Chrome (top bar + left rail + sub-pill strip) is identical to A/C/D.
+           ════════════════════════════════════════════════════════════════════ */
+
+        :root {
+            --rti-topbar-h:   50px;
+            --rti-rail-w:     220px;
+            --rti-subpill-h:  44px;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            min-height: 100%;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            font-family: var(--font-family-base);
+            font-size: var(--font-size-base);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* ── DEMO LABEL STRIP ─────────────────────────────────────────── */
+        .demo-label {
+            position: fixed;
+            top: calc(var(--rti-topbar-h) + 6px);
+            left: calc(var(--rti-rail-w) + 14px);
+            z-index: 60;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 10px;
+            background: var(--guide-accent-soft);
+            border: 1px solid color-mix(in srgb, var(--guide-accent) 40%, transparent);
+            border-radius: 999px;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--guide-accent-text);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            pointer-events: none;
+        }
+        .demo-label__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--guide-accent); }
+
+        /* ── TOP BAR ─────────────────────────────────────────────────── */
+        .rti-topbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--rti-topbar-h);
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 22px;
+            z-index: 100;
+        }
+        .rti-topbar__brand { display: flex; align-items: center; gap: 12px; }
+        .rti-topbar__mark {
+            width: 22px; height: 22px;
+            border: 1.5px solid var(--brand-light);
+            border-radius: 5px;
+            position: relative;
+        }
+        .rti-topbar__mark::after {
+            content: ""; position: absolute; inset: 5px;
+            background: var(--brand-light); border-radius: 2px;
+        }
+        .rti-topbar__title {
+            font-family: var(--font-family-mono);
+            font-size: 11.5px; font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 0.14em; text-transform: uppercase;
+        }
+        .rti-topbar__chip {
+            display: inline-flex; align-items: center; gap: 7px;
+            padding: 4px 10px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 999px;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px; font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: 0.06em;
+        }
+        .rti-topbar__chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--guide-accent); }
+        .rti-topbar__actions { display: flex; align-items: center; gap: 10px; }
+        .rti-topbar__user {
+            font-family: var(--font-family-mono);
+            font-size: 11px; color: var(--text-secondary); letter-spacing: 0.04em;
+        }
+        .rti-topbar__user strong { color: var(--text-primary); font-weight: 600; }
+        .rti-topbar__kbd {
+            font-family: var(--font-family-mono); font-size: 10.5px;
+            color: var(--text-secondary);
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px; padding: 2px 6px;
+        }
+        .rti-topbar__theme {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-primary);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px; font-weight: 600;
+            letter-spacing: 0.08em; text-transform: uppercase;
+            padding: 5px 9px; border-radius: 5px; cursor: pointer;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .rti-topbar__theme:hover { border-color: var(--brand-light); }
+
+        /* ── LEFT RAIL ───────────────────────────────────────────────── */
+        .rti-rail {
+            position: fixed;
+            top: var(--rti-topbar-h);
+            left: 0; bottom: 0;
+            width: var(--rti-rail-w);
+            background: var(--bg-section);
+            border-right: 1px solid var(--border-subtle);
+            display: flex; flex-direction: column;
+            padding: 14px 12px; gap: 2px;
+            z-index: 90; overflow-y: auto;
+        }
+        .rti-rail__group {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px; font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em; text-transform: uppercase;
+            padding: 10px 10px 6px;
+        }
+        .rti-rail__item {
+            appearance: none; background: transparent; border: 0;
+            position: relative;
+            display: flex; align-items: center; gap: 10px;
+            padding: 8px 12px;
+            color: var(--text-secondary);
+            font-family: inherit;
+            font-size: 13px; font-weight: 500;
+            border-radius: 6px; cursor: pointer;
+            text-align: left; width: 100%;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .rti-rail__item:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+        .rti-rail__item.is-active {
+            background: var(--bg-card-hover); color: var(--text-primary); font-weight: 600;
+        }
+        .rti-rail__item.is-active::before {
+            content: ""; position: absolute;
+            left: -12px; top: 8px; bottom: 8px;
+            width: 2px; border-radius: 0 2px 2px 0;
+            background: var(--brand-light);
+        }
+        .rti-rail__icon { width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; color: currentColor; }
+        .rti-rail__label { flex: 1; white-space: nowrap; }
+        .rti-rail__caret {
+            width: 6px; height: 6px;
+            border-right: 1.4px solid currentColor;
+            border-bottom: 1.4px solid currentColor;
+            transform: rotate(45deg); opacity: 0.55;
+        }
+        .rti-rail__children { display: flex; flex-direction: column; margin: 4px 0 8px; }
+        .rti-rail__child {
+            appearance: none; background: transparent; border: 0;
+            position: relative;
+            display: flex; align-items: center;
+            margin: 1px 0; padding: 6px 10px 6px 36px;
+            font-family: inherit; font-size: 12.5px; font-weight: 500;
+            color: var(--text-secondary);
+            border-radius: 5px; cursor: pointer;
+            text-align: left; width: 100%;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .rti-rail__child:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+        .rti-rail__child.is-active {
+            background: var(--bg-card-hover); color: var(--text-primary); font-weight: 600;
+        }
+
+        /* ── CONTENT WRAPPER ─────────────────────────────────────────── */
+        .rti-content {
+            margin-left: var(--rti-rail-w);
+            padding-top: var(--rti-topbar-h);
+            min-height: 100vh;
+            display: flex; flex-direction: column;
+        }
+
+        /* ── SUB-PILL STRIP ─────────────────────────────────────────── */
+        .rti-subnav {
+            height: var(--rti-subpill-h);
+            background: var(--bg-container);
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex; align-items: center; gap: 6px;
+            padding: 0 22px;
+            position: sticky;
+            top: var(--rti-topbar-h);
+            z-index: 80;
+        }
+        .rti-subpill {
+            appearance: none;
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 11px; font-weight: 600;
+            letter-spacing: 0.08em; text-transform: uppercase;
+            padding: 6px 12px; border-radius: 999px;
+            cursor: pointer;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard),
+                        color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .rti-subpill:hover { color: var(--text-primary); border-color: var(--border-subtle); }
+        .rti-subpill.is-active {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            border-color: var(--brand-light);
+            box-shadow: inset 0 -2px 0 var(--brand-light);
+        }
+        .rti-subpill__sep {
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 11px; opacity: 0.4; padding: 0 2px;
+        }
+
+        /* ════════════════════════════════════════════════════════════
+           B-SPECIFIC: full-width walkthrough surface
+           ════════════════════════════════════════════════════════════ */
+        .bw-shell {
+            flex: 1;
+            max-width: 1180px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 28px 32px 64px;
+            animation: bw-fade-in 280ms var(--motion-easing-enter) both;
+        }
+        @keyframes bw-fade-in {
+            from { opacity: 0; transform: translateY(4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ── BREADCRUMB ─────────────────────────────────────────────── */
+        .bw-crumb {
+            display: flex; align-items: center; gap: 8px;
+            margin-bottom: 18px;
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+        .bw-crumb__link {
+            appearance: none; background: transparent; border: 0;
+            color: var(--text-secondary);
+            font: inherit;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            text-decoration: none;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .bw-crumb__link:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+        .bw-crumb__sep { opacity: 0.5; }
+        .bw-crumb__current { color: var(--text-primary); }
+
+        /* ── PAGE HEAD ──────────────────────────────────────────────── */
+        .bw-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 24px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 22px;
+        }
+        .bw-head__text {
+            min-width: 0; flex: 1;
+        }
+        .bw-eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px; font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.14em; text-transform: uppercase;
+            display: block; margin-bottom: 6px;
+        }
+        .bw-title {
+            margin: 0 0 8px;
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.012em;
+            line-height: 1.18;
+        }
+        .bw-subtitle {
+            margin: 0;
+            font-family: var(--font-family-mono);
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+        .bw-subtitle strong { color: var(--text-primary); font-weight: 600; }
+
+        .bw-head__dots {
+            display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+        }
+        .bw-dots {
+            display: inline-flex; align-items: center; gap: 6px;
+        }
+        .bw-dot {
+            width: 9px; height: 9px;
+            border-radius: 50%;
+            background: var(--bg-card-hover);
+            border: 1px solid var(--border-subtle);
+        }
+        .bw-dot.is-done { background: var(--guide-accent); border-color: var(--guide-accent); }
+        .bw-dot.is-current {
+            background: var(--guide-accent); border-color: var(--guide-accent);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--guide-accent) 25%, transparent);
+        }
+        .bw-dots__label {
+            font-family: var(--font-family-mono);
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.06em;
+        }
+
+        /* ── TABS ───────────────────────────────────────────────────── */
+        .bw-tabs {
+            display: flex; gap: 4px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 22px;
+        }
+        .bw-tab {
+            appearance: none; background: transparent;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            color: var(--text-secondary);
+            font-family: var(--font-family-mono);
+            font-size: 11px; font-weight: 600;
+            letter-spacing: 0.08em; text-transform: uppercase;
+            padding: 9px 14px 11px;
+            cursor: pointer;
+            transition: color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .bw-tab:hover { color: var(--text-primary); }
+        .bw-tab.is-active {
+            color: var(--text-primary);
+            border-bottom-color: var(--brand-light);
+        }
+
+        /* ── ARTICLE BODY (full width, generous whitespace) ─────────── */
+        .bw-article {
+            max-width: 760px;
+        }
+        .bw-article__head {
+            display: flex; align-items: baseline; justify-content: space-between;
+            gap: 12px; margin-bottom: 4px;
+        }
+        .bw-article__eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px; font-weight: 600;
+            color: var(--guide-accent-text);
+            letter-spacing: 0.14em; text-transform: uppercase;
+        }
+        .bw-article__time {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+        .bw-article__title {
+            margin: 6px 0 18px;
+            font-size: 19px; font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.005em;
+        }
+        .bw-article p {
+            color: var(--text-primary);
+            line-height: 1.65;
+            margin: 8px 0 14px;
+            font-size: 14px;
+        }
+        .bw-article code {
+            background: var(--bg-card-hover);
+            border: 1px solid var(--border-subtle);
+            border-radius: 3px;
+            padding: 1px 5px;
+            font-family: var(--font-family-mono);
+            font-size: 12.5px;
+            color: var(--text-primary);
+        }
+        .bw-article pre {
+            background: var(--bg-terminal);
+            color: var(--text-terminal);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 12px 14px;
+            margin: 10px 0 18px;
+            font-family: var(--font-family-mono);
+            font-size: 12.5px;
+            line-height: 1.55;
+            overflow-x: auto;
+        }
+        .bw-article pre code {
+            background: transparent; border: 0; padding: 0; color: inherit; font-size: 12.5px;
+        }
+        .bw-article__callout {
+            display: flex; flex-direction: column; gap: 6px;
+            margin: 18px 0;
+            padding: 14px 16px;
+            background: var(--guide-accent-soft);
+            border: 1px solid color-mix(in srgb, var(--guide-accent) 40%, transparent);
+            border-left: 3px solid var(--guide-accent);
+            border-radius: var(--radius-sm);
+        }
+        .bw-article__callout-eyebrow {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px; font-weight: 700;
+            color: var(--guide-accent-text);
+            letter-spacing: 0.12em; text-transform: uppercase;
+        }
+        .bw-article__callout p { margin: 0; font-size: 13px; }
+        .bw-article__callout a {
+            color: var(--guide-accent-text);
+            text-decoration: underline; text-underline-offset: 3px;
+        }
+        .bw-article__quote {
+            margin: 14px 0;
+            padding: 12px 16px;
+            background: var(--bg-card-hover);
+            border-left: 3px solid var(--brand-light);
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+        .bw-article__quote strong { color: var(--text-primary); }
+
+        /* ── ASSESSMENT ─────────────────────────────────────────────── */
+        .bw-quiz {
+            margin-top: 28px;
+            padding: 16px 18px;
+            background: var(--bg-card-hover);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+        }
+        .bw-quiz__heading {
+            margin: 0 0 8px;
+            font-family: var(--font-family-mono);
+            font-size: 10px; font-weight: 700;
+            color: var(--text-secondary);
+            letter-spacing: 0.12em; text-transform: uppercase;
+        }
+        .bw-quiz__q {
+            margin: 0 0 12px;
+            font-size: 14px;
+            color: var(--text-primary);
+            font-weight: 500; line-height: 1.5;
+        }
+        .bw-quiz__opts { display: flex; flex-direction: column; gap: 8px; }
+        .bw-quiz__opt {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-primary);
+            padding: 10px 12px;
+            border-radius: var(--radius-sm);
+            text-align: left;
+            font-family: inherit;
+            font-size: 13px;
+            cursor: pointer;
+            display: flex; align-items: center; gap: 10px;
+            transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                        border-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .bw-quiz__opt:hover { background: var(--bg-card-hover); border-color: var(--brand-light); }
+        .bw-quiz__opt-marker {
+            width: 22px; height: 22px;
+            flex-shrink: 0;
+            border-radius: 50%;
+            background: var(--bg-card-hover);
+            border: 1px solid var(--border-subtle);
+            display: inline-flex; align-items: center; justify-content: center;
+            font-family: var(--font-family-mono);
+            font-size: 10.5px; font-weight: 700;
+            color: var(--text-secondary);
+        }
+
+        /* ── FOOTER ─────────────────────────────────────────────────── */
+        .bw-foot {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-top: 32px;
+            padding-top: 18px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .bw-foot__hint {
+            font-family: var(--font-family-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+        .bw-btn {
+            appearance: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 12.5px; font-weight: 600;
+            padding: 9px 16px;
+            border-radius: 6px; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 7px;
+            transition: border-color var(--motion-duration-base) var(--motion-easing-standard),
+                        background-color var(--motion-duration-base) var(--motion-easing-standard);
+        }
+        .bw-btn:hover { border-color: var(--brand-light); background: var(--bg-card-hover); }
+        .bw-btn--primary {
+            background: var(--brand-light); color: var(--text-on-primary); border-color: var(--brand-light);
+        }
+        .bw-btn--primary:hover { background: var(--brand); border-color: var(--brand); }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.001ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.001ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- ── TOP BAR (identical across A/B/C/D) ───────────────────────── -->
+    <header class="rti-topbar">
+        <div class="rti-topbar__brand">
+            <span class="rti-topbar__mark" aria-hidden="true"></span>
+            <span class="rti-topbar__title">Red Team Infra</span>
+            <span class="rti-topbar__chip">
+                <span class="rti-topbar__chip-dot" aria-hidden="true"></span>
+                demo
+            </span>
+        </div>
+        <div class="rti-topbar__actions">
+            <span class="rti-topbar__user"><strong>harriss</strong>@dashboard-01</span>
+            <span class="rti-topbar__kbd">⌘K</span>
+            <button class="rti-topbar__theme" type="button"
+                    onclick="document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme')==='light'?'dark':'light')">Theme</button>
+        </div>
+    </header>
+
+    <!-- ── LEFT RAIL ────────────────────────────────────────────────── -->
+    <nav class="rti-rail" aria-label="App navigation">
+        <span class="rti-rail__group">Workspace</span>
+        <button class="rti-rail__item" type="button">
+            <span class="rti-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="8.5" y="1.5" width="6" height="3" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="8.5" y="5.5" width="6" height="9" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="1.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+            </svg></span>
+            <span class="rti-rail__label">Dashboard</span>
+        </button>
+        <button class="rti-rail__item is-active" type="button" aria-expanded="true">
+            <span class="rti-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="1.5" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <rect x="1.5" y="10" width="13" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/>
+                <circle cx="4" cy="3.75" r="0.7" fill="currentColor"/>
+                <circle cx="4" cy="12.25" r="0.7" fill="currentColor"/>
+            </svg></span>
+            <span class="rti-rail__label">Deployments</span>
+            <span class="rti-rail__caret" aria-hidden="true"></span>
+        </button>
+        <div class="rti-rail__children">
+            <button class="rti-rail__child" type="button">Configure</button>
+            <button class="rti-rail__child" type="button">Deploy</button>
+            <button class="rti-rail__child" type="button">Manage</button>
+            <button class="rti-rail__child" type="button">Cleanup</button>
+            <button class="rti-rail__child is-active" type="button">Bolt-ons</button>
+            <button class="rti-rail__child" type="button">Operations</button>
+        </div>
+        <button class="rti-rail__item" type="button">
+            <span class="rti-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
+                <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg></span>
+            <span class="rti-rail__label">Operations</span>
+        </button>
+        <button class="rti-rail__item" type="button">
+            <span class="rti-rail__icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.3"/>
+                <path d="M8 1.5v1.5M8 13v1.5M14.5 8h-1.5M3 8H1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg></span>
+            <span class="rti-rail__label">Settings</span>
+        </button>
+    </nav>
+
+    <!-- ── CONTENT WRAPPER ──────────────────────────────────────────── -->
+    <div class="rti-content">
+        <div class="rti-subnav" role="tablist" aria-label="Deployment sub-sections">
+            <button class="rti-subpill" type="button">Configure</button>
+            <span class="rti-subpill__sep">·</span>
+            <button class="rti-subpill" type="button">Deploy</button>
+            <span class="rti-subpill__sep">·</span>
+            <button class="rti-subpill" type="button">Manage</button>
+            <span class="rti-subpill__sep">·</span>
+            <button class="rti-subpill" type="button">Cleanup</button>
+            <span class="rti-subpill__sep">·</span>
+            <button class="rti-subpill is-active" type="button" aria-current="page">Bolt-ons</button>
+            <span class="rti-subpill__sep">·</span>
+            <button class="rti-subpill" type="button">Operations</button>
+        </div>
+
+        <span class="demo-label">
+            <span class="demo-label__dot" aria-hidden="true"></span>
+            B — Full content swap
+        </span>
+
+        <!-- ════════════════════════════════════════════════════════════
+             B-SPECIFIC: catalog REPLACED by full-width walkthrough
+             ════════════════════════════════════════════════════════════ -->
+        <main class="bw-shell">
+            <nav class="bw-crumb" aria-label="Breadcrumb">
+                <button class="bw-crumb__link" type="button">← Back to Bolt-ons catalog</button>
+                <span class="bw-crumb__sep">/</span>
+                <span class="bw-crumb__current">Kerberoasting · Walkthrough</span>
+            </nav>
+
+            <header class="bw-head">
+                <div class="bw-head__text">
+                    <span class="bw-eyebrow">Bolt-on walkthrough · TESTLAB</span>
+                    <h1 class="bw-title">Kerberoasting — SPN-to-shell on TESTLAB</h1>
+                    <p class="bw-subtitle">bolton.identity-kerberos.kerberoastable-svc · target <strong>tldc01.testlab.local</strong></p>
+                </div>
+                <div class="bw-head__dots">
+                    <span class="bw-dots" aria-label="Step 1 of 6">
+                        <span class="bw-dot is-current" aria-hidden="true"></span>
+                        <span class="bw-dot" aria-hidden="true"></span>
+                        <span class="bw-dot" aria-hidden="true"></span>
+                        <span class="bw-dot" aria-hidden="true"></span>
+                        <span class="bw-dot" aria-hidden="true"></span>
+                        <span class="bw-dot" aria-hidden="true"></span>
+                    </span>
+                    <span class="bw-dots__label">Step 1 of 6</span>
+                </div>
+            </header>
+
+            <nav class="bw-tabs" role="tablist">
+                <button class="bw-tab is-active" type="button" role="tab" aria-selected="true">Walkthrough</button>
+                <button class="bw-tab" type="button" role="tab">Detections</button>
+                <button class="bw-tab" type="button" role="tab">Install</button>
+            </nav>
+
+            <article class="bw-article">
+                <div class="bw-article__head">
+                    <span class="bw-article__eyebrow">Step 1 · Enumeration</span>
+                    <span class="bw-article__time">≈ 5 min</span>
+                </div>
+                <h2 class="bw-article__title">Enumerate Service Principal Names on testlab.local</h2>
+                <p>
+                    Operating as <code>TESTLAB\jdoe</code> on <code>tlws01</code> (10.99.50.12).
+                    The target SPN sits on <code>tldc01</code> (10.99.50.10) — request a TGS
+                    for any registered service account to expose an RC4 hash crackable offline.
+                </p>
+                <pre><code>GetUserSPNs.py testlab.local/jdoe:Welcome1! -dc-ip 10.99.50.10 -request</code></pre>
+                <p><strong>Expected output:</strong></p>
+                <pre><code>MSSQLSvc/tlms01.testlab.local:1433 → svc_kerb</code></pre>
+
+                <div class="bw-article__callout">
+                    <span class="bw-article__callout-eyebrow">Cobalt Strike BOF alternative</span>
+                    <p>
+                        If the beacon is already on <code>tlws01</code>, skip Impacket and run the
+                        in-process BOF instead — no Python, no PowerShell, no on-disk artifact:
+                    </p>
+                    <pre><code>inline-execute /opt/cobalt-tools/inline_kerberoast.x64.o</code></pre>
+                    <p>
+                        Source: <a href="https://github.com/trustedsec/CS-Situational-Awareness-BOF" rel="noopener">trustedsec/CS-Situational-Awareness-BOF</a>
+                    </p>
+                </div>
+
+                <blockquote class="bw-article__quote">
+                    <strong>Detection that should fire:</strong> Elastic rule
+                    <code>Kerberoasting via Unusual Process</code> (rule UUID
+                    <code>1c01…</code>). Confirm in the Detections tab after the next step.
+                </blockquote>
+
+                <section class="bw-quiz">
+                    <h3 class="bw-quiz__heading">Assessment</h3>
+                    <p class="bw-quiz__q">Why does <code>GetUserSPNs</code> request a TGS for the discovered SPN?</p>
+                    <div class="bw-quiz__opts">
+                        <button class="bw-quiz__opt" type="button"><span class="bw-quiz__opt-marker">A</span> It elevates the requesting user to that service's privileges.</button>
+                        <button class="bw-quiz__opt" type="button"><span class="bw-quiz__opt-marker">B</span> It triggers RC4 TGS issuance which exposes the service account NTLM hash for offline cracking.</button>
+                        <button class="bw-quiz__opt" type="button"><span class="bw-quiz__opt-marker">C</span> It validates that the SPN points to a real service before attempting any exploit.</button>
+                        <button class="bw-quiz__opt" type="button"><span class="bw-quiz__opt-marker">D</span> It forces the KDC to log the request so blue-team detection can be tested.</button>
+                    </div>
+                </section>
+
+                <footer class="bw-foot">
+                    <span class="bw-foot__hint">Pick an answer to unlock <strong>Mark complete</strong></span>
+                    <div style="display:inline-flex;gap:8px;">
+                        <button class="bw-btn" type="button">✓ Mark complete</button>
+                        <button class="bw-btn bw-btn--primary" type="button">⏵ Next: Request the TGS</button>
+                    </div>
+                </footer>
+            </article>
+        </main>
+    </div>
+</body>
+</html>
