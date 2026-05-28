@@ -13648,10 +13648,21 @@ APP.configureV2 = (function () {
             { id: 'goad-full',  label: 'goad-full',  desc: '5 hosts · full lab' },
             { id: 'goad-nha',   label: 'goad-nha',   desc: 'Hacker Academy · 5 hosts' }
         ],
+        // 2026-05-28 — CCRTS family. Self-contained CREST exam-mirror lab.
+        // See [[feedback-deployment-type-two-surfaces]] in memory — any new
+        // family MUST be wired here AND in the #cfg-family-row buttons in
+        // index.html.
+        ccrts: [
+            { id: 'ccrts-mini', label: 'ccrts-mini', desc: '4 hosts · Kali + Win + ELK' },
+            { id: 'ccrts-full', label: 'ccrts-full', desc: '6 hosts · + AD DC + AD-WS on ccrts.local' }
+        ],
         combined: [
-            { id: 'combined-adhoc-mini',  label: 'combined-adhoc-mini',  desc: 'c2-adhoc + goad-mini' },
-            { id: 'combined-adhoc-light', label: 'combined-adhoc-light', desc: 'c2-adhoc + goad-light' },
-            { id: 'combined-full-full',   label: 'combined-full-full',   desc: 'c2-full + goad-full' }
+            { id: 'combined-adhoc-mini',       label: 'combined-adhoc-mini',       desc: 'c2-adhoc + goad-mini' },
+            { id: 'combined-adhoc-light',      label: 'combined-adhoc-light',      desc: 'c2-adhoc + goad-light' },
+            { id: 'combined-full-full',        label: 'combined-full-full',        desc: 'c2-full + goad-full' },
+            { id: 'combined-adhoc-ccrts-mini', label: 'combined-adhoc-ccrts-mini', desc: 'c2-adhoc + ccrts-mini' },
+            { id: 'combined-adhoc-ccrts-full', label: 'combined-adhoc-ccrts-full', desc: 'c2-adhoc + ccrts-full' },
+            { id: 'combined-full-ccrts-full',  label: 'combined-full-ccrts-full',  desc: 'c2-full + ccrts-full' }
         ]
     };
 
@@ -13664,6 +13675,11 @@ APP.configureV2 = (function () {
     const FAMILY_SECTIONS = {
         c2:       ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'testlab', 'attackbox', 'cost'],
         goad:     ['identity', 'network', 'ssh', 'attackbox', 'cost'],
+        // 2026-05-28 — CCRTS uses its own Kali host as the attack platform
+        // (CS-on-Kali from CREST AMI) so no separate attackbox section.
+        // No domain/ssl/c2 (self-contained, no public C2 infra).
+        // No testlab (CCRTS IS the lab — different concept from test_lab).
+        ccrts:    ['identity', 'network', 'ssh', 'cost'],
         combined: ['identity', 'network', 'ssh', 'domain', 'ssl', 'c2', 'testlab', 'attackbox', 'cost']
     };
 
