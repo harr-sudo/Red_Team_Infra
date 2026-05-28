@@ -12997,6 +12997,56 @@ body[data-overlay-depth] .app-topbar {
     letter-spacing: 0.04em;
 }
 
+/* ─── Demo row distinction (2026-05-28) ─────────────────────────────
+   The `demo` showcase + `demo-draft-*` walkthrough rows get a guide-
+   accent left border + DEMO badge so the operator never confuses a
+   synthetic project with a real one in the picker. Same --guide-accent
+   palette used by the walkthrough ribbon + leaf-pane corner pill. */
+.deploy-option--demo {
+    border-left: 2px solid var(--guide-accent);
+    background: color-mix(in srgb, var(--guide-accent) 5%, transparent);
+}
+.deploy-option--demo .global-header__combobox-option-status--demo {
+    background: var(--guide-accent-soft);
+    color: var(--guide-accent-text);
+    border: 1px solid color-mix(in srgb, var(--guide-accent) 40%, transparent);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* Top-bar trigger chip — shown inline before the project name whenever
+   the active deployment is the demo or a demo-draft-*. Always visible
+   so the operator's compass never lies about whether they're in demo. */
+.global-header__combobox-value-demo-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 6px;
+    padding: 1px 7px;
+    background: var(--guide-accent-soft);
+    color: var(--guide-accent-text);
+    border: 1px solid color-mix(in srgb, var(--guide-accent) 40%, transparent);
+    border-radius: 999px;
+    font-family: var(--font-family-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    line-height: 1.4;
+    vertical-align: middle;
+}
+.global-header__combobox-value-demo-chip::before {
+    content: '';
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--guide-accent);
+}
+
 /* Non-selectable divider between sentinel(s) and real deployments. */
 .deploy-option-divider {
     height: 1px;

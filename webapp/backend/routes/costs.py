@@ -114,9 +114,12 @@ def aggregate():
         )
         deployments = list(agg.get('deployments') or [])
         # 2026-05-28 — surface the demo project's synthetic monthly burn
-        # in the aggregate so Dashboard's Cost Trend tile shows a
-        # realistic ~$184/mo entry when the operator is exploring with
-        # the demo deployment active. Real Cost Explorer is never hit.
+        # as a labeled line item so the operator can drill into it from
+        # the picker, but EXCLUDE it from monthly_total so the headline
+        # real-spend number isn't inflated by synthetic data. The
+        # frontend reads monthly_total_demo separately for an "+ X demo"
+        # tag on the Cost Trend tile.
+        demo_monthly = 0.0
         try:
             from webapp.backend.services import demo_data_service
             if hasattr(demo_data_service, "cost_summary"):
@@ -125,19 +128,25 @@ def aggregate():
                     (d.get("project_name") == demo_cost.get("project_name"))
                     for d in deployments
                 ):
+                    demo_monthly = float(demo_cost.get("monthly_total", 0.0) or 0.0)
                     deployments.append({
                         "project_name": demo_cost.get("project_name"),
-                        "monthly": demo_cost.get("monthly_total", 0.0),
+                        "monthly": demo_monthly,
                         "status": "running",
                         "is_demo": True,
                     })
         except Exception:
             # Demo fold-in failures must not break the real aggregate.
             pass
-        monthly_total = sum(float(d.get("monthly", 0) or 0) for d in deployments)
+        monthly_total = sum(
+            float(d.get("monthly", 0) or 0)
+            for d in deployments
+            if not d.get("is_demo")
+        )
         return jsonify({
             'success': True,
             'monthly_total': monthly_total,
+            'monthly_total_demo': demo_monthly,
             'currency': agg.get('currency', 'USD'),
             'deployments': deployments,
             'region_filter': agg.get('region_filter'),

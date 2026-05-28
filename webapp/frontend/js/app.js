@@ -4854,6 +4854,16 @@ async function _refreshGlobalDeployments() {
         if (!APP.activeDeployment.isUserVisibleProject(d.project_name)) return;
         const li = document.createElement('li');
         li.className = 'global-header__combobox-option';
+        // 2026-05-28 — Demo distinction in dropdown. Both flavours of demo
+        // (the static `demo` showcase + the demo-draft-* walkthrough) get
+        // a `--demo` modifier and a guide-accent DEMO badge in place of
+        // the regular running pill — so the operator can never confuse a
+        // synthetic project with a real one in the picker.
+        const _isDemoRow = d.project_name === 'demo'
+            || /^demo-draft-/.test(d.project_name)
+            || d.is_demo === true
+            || d.is_demo_draft === true;
+        if (_isDemoRow) li.className += ' deploy-option--demo';
         li.setAttribute('role', 'option');
         li.id = `global-deploy-option-${idx}`;
         li.dataset.value = d.project_name;
@@ -4865,11 +4875,16 @@ async function _refreshGlobalDeployments() {
         nameSpan.textContent = d.project_name;
         li.appendChild(nameSpan);
 
-        const status = (d.status || 'unknown').toLowerCase();
         const badge = document.createElement('span');
-        badge.className = `global-header__combobox-option-status global-header__combobox-option-status--${status}`;
-        // Active in /api/deploy/active means status === 'success' — treat as running.
-        badge.textContent = status === 'success' ? 'running' : status;
+        if (_isDemoRow) {
+            badge.className = 'global-header__combobox-option-status global-header__combobox-option-status--demo';
+            badge.textContent = 'demo';
+        } else {
+            const status = (d.status || 'unknown').toLowerCase();
+            badge.className = `global-header__combobox-option-status global-header__combobox-option-status--${status}`;
+            // Active in /api/deploy/active means status === 'success' — treat as running.
+            badge.textContent = status === 'success' ? 'running' : status;
+        }
         li.appendChild(badge);
 
         li.addEventListener('mouseenter', () => _setActiveOption(li));
@@ -4892,7 +4907,22 @@ async function _refreshGlobalDeployments() {
     } else if (selected === APP.activeDeployment.ALL_SENTINEL) {
         valueEl.textContent = 'All deployments';
     } else if (selected) {
-        valueEl.textContent = selected;
+        // 2026-05-28 — Demo distinction in the top-bar trigger. Demo +
+        // demo-draft selections render with a small guide-accent DEMO chip
+        // before the project name so the operator always sees "you're in
+        // demo mode" without having to open the picker. textContent → DOM
+        // rewrite so the chip is a real element (not a unicode hack).
+        const _isDemoSel = selected === 'demo' || /^demo-draft-/.test(selected);
+        if (_isDemoSel) {
+            valueEl.textContent = '';
+            const chip = document.createElement('span');
+            chip.className = 'global-header__combobox-value-demo-chip';
+            chip.textContent = 'Demo';
+            valueEl.appendChild(chip);
+            valueEl.appendChild(document.createTextNode(' ' + selected));
+        } else {
+            valueEl.textContent = selected;
+        }
     } else {
         valueEl.textContent = 'Pick a deployment';
     }
