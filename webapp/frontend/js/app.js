@@ -4599,10 +4599,33 @@ APP.startDemoDraftFlow = function () {
     // load-bearing signal once a state file exists.
     APP._demoDraftActive = true;
     APP._demoDraftProject = projectName;
+    // 2026-05-28 — persist to sessionStorage so a mid-tour reload (before
+    // Apply has written a backend state file) doesn't drop the operator
+    // out of the walkthrough. Cleared by APP._clearDemoDraftFlow().
+    try {
+        sessionStorage.setItem('demoDraftActive', '1');
+        sessionStorage.setItem('demoDraftProject', projectName);
+    } catch (_) { /* private browsing — non-fatal */ }
     try { if (APP.demoRibbon && APP.demoRibbon.refresh) APP.demoRibbon.refresh(); } catch (_) {}
     if (typeof APP.navigateTo === 'function') {
         APP.navigateTo('deployments-tab', 'configure');
     }
+};
+
+/**
+ * Tear down the in-memory + sessionStorage demo-draft markers. Called
+ * when the operator explicitly leaves the tour (e.g. switches to a real
+ * deployment from the dropdown). Does NOT delete the backend state
+ * file — that's a Cleanup-action concern.
+ */
+APP._clearDemoDraftFlow = function () {
+    APP._demoDraftActive = false;
+    APP._demoDraftProject = null;
+    try {
+        sessionStorage.removeItem('demoDraftActive');
+        sessionStorage.removeItem('demoDraftProject');
+    } catch (_) {}
+    try { if (APP.demoRibbon && APP.demoRibbon.refresh) APP.demoRibbon.refresh(); } catch (_) {}
 };
 
 APP.startNewDeployment = function () {
@@ -5983,7 +6006,23 @@ if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function'
     // so the operator can never confuse a walkthrough surface with a real
     // deployment. APP.demoRibbon.refresh() can be called directly from
     // startDemoDraftFlow for immediate paint.
-    APP.activeDeployment.subscribe(() => {
+    APP.activeDeployment.subscribe((name) => {
+        // 2026-05-28 — Auto-clear the demo-draft markers when the operator
+        // navigates to anything other than a demo-draft-* project (or the
+        // static 'demo'). Without this, _demoDraftActive=true would persist
+        // after the operator picked a real deployment from the dropdown,
+        // making isDemoDraft() incorrectly return true and painting the
+        // tour ribbon over real infrastructure.
+        const cur = name || '';
+        const isDemoSurface = cur === 'demo' || /^demo-draft-/.test(cur);
+        if (!isDemoSurface && APP._demoDraftActive) {
+            APP._demoDraftActive = false;
+            APP._demoDraftProject = null;
+            try {
+                sessionStorage.removeItem('demoDraftActive');
+                sessionStorage.removeItem('demoDraftProject');
+            } catch (_) {}
+        }
         try { if (APP.demoRibbon && APP.demoRibbon.refresh) APP.demoRibbon.refresh(); }
         catch (_) { /* noop — ribbons may not be mounted yet */ }
     });
@@ -6046,6 +6085,18 @@ APP.demoRibbon = (function () {
 // demo-draft state (e.g. operator reloaded mid-walkthrough). The
 // subscriber above also re-paints on every activeDeployment change.
 document.addEventListener('DOMContentLoaded', () => {
+    // 2026-05-28 — Rehydrate the demo-draft markers from sessionStorage
+    // before the first paint so a reload mid-Configure (no backend state
+    // file yet) doesn't drop the operator out of the walkthrough. The
+    // post-Apply case already self-heals via the demo-draft-* name regex
+    // in isDemoDraft() — this only covers the pre-Apply window.
+    try {
+        if (sessionStorage.getItem('demoDraftActive') === '1') {
+            APP._demoDraftActive = true;
+            const stashedName = sessionStorage.getItem('demoDraftProject') || '';
+            if (stashedName) APP._demoDraftProject = stashedName;
+        }
+    } catch (_) { /* private browsing — non-fatal */ }
     try { APP.demoRibbon.refresh(); } catch (_) {}
 });
 
@@ -14842,7 +14893,17 @@ async function saveConfig() {
         if (data.success) {
             if (data.is_demo) {
                 showMessage('Configuration accepted (demo — not persisted)', 'success');
-                if (APP && APP.toast) APP.toast('Demo configuration accepted', 'success');
+                if (APP && APP.toast) APP.toast('Step 1 complete — opening Deploy…', 'success');
+                // 2026-05-28 — guided-tour handoff: auto-advance to Deploy
+                // ~1.2s after the toast so the operator sees the success
+                // signal, then naturally lands on the next step. Without
+                // this the only way forward was the small "Skip to Deploy →"
+                // link in the ribbon — too easy to miss.
+                setTimeout(() => {
+                    if (typeof APP.navigateTo === 'function') {
+                        APP.navigateTo('deployments-tab', 'deploy');
+                    }
+                }, 1200);
                 return;
             }
             showMessage('Configuration saved successfully!', 'success');
@@ -17008,6 +17069,30 @@ async function fetchAndUpdateDeploymentStatus() {
                     window._setupCheckScheduled = false;
                     runSetupCheck();
                 }, 180000);
+            }
+
+            // 2026-05-28 — Guided-tour handoff (Phase 4): the existing
+            // promote+refresh+nav block above is gated on isDraft() (the
+            // DRAFT_SENTINEL flow). Demo-draft uses a literal project name
+            // ("demo-draft-<ts>") so it never enters that branch — without
+            // this the operator's dropdown stayed empty and they were
+            // stranded on Deploy after the 30s tick completed.
+            if (status.status === 'success' && APP.activeDeployment
+                && typeof APP.activeDeployment.isDemoDraft === 'function'
+                && APP.activeDeployment.isDemoDraft()
+                && finishedProject && /^demo-draft-/.test(finishedProject)) {
+                // 1) Refresh the dropdown so the new demo-draft project
+                //    shows up (backend now returns status="success").
+                try { _refreshGlobalDeployments(); } catch (_) { /* noop */ }
+                // 2) Toast + auto-nav to Manage after a short pause so the
+                //    operator sees "complete" in the progress overlay
+                //    before the screen transitions.
+                if (APP && APP.toast) APP.toast('Step 2 complete — opening Manage…', 'success');
+                setTimeout(() => {
+                    if (typeof APP.navigateTo === 'function') {
+                        APP.navigateTo('deployments-tab', 'manage');
+                    }
+                }, 1800);
             }
                 }
         
