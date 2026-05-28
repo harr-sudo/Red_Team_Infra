@@ -1,6 +1,50 @@
 """
 Terraform Service
 Wrapper for Terraform CLI operations with workspace support for multiple concurrent deployments
+
+CRITICAL #1 + #2 fix (2026-05-28 — workspace race incident audit):
+================================================================
+Terraform tracks the active workspace via a single global file at
+``terraform/.terraform/environment``. Switching workspaces is therefore
+a process-global mutation, not an instance-local one. Before this fix,
+any method that called ``ensure_workspace()`` then immediately shelled
+out to ``terraform output / state list / apply / destroy / ...`` had a
+race window: between the workspace-select subprocess returning and the
+real subprocess starting, another thread could select a DIFFERENT
+workspace, and the second subprocess would read the wrong state.
+
+Operational symptoms observed:
+  * /deployment-details polls returning data from project B while the
+    operator was viewing project A
+  * concurrent destroys flipping each other's state files
+  * apply succeeding but `terraform output -json` returning the wrong
+    project's outputs (CRITICAL #3 — see deploy.py output_warning path)
+
+Fix: ``_TERRAFORM_MUTEX`` is a module-level ``threading.RLock`` (NOT a
+plain Lock — re-entrant so a method calling another mutex'd method
+doesn't self-deadlock). Every method that does workspace-select +
+subprocess holds the lock from the first workspace selection through
+the last subprocess return.
+
+Methods wrapped (must hold _TERRAFORM_MUTEX during workspace ops):
+  * workspace_list / workspace_new / workspace_select / workspace_delete /
+    workspace_show / ensure_workspace
+  * plan / apply / destroy / destroy_target / apply_target /
+    apply_fresh / apply_fresh_streaming / apply_target_streaming /
+    destroy_streaming
+  * output / output_raw / show / refresh / force_destroy
+  * state_list / state_rm
+
+Methods NOT wrapped (keep lock surface minimal — no workspace ops):
+  * __init__, _run_command, _run_command_streaming, _parse_terraform_line
+  * init, validate, cancel, get_state_file_path, has_state,
+    get_workspace_config
+
+Re-entrancy note: ``ensure_workspace`` calls ``workspace_list`` +
+``workspace_select`` / ``workspace_new``. Public methods (output, plan,
+etc.) call ``ensure_workspace``. All three layers acquire the same
+RLock — that's fine, the same thread can re-acquire an RLock any
+number of times without blocking itself.
 """
 
 import subprocess
@@ -8,6 +52,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import time as _time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -21,6 +66,11 @@ TIMEOUT_DESTROY = 3600      # 60 minutes for destroy (increased for combined dep
 TIMEOUT_OUTPUT = 60         # 1 minute for output
 TIMEOUT_SHOW = 120          # 2 minutes for show
 TIMEOUT_WORKSPACE = 30      # 30 seconds for workspace operations
+
+# CRITICAL #1 + #2 mutex — see module docstring above for the
+# full incident analysis. RLock is required for re-entrant calls
+# (ensure_workspace → workspace_select, public method → ensure_workspace).
+_TERRAFORM_MUTEX = threading.RLock()
 
 
 class TerraformService:
@@ -201,139 +251,172 @@ class TerraformService:
     # =========================================================================
     
     def workspace_list(self) -> Dict:
-        """List all Terraform workspaces"""
-        exit_code, stdout, stderr = self._run_command(
-            ["terraform", "workspace", "list"],
-            timeout=TIMEOUT_WORKSPACE
-        )
-        
-        workspaces = []
-        current = "default"
-        
-        if exit_code == 0:
-            for line in stdout.strip().split('\n'):
-                line = line.strip()
-                if line.startswith('*'):
-                    # Current workspace is marked with *
-                    ws_name = line[1:].strip()
-                    current = ws_name
-                    workspaces.append(ws_name)
-                elif line:
-                    workspaces.append(line)
-        
-        return {
-            "success": exit_code == 0,
-            "workspaces": workspaces,
-            "current": current,
-            "stderr": stderr
-        }
-    
+        """List all Terraform workspaces.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
+        with _TERRAFORM_MUTEX:
+            exit_code, stdout, stderr = self._run_command(
+                ["terraform", "workspace", "list"],
+                timeout=TIMEOUT_WORKSPACE
+            )
+
+            workspaces = []
+            current = "default"
+
+            if exit_code == 0:
+                for line in stdout.strip().split('\n'):
+                    line = line.strip()
+                    if line.startswith('*'):
+                        # Current workspace is marked with *
+                        ws_name = line[1:].strip()
+                        current = ws_name
+                        workspaces.append(ws_name)
+                    elif line:
+                        workspaces.append(line)
+
+            return {
+                "success": exit_code == 0,
+                "workspaces": workspaces,
+                "current": current,
+                "stderr": stderr
+            }
+
     def workspace_new(self, name: str) -> Dict:
-        """Create a new Terraform workspace"""
-        # Validate workspace name
+        """Create a new Terraform workspace.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
+        # Validate workspace name (no terraform call yet — safe outside lock)
         if not name or not name.replace('_', '').replace('-', '').isalnum():
             return {
                 "success": False,
                 "error": "Invalid workspace name. Use only alphanumeric characters, underscores, and hyphens."
             }
-        
-        exit_code, stdout, stderr = self._run_command(
-            ["terraform", "workspace", "new", name],
-            timeout=TIMEOUT_WORKSPACE
-        )
-        
-        if exit_code == 0:
-            self.workspace_name = name
-            # Create workspace-specific tfvars file
-            self.tfvars_file = self.config_dir / f"{name}.tfvars"
-        
-        return {
-            "success": exit_code == 0,
-            "workspace": name,
-            "stdout": stdout,
-            "stderr": stderr
-        }
-    
-    def workspace_select(self, name: str) -> Dict:
-        """Select/switch to a Terraform workspace"""
-        exit_code, stdout, stderr = self._run_command(
-            ["terraform", "workspace", "select", name],
-            timeout=TIMEOUT_WORKSPACE
-        )
-        
-        if exit_code == 0:
-            self.workspace_name = name
-            if name != "default":
+
+        with _TERRAFORM_MUTEX:
+            exit_code, stdout, stderr = self._run_command(
+                ["terraform", "workspace", "new", name],
+                timeout=TIMEOUT_WORKSPACE
+            )
+
+            if exit_code == 0:
+                self.workspace_name = name
+                # Create workspace-specific tfvars file
                 self.tfvars_file = self.config_dir / f"{name}.tfvars"
-            else:
-                self.tfvars_file = self.config_dir / "terraform.tfvars"
-        
-        return {
-            "success": exit_code == 0,
-            "workspace": name,
-            "stdout": stdout,
-            "stderr": stderr
-        }
-    
+
+            return {
+                "success": exit_code == 0,
+                "workspace": name,
+                "stdout": stdout,
+                "stderr": stderr
+            }
+
+    def workspace_select(self, name: str) -> Dict:
+        """Select/switch to a Terraform workspace.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
+        with _TERRAFORM_MUTEX:
+            exit_code, stdout, stderr = self._run_command(
+                ["terraform", "workspace", "select", name],
+                timeout=TIMEOUT_WORKSPACE
+            )
+
+            if exit_code == 0:
+                self.workspace_name = name
+                if name != "default":
+                    self.tfvars_file = self.config_dir / f"{name}.tfvars"
+                else:
+                    self.tfvars_file = self.config_dir / "terraform.tfvars"
+
+            return {
+                "success": exit_code == 0,
+                "workspace": name,
+                "stdout": stdout,
+                "stderr": stderr
+            }
+
     def workspace_delete(self, name: str) -> Dict:
-        """Delete a Terraform workspace"""
+        """Delete a Terraform workspace.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
         if name == "default":
             return {
                 "success": False,
                 "error": "Cannot delete the default workspace"
             }
-        
-        # First switch to default if we're deleting current workspace
-        if self.workspace_name == name:
-            self.workspace_select("default")
-        
-        exit_code, stdout, stderr = self._run_command(
-            ["terraform", "workspace", "delete", "-force", name],
-            timeout=TIMEOUT_WORKSPACE
-        )
-        
-        # Also delete the workspace-specific tfvars file
-        if exit_code == 0:
-            tfvars_file = self.config_dir / f"{name}.tfvars"
-            if tfvars_file.exists():
-                tfvars_file.unlink()
-        
-        return {
-            "success": exit_code == 0,
-            "workspace": name,
-            "stdout": stdout,
-            "stderr": stderr
-        }
-    
+
+        with _TERRAFORM_MUTEX:
+            # First switch to default if we're deleting current workspace
+            # (workspace_select also takes the mutex — RLock allows re-entry)
+            if self.workspace_name == name:
+                self.workspace_select("default")
+
+            exit_code, stdout, stderr = self._run_command(
+                ["terraform", "workspace", "delete", "-force", name],
+                timeout=TIMEOUT_WORKSPACE
+            )
+
+            # Also delete the workspace-specific tfvars file
+            if exit_code == 0:
+                tfvars_file = self.config_dir / f"{name}.tfvars"
+                if tfvars_file.exists():
+                    tfvars_file.unlink()
+
+            return {
+                "success": exit_code == 0,
+                "workspace": name,
+                "stdout": stdout,
+                "stderr": stderr
+            }
+
     def workspace_show(self) -> Dict:
-        """Show current workspace"""
-        exit_code, stdout, stderr = self._run_command(
-            ["terraform", "workspace", "show"],
-            timeout=TIMEOUT_WORKSPACE
-        )
-        
-        return {
-            "success": exit_code == 0,
-            "workspace": stdout.strip() if exit_code == 0 else None,
-            "stderr": stderr
-        }
-    
+        """Show current workspace.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
+        with _TERRAFORM_MUTEX:
+            exit_code, stdout, stderr = self._run_command(
+                ["terraform", "workspace", "show"],
+                timeout=TIMEOUT_WORKSPACE
+            )
+
+            return {
+                "success": exit_code == 0,
+                "workspace": stdout.strip() if exit_code == 0 else None,
+                "stderr": stderr
+            }
+
     def ensure_workspace(self) -> Dict:
-        """Ensure the configured workspace exists and is selected"""
+        """Ensure the configured workspace exists and is selected.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race. Callers (output, plan,
+        apply, destroy, etc.) hold the lock for their full subprocess
+        lifetime — the RLock allows this method to re-acquire it here.
+        """
         if self.workspace_name == "default":
             return {"success": True, "workspace": "default"}
-        
-        # Check if workspace exists
-        list_result = self.workspace_list()
-        if not list_result["success"]:
-            return list_result
-        
-        if self.workspace_name in list_result["workspaces"]:
-            # Workspace exists, select it
-            return self.workspace_select(self.workspace_name)
-        else:
-            # Create new workspace
-            return self.workspace_new(self.workspace_name)
+
+        with _TERRAFORM_MUTEX:
+            # Check if workspace exists
+            list_result = self.workspace_list()
+            if not list_result["success"]:
+                return list_result
+
+            if self.workspace_name in list_result["workspaces"]:
+                # Workspace exists, select it
+                return self.workspace_select(self.workspace_name)
+            else:
+                # Create new workspace
+                return self.workspace_new(self.workspace_name)
     
     # =========================================================================
     # CORE TERRAFORM OPERATIONS
@@ -368,337 +451,390 @@ class TerraformService:
         }
     
     def plan(self) -> Dict:
-        """Run Terraform plan"""
-        if not self.tfvars_file.exists():
-            return {
-                "success": False,
-                "error": f"terraform.tfvars file not found: {self.tfvars_file}"
-            }
-        
-        # Ensure correct workspace is selected
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return ws_result
-        
-        # Run plan without -json for human-readable output
-        exit_code, stdout, stderr = self._run_command(
-            [
-            "terraform", "plan",
-                "-var-file", str(self.tfvars_file.absolute()),
-            "-out", "tfplan",
-                "-no-color"  # Remove color codes for cleaner output
-            ],
-            timeout=TIMEOUT_PLAN
-        )
-        
-        # Combine stdout and stderr for complete output
-        full_output = ""
-        if stdout:
-            full_output += stdout
-        if stderr:
-            if full_output:
-                full_output += "\n\n--- STDERR ---\n"
-            full_output += stderr
-        
-        return {
-            "success": exit_code in [0, 2],  # 2 means changes detected
-            "exit_code": exit_code,
-            "stdout": stdout or "",
-            "stderr": stderr or "",
-            "full_output": full_output,
-            "plan": {},
-            "workspace": self.workspace_name
-        }
-    
-    def apply(self) -> Dict:
-        """Apply Terraform changes"""
-        plan_file = self.terraform_dir / "tfplan"
-        
-        if not plan_file.exists():
-            return {
-                "success": False,
-                "error": "Terraform plan file not found. Run plan first."
-            }
-        
-        # Ensure correct workspace is selected
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return ws_result
-        
-        exit_code, stdout, stderr = self._run_command(
-            [
-            "terraform", "apply",
-            "-auto-approve",
-            "tfplan"
-            ],
-            timeout=TIMEOUT_APPLY
-        )
-        
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "workspace": self.workspace_name
-        }
-    
-    def destroy(self) -> Dict:
-        """Destroy Terraform infrastructure"""
-        if not self.tfvars_file.exists():
-            return {
-                "success": False,
-                "error": f"terraform.tfvars file not found: {self.tfvars_file}"
-            }
-        
-        # Ensure correct workspace is selected
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return ws_result
-        
-        exit_code, stdout, stderr = self._run_command(
-            [
-            "terraform", "destroy",
-                "-var-file", str(self.tfvars_file.absolute()),
-            "-auto-approve"
-            ],
-            timeout=TIMEOUT_DESTROY  # 60 minutes for complex deployments
-        )
-        
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "workspace": self.workspace_name
-        }
-    
-    def destroy_target(self, target: str) -> Dict:
-        """Destroy a specific Terraform resource or module"""
-        if not self.tfvars_file.exists():
-            return {
-                "success": False,
-                "error": f"terraform.tfvars file not found: {self.tfvars_file}"
-            }
-        
-        # Ensure correct workspace is selected
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return ws_result
-        
-        exit_code, stdout, stderr = self._run_command(
-            [
-            "terraform", "destroy",
-                "-var-file", str(self.tfvars_file.absolute()),
-            "-target", target,
-            "-auto-approve"
-            ],
-            timeout=TIMEOUT_DESTROY  # 60 minutes for complex modules
-        )
-        
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "target": target,
-            "workspace": self.workspace_name
-        }
-    
-    def apply_target(self, target: str) -> Dict:
-        """Apply a specific Terraform resource or module (targeted apply)"""
-        if not self.tfvars_file.exists():
-            return {
-                "success": False,
-                "error": f"terraform.tfvars file not found: {self.tfvars_file}"
-            }
-        
-        # Ensure correct workspace is selected
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return ws_result
-        
-        exit_code, stdout, stderr = self._run_command(
-            [
-                "terraform", "apply",
-                "-var-file", str(self.tfvars_file.absolute()),
-                "-target", target,
-                "-auto-approve"
-            ],
-            timeout=TIMEOUT_APPLY
-        )
-        
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "target": target,
-            "workspace": self.workspace_name
-        }
-    
-    def apply_fresh(self) -> Dict:
-        """Apply Terraform changes without using a saved plan file.
-        
-        This is useful when the state has changed since the plan was created
-        (e.g., after a targeted apply). It runs a fresh plan and apply in one step.
+        """Run Terraform plan.
+
+        thread-safety: holds _TERRAFORM_MUTEX from workspace selection
+        through subprocess completion to prevent .terraform/environment
+        race. See module docstring (CRITICAL #1 + #2).
         """
         if not self.tfvars_file.exists():
             return {
                 "success": False,
                 "error": f"terraform.tfvars file not found: {self.tfvars_file}"
             }
-        
-        # Ensure correct workspace is selected
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return ws_result
-        
-        exit_code, stdout, stderr = self._run_command(
-            [
+
+        with _TERRAFORM_MUTEX:
+            # Ensure correct workspace is selected
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return ws_result
+
+            # Run plan without -json for human-readable output
+            exit_code, stdout, stderr = self._run_command(
+                [
+                "terraform", "plan",
+                    "-var-file", str(self.tfvars_file.absolute()),
+                "-out", "tfplan",
+                    "-no-color"  # Remove color codes for cleaner output
+                ],
+                timeout=TIMEOUT_PLAN
+            )
+
+            # Combine stdout and stderr for complete output
+            full_output = ""
+            if stdout:
+                full_output += stdout
+            if stderr:
+                if full_output:
+                    full_output += "\n\n--- STDERR ---\n"
+                full_output += stderr
+
+            return {
+                "success": exit_code in [0, 2],  # 2 means changes detected
+                "exit_code": exit_code,
+                "stdout": stdout or "",
+                "stderr": stderr or "",
+                "full_output": full_output,
+                "plan": {},
+                "workspace": self.workspace_name
+            }
+    
+    def apply(self) -> Dict:
+        """Apply Terraform changes.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
+        plan_file = self.terraform_dir / "tfplan"
+
+        if not plan_file.exists():
+            return {
+                "success": False,
+                "error": "Terraform plan file not found. Run plan first."
+            }
+
+        with _TERRAFORM_MUTEX:
+            # Ensure correct workspace is selected
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return ws_result
+
+            exit_code, stdout, stderr = self._run_command(
+                [
                 "terraform", "apply",
-                "-var-file", str(self.tfvars_file.absolute()),
+                "-auto-approve",
+                "tfplan"
+                ],
+                timeout=TIMEOUT_APPLY
+            )
+
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "workspace": self.workspace_name
+            }
+
+    def destroy(self) -> Dict:
+        """Destroy Terraform infrastructure.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
+        if not self.tfvars_file.exists():
+            return {
+                "success": False,
+                "error": f"terraform.tfvars file not found: {self.tfvars_file}"
+            }
+
+        with _TERRAFORM_MUTEX:
+            # Ensure correct workspace is selected
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return ws_result
+
+            exit_code, stdout, stderr = self._run_command(
+                [
+                "terraform", "destroy",
+                    "-var-file", str(self.tfvars_file.absolute()),
                 "-auto-approve"
-            ],
-            timeout=TIMEOUT_APPLY
-        )
-        
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "workspace": self.workspace_name
-        }
+                ],
+                timeout=TIMEOUT_DESTROY  # 60 minutes for complex deployments
+            )
+
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "workspace": self.workspace_name
+            }
+
+    def destroy_target(self, target: str) -> Dict:
+        """Destroy a specific Terraform resource or module.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
+        if not self.tfvars_file.exists():
+            return {
+                "success": False,
+                "error": f"terraform.tfvars file not found: {self.tfvars_file}"
+            }
+
+        with _TERRAFORM_MUTEX:
+            # Ensure correct workspace is selected
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return ws_result
+
+            exit_code, stdout, stderr = self._run_command(
+                [
+                "terraform", "destroy",
+                    "-var-file", str(self.tfvars_file.absolute()),
+                "-target", target,
+                "-auto-approve"
+                ],
+                timeout=TIMEOUT_DESTROY  # 60 minutes for complex modules
+            )
+
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "target": target,
+                "workspace": self.workspace_name
+            }
+
+    def apply_target(self, target: str) -> Dict:
+        """Apply a specific Terraform resource or module (targeted apply).
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
+        if not self.tfvars_file.exists():
+            return {
+                "success": False,
+                "error": f"terraform.tfvars file not found: {self.tfvars_file}"
+            }
+
+        with _TERRAFORM_MUTEX:
+            # Ensure correct workspace is selected
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return ws_result
+
+            exit_code, stdout, stderr = self._run_command(
+                [
+                    "terraform", "apply",
+                    "-var-file", str(self.tfvars_file.absolute()),
+                    "-target", target,
+                    "-auto-approve"
+                ],
+                timeout=TIMEOUT_APPLY
+            )
+
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "target": target,
+                "workspace": self.workspace_name
+            }
+
+    def apply_fresh(self) -> Dict:
+        """Apply Terraform changes without using a saved plan file.
+
+        This is useful when the state has changed since the plan was created
+        (e.g., after a targeted apply). It runs a fresh plan and apply in one step.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
+        if not self.tfvars_file.exists():
+            return {
+                "success": False,
+                "error": f"terraform.tfvars file not found: {self.tfvars_file}"
+            }
+
+        with _TERRAFORM_MUTEX:
+            # Ensure correct workspace is selected
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return ws_result
+
+            exit_code, stdout, stderr = self._run_command(
+                [
+                    "terraform", "apply",
+                    "-var-file", str(self.tfvars_file.absolute()),
+                    "-auto-approve"
+                ],
+                timeout=TIMEOUT_APPLY
+            )
+
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "workspace": self.workspace_name
+            }
     
     # =========================================================================
     # STREAMING VARIANTS (real-time resource-level events)
     # =========================================================================
 
     def apply_fresh_streaming(self, on_event: Callable = None) -> Dict:
-        """Apply Terraform changes with real-time event streaming."""
+        """Apply Terraform changes with real-time event streaming.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race. Lock is held for the
+        full multi-minute apply — concurrent workspace ops will block.
+        """
         if not self.tfvars_file.exists():
             return {"success": False, "error": f"terraform.tfvars file not found: {self.tfvars_file}"}
 
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return ws_result
+        with _TERRAFORM_MUTEX:
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return ws_result
 
-        exit_code, stdout, stderr = self._run_command_streaming(
-            [
-                "terraform", "apply",
-                "-var-file", str(self.tfvars_file.absolute()),
-                "-auto-approve",
-                "-no-color"
-            ],
-            on_event=on_event,
-            timeout=TIMEOUT_APPLY
-        )
+            exit_code, stdout, stderr = self._run_command_streaming(
+                [
+                    "terraform", "apply",
+                    "-var-file", str(self.tfvars_file.absolute()),
+                    "-auto-approve",
+                    "-no-color"
+                ],
+                on_event=on_event,
+                timeout=TIMEOUT_APPLY
+            )
 
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "workspace": self.workspace_name
-        }
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "workspace": self.workspace_name
+            }
 
     def apply_target_streaming(self, target: str, on_event: Callable = None) -> Dict:
-        """Targeted apply with real-time event streaming."""
+        """Targeted apply with real-time event streaming.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
         if not self.tfvars_file.exists():
             return {"success": False, "error": f"terraform.tfvars file not found: {self.tfvars_file}"}
 
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return ws_result
+        with _TERRAFORM_MUTEX:
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return ws_result
 
-        exit_code, stdout, stderr = self._run_command_streaming(
-            [
-                "terraform", "apply",
-                "-var-file", str(self.tfvars_file.absolute()),
-                "-target", target,
-                "-auto-approve",
-                "-no-color"
-            ],
-            on_event=on_event,
-            timeout=TIMEOUT_APPLY
-        )
+            exit_code, stdout, stderr = self._run_command_streaming(
+                [
+                    "terraform", "apply",
+                    "-var-file", str(self.tfvars_file.absolute()),
+                    "-target", target,
+                    "-auto-approve",
+                    "-no-color"
+                ],
+                on_event=on_event,
+                timeout=TIMEOUT_APPLY
+            )
 
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "target": target,
-            "workspace": self.workspace_name
-        }
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "target": target,
+                "workspace": self.workspace_name
+            }
 
     def destroy_streaming(self, on_event: Callable = None) -> Dict:
-        """Destroy Terraform infrastructure with real-time event streaming."""
+        """Destroy Terraform infrastructure with real-time event streaming.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
         if not self.tfvars_file.exists():
             return {"success": False, "error": f"terraform.tfvars file not found: {self.tfvars_file}"}
 
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return ws_result
+        with _TERRAFORM_MUTEX:
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return ws_result
 
-        exit_code, stdout, stderr = self._run_command_streaming(
-            [
-                "terraform", "destroy",
-                "-var-file", str(self.tfvars_file.absolute()),
-                "-auto-approve",
-                "-no-color"
-            ],
-            on_event=on_event,
-            timeout=TIMEOUT_DESTROY
-        )
+            exit_code, stdout, stderr = self._run_command_streaming(
+                [
+                    "terraform", "destroy",
+                    "-var-file", str(self.tfvars_file.absolute()),
+                    "-auto-approve",
+                    "-no-color"
+                ],
+                on_event=on_event,
+                timeout=TIMEOUT_DESTROY
+            )
 
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "workspace": self.workspace_name
-        }
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "workspace": self.workspace_name
+            }
 
     def output(self) -> Dict:
-        """Get Terraform outputs"""
-        # Ensure correct workspace is selected
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return {"success": False, "outputs": {}, "stderr": ws_result.get("stderr", "")}
-        
-        exit_code, stdout, stderr = self._run_command(
-            [
-            "terraform", "output",
-            "-json"
-            ],
-            timeout=TIMEOUT_OUTPUT
-        )
-        
-        outputs = {}
-        if exit_code == 0:
-            try:
-                outputs = json.loads(stdout)
-            except (json.JSONDecodeError, ValueError):
-                pass
-        
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "outputs": outputs,
-            "stderr": stderr,
-            "workspace": self.workspace_name
-        }
+        """Get Terraform outputs.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race. This is the canonical fix
+        for CRITICAL #1 + #2 — output() races were the most operator-
+        visible symptom (wrong project's IPs surfacing in Manage).
+        """
+        with _TERRAFORM_MUTEX:
+            # Ensure correct workspace is selected
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return {"success": False, "outputs": {}, "stderr": ws_result.get("stderr", "")}
+
+            exit_code, stdout, stderr = self._run_command(
+                [
+                "terraform", "output",
+                "-json"
+                ],
+                timeout=TIMEOUT_OUTPUT
+            )
+
+            outputs = {}
+            if exit_code == 0:
+                try:
+                    outputs = json.loads(stdout)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "outputs": outputs,
+                "stderr": stderr,
+                "workspace": self.workspace_name
+            }
     
     def cancel(self) -> bool:
         """Kill the active Terraform subprocess and all its children (provider plugins)"""
@@ -721,107 +857,127 @@ class TerraformService:
         return False
 
     def output_raw(self, name: str) -> str:
-        """Get a single Terraform output value (including sensitive ones)"""
-        if self.workspace_name != "default":
-            self.ensure_workspace()
-        exit_code, stdout, stderr = self._run_command(
-            ["terraform", "output", "-raw", name],
-            timeout=TIMEOUT_OUTPUT
-        )
-        return stdout.strip() if exit_code == 0 else ""
+        """Get a single Terraform output value (including sensitive ones).
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
+        with _TERRAFORM_MUTEX:
+            if self.workspace_name != "default":
+                self.ensure_workspace()
+            exit_code, stdout, stderr = self._run_command(
+                ["terraform", "output", "-raw", name],
+                timeout=TIMEOUT_OUTPUT
+            )
+            return stdout.strip() if exit_code == 0 else ""
 
     def show(self) -> Dict:
-        """Show current Terraform state"""
-        # Ensure correct workspace is selected
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return {"success": False, "state": {}, "stderr": ws_result.get("stderr", "")}
-        
-        exit_code, stdout, stderr = self._run_command(
-            [
-            "terraform", "show",
-            "-json"
-            ],
-            timeout=TIMEOUT_SHOW
-        )
-        
-        state = {}
-        if exit_code == 0:
-            try:
-                state = json.loads(stdout)
-            except (json.JSONDecodeError, ValueError):
-                pass
-        
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "state": state,
-            "stderr": stderr,
-            "workspace": self.workspace_name
-        }
-    
+        """Show current Terraform state.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
+        with _TERRAFORM_MUTEX:
+            # Ensure correct workspace is selected
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return {"success": False, "state": {}, "stderr": ws_result.get("stderr", "")}
+
+            exit_code, stdout, stderr = self._run_command(
+                [
+                "terraform", "show",
+                "-json"
+                ],
+                timeout=TIMEOUT_SHOW
+            )
+
+            state = {}
+            if exit_code == 0:
+                try:
+                    state = json.loads(stdout)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "state": state,
+                "stderr": stderr,
+                "workspace": self.workspace_name
+            }
+
     def refresh(self) -> Dict:
-        """Refresh Terraform state to match actual infrastructure"""
+        """Refresh Terraform state to match actual infrastructure.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
         if not self.tfvars_file.exists():
             return {
                 "success": False,
                 "error": f"terraform.tfvars file not found: {self.tfvars_file}"
             }
-        
-        # Ensure correct workspace is selected
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return ws_result
-        
-        exit_code, stdout, stderr = self._run_command(
-            [
-                "terraform", "refresh",
-                "-var-file", str(self.tfvars_file.absolute())
-            ],
-            timeout=TIMEOUT_PLAN  # Use plan timeout
-        )
-        
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "workspace": self.workspace_name
-        }
-    
+
+        with _TERRAFORM_MUTEX:
+            # Ensure correct workspace is selected
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return ws_result
+
+            exit_code, stdout, stderr = self._run_command(
+                [
+                    "terraform", "refresh",
+                    "-var-file", str(self.tfvars_file.absolute())
+                ],
+                timeout=TIMEOUT_PLAN  # Use plan timeout
+            )
+
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "workspace": self.workspace_name
+            }
+
     def force_destroy(self) -> Dict:
-        """Force destroy infrastructure without refreshing state first"""
+        """Force destroy infrastructure without refreshing state first.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
+        """
         if not self.tfvars_file.exists():
             return {
                 "success": False,
                 "error": f"terraform.tfvars file not found: {self.tfvars_file}"
             }
-        
-        # Ensure correct workspace is selected
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return ws_result
-        
-        exit_code, stdout, stderr = self._run_command(
-            [
-                "terraform", "destroy",
-                "-var-file", str(self.tfvars_file.absolute()),
-                "-auto-approve",
-                "-refresh=false"  # Skip refresh, use current state
-            ],
-            timeout=TIMEOUT_DESTROY
-        )
-        
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "workspace": self.workspace_name
-        }
+
+        with _TERRAFORM_MUTEX:
+            # Ensure correct workspace is selected
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return ws_result
+
+            exit_code, stdout, stderr = self._run_command(
+                [
+                    "terraform", "destroy",
+                    "-var-file", str(self.tfvars_file.absolute()),
+                    "-auto-approve",
+                    "-refresh=false"  # Skip refresh, use current state
+                ],
+                timeout=TIMEOUT_DESTROY
+            )
+
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "workspace": self.workspace_name
+            }
     
     # =========================================================================
     # STATE-LEVEL OPERATIONS (read-only listing + targeted detachment)
@@ -842,36 +998,40 @@ class TerraformService:
         ``addresses`` is a parsed list of non-empty lines from stdout for
         callers that don't want to re-parse. On failure ``addresses`` is
         an empty list; consult ``stderr`` for the underlying error.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
         """
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return {
-                    "success": False,
-                    "exit_code": -1,
-                    "stdout": "",
-                    "stderr": ws_result.get("stderr", "Workspace selection failed"),
-                    "addresses": [],
-                    "workspace": self.workspace_name,
-                }
+        with _TERRAFORM_MUTEX:
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return {
+                        "success": False,
+                        "exit_code": -1,
+                        "stdout": "",
+                        "stderr": ws_result.get("stderr", "Workspace selection failed"),
+                        "addresses": [],
+                        "workspace": self.workspace_name,
+                    }
 
-        exit_code, stdout, stderr = self._run_command(
-            ["terraform", "state", "list"],
-            timeout=TIMEOUT_SHOW
-        )
+            exit_code, stdout, stderr = self._run_command(
+                ["terraform", "state", "list"],
+                timeout=TIMEOUT_SHOW
+            )
 
-        addresses = []
-        if exit_code == 0:
-            addresses = [l.strip() for l in stdout.splitlines() if l.strip()]
+            addresses = []
+            if exit_code == 0:
+                addresses = [l.strip() for l in stdout.splitlines() if l.strip()]
 
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "addresses": addresses,
-            "workspace": self.workspace_name,
-        }
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "addresses": addresses,
+                "workspace": self.workspace_name,
+            }
 
     def state_rm(self, addr: str) -> Dict:
         """Detach a resource/module from THIS workspace's state.
@@ -883,6 +1043,9 @@ class TerraformService:
         keeps running, we just stop pretending this workspace owns it.
 
         Returns success/failure shape consistent with the other helpers.
+
+        thread-safety: holds _TERRAFORM_MUTEX during workspace operations
+        to prevent .terraform/environment race.
         """
         if not addr or not isinstance(addr, str):
             return {
@@ -893,30 +1056,31 @@ class TerraformService:
                 "workspace": self.workspace_name,
             }
 
-        if self.workspace_name != "default":
-            ws_result = self.ensure_workspace()
-            if not ws_result["success"]:
-                return {
-                    "success": False,
-                    "exit_code": -1,
-                    "stdout": "",
-                    "stderr": ws_result.get("stderr", "Workspace selection failed"),
-                    "workspace": self.workspace_name,
-                }
+        with _TERRAFORM_MUTEX:
+            if self.workspace_name != "default":
+                ws_result = self.ensure_workspace()
+                if not ws_result["success"]:
+                    return {
+                        "success": False,
+                        "exit_code": -1,
+                        "stdout": "",
+                        "stderr": ws_result.get("stderr", "Workspace selection failed"),
+                        "workspace": self.workspace_name,
+                    }
 
-        exit_code, stdout, stderr = self._run_command(
-            ["terraform", "state", "rm", addr],
-            timeout=TIMEOUT_SHOW
-        )
+            exit_code, stdout, stderr = self._run_command(
+                ["terraform", "state", "rm", addr],
+                timeout=TIMEOUT_SHOW
+            )
 
-        return {
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "address": addr,
-            "workspace": self.workspace_name,
-        }
+            return {
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "address": addr,
+                "workspace": self.workspace_name,
+            }
 
     # =========================================================================
     # UTILITY METHODS
