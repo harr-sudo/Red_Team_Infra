@@ -34953,18 +34953,17 @@ APP.bolton = APP.bolton || {
                     <div class="bolton-detail__pane" data-bolton-detail-pane="detections"><p class="app-overlay__loading">Loading…</p></div>
                 </div>
             </div>`;
-        if (APP.overlay && typeof APP.overlay.open === 'function') {
-            APP.overlay.open('bolton-detail', shellBody, {
-                title: vulnId,
-                eyebrow: 'Bolt-on detail',
-                // 2026-05-22 — wide variant for the curriculum + detections
-                // table; the default 680px clipped long URLs and registry
-                // paths in markdown content.
-                wide: true,
-            });
-        } else {
+        // 2026-05-29 — Operator directive: the walkthrough now docks as a
+        // right-side overlay that slides IN only when a walkthrough is
+        // launched and slides OUT (restoring the catalog) when dismissed.
+        // The bolt-on catalog page layout itself is untouched — it just
+        // shrinks + dims to make room while the dock is open. Replaces the
+        // old centered-modal (APP.overlay) presentation.
+        const docked = this._mountWalkthroughDock(shellBody, vulnId);
+        if (!docked) {
             // Fallback: append a minimal takeover so the drawer still works
-            // when overlay scaffolding is absent.
+            // when the bolt-ons pane isn't mounted (e.g. deep-link before
+            // the sub-pill has rendered).
             let host_el = document.getElementById('bolton-detail-fallback');
             if (host_el) host_el.remove();
             host_el = document.createElement('div');
@@ -35031,6 +35030,78 @@ APP.bolton = APP.bolton || {
             this.state.detailProgress = body.progress;
             this._renderWalkthroughPane(body.curriculum, body.progress);
         }).catch(err => console.warn('[bolton] detail curriculum fetch failed:', err));
+    },
+
+    /**
+     * 2026-05-29 — Mount the walkthrough shell into a right-docked panel
+     * that slides over the bolt-on catalog. Lazily creates the dock element
+     * (once) inside the bolt-ons sub-pill, renders the shell into it, and
+     * adds `is-wt-docked` to the pane which (a) slides the dock in and
+     * (b) shrinks + dims the catalog underneath via CSS. Returns false when
+     * the bolt-ons pane isn't mounted so the caller can use its fallback.
+     */
+    _mountWalkthroughDock(shellBody, vulnId) {
+        const pane = document.getElementById('subpill-pane-bolt-ons');
+        if (!pane) return false;
+        // If the bolt-ons pane isn't actually on-screen (operator isn't on
+        // the Bolt-ons sub-pill — programmatic/deep-link call), mounting the
+        // dock into a display:none container would render it invisible.
+        // Signal the caller to use its body-level takeover fallback instead.
+        if (pane.hidden || pane.offsetParent === null) return false;
+        let dock = pane.querySelector('[data-bolton-wt-dock]');
+        if (!dock) {
+            dock = document.createElement('aside');
+            dock.className = 'bolton-wt-dock';
+            dock.setAttribute('data-bolton-wt-dock', '');
+            dock.setAttribute('role', 'dialog');
+            dock.setAttribute('aria-label', 'Bolt-on walkthrough');
+            dock.innerHTML = `
+                <div class="bolton-wt-dock__bar">
+                    <button type="button" class="bolton-wt-dock__back" data-wt-dock-close>&larr; Back to bolt-ons</button>
+                    <span class="bolton-wt-dock__eyebrow" data-bolton-wt-dock-eyebrow>Walkthrough</span>
+                    <button type="button" class="bolton-wt-dock__close" data-wt-dock-close aria-label="Close walkthrough">&times; Close</button>
+                </div>
+                <div class="bolton-wt-dock__body" data-bolton-wt-dock-body></div>`;
+            pane.appendChild(dock);
+            // Delegated close — back link + ✕ both dismiss the dock.
+            dock.addEventListener('click', (ev) => {
+                if (ev.target.closest('[data-wt-dock-close]')) {
+                    ev.preventDefault();
+                    this._closeWalkthroughDock();
+                }
+            });
+            // Esc closes the dock (wired once, gated on docked state).
+            if (!this._wtDockEscWired) {
+                this._wtDockEscWired = true;
+                document.addEventListener('keydown', (ev) => {
+                    if (ev.key !== 'Escape') return;
+                    const p = document.getElementById('subpill-pane-bolt-ons');
+                    if (p && p.classList.contains('is-wt-docked')) {
+                        this._closeWalkthroughDock();
+                    }
+                });
+            }
+        }
+        const eyebrow = dock.querySelector('[data-bolton-wt-dock-eyebrow]');
+        if (eyebrow) eyebrow.textContent = vulnId || 'Walkthrough';
+        const body = dock.querySelector('[data-bolton-wt-dock-body]');
+        if (body) body.innerHTML = shellBody;
+        // Slide in + shrink the catalog. requestAnimationFrame so the
+        // transform transition fires even on the first open (the element
+        // was just appended at translateX(100%)).
+        requestAnimationFrame(() => pane.classList.add('is-wt-docked'));
+        return true;
+    },
+
+    /** Slide the walkthrough dock out + restore the catalog to full width. */
+    _closeWalkthroughDock() {
+        const pane = document.getElementById('subpill-pane-bolt-ons');
+        if (!pane) return;
+        pane.classList.remove('is-wt-docked');
+        // Dock content is left mounted (hidden via the slide-out transform)
+        // so re-opening the same vuln is instant; openDetail re-renders the
+        // body on every call anyway.
+        this.state.detailVulnId = null;
     },
 
     _switchDetailTab(tab) {
