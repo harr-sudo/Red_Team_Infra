@@ -170,17 +170,61 @@
         /* ════════════════════════════════════════════════════════════
            C-SPECIFIC: split panel layout (resizable)
            ════════════════════════════════════════════════════════════ */
+        /* 2026-05-29 — corrected UX model: catalog is the DEFAULT view
+           at full width; walkthrough is a DOCKED OVERLAY that slides in
+           from the right when ▶ Walkthrough is clicked. Catalog stays
+           visible underneath, dimmed but click-through. */
         .bw-split {
             flex: 1;
-            display: grid;
-            grid-template-columns: var(--split-left) var(--split-handle-w) 1fr;
+            position: relative;
             min-height: 0;
             background: var(--bg-body);
-            position: relative;
+            overflow: hidden;
+        }
+        .bw-cat {
+            width: 100%;
+            height: 100%;
+            transition: opacity var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-split[data-dock-open="true"] .bw-cat {
+            opacity: 0.62;
+            pointer-events: auto; /* still click-through to swap vuln */
+        }
+        .bw-walk {
+            position: absolute;
+            top: 0; right: 0; bottom: 0;
+            width: var(--dock-width, 60%);
+            min-width: 480px;
+            background: var(--bg-card);
+            border-left: 1px solid var(--border-subtle);
+            box-shadow: -16px 0 32px -8px color-mix(in srgb, var(--bg-body) 60%, transparent),
+                        -2px 0 0 0 color-mix(in srgb, var(--guide-accent) 35%, transparent);
+            transform: translateX(100%);
+            transition: transform var(--motion-duration-base) var(--motion-ease-walk);
+            will-change: transform;
+        }
+        .bw-split[data-dock-open="true"] .bw-walk {
+            transform: translateX(0);
+        }
+        .bw-handle {
+            position: absolute;
+            top: 0; bottom: 0;
+            right: var(--dock-width, 60%);
+            width: var(--split-handle-w);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-split[data-dock-open="true"] .bw-handle {
+            opacity: 1;
+            pointer-events: auto;
         }
         .bw-split.is-dragging { user-select: none; cursor: col-resize; }
         .bw-split.is-dragging .bw-cat,
         .bw-split.is-dragging .bw-walk { will-change: transform; }
+        @media (prefers-reduced-motion: reduce) {
+            .bw-walk, .bw-cat, .bw-handle { transition: none !important; }
+        }
 
         /* ── DRAG HANDLE ────────────────────────────────────────────── */
         .bw-handle {
@@ -375,6 +419,10 @@
         .bw-pill--danger { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-border); }
         .bw-pill--info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
         .bw-pill--neutral { background: var(--bg-section); color: var(--text-secondary); border-color: var(--border-subtle); }
+        .bw-cat__row-actions {
+            display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+            white-space: nowrap;
+        }
         .bw-cat__row-status {
             font-family: var(--font-family-mono);
             font-size: 10px;
@@ -383,6 +431,31 @@
             text-align: right;
         }
         .bw-cat__row-status .check { color: var(--success-text); margin-right: 4px; }
+        /* 2026-05-29 — primary action per row: open the docked walkthrough.
+           Uses the same guide-accent palette as the active step dots + Continue
+           button so the operator's eye is trained to recognise it as a
+           walkthrough-related affordance. */
+        .bw-cat__row-walk {
+            appearance: none;
+            background: color-mix(in srgb, var(--guide-accent) 14%, var(--bg-card));
+            border: 1px solid color-mix(in srgb, var(--guide-accent) 45%, transparent);
+            color: var(--guide-accent-text);
+            font-family: var(--font-family-mono);
+            font-size: 10.5px; font-weight: 700;
+            letter-spacing: 0.06em;
+            padding: 5px 11px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color var(--motion-duration-base) var(--motion-ease-walk),
+                        border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        transform 160ms var(--motion-ease-walk);
+        }
+        .bw-cat__row-walk:hover {
+            background: color-mix(in srgb, var(--guide-accent) 22%, var(--bg-card));
+            border-color: var(--guide-accent);
+            transform: translateY(-1px);
+        }
+        .bw-cat__row-walk:active { transform: translateY(0); }
 
         .bw-cat__empty {
             padding: 32px 14px;
@@ -616,9 +689,32 @@
             transition: color var(--motion-duration-base) var(--motion-ease-walk);
         }
         .bw-sticky__back:hover { color: var(--guide-accent-text); }
+        /* 2026-05-29 — ✕ close button for the docked overlay */
+        .bw-sticky__close {
+            position: absolute;
+            top: 12px; right: 18px;
+            appearance: none;
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            width: 28px; height: 28px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px; line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background-color var(--motion-duration-base) var(--motion-ease-walk),
+                        color var(--motion-duration-base) var(--motion-ease-walk),
+                        border-color var(--motion-duration-base) var(--motion-ease-walk);
+        }
+        .bw-sticky__close:hover {
+            background: var(--bg-section);
+            color: var(--text-primary);
+            border-color: var(--border-light);
+        }
         .bw-sticky__head-row {
             display: flex; align-items: flex-start; justify-content: space-between;
             gap: 16px;
+            padding-right: 40px; /* clear room for the ✕ close button */
         }
         .bw-sticky__head-text { min-width: 0; flex: 1; }
         .bw-eyebrow {
@@ -1288,7 +1384,7 @@
             <span class="rti-topbar__title">Red Team Infra</span>
             <span class="rti-topbar__demo">
                 <span class="rti-topbar__demo-dot" aria-hidden="true"></span>
-                C — Split panel (interactive)
+                C — Browser + docked walkthrough (interactive)
             </span>
             <span class="rti-topbar__chip">
                 <span class="rti-topbar__chip-dot" aria-hidden="true"></span>
@@ -1366,9 +1462,12 @@
         </div>
 
         <!-- ════════════════════════════════════════════════════════════
-             SPLIT: catalog | handle | walkthrough (rail nested inside)
+             LAYOUT: catalog full-width by default. Walkthrough is a
+             DOCKED OVERLAY that slides in from the right when an
+             operator clicks ▶ Walkthrough on a vuln row. Closing the
+             dock (✕ / Esc / ← Back link) restores the catalog full-width.
              ════════════════════════════════════════════════════════════ -->
-        <div class="bw-split" id="bw-split">
+        <div class="bw-split" id="bw-split" data-dock-open="false">
             <!-- LEFT: catalog pane -->
             <aside class="bw-cat" aria-label="Bolt-on catalog">
                 <div class="bw-cat__head">
@@ -1456,7 +1555,7 @@
                 <dt><kbd>←</kbd></dt><dd>Previous step</dd>
                 <dt><kbd>→</kbd></dt><dd>Next step</dd>
                 <dt><kbd>Space</kbd></dt><dd>Toggle mark complete on current step</dd>
-                <dt><kbd>Esc</kbd></dt><dd>Back to catalog (clears walkthrough)</dd>
+                <dt><kbd>Esc</kbd></dt><dd>Close walkthrough panel (returns to bolt-on browser)</dd>
                 <dt><kbd>?</kbd></dt><dd>Open this shortcut help</dd>
             </dl>
             <button class="bw-kbd-modal__close" type="button" id="kbdModalClose">Close</button>
@@ -1471,7 +1570,10 @@
 const LS_STATE = 'boltonPreviewState';
 const LS_SPLIT = 'boltonSplitRatio';
 const LS_RAIL  = 'boltonStepRailCollapsed';
-const DEFAULT_RATIO = 0.45;
+// 2026-05-29 — splitRatio = CATALOG fraction. Default 0.40 → 60% docked
+// panel by default (matches the operator's picked layout from the AskUser
+// preview vote).
+const DEFAULT_RATIO = 0.40;
 
 // ─── VULN DATA ─────────────────────────────────────────────────────────
 const VULNS = [
@@ -2430,6 +2532,11 @@ const VULNS = [
 
 // ─── DEFAULT STATE ──────────────────────────────────────────────────────
 const DEFAULT_STATE = {
+    // 2026-05-29 — UX correction: default to dockOpen:false so the
+    // operator lands on the BOLT-ON BROWSER, not the walkthrough.
+    // selectedVulnId is pre-seeded so the walkthrough opens instantly
+    // when ▶ Walkthrough is clicked, but the panel is offscreen until then.
+    dockOpen: false,
     selectedVulnId: 'bolton.identity-kerberos.kerberoastable-svc',
     activeTab: 'walkthrough',
     splitRatio: DEFAULT_RATIO,
@@ -2498,8 +2605,11 @@ function initSplit() {
     };
     const onMove = (e) => {
         if (!dragging) return;
+        // 2026-05-29 — dock-overlay model: the handle sits at the LEFT edge of
+        // the docked panel. Drag right → catalog grows, panel shrinks.
+        // splitRatio still represents the CATALOG fraction (preserved for LS
+        // compatibility); the dock width is computed as (1 - splitRatio).
         const rect = split.getBoundingClientRect();
-        const railOffset = document.querySelector('.rti-rail').offsetWidth;
         const x = e.clientX - rect.left;
         const ratio = x / rect.width;
         applySplitRatio(ratio, /*persist=*/false);
@@ -2534,21 +2644,25 @@ function applySplitRatio(ratio, persist = true) {
     const rect = split.getBoundingClientRect();
     const totalW = rect.width;
 
-    // Constraints:
-    //  catalog min: 320px (was 280), max: 55%
-    //  walkthrough min: 480px
-    const catMin = 320 / totalW;
+    // 2026-05-29 — dock-overlay constraints (only meaningful when dock open):
+    //   catalog min: 25% (dock max: 75%)
+    //   catalog max: 55% (dock min: 45%, with absolute min 480px for code blocks)
+    const catMin = 0.25;
     const catMaxByPct = 0.55;
-    const catMaxByWalk = 1 - (480 / totalW);
-    const catMax = Math.min(catMaxByPct, catMaxByWalk);
+    const catMaxByDockMinPx = 1 - (480 / totalW);
+    const catMax = Math.min(catMaxByPct, catMaxByDockMinPx);
 
     if (catMax < catMin) {
-        // Very narrow viewport — clamp to a sane fraction
         ratio = catMin;
     } else {
         ratio = Math.max(catMin, Math.min(catMax, ratio));
     }
     state.splitRatio = ratio;
+    const dockPct = (1 - ratio) * 100;
+    // Drive the new --dock-width var (overlay panel width from right edge).
+    // Also keep --split-left in sync for any legacy CSS that may still
+    // reference it during the transition.
+    document.documentElement.style.setProperty('--dock-width', `${dockPct.toFixed(3)}%`);
     document.documentElement.style.setProperty('--split-left', `${(ratio * 100).toFixed(3)}%`);
     if (persist) saveState();
 }
@@ -2625,9 +2739,22 @@ function renderCatalog() {
                 <div class="bw-cat__row-id">${escapeHtml(v.id)}</div>
                 <div class="bw-cat__row-pills">${pillsHtml}</div>
             </div>
-            <div class="bw-cat__row-status">${statusHtml}</div>
+            <div class="bw-cat__row-actions">
+                <div class="bw-cat__row-status">${statusHtml}</div>
+                <button class="bw-cat__row-walk" type="button" data-walk-vuln="${escapeHtml(v.id)}"
+                        title="Open walkthrough (slides in from right)">▶ Walkthrough</button>
+            </div>
         `;
-        li.addEventListener('click', () => selectVuln(v.id));
+        // Row click — selects vuln (and swaps walkthrough content if dock already open)
+        li.addEventListener('click', (ev) => {
+            if (ev.target.closest('[data-walk-vuln]')) return; // button handles it
+            selectVuln(v.id);
+        });
+        // Button click — opens dock for this vuln (or swaps content if already open)
+        li.querySelector('[data-walk-vuln]').addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            openDock(v.id);
+        });
         list.appendChild(li);
     });
 }
@@ -2750,7 +2877,8 @@ function renderBodyCol() {
     const sticky = document.createElement('div');
     sticky.className = 'bw-sticky';
     sticky.innerHTML = `
-        <button class="bw-sticky__back" type="button" id="backToCatalog" aria-label="Back to catalog">← Back to catalog</button>
+        <button class="bw-sticky__back" type="button" id="backToCatalog" aria-label="Back to bolt-on browser">← Back to bolt-on browser</button>
+        <button class="bw-sticky__close" type="button" id="dockClose" aria-label="Close walkthrough" title="Close (Esc)">✕</button>
         <div class="bw-sticky__head-row">
             <div class="bw-sticky__head-text">
                 <span class="bw-eyebrow">Bolt-on walkthrough · TESTLAB</span>
@@ -2799,10 +2927,12 @@ function renderBodyCol() {
         });
     });
 
-    // Wire back-to-catalog
+    // Wire back-to-catalog + dock close (both collapse the docked overlay)
     sticky.querySelector('#backToCatalog').addEventListener('click', () => {
-        backToCatalog();
+        closeDock();
     });
+    const closeBtn = sticky.querySelector('#dockClose');
+    if (closeBtn) closeBtn.addEventListener('click', () => closeDock());
 
     // Render the active tab content
     if (state.activeTab === 'walkthrough') {
@@ -3278,11 +3408,32 @@ function cancelAutoAdvance() {
     if (autoAdvanceTimer) { clearTimeout(autoAdvanceTimer); autoAdvanceTimer = null; }
 }
 
+// 2026-05-29 — UX correction: the docked walkthrough overlay now slides
+// out, the bolt-on browser stays mounted full-width underneath. selectedVulnId
+// is preserved (per-vuln state survives close-reopen) — we only flip dockOpen.
 function backToCatalog() {
-    state.selectedVulnId = null;
+    closeDock();
+}
+
+function openDock(vulnId) {
+    if (vulnId) {
+        state.selectedVulnId = vulnId;
+        state.activeTab = 'walkthrough';
+    }
+    state.dockOpen = true;
     saveState();
-    renderCatalog();
+    document.getElementById('bw-split').setAttribute('data-dock-open', 'true');
+    renderCatalog();   // re-render to update selection highlight + dimming
     renderWalkthrough();
+}
+
+function closeDock() {
+    state.dockOpen = false;
+    saveState();
+    document.getElementById('bw-split').setAttribute('data-dock-open', 'false');
+    renderCatalog();   // re-render to clear dimming + selection highlight
+    // Walkthrough content stays rendered in the panel (it just slid out of view)
+    // so re-opening is instant.
 }
 
 function resetProgress() {
@@ -3315,19 +3466,22 @@ function initKeyboard() {
 
         const v = state.selectedVulnId ? vulnById(state.selectedVulnId) : null;
         const pv = v ? perVuln(v.id) : null;
+        // 2026-05-29 — step nav shortcuts only fire when the dock is open
+        // (otherwise the walkthrough is offscreen and the keypress is invisible)
+        const dockOpen = state.dockOpen === true;
 
         if (e.key === 'ArrowRight') {
-            if (v && pv) { goToStep(pv.currentStepIndex + 1); e.preventDefault(); }
+            if (dockOpen && v && pv) { goToStep(pv.currentStepIndex + 1); e.preventDefault(); }
         } else if (e.key === 'ArrowLeft') {
-            if (v && pv) { goToStep(pv.currentStepIndex - 1); e.preventDefault(); }
+            if (dockOpen && v && pv) { goToStep(pv.currentStepIndex - 1); e.preventDefault(); }
         } else if (e.key === ' ' || e.code === 'Space') {
-            if (v && pv) {
+            if (dockOpen && v && pv) {
                 const step = v.steps[pv.currentStepIndex];
                 toggleStepComplete(v.id, step.id, pv.currentStepIndex);
                 e.preventDefault();
             }
         } else if (e.key === 'Escape') {
-            backToCatalog();
+            if (dockOpen) closeDock();
         } else if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
             openKbdModal();
             e.preventDefault();
@@ -3374,6 +3528,11 @@ document.addEventListener('DOMContentLoaded', () => {
     renderCatalog();
     renderWalkthrough();
     document.getElementById('resetProgress').addEventListener('click', resetProgress);
+    // 2026-05-29 — apply persisted dock state. Default DEFAULT_STATE.dockOpen
+    // is false so the operator lands on the bolt-on browser; if they had the
+    // dock open last session, restore it.
+    const split = document.getElementById('bw-split');
+    if (split) split.setAttribute('data-dock-open', state.dockOpen ? 'true' : 'false');
 });
 </script>
 </body>
