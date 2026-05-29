@@ -8582,7 +8582,13 @@ body[data-journey-open="true"] .container > main {
    ════════════════════════════════════════════════════════════════════════ */
 
 .manage-view {
-    max-width: 920px;
+    /* 2026-05-29 — was capped at 920px, which made the Deployment Manager
+       header/table/actions narrower than the sibling sections below it
+       (DEPLOYED INVENTORY / SESSION LOG / DETAILED LOGS — none of which
+       cap their width). Fill the container so the whole Manage column
+       lines up at the same predetermined width. */
+    max-width: none;
+    width: 100%;
     margin: 0;
     padding: 0;
     /* 2026-05-22 — manage-fade-in animation removed. Same root cause as
