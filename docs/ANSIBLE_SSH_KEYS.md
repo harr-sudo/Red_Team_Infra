@@ -183,53 +183,40 @@ ansible-playbook -i inventory/hosts.yml playbooks/distribute-ssh-keys.yml \
     -e "ssh_public_key_file=/tmp/all-keys.pub"
 ```
 
-## From Jump Box (WSL2) — legacy/fallback
+## Manual Key Distribution (Local Dev)
 
-> The AWS-hosted Dashboard Server now manages SSH keys via its own keypair + SSM (see [Server Mode SSH Keys](#server-mode-ssh-keys) below). The jump-box/bastion workflow here is **legacy/fallback** only.
+> In production the AWS-hosted Dashboard Server manages SSH keys via its own keypair + SSM (see [Server Mode SSH Keys](#server-mode-ssh-keys) below). The manual workflow here applies only when running the dashboard as a local dev instance from your laptop.
 
 ### Complete Workflow
 
-1. **RDP to jump box (legacy bastion):**
+1. **Clone the project locally:**
    ```bash
-   mstsc /v:bastion-public-ip
-   ```
-
-2. **Open WSL2:**
-   ```powershell
-   wsl
-   ```
-
-3. **Clone or copy project to WSL2:**
-   ```bash
-   # If project is on Windows, access via /mnt/c/
-   cd /mnt/c/Users/Administrator/Desktop/Red_Team_Infra
-   
-   # Or clone from GitHub
    git clone https://github.com/your-org/Red_Team_Infra.git
    cd Red_Team_Infra
    ```
 
-4. **Generate and distribute keys:**
+2. **Generate and distribute keys:**
    ```bash
    ./scripts/utilities/setup-ssh-keys.sh
    ```
 
-5. **SSH to C2 servers:**
+3. **SSH to C2 servers (through the Dashboard Server jump):**
    ```bash
-   # Now you can SSH without specifying key (if using SSH config)
-   ssh ec2-user@c2-server-1-private-ip
+   # Reach private C2 instances via the Dashboard Server
+   ssh -J ubuntu@<dashboard-eip> ec2-user@c2-server-1-private-ip
    ```
 
 ## SSH Config Setup
 
 ### Create SSH Config for Easy Access
 
-**On jump box WSL2:**
+**In your `~/.ssh/config` (ProxyJump through the Dashboard Server):**
 ```bash
 cat >> ~/.ssh/config << 'EOF'
 Host c2-*
     User ec2-user
-    IdentityFile ~/.ssh/red-team-jumpbox-key
+    IdentityFile ~/.ssh/red-team-key
+    ProxyJump ubuntu@<dashboard-eip>
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
 
@@ -242,7 +229,7 @@ Host c2-server-2
 Host proxy-1
     HostName 54.123.45.67
     User ec2-user
-    IdentityFile ~/.ssh/red-team-jumpbox-key
+    IdentityFile ~/.ssh/red-team-key
 EOF
 
 chmod 600 ~/.ssh/config
@@ -416,7 +403,7 @@ When running the dashboard in server mode, SSH key management works differently 
 - The dashboard server generates its own Ed25519 keypair at `/opt/redteam/.ssh/id_ed25519` during initial setup
 - The public key is pushed to all deployed instances via AWS SSM (`AWS-RunShellScript` / `AWS-RunPowerShellScript`), adding it to each instance's `authorized_keys`
 - The operator's private key **never leaves their laptop** — it is only used to SSH into the dashboard server itself
-- The dashboard's Terminal tab uses the server's keypair to provide in-browser SSH access to all infrastructure instances (team servers, redirectors, bastion, jumpbox)
+- The dashboard's Terminal tab uses the server's keypair to provide in-browser SSH access to all infrastructure instances (team servers, redirectors, attack box, GOAD jumpbox)
 - The server keypair is separate from any operator keys or the AWS EC2 key pair used at launch
 
 ### Migrated Deployments
@@ -437,10 +424,10 @@ This means the server can SSH to all instances without the operator needing to d
 
 | Aspect | Local Mode | Server Mode |
 |--------|-----------|-------------|
-| Key generation | Jump box or operator laptop | Dashboard server (`/opt/redteam/.ssh/`) |
+| Key generation | Operator laptop | Dashboard server (`/opt/redteam/.ssh/`) |
 | Distribution method | Ansible playbook | AWS SSM (no Ansible needed) |
 | Operator private key | On laptop, used for SSH | On laptop, used only to reach dashboard |
-| Instance access | SSH from jump box / bastion | Terminal tab in browser (via server keypair) |
+| Instance access | SSH via Dashboard Server jump | Terminal tab in browser (via server keypair) |
 
 ## Summary
 

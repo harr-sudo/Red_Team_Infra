@@ -97,10 +97,10 @@ When deploying **GOAD labs standalone** (without full C2 infrastructure), we use
 **Key Points for GOAD-Only Mode:**
 
 1. **No Redirectors Needed**: This is an isolated lab - beacons don't need to traverse the internet
-2. **No Separate Bastion**: The GOAD jumpbox serves dual purpose (lab access + CS server)
+2. **No Bastion**: there is no per-deployment SSH-relay bastion; operator access is through the Dashboard Server. The GOAD jumpbox provisions the AD lab via Ansible and (in GOAD-only mode) runs the CS team server.
 3. **Cobalt Strike on Jumpbox**: Team server runs directly on the jumpbox
 4. **Direct Internal Access**: CS server has direct network access to all GOAD VMs
-5. **Operator Connects Directly**: Your CS client connects to jumpbox public IP on port 50050
+5. **Operator Access via Dashboard**: Your CS client tunnels to the jumpbox CS port (50050) through the Dashboard Server
 
 **Why This Works:**
 - GOAD is a **training environment** - no need to simulate realistic C2 infrastructure
@@ -144,14 +144,14 @@ When deploying **C2 infrastructure WITH a GOAD lab** (for realistic red team tra
 │  │                    Full C2 Infrastructure                           │    │
 │  │                                                                      │    │
 │  │   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐          │    │
-│  │   │  C2 Server   │    │  Redirector  │    │  Our Bastion │          │    │
-│  │   │  (Cobalt)    │◄───│  (Public)    │◄───│  (Windows)   │          │    │
-│  │   │  Private     │    │  10.x.x.x    │    │  Public IP   │          │    │
+│  │   │  C2 Server   │    │  Redirector  │    │  Attack Box  │          │    │
+│  │   │  (Cobalt)    │◄───│  (Public)    │    │  (Windows)   │          │    │
+│  │   │  Private     │    │  10.x.x.x    │    │  Private     │          │    │
 │  │   └──────────────┘    └──────────────┘    └──────────────┘          │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
-│                         VPC Peering / Security Groups                        │
-│                    (Allow traffic between C2 and GOAD)                       │
+│        Access: Dashboard Server (own VPC, EIP) ── VPC peering ──► all hosts   │
+│        VPC Peering / Security Groups (allow traffic between C2 and GOAD)      │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -170,13 +170,14 @@ When deploying **C2 infrastructure WITH a GOAD lab** (for realistic red team tra
 | **GOAD-Only (Mini)** | 1 GOAD VM + Jumpbox/CS | ~$75-100 |
 | **GOAD-Only (Light)** | 3 GOAD VMs + Jumpbox/CS | ~$200-250 |
 | **GOAD-Only (Full)** | 5 GOAD VMs + Jumpbox/CS | ~$350-400 |
-| **C2 Ad-Hoc + GOAD Mini** | 1 C2 + 2 Redirectors + Bastion + GOAD Mini | ~$180-220 |
-| **C2 Full + GOAD Full** | 3 C2 + 2 Redirectors + Bastion + GOAD Full | ~$500-600 |
+| **C2 Ad-Hoc + GOAD Mini** | 1 C2 + 2 Redirectors + Attack Box + GOAD Mini | ~$180-220 |
+| **C2 Full + GOAD Full** | 3 C2 + 2 Redirectors + Attack Box + GOAD Full | ~$500-600 |
 
 **GOAD-Only is ~30-40% cheaper** because:
-- No separate bastion (jumpbox serves this role)
 - No redirectors (internal network only)
 - Single CS server on jumpbox (no dedicated C2 instance)
+
+(Access for every deployment is through the AWS Dashboard Server — there is no per-deployment bastion in any mode.)
 
 ---
 
@@ -316,7 +317,7 @@ resource "aws_security_group_rule" "goad_from_c2" {
 
 1. **Via GOAD Jumpbox (Recommended)**:
    ```
-   Our Bastion → SSH → GOAD Jumpbox → SOCKS Proxy → GOAD Network
+   Dashboard Server → SSH → GOAD Jumpbox → SOCKS Proxy → GOAD Network
    ```
    - Use GOAD's built-in `ssh_jumpbox_proxy` feature
    - Configure Cobalt Strike to use SOCKS proxy
@@ -456,7 +457,7 @@ For GOAD-only deployments, connecting is straightforward since the team server r
 3. **Connect to**: `<jumpbox-public-ip>:50050`
 4. **Enter teamserver password**
 
-That's it! No tunnels, no bastion hopping. Your IP just needs to be in `management_cidr_blocks`.
+That's it! No multi-hop SSH. Your IP just needs to be in `management_cidr_blocks` (or tunnel through the Dashboard Server).
 
 **Security Note**: Port 50050 is only accessible from your whitelisted management CIDRs.
 
@@ -466,25 +467,25 @@ That's it! No tunnels, no bastion hopping. Your IP just needs to be in `manageme
 
 For combined deployments (C2 + GOAD), use the full access methods since the team server is on a private C2 instance:
 
-#### Option 1: SSH Tunnel through Bastion (Recommended) ✅
+#### Option 1: SSH Tunnel through the Dashboard Server (Recommended) ✅
 
 **Best for**: Most users, secure remote access, dynamic home IPs
 
 **How it works**:
 ```
-┌──────────────┐     SSH Tunnel      ┌──────────────┐     Internal     ┌──────────────┐
-│ Your Laptop  │ ──────────────────► │   Bastion    │ ───────────────► │  C2 Server   │
-│              │   Port 50050        │  (Public IP) │                  │ (Private IP) │
-│ CS Client    │   Forwarded         │              │                  │  Port 50050  │
-│ localhost    │                     │              │                  │              │
-└──────────────┘                     └──────────────┘                  └──────────────┘
+┌──────────────┐     SSH Tunnel      ┌──────────────────┐   VPC peering   ┌──────────────┐
+│ Your Laptop  │ ──────────────────► │ Dashboard Server │ ──────────────► │  C2 Server   │
+│              │   Port 50050        │  (own VPC, EIP)  │                 │ (Private IP) │
+│ CS Client    │   Forwarded         │                  │                 │  Port 50050  │
+│ localhost    │                     │                  │                 │              │
+└──────────────┘                     └──────────────────┘                 └──────────────┘
 ```
 
 **Steps**:
 1. **Open terminal on your laptop**
 2. **Create SSH tunnel**:
    ```bash
-   ssh -i ~/.ssh/your-key.pem -L 50050:<c2-private-ip>:50050 ubuntu@<bastion-public-ip>
+   ssh -i ~/.ssh/your-key.pem -L 50050:<c2-private-ip>:50050 ubuntu@<dashboard-eip>
    ```
 3. **Keep terminal open** (maintains the tunnel)
 4. **Open Cobalt Strike client**
@@ -492,10 +493,10 @@ For combined deployments (C2 + GOAD), use the full access methods since the team
 6. **Enter teamserver password**
 
 **Pros**:
-- ✅ Your home IP doesn't need to be whitelisted
+- ✅ Your home IP only needs allow-listing on the Dashboard Server
 - ✅ All traffic encrypted through SSH
 - ✅ Works with dynamic IPs
-- ✅ Only port 22 exposed on bastion
+- ✅ Single jump — no per-deployment relay host
 
 **Cons**:
 - ❌ Requires SSH key management
@@ -503,37 +504,36 @@ For combined deployments (C2 + GOAD), use the full access methods since the team
 
 ---
 
-#### Option 2: RDP to Bastion, Run CS Client There
+#### Option 2: RDP to the Attack Box, Run CS Client There
 
 **Best for**: Users who prefer GUI, don't want to install CS locally
 
 **How it works**:
 ```
-┌──────────────┐       RDP          ┌──────────────┐     Internal     ┌──────────────┐
-│ Your Laptop  │ ──────────────────►│   Bastion    │ ───────────────► │  C2 Server   │
-│              │   Port 3389        │  (Windows)   │                  │ (Private IP) │
-│ RDP Client   │                    │              │                  │  Port 50050  │
-│              │                    │  CS Client   │                  │              │
-└──────────────┘                    │  runs HERE   │                  │              │
-                                    └──────────────┘                  └──────────────┘
+┌──────────────┐  RDP via Dashboard  ┌──────────────────┐   VPC peering   ┌──────────────┐
+│ Your Laptop  │ ──────────────────► │ Dashboard Server │ ──────────────► │  Attack Box  │
+│              │   tunnel :13389     │  (own VPC, EIP)  │                 │  (Windows,   │
+│ RDP Client   │                     │                  │                 │  CS Client   │
+│              │                     │                  │                 │  runs HERE)  │
+└──────────────┘                     └──────────────────┘                 └──────────────┘
 ```
 
 **Steps**:
-1. **Open RDP client** (mstsc on Windows, Microsoft Remote Desktop on Mac)
-2. **Connect to**: `<bastion-public-ip>:3389`
-3. **Login** with Windows credentials (provided after deployment)
-4. **Open Cobalt Strike** on the bastion (pre-installed or download)
-5. **Connect to team server**: `<c2-private-ip>:50050`
+1. **Tunnel RDP through the Dashboard Server**: `ssh -L 13389:<attackbox-private-ip>:3389 ubuntu@<dashboard-eip>`
+2. **Open RDP client** (mstsc on Windows, Microsoft Remote Desktop on Mac)
+3. **Connect to**: `localhost:13389`
+4. **Login** with Windows credentials (provided after deployment)
+5. **Open Cobalt Strike** on the attack box (pre-installed)
+6. **Connect to team server**: `<c2-private-ip>:50050`
 
 **Pros**:
 - ✅ No local CS installation needed
 - ✅ Full Windows environment
-- ✅ CS artifacts stay on bastion, not your laptop
+- ✅ CS artifacts stay on the attack box, not your laptop
 
 **Cons**:
 - ❌ Latency in GUI operations
-- ❌ Requires Windows license on bastion
-- ❌ RDP port exposed (should be restricted to your IP)
+- ❌ Tunnel must stay open
 
 ---
 
@@ -586,7 +586,7 @@ After deployment, the **Deployment Manager** page will show:
 │  │ Run this command in your terminal:                                   │   │
 │  │ ┌──────────────────────────────────────────────────────────────────┐│   │
 │  │ │ ssh -i ~/.ssh/redteam-key.pem -L 50050:10.0.2.15:50050 \         ││   │
-│  │ │     ubuntu@54.123.45.67                                          ││   │
+│  │ │     ubuntu@<dashboard-eip>                                       ││   │
 │  │ └──────────────────────────────────────────────────────────────────┘│   │
 │  │                                                    [📋 Copy Command] │   │
 │  │                                                                      │   │
@@ -594,9 +594,9 @@ After deployment, the **Deployment Manager** page will show:
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ 🖥️ RDP to Bastion                                                    │   │
+│  │ 🖥️ RDP to Attack Box (via Dashboard Server tunnel)                   │   │
 │  │                                                                      │   │
-│  │ Bastion IP: 54.123.45.67                                            │   │
+│  │ Tunnel: ssh -L 13389:<attackbox-ip>:3389 ubuntu@<dashboard-eip>     │   │
 │  │ Username: Administrator                                              │   │
 │  │ Password: [Click to reveal]                                          │   │
 │  │                                                    [📋 Copy RDP File]│   │
@@ -624,15 +624,15 @@ After deployment, the **Deployment Manager** page will show:
 
 | Method | Setup Complexity | Security | Works with Dynamic IP | Latency |
 |--------|-----------------|----------|----------------------|---------|
-| **SSH Tunnel** | Medium | ⭐⭐⭐⭐⭐ | ✅ Yes | Low |
-| **RDP to Bastion** | Low | ⭐⭐⭐⭐ | ✅ Yes | Medium |
+| **SSH Tunnel (via Dashboard Server)** | Medium | ⭐⭐⭐⭐⭐ | ✅ Yes | Low |
+| **RDP to Attack Box (via Dashboard Server)** | Low | ⭐⭐⭐⭐ | ✅ Yes | Medium |
 | **Direct** | Low | ⭐⭐⭐ | ❌ No | Lowest |
 
 ### Troubleshooting Connection Issues
 
 | Problem | Solution |
 |---------|----------|
-| SSH tunnel won't connect | Check bastion security group allows port 22 from your IP |
+| SSH tunnel won't connect | Check the Dashboard Server security group allows port 22 from your IP |
 | CS client times out | Verify team server is running, check port 50050 is open |
 | "Connection refused" | Ensure tunnel is still active, check you're connecting to correct port |
 | RDP won't connect | Check port 3389 is open in security group, verify credentials |

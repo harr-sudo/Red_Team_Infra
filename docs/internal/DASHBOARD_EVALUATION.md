@@ -11,7 +11,7 @@
 | **GOAD Lab Management** | ★★★★★ | Full lifecycle: deploy, provision AD, poll status, extract credentials, start/stop. First-class purple team training. |
 | **Pre-Reqs Validation** | ★★★★☆ | Catches missing tools, bad creds, wrong IAM perms before you waste 15 minutes on a failed deploy. Missing: validates terraform version compatibility. |
 | **Deployment Manager (Start/Stop)** | ★★★★☆ | Cost savings by stopping instances overnight is real. Missing: scheduled stop/start (e.g., auto-stop at 6pm). |
-| **Tools Upload (SCP to Attack Box)** | ★★★★☆ | Drag-and-drop file transfer through bastion. Useful but limited to one-way push. |
+| **Tools Upload (SCP to Attack Box)** | ★★★★☆ | Drag-and-drop file transfer through the Dashboard Server. Useful but limited to one-way push. |
 | **CS Archive + Client Upload** | ★★★★☆ | S3 with content-hash dedup is clean. License activation from Secrets Manager removes manual step. |
 | **SSL/TLS Configuration** | ★★★★☆ | Let's Encrypt auto-renewal is the right default. Self-signed OPSEC warning is a nice touch. |
 | **Architecture Diagrams** | ★★★★☆ | 19 diagrams covering every deployment mode. Good for team briefings and engagement planning. |
@@ -91,10 +91,10 @@ If a redirector IP or domain gets burned mid-engagement:
 
 Replace copy-paste SSH commands with one-click actions:
 
-- "Connect to Bastion" — opens terminal with SSH command pre-filled
-- "Tunnel to C2" — opens SSH tunnel (`ssh -L 50050:...`)
+- "Connect to Dashboard Server" — opens terminal with SSH command pre-filled
+- "Tunnel to C2" — opens SSH tunnel through the Dashboard Server (`ssh -L 50050:...`)
 - "RDP to Attack Box" — launches RDP client with correct IP and port
-- "SSH to Jumpbox" — direct jumpbox connection
+- "SSH to GOAD Jumpbox" — jumpbox connection through the Dashboard Server
 - Generate `.ssh/config` entries for the current deployment
 
 ---

@@ -63,7 +63,7 @@ Operator (Your Laptop)
 
 | Component | Type | IP | Subnet | Purpose |
 |-----------|------|------|--------|---------|
-| **Jumpbox** | Ubuntu 22.04, t3.small | 10.10.1.100 | Public | SSH bastion gateway ONLY |
+| **Jumpbox** | Ubuntu 22.04, t3.small | 10.10.1.100 | Public | GOAD AD-lab Ansible provisioning host (reached via the Dashboard Server) |
 | **Team Server** | Ubuntu 22.04, t3.medium | 10.10.1.40 | Private | Cobalt Strike server daemon (headless) |
 | **Attack Box** | Windows 2022, t3.xlarge | 10.10.1.50 | Private | CS Client GUI, Tools, WSL2 |
 | **DC01** | Windows 2019, t3.medium | 10.10.1.10 | Private | Domain Controller - sevenkingdoms.local |

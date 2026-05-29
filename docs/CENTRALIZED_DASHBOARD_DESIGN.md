@@ -12,7 +12,7 @@ The dashboard supports two run targets from a single codebase — no code forks,
 - **Dashboard Server (production)** — runs on a dedicated EC2 instance in AWS (own VPC, public EIP). This is the **production control plane and SSH jump host**: every deployment branches out from it via VPC peering, and it is the single entry point into all instances. Supports multi-operator shared access.
 - **Local Dev** — runs on the operator's laptop for development/testing only. Not the production path.
 
-> The per-deployment bastion is **legacy/fallback** — the Dashboard Server is the primary jump into all instances.
+> There is no per-deployment SSH-relay bastion — the Dashboard Server is the sole jump into all instances.
 
 ---
 
@@ -25,7 +25,7 @@ The dashboard supports two run targets from a single codebase — no code forks,
 | **AWS credentials** | Operator's `~/.aws/credentials` | IAM instance role (no creds on disk) |
 | **Terraform state** | Local `.tfstate` per workspace | S3 backend + DynamoDB locking |
 | **CS archive** | `uploads/` in project dir | `/opt/redteam/uploads/` on EBS (SCP once) |
-| **Terminal SSH** | ProxyJump through bastion (legacy) | Jump via Dashboard Server (direct VPC peering) |
+| **Terminal SSH** | SSM / direct SSH to public hosts | Jump via Dashboard Server (direct VPC peering) |
 | **Operator identity** | Single user (no tracking) | Per-user Linux accounts + audit trail |
 | **Multi-operator** | No | Yes (2+ operators via SSH tunnel) |
 | **Prerequisites** | Terraform, AWS CLI, Python, SSH | SSH client + browser (nothing else) |
@@ -194,7 +194,7 @@ SSM goes through AWS APIs — no VPC peering needed for SSM commands.
 Two separate, independent allowlists:
 
 1. **Dashboard security group** — `dashboard_allowed_ips` — who can SSH into the dashboard server
-2. **Per-deployment security groups** — `management_cidr_blocks` — who can RDP to bastion, access redirectors
+2. **Per-deployment security groups** — `management_cidr_blocks` — break-glass direct SSH/RDP to deployment instances (the Dashboard Server is the normal path)
 
 May overlap but managed independently. Dashboard module prompts for `dashboard_allowed_ips` as required variable.
 

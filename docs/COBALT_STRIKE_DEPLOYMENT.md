@@ -69,9 +69,8 @@ Or select "Auto-activate from Secrets Manager" in the web app deploy page and en
 Leave `cobalt_strike_license_secret_name` empty. After deployment:
 
 ```bash
-# SSH to team server via the Dashboard Server (jump host)
+# SSH to team server via the Dashboard Server (sole SSH jump host)
 ssh -J ubuntu@<dashboard-eip> ubuntu@<c2_ip>
-# Legacy/fallback: ssh -J ubuntu@<bastion_ip> ubuntu@<c2_ip>
 
 # Activate license
 cd /opt/cobaltstrike && sudo ./update

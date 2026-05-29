@@ -10,15 +10,15 @@ The project uses a layered SSH key architecture with three categories of keys. P
 
 ### Category A: Operator External Key (User Access)
 
-The operator's own SSH key (ed25519 or RSA) is registered as an AWS key pair via `var.user_public_key`. The private key never enters Terraform state. In the current architecture the operator authenticates with this key to the **Dashboard Server** — the AWS-hosted production control plane and SSH jump host — which is the entry point for every deployment. The key is also installed on deployment instances so the legacy bastion/jumpbox fallback still works.
+The operator's own SSH key (ed25519 or RSA) is registered as an AWS key pair via `var.user_public_key`. The private key never enters Terraform state. The operator authenticates with this key to the **Dashboard Server** — the AWS-hosted production control plane and sole SSH jump host — which is the entry point for every deployment. The key is also installed on deployment instances so the Dashboard Server can jump to them (and for break-glass direct SSH from `management_cidr_blocks`).
 
 ```
-Operator laptop → public key → terraform.tfvars → aws_key_pair → Dashboard Server (primary)
-                  private key stays on operator's laptop      └→ deployment instances (legacy fallback path)
+Operator laptop → public key → terraform.tfvars → aws_key_pair → Dashboard Server (sole jump)
+                  private key stays on operator's laptop      └→ deployment instances (reached via the dashboard / break-glass)
 ```
 
 **Primary use:** authorizes the operator to the Dashboard Server (SSH-key auth + IP allow-list).
-**Also installed on:** all Linux instances (C2 team servers, proxy redirectors, bastion, GOAD jumpbox) so the legacy bastion/jumpbox path remains usable.
+**Also installed on:** all Linux instances (C2 team servers, proxy redirectors, GOAD jumpbox) so the Dashboard Server can jump to them.
 
 ### Category B: Windows Instance Key (Auto-Generated RSA)
 
@@ -33,7 +33,7 @@ resource "tls_private_key" "windows" {
 
 **Security note:** The private key IS stored in Terraform state (inherent limitation). The web app uses it to decrypt the EC2Launch v2 auto-generated Administrator password.
 
-**Used by:** Attack Box (Windows Server 2022), Bastion (Windows Server)
+**Used by:** Attack Box (Windows Server 2022)
 
 ### Category C: Host-Generated Internal Keys (Inter-Instance)
 
@@ -108,7 +108,7 @@ All Linux instances apply these SSH settings via their init scripts:
 | `MaxSessions` | `10` | Reasonable session limit |
 | `ClientAliveInterval` | `300` | 5-minute keepalive |
 | `ClientAliveCountMax` | `2` | Disconnect after 10 min idle |
-| `AllowAgentForwarding` | `yes` | Required for SSH agent through bastion |
+| `AllowAgentForwarding` | `yes` | Required for SSH agent forwarding through the Dashboard Server jump |
 | `AllowTcpForwarding` | `yes` | Required for port forwarding to C2 |
 | `X11Forwarding` | `no` | Not needed, reduces attack surface |
 
@@ -137,15 +137,15 @@ These are manual-use tools, not part of the automated bootstrap:
 
 ## Operator Access Methods
 
-The operator's external key authorizes to the **Dashboard Server**, which is the entry point and jump host for everything below. The bastion/jumpbox rows are legacy fallbacks.
+The operator's external key authorizes to the **Dashboard Server**, which is the sole entry point and SSH jump host for everything below.
 
-| Target | Method (Primary) | Key Used |
-|--------|------------------|----------|
+| Target | Method | Key Used |
+|--------|--------|----------|
 | Dashboard Server | SSH tunnel to EIP (`ssh -L 5000:localhost:5000 ubuntu@dashboard_eip`) + IP allow-list | Operator external key |
 | C2 Team Server | `ssh -L 50050:c2_ip:50050 ubuntu@dashboard_eip` (or web UI terminal) | Operator external key → dashboard internal access |
 | Attack Box (C2 mode) | RDP via dashboard tunnel (`-L 13389:ab_ip:3389`) | Operator external key → dashboard; Windows RSA for password |
 | Attack Box (GOAD mode) | RDP via dashboard tunnel / SSH via dashboard | Dashboard internal access; Windows RSA / internal key |
-| Bastion / GOAD Jumpbox (fallback) | SSH to public IP | Operator external key |
+| GOAD Jumpbox (provisioning host) | SSH via the Dashboard Server | Operator external key → dashboard internal access |
 
 ## Related Files
 

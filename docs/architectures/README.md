@@ -45,7 +45,7 @@ This directory contains detailed architecture documentation for all deployment m
 
 ## Dashboard Server (Production Control Plane)
 
-The **Dashboard Server** (EC2 t3.medium, Ubuntu 22.04) is a dedicated AWS-hosted instance in its own VPC. It is the **production control plane and SSH jump host** — the single operator entry point that all deployments branch out from. Every deployment VPC (C2 / GOAD / CCRTS) is peered with the Dashboard VPC, so the dashboard reaches every instance directly. The operator's laptop only runs a *dev* instance of the dashboard for development; production always runs on this AWS server. Per-deployment bastions and GOAD jumpboxes are demoted to legacy/fallback relays.
+The **Dashboard Server** (EC2 t3.medium, Ubuntu 22.04) is a dedicated AWS-hosted instance in its own VPC. It is the **production control plane and sole SSH jump host** — the single operator entry point that all deployments branch out from. Every deployment VPC (C2 / GOAD / CCRTS) is peered with the Dashboard VPC, so the dashboard reaches every instance directly. The operator's laptop only runs a *dev* instance of the dashboard for development; production always runs on this AWS server. There is no per-deployment SSH-relay bastion; the GOAD jumpbox is retained only as the AD-lab Ansible provisioning host (not an access path).
 
 ### Dashboard VPC
 
@@ -76,11 +76,11 @@ Operator laptop
    ▼
 Dashboard Server (10.100.1.10, EIP)
    │ VPC Peering (direct routes)
-   ├──► C2 VPC instances (bastion, redirectors, team server, attack box)
+   ├──► C2 VPC instances (redirectors, team server, attack box)
    └──► GOAD VPC instances (jumpbox, DCs, team server, attack box)
 ```
 
-The operator opens `http://localhost:5000` in a browser and uses the web UI to manage infrastructure, open terminal sessions, view topology, and interact with beacons. The dashboard is the primary management entry point that all deployments branch from — the per-deployment bastion (C2) and GOAD jumpbox remain only as legacy/fallback SSH relays, not the operator's day-to-day path.
+The operator opens `http://localhost:5000` in a browser and uses the web UI to manage infrastructure, open terminal sessions, view topology, and interact with beacons. The dashboard is the sole management entry point that all deployments branch from — there is no per-deployment SSH-relay bastion. The GOAD jumpbox is reached *through* the dashboard and only provisions the AD lab via Ansible (it is not an access bastion).
 
 For deployment-specific details, see the "Dashboard Server (Production Control Plane)" section in each architecture document.
 

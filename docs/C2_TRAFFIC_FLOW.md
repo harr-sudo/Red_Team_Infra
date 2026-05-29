@@ -56,9 +56,9 @@ STEP 5: Target executes the command, sends output on NEXT beacon
 
 ```
 ┌──────────────┐         ┌──────────────────┐         ┌──────────────────┐         ┌──────────────┐
-│   Operator   │──SSH────▶│     Bastion      │──tunnel─▶│   Team Server    │         │    Target    │
-│   Laptop     │  tunnel  │  (management)    │  50050   │   (private)      │         │   (beacon)   │
-│              │         │                  │         │                  │         │              │
+│   Operator   │──SSH────▶│ Dashboard Server │──tunnel─▶│   Team Server    │         │    Target    │
+│   Laptop     │  tunnel  │ (own VPC, EIP,   │  50050   │   (private)      │         │   (beacon)   │
+│              │         │  VPC peering)    │  (peered)│                  │         │              │
 │  CS Client   │         │                  │         │  queues command  │         │              │
 │  localhost   │         │                  │         │       ↕          │         │              │
 │   :50050     │         │                  │         │  waits for poll  │         │              │
@@ -71,7 +71,7 @@ STEP 5: Target executes the command, sends output on NEXT beacon
                                                     └────────────────────┘
 ```
 
-**Reading the diagram**: The target beacon polls the redirector (bottom right → bottom left). Nginx proxies to the team server (bottom left → middle). The team server responds with commands on the same connection. The operator interacts with the team server separately via SSH tunnel (top left → top right). These are two independent connections — the operator path and the C2 path never share a network link.
+**Reading the diagram**: The target beacon polls the redirector (bottom right → bottom left). Nginx proxies to the team server (bottom left → middle). The team server responds with commands on the same connection. The operator interacts with the team server separately via an SSH tunnel through the Dashboard Server, which reaches the team server over VPC peering (top left → top right). These are two independent connections — the operator path and the C2 path never share a network link.
 
 ---
 
@@ -95,16 +95,14 @@ Target ◀──HTTPS response (commands)──── Redirector ◀────
 
 ### 2. Operator Access (SSH Tunnel)
 
-> **Primary path:** operator → AWS-hosted **Dashboard Server** (jump host) → team server. The bastion diagram below is the **legacy/fallback** path. See [Server Mode Traffic Flow](#server-mode-traffic-flow) below for the production path.
+> **Access path:** operator → AWS-hosted **Dashboard Server** (sole SSH jump host) → team server, over VPC peering. There is no per-deployment bastion relay. See [Server Mode Traffic Flow](#server-mode-traffic-flow) below for the full path.
 
 ```
-Operator ──SSH──▶ Dashboard Server (EIP, port 22) ──tunnel──▶ Team Server (port 50050)
-                  (legacy fallback: ──▶ Bastion ──tunnel──▶ Team Server)
+Operator ──SSH──▶ Dashboard Server (EIP, port 22) ──VPC peering──▶ Team Server (port 50050)
 ```
 
 - **Initiated by**: Operator
-- **Command (primary)**: `ssh -L 50050:10.0.10.10:50050 ubuntu@<dashboard-eip>`
-- **Command (legacy fallback)**: `ssh -L 50050:10.0.10.10:50050 ubuntu@bastion_ip`
+- **Command**: `ssh -L 50050:10.0.10.10:50050 ubuntu@<dashboard-eip>`
 - **Security Groups**: Management CIDR → Dashboard SG (22), Dashboard VPC peering → C2 SG (50050)
 - **CS Client**: Connects to `localhost:50050` (tunneled to team server)
 
@@ -314,8 +312,8 @@ All C2 traffic is pull-based, so the SG rules are straightforward:
 |------|--------|------|------|-----|
 | Beacon inbound | 0.0.0.0/0 (or CloudFront) | Redirector SG | 443 | Target beacons check in |
 | Proxy forward | Redirector SG | C2 Team Server SG | 443 | Nginx forwards to TS |
-| Operator SSH | Management CIDR | Bastion SG | 22 | SSH tunnel entry point |
-| CS client tunnel | Bastion SG | C2 Team Server SG | 50050 | Tunneled CS client |
+| Operator SSH | Management CIDR | Dashboard SG | 22 | SSH tunnel entry point (Dashboard Server) |
+| CS client tunnel | Dashboard SG (via peering) | C2 Team Server SG | 50050 | Tunneled CS client |
 | Bootstrap/updates | All instances | 0.0.0.0/0 (egress) | all | S3, packages, DNS-01 |
 
 **Note**: No inbound rules needed for command delivery — commands ride back as HTTP responses on the same TCP connection the beacon opened. AWS security groups are stateful, so return traffic is automatically allowed.
@@ -362,16 +360,14 @@ STEP 1 — Target beacon sends check-in (HTTPS GET)
 **All 4 steps happen on the SAME TCP connection** that the target opened. The team server never opens a connection outbound.
 
 ```bash
-# The SSH tunnel command (production — through the Dashboard Server EIP):
+# The SSH tunnel command (through the Dashboard Server EIP):
 ssh -L 50050:10.0.10.10:50050 ubuntu@<dashboard-eip>
-# Legacy/fallback (through the per-deployment bastion):
-#   ssh -L 50050:10.0.10.10:50050 ubuntu@bastion_public_ip
 # Then CS client connects to localhost:50050
 ```
 
 - **Direction**: Inbound (operator initiates)
 - **Protocol**: SSH (port 22) + tunneled CS traffic (port 50050)
-- **Security Groups**: Management CIDR → Bastion SG (22), Bastion SG → C2 SG (50050)
+- **Security Groups**: Management CIDR → Dashboard SG (22), Dashboard SG (via peering) → C2 SG (50050)
 - **What it carries**: CS client GUI traffic (operator commands, beacon list, screenshots)
 
 ### Traffic Type 4: SSL Certificate Validation (Redirector → Route53)
@@ -420,7 +416,7 @@ Target ──HTTPS──▶ CloudFront Edge ──origin──▶ Redirector ─
 |---|-------------|--------------|----------|-------|-------------|
 | 1 | Beacon Callbacks | Target → Redirector → Team Server | HTTPS | 443 → 443 | Target (pull) |
 | 2 | Command Delivery | Team Server → Redirector → Target | HTTPS response | same conn | Response only |
-| 3 | Operator Access | Laptop → Bastion → Team Server | SSH tunnel | 22, 50050 | Operator |
+| 3 | Operator Access | Laptop → Dashboard Server → Team Server | SSH tunnel | 22, 50050 | Operator |
 | 4 | SSL Validation | Redirector → Route53 → Let's Encrypt | AWS API + DNS | 443 (API) | Redirector |
 | 5 | Bootstrap/Keys | All Instances → S3 | HTTPS (VPC EP) | 443 | Instance |
 | 6 | Domain Fronting | Target → CloudFront → Redirector → TS | HTTPS | 443 | Target (pull) |
@@ -441,21 +437,20 @@ Dashboard Server (10.100.0.0/16)
   | VPC Peering (direct)
   |---> Team Server (10.0.10.x) --- SSH/22, CS/50050, REST/50443
   |---> Redirectors (10.0.1-2.x) --- SSH/22
-  |---> Bastion (10.0.0.x) --- SSH/22
   '---> Attack Box (10.0.10.x) --- RDP via tunnel
 ```
 
 ### What Changes in Server Mode
 
-1. **No multi-hop SSH** — The dashboard server has direct VPC peering to the C2 VPC. SSH to any instance is a single hop from the server, not operator laptop -> bastion -> target.
+1. **No multi-hop SSH** — The dashboard server has direct VPC peering to the C2 VPC. SSH to any instance is a single hop from the server — no intermediate relay host.
 
 2. **REST API is direct** — The Cobalt Strike REST API (port 50443) is reachable directly from the dashboard server via peering. No SSH tunnel needed for API calls. The backend Flask app connects to `https://10.0.10.x:50443` over the peered network.
 
 3. **Terminal tab for all SSH** — The dashboard's in-browser Terminal tab uses the server's own keypair to SSH into any instance. Operators never need to manage SSH keys or tunnels for routine access.
 
-4. **RDP via dashboard tunnel** — For graphical access to the Windows attack box, operators can tunnel RDP through the dashboard server instead of through the bastion.
+4. **RDP via dashboard tunnel** — For graphical access to the Windows attack box, operators tunnel RDP through the dashboard server.
 
-5. **CS client still uses SSH tunnel** — Operators who want to run the CS GUI client on their laptop still create an SSH tunnel, but now through the dashboard server instead of the bastion:
+5. **CS client still uses SSH tunnel** — Operators who want to run the CS GUI client on their laptop create an SSH tunnel through the dashboard server:
    ```bash
    # Tunnel CS client through the Dashboard Server (public EIP)
    ssh -L 50050:10.0.10.10:50050 ubuntu@<dashboard-eip>
@@ -464,13 +459,13 @@ Dashboard Server (10.100.0.0/16)
 
 ### Server Mode vs Local Mode (Operator Access)
 
-| Access Type | Local Mode | Server Mode |
+| Access Type | Local Dev (laptop) | Server Mode (production) |
 |-------------|-----------|-------------|
 | Dashboard UI | `localhost:5000` (run locally) | `ssh -L 5000:localhost:5000 harris@<server>` |
-| SSH to instances | Bastion -> target (multi-hop) | Terminal tab (single hop via peering) |
-| CS REST API | SSH tunnel through bastion | Direct from server (VPC peering) |
-| CS GUI client | `ssh -L 50050:c2:50050 ubuntu@bastion` | `ssh -L 50050:c2:50050 harris@server` |
-| RDP to attack box | Through bastion | Through dashboard server tunnel |
+| SSH to instances | SSM / direct SSH to public hosts | Terminal tab (single hop via peering) |
+| CS REST API | SSH tunnel from laptop | Direct from server (VPC peering) |
+| CS GUI client | `ssh -L 50050:c2:50050 ...` (tunnel) | `ssh -L 50050:c2:50050 harris@server` |
+| RDP to attack box | SSM port forward | Through dashboard server tunnel |
 
 ### C2 Traffic Path (Unchanged)
 
@@ -484,7 +479,7 @@ Server mode only changes **operator access**. The actual C2 traffic path (beacon
 2. **Beacons come IN**: Targets initiate connections to redirectors (pull-based)
 3. **Commands go OUT as responses**: Team servers NEVER initiate connections to targets
 4. **SSL uses DNS-01**: Each redirector gets its own Let's Encrypt cert via Route53 — works with round-robin DNS
-5. **Operator access via SSH tunnel**: CS client never directly reaches the team server — always through bastion (local mode) or dashboard server (server mode)
+5. **Operator access via SSH tunnel**: CS client never directly reaches the team server — always through the Dashboard Server (the sole SSH jump; no per-deployment bastion)
 6. **Color-coded diagrams**: Blue = inbound beacons, Red = outbound commands, Green = internal proxy traffic
 7. **Server mode simplifies access**: VPC peering eliminates multi-hop SSH; REST API connects directly
 

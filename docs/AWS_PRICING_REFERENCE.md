@@ -7,9 +7,8 @@ Source: [Vantage EC2 Instances](https://instances.vantage.sh), [CostGoat NAT Gat
 
 | Instance Type | vCPU | RAM | Linux $/hr | Linux $/mo (×730) | Windows $/hr | Windows $/mo | Used By |
 |---|---|---|---|---|---|---|---|
-| t3.micro | 2 | 1 GB | $0.0136 | $9.93 | — | — | Bastion |
 | t3.small | 2 | 2 GB | $0.0272 | $19.86 | — | — | Redirectors |
-| t3.medium | 2 | 4 GB | $0.0432 | $31.54 | — | — | C2 Team Server |
+| t3.medium | 2 | 4 GB | $0.0432 | $31.54 | — | — | C2 Team Server, Dashboard Server |
 | t3.large | 2 | 8 GB | $0.0885 | $64.61 | — | — | C2 (optional upgrade) |
 | t3.xlarge | 4 | 16 GB | $0.1792 | $130.82 | — | — | C2 (optional upgrade) |
 | t2.small | 2 | 2 GB | $0.0205 | $14.97 | — | — | GOAD Jumpbox |
@@ -33,7 +32,7 @@ Source: [Vantage EC2 Instances](https://instances.vantage.sh), [CostGoat NAT Gat
 |---|---|---|
 | C2 Team Server | 20 | $1.90 |
 | Proxy Redirector | 8 | $0.76 |
-| Bastion (Linux) | 20 | $1.90 |
+| Dashboard Server (Linux) | 20 | $1.90 |
 | Attack Box (Windows) | 40 | $3.81 |
 | GOAD Jumpbox | 20 | $1.90 |
 | GOAD Team Server | 20 | $1.90 |
@@ -48,9 +47,9 @@ Does NOT include: data transfer, CloudFront (if domain fronting enabled), ACM.
 
 | Deployment | Components | Monthly Est. |
 |---|---|---|
-| **c2-adhoc** | 1× C2 (t3.med) + 2× Redir (t3.sm) + Bastion (t3.mic) + Attack Box (t2.lg Win) + NAT | ~$245 |
-| **c2-purple** | 2× C2 (t3.med) + 2× Redir (t3.sm) + Bastion (t3.mic) + Attack Box (t2.lg Win) + NAT | ~$280 |
-| **c2-full** | 3× C2 (t3.med) + 2× Redir (t3.sm) + Bastion (t3.mic) + Attack Box (t2.lg Win) + NAT | ~$310 |
+| **c2-adhoc** | 1× C2 (t3.med) + 2× Redir (t3.sm) + Attack Box (t2.lg Win) + NAT | ~$235 |
+| **c2-purple** | 2× C2 (t3.med) + 2× Redir (t3.sm) + Attack Box (t2.lg Win) + NAT | ~$270 |
+| **c2-full** | 3× C2 (t3.med) + 2× Redir (t3.sm) + Attack Box (t2.lg Win) + NAT | ~$300 |
 
 ### GOAD-Only Deployments
 
@@ -66,9 +65,9 @@ Does NOT include: data transfer, CloudFront (if domain fronting enabled), ACM.
 
 | Deployment | Components | Monthly Est. |
 |---|---|---|
-| **combined-adhoc-mini** | c2-adhoc infra + 1× AD VM (t2.med Win) + Jumpbox + 2× NAT | ~$380 |
-| **combined-adhoc-light** | c2-adhoc infra + 3× AD VMs (t2.med Win) + Jumpbox + 2× NAT | ~$545 |
-| **combined-full-full** | c2-full infra + 5× AD VMs (t2.med Win) + Jumpbox + 2× NAT | ~$780 |
+| **combined-adhoc-mini** | c2-adhoc infra + 1× AD VM (t2.med Win) + Jumpbox + 2× NAT | ~$370 |
+| **combined-adhoc-light** | c2-adhoc infra + 3× AD VMs (t2.med Win) + Jumpbox + 2× NAT | ~$535 |
+| **combined-full-full** | c2-full infra + 5× AD VMs (t2.med Win) + Jumpbox + 2× NAT | ~$770 |
 
 ## Cost Drivers (ranked by impact)
 

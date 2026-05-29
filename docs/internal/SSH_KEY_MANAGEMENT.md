@@ -1109,26 +1109,25 @@ terraform {
 
 ## C2-Only Deployments
 
-For **C2-Only** deployments (no GOAD lab), the architecture is simpler:
+For **C2-Only** deployments (no GOAD lab), access goes through the Dashboard Server — there is no per-deployment SSH-relay bastion:
 
 ```
 User Workstation
     │
-    │ ssh -i ~/.ssh/user_key ubuntu@bastion-ip
+    │ ssh -i ~/.ssh/user_key ubuntu@dashboard-eip
     │
     ▼
-Bastion Host (Public) ─────> Team Server (Private)
-    │                         (Bastion's public key)
-    │ (Bastion's private key - STAYS ON BASTION)
+Dashboard Server (own VPC, EIP) ── VPC peering ──> Team Server (Private)
+    │  (server's internal public key on each instance)
     │
-    └────────────────────────> Redirectors (Private)
-                               (Bastion's public key)
+    └──────────────────────────────────────────────> Redirectors (Private)
+                                                      (server's internal public key)
 ```
 
 **Key Points:**
-- User provides their public key before deployment
-- Bastion generates its own internal key pair on first boot
-- Team servers and redirectors receive bastion's public key via S3
+- User provides their public key before deployment (authorizes to the Dashboard Server)
+- The Dashboard Server uses its own internal key pair, distributed via SSM, to reach each instance
+- Team servers and redirectors receive the Dashboard Server's internal public key
 
 ---
 
@@ -1146,9 +1145,9 @@ The proposed architecture aligns with SSH security best practices by:
 **User Experience:**
 - User generates one key pair on their workstation
 - User uploads public key before deployment
-- User receives jumpbox IP and connection instructions
-- User connects with: `ssh -i ~/.ssh/user_key ubuntu@jumpbox-ip`
-- All internal access is transparent via jumpbox
+- User receives the Dashboard Server EIP and connection instructions
+- User connects with: `ssh -i ~/.ssh/user_key ubuntu@dashboard-eip`
+- All internal access is transparent via the Dashboard Server (the sole SSH jump)
 
 **Next Steps:**
 1. Review and approve this architecture

@@ -1,92 +1,59 @@
-# Bastion Host - Linux SSH Relay (Legacy / Fallback)
+# Dashboard Server Jump Host (+ GOAD provisioning jumpbox)
 
-> **Primary access is the Dashboard Server, not the bastion.** The AWS-hosted **Dashboard Server** — a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public EIP — is THE production control plane and SSH jump host. Every deployment branches out from it via VPC peering, and it reaches all instances directly. The per-deployment bastion documented below is **legacy/fallback only**. The operator's local machine runs only a **dev instance** of the dashboard; production always runs on the AWS Dashboard Server. See the Centralized Dashboard Design doc for the full architecture.
+> **There is no per-deployment bastion.** Earlier versions of this framework deployed a dedicated SSH-relay "bastion" host inside each C2 deployment. That host has been **removed from the architecture**. The AWS-hosted **Dashboard Server** is now the sole SSH jump into every instance. This document describes the Dashboard Server as the jump host, and the **GOAD jumpbox** as the Active Directory lab provisioning host (a separate, GOAD-only role — not a bastion).
 
-## Dashboard Server (primary) vs Bastion (legacy/fallback)
+## Dashboard Server — the single SSH jump
 
-The AWS-hosted **Dashboard Server** is the primary jump and does everything the bastion traditionally did:
+The **Dashboard Server** is a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public EIP. It is the production control plane AND the SSH jump host. Every deployment branches out from it via VPC peering, so it reaches all instances directly — no SSH-hopping through an intermediate relay.
 
-- **SSH access to instances** — The Terminal tab in the dashboard provides in-browser SSH to all C2 servers, redirectors, and the attack box. The Dashboard Server is a single-hop jump into every instance — no bastion hopping.
+It does everything an SSH bastion traditionally did, and more:
+
+- **SSH access to instances** — The Terminal tab in the dashboard provides in-browser SSH to all C2 servers, redirectors, and the attack box. The Dashboard Server is a single-hop jump into every instance.
 - **VPC peering** — The Dashboard Server's VPC (10.100.0.0/16) is peered with all deployment VPCs, giving it direct network access to every instance.
 - **Operator tunnels go through the Dashboard Server EIP**, e.g. `ssh -L 50050:<c2-ip>:50050 ubuntu@<dashboard-eip>` for the CS client and `ssh -L 13389:<attackbox-ip>:3389 ubuntu@<dashboard-eip>` for RDP.
 
-The **bastion is legacy/fallback only**. It is still created, but it is no longer the primary access path. It remains useful for:
+The operator's local machine runs only a **dev instance** of the dashboard; production always runs on the AWS Dashboard Server. See the Centralized Dashboard Design doc for the full architecture.
 
-- **Fallback access** — when the Dashboard Server is unavailable, or for operators who prefer a CLI-only workflow.
-- **Legacy compatibility** — existing scripts and SSH configs that reference the bastion still work.
-
-The remainder of this document describes the legacy bastion access patterns. For day-to-day operations, route through the Dashboard Server instead.
-
----
-
-## Overview
-
-The bastion is a **lightweight Ubuntu 22.04 LTS instance** in the management subnet. It serves as an SSH relay/tunnel host for accessing private-subnet resources (C2 team servers, attack box). No red team tools are installed on the bastion — all operations happen on the Windows attack box.
-
-## Architecture (legacy path)
-
-> Primary access is operator laptop → Dashboard Server (AWS) → instances. The diagram below shows the legacy bastion path, retained for fallback only.
+### Architecture (operator access path)
 
 ```
 Operator Laptop
     |
-    ├── SSH ──────────────> Bastion (Ubuntu, Management Subnet, 10.0.0.10)
-    |                          |
-    |                          ├── SSH tunnel ──> C2 Team Servers (Private Subnet)
-    |                          └── SSH tunnel ──> Attack Box RDP (Private Subnet)
-    |
-    └── SSH -L 3389:attack_box_ip:3389 ──> Bastion ──> Attack Box
-            then RDP to localhost:3389
+    └── SSH (key + IP allow-list) ──> Dashboard Server (own VPC 10.100.0.0/16, EIP)
+                                          | VPC peering (direct, no relay hop)
+                                          ├── SSH ─────> C2 Team Servers (private subnet)
+                                          ├── SSH tunnel ─> Attack Box RDP (private subnet)
+                                          └── SSH ─────> Redirectors (DMZ subnet)
 ```
 
-## Configuration
+## Access Patterns (through the Dashboard Server)
 
-### Enable/Disable
-
-In `terraform.tfvars`:
-```hcl
-enable_bastion = true  # Set to false to disable
-```
-
-### Instance Specifications
-
-| Property | Default | Configurable |
-|----------|---------|--------------|
-| **OS** | Ubuntu 22.04 LTS | Yes (`bastion_ami_id`) |
-| **Instance Type** | `t3.micro` | Yes (`bastion_instance_type`) |
-| **vCPU** | 1 | Based on instance type |
-| **RAM** | 1 GB | Based on instance type |
-| **Storage** | 20 GB gp3, encrypted | Yes (`bastion_root_volume_size`) |
-| **Elastic IP** | Always enabled | Automatic |
-| **Auth** | SSH key-based only | Via EC2 key pair |
-
-## Access Patterns
-
-### 1. SSH to Bastion
+### 1. Open the Dashboard UI
 
 ```bash
-ssh -i ~/.ssh/key.pem ubuntu@<bastion-eip>
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
+# Then open http://localhost:5000 in your browser
 ```
 
-### 2. Tunnel RDP to Attack Box
+### 2. Tunnel RDP to the Attack Box
 
-From your operator laptop, create an SSH tunnel through the bastion to the attack box:
+From your operator laptop, create an SSH tunnel through the Dashboard Server to the attack box (private subnet, reached via VPC peering):
 
 ```bash
-# Create tunnel (attack box is in private subnet at 10.0.10.50)
-ssh -i ~/.ssh/key.pem -L 3389:10.0.10.50:3389 ubuntu@<bastion-eip>
+# Create tunnel (attack box is in the private subnet at 10.0.10.50)
+ssh -i ~/.ssh/key.pem -L 13389:10.0.10.50:3389 ubuntu@<dashboard-eip>
 
 # Then connect your RDP client to localhost
-mstsc /v:localhost:3389        # Windows
-open rdp://localhost:3389      # macOS
-xfreerdp /v:localhost:3389     # Linux
+mstsc /v:localhost:13389        # Windows
+open rdp://localhost:13389      # macOS
+xfreerdp /v:localhost:13389     # Linux
 ```
 
-### 3. Tunnel CS Client to Team Server
+### 3. Tunnel CS Client to the Team Server
 
 ```bash
 # Create tunnel to team server's CS listener (port 50050)
-ssh -i ~/.ssh/key.pem -L 50050:10.0.10.10:50050 ubuntu@<bastion-eip>
+ssh -i ~/.ssh/key.pem -L 50050:10.0.10.10:50050 ubuntu@<dashboard-eip>
 
 # Then connect Cobalt Strike client to localhost:50050
 ```
@@ -96,79 +63,73 @@ ssh -i ~/.ssh/key.pem -L 50050:10.0.10.10:50050 ubuntu@<bastion-eip>
 ```bash
 # Tunnel both RDP to attack box and CS client to team server
 ssh -i ~/.ssh/key.pem \
-    -L 3389:10.0.10.50:3389 \
+    -L 13389:10.0.10.50:3389 \
     -L 50050:10.0.10.10:50050 \
-    ubuntu@<bastion-eip>
+    ubuntu@<dashboard-eip>
 ```
 
-## Security Configuration
+### In-browser alternative (no manual tunnels)
 
-### Security Group Rules
+The dashboard's **Terminal tab** provides in-browser SSH to any instance using the server's own keypair, and **Tunnel shortcuts** (RDP, CS Client, REST API). For routine access you never need to set up SSH tunnels by hand.
 
-**Inbound:**
-- **SSH (22)**: From management CIDR blocks only
+## C2 Server Access (security groups)
 
-**Outbound:**
-- **All traffic**: Allowed (for SSH to C2 servers, attack box, internet)
+C2 servers allow SSH (22), the CS client port (50050), and the REST API port (50443) inbound from the **Dashboard Server's security group** (or the Dashboard VPC CIDR). Management CIDR blocks remain as a direct-SSH fallback for break-glass scenarios.
 
-### SSH Hardening (Applied Automatically)
+---
 
-- `PermitRootLogin no`
-- `PasswordAuthentication no`
-- `MaxAuthTries 3`
-- `AllowTcpForwarding yes` (required for tunneling)
-- `X11Forwarding no`
+## GOAD Jumpbox — Active Directory lab provisioning host
 
-### C2 Server Access
+The **GOAD jumpbox** is a **separate, GOAD-only host** and is **not** a bastion. It is a `t2.small` Ubuntu instance in the GOAD VPC's public subnet, pre-loaded with Ansible and the GOAD repository. Its job is to **provision the vulnerable Active Directory lab** — it runs the GOAD Ansible playbooks against the Windows AD VMs.
 
-C2 servers allow SSH from:
-- Bastion security group (primary method)
-- Management CIDR blocks (fallback)
+| Property | Value |
+|----------|-------|
+| **Role** | Runs GOAD Ansible playbooks to provision the AD lab (DC, member servers, workstations) |
+| **OS** | Ubuntu 22.04 LTS |
+| **Instance Type** | `t2.small` |
+| **Subnet** | GOAD VPC public subnet |
+| **User** | `ubuntu` |
+| **Tooling** | Ansible + GOAD repo pre-installed; SOCKS proxy support for C2 integration |
+
+The jumpbox is reached the same way as everything else — **through the Dashboard Server** (the dashboard is the access jump; the jumpbox only provisions the lab):
+
+```bash
+# Reach the GOAD jumpbox via the Dashboard Server
+ssh -L 22022:<goad-jumpbox-ip>:22 ubuntu@<dashboard-eip>
+# Then: ssh -p 22022 ubuntu@localhost
+```
+
+From the jumpbox, the operator (or the dashboard's GOAD provisioning workflow) runs Ansible to stand up the AD lab. The jumpbox also offers a SOCKS proxy so a Cobalt Strike beacon can pivot into the GOAD network.
+
+### Jumpbox vs Dashboard Server
+
+| | Dashboard Server | GOAD Jumpbox |
+|---|---|---|
+| **Role** | Control plane + sole SSH jump into all instances | Provisions the GOAD AD lab (runs Ansible) |
+| **Scope** | All deployments (C2, GOAD, combined) | GOAD / combined deployments only |
+| **Reached via** | Operator laptop → Dashboard EIP (SSH tunnel) | Through the Dashboard Server |
+| **Provisions AD?** | No | Yes — runs the GOAD playbooks |
 
 ## Cost
 
-**Monthly Cost (24/7):**
-- **t3.micro Ubuntu**: ~$8/month
-- **20 GB EBS storage**: ~$1.60/month
-- **Elastic IP**: Free (when attached to running instance)
-- **Total**: ~$10/month
+The GOAD jumpbox runs only with GOAD/combined deployments:
 
-## Bastion vs Attack Box
+- **t2.small Ubuntu**: ~$15/month
+- **20 GB EBS storage**: ~$1.90/month
 
-| Feature | Bastion | Attack Box |
-|---------|---------|------------|
-| **Purpose** | SSH relay/tunnel host | Red team operations workstation |
-| **OS** | Ubuntu 22.04 | Windows Server 2022 |
-| **Subnet** | Management (public) | Private |
-| **Public IP** | Elastic IP | None |
-| **Access** | SSH from internet | RDP via bastion tunnel only |
-| **Tools** | None (minimal) | CS Client, PowerSploit, tools repo |
-| **Cost** | ~$10/mo | ~$58/mo |
+The Dashboard Server (t3.medium + 20 GB EBS + EIP) is a one-per-team control plane, not a per-deployment cost.
 
 ## Troubleshooting
 
-### Can't SSH to Bastion
+### Can't reach an instance through the Dashboard Server
 
-- Verify your IP is in `management_cidr_blocks`
-- Check security group allows SSH (22) from your IP
-- Verify key pair matches: `ssh -i ~/.ssh/key.pem ubuntu@<bastion-eip>`
+- Verify your IP is in the dashboard's `management_cidr_blocks` allow-list
+- Check the Dashboard Server security group allows SSH (22) from your IP
+- Confirm VPC peering is active between the Dashboard VPC and the deployment VPC
+- Confirm the target instance's security group allows traffic from the Dashboard SG / VPC CIDR
 
-### Can't Tunnel to C2 Servers / Attack Box
+### GOAD provisioning fails on the jumpbox
 
-- Verify bastion security group allows outbound traffic
-- C2/attack box security groups must allow SSH/RDP from bastion security group
-- Test from bastion: `nc -zv 10.0.10.10 22` (C2 server) or `nc -zv 10.0.10.50 3389` (attack box)
-
-### RDP Tunnel Not Working
-
-- Ensure tunnel is active: `ssh -L 3389:10.0.10.50:3389 ubuntu@bastion`
-- Check attack box is running: verify in AWS console
-- Try alternate local port if 3389 is in use: `ssh -L 3390:10.0.10.50:3389 ...`
-
-## Terraform Outputs
-
-```bash
-terraform output bastion_public_ip
-terraform output bastion_private_ip
-terraform output bastion_ssh_command
-```
+- Confirm the jumpbox can reach the AD VMs (same GOAD VPC): `nc -zv <ad-vm-ip> 5985`
+- Check the GOAD Ansible run logs on the jumpbox
+- Verify the inventory `ip_range` was resolved correctly for the deployment

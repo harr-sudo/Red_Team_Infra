@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Modular, deployable, and manageable AWS infrastructure for red team operations using Cobalt Strike. The framework automates provisioning of C2 servers, redirectors, bastion hosts, and vulnerable Active Directory labs (GOAD) with a security-first architecture.
+Modular, deployable, and manageable AWS infrastructure for red team operations using Cobalt Strike. The framework automates provisioning of C2 servers, redirectors, an AWS-hosted Dashboard Server (control plane + SSH jump host), and vulnerable Active Directory labs (GOAD) with a security-first architecture.
 
 **Repository:** https://github.com/harr-sudo/Red_Team_Infra
 
@@ -30,7 +30,7 @@ terraform/                  # Infrastructure as Code
     ├── security/           # Security groups & IAM
     ├── c2_team_server/     # Cobalt Strike team servers
     ├── proxy_redirector/   # Nginx HTTP/HTTPS redirectors
-    ├── bastion/            # Windows jump box (RDP + WSL2)
+    ├── dashboard_server/   # AWS-hosted control plane + sole SSH jump host (own VPC, EIP)
     ├── goad/               # Vulnerable AD lab environments
     ├── deployment_storage/ # S3 bucket + IAM + Secrets (3-layer security)
     ├── dns/                # Route 53 DNS management
@@ -133,7 +133,7 @@ aws ssm get-command-invocation --command-id <id> --instance-id <id> --region <re
 - SSM eliminates the need for SSH key distribution for multi-hop access
 - SSH is still used for: operator → Dashboard Server tunnel, and the CS client tunnel through the Dashboard Server (`ssh -L 50050:<c2-ip>:50050 ubuntu@<dashboard-eip>`)
 - **Use SSM for remote management and diagnostics:** checking service status, reading bootstrap logs, verifying setup steps, restarting services, and troubleshooting deployment issues on any instance
-- **Use `AWS-RunPowerShellScript`** for Windows instances (attack box, bastion), **`AWS-RunShellScript`** for Linux (C2 servers, redirectors, jumpbox)
+- **Use `AWS-RunPowerShellScript`** for Windows instances (attack box, GOAD AD VMs), **`AWS-RunShellScript`** for Linux (C2 servers, redirectors, GOAD jumpbox)
 - **Always retrieve command output** via `aws ssm get-command-invocation` — SSM commands are async and may take time to complete
 - **Bootstrap log locations:** Linux team servers: `/var/log/cs-install.log`, Windows attack box: `C:\Users\Administrator\Desktop\Deployment-Logs-Scripts\attackbox-init.log`, setup status JSON: `/opt/cobaltstrike/bootstrap-status` (Linux) or `C:\ProgramData\setup-status.json` (Windows)
 
@@ -143,7 +143,8 @@ aws ssm get-command-invocation --command-id <id> --instance-id <id> --region <re
 - **Dashboard UI:** `ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>`, then open `http://localhost:5000`. Running the dashboard locally on the laptop is a **dev instance only** — production runs on the AWS Dashboard Server.
 - **CS client tunnel** (CS GUI runs on the laptop): `ssh -L 50050:<c2-ip>:50050 ubuntu@<dashboard-eip>`, then connect the CS client to `localhost:50050`. This is a local port forward through the Dashboard Server, not a reverse tunnel.
 - **RDP to attack box / GOAD VMs:** `ssh -L 13389:<attackbox-ip>:3389 ubuntu@<dashboard-eip>`, then RDP to `localhost:13389`.
-- **Legacy/fallback:** the per-deployment Windows bastion and GOAD jumpbox still exist for fallback access, but are **no longer the primary entry**. Do not frame `ssh -L ... ubuntu@bastion_ip` as the operator entry path — route through the Dashboard Server EIP instead.
+- **No bastion:** there is **no per-deployment SSH-relay bastion** — it has been removed from the architecture. The Dashboard Server is the sole SSH jump. Never frame `ssh -L ... ubuntu@bastion_ip` as an access path; always route through the Dashboard Server EIP.
+- **GOAD jumpbox:** the GOAD jumpbox is a real host but is **not** an access bastion — it is the GOAD AD-lab Ansible **provisioning** host (it runs the GOAD playbooks). It is reached through the Dashboard Server like any other instance.
 
 ## Coding Conventions
 
@@ -204,7 +205,7 @@ aws ssm get-command-invocation --command-id <id> --instance-id <id> --region <re
 
 ### Network
 - **VPC isolation:** Private subnets for C2 servers, public subnets for redirectors
-- **Dashboard Server jump pattern:** The AWS-hosted Dashboard Server (own VPC `10.100.0.0/16`, public EIP) is the single SSH/RDP entry point; deployments branch out from it via VPC peering. The per-deployment bastion is legacy/fallback only.
+- **Dashboard Server jump pattern:** The AWS-hosted Dashboard Server (own VPC `10.100.0.0/16`, public EIP) is the single SSH/RDP entry point; deployments branch out from it via VPC peering. There is no per-deployment SSH-relay bastion.
 - **Security group granularity:** Separate groups per component type
 - **Management CIDR blocks:** Whitelist operator IPs only
 - **VPC peering:** Controlled cross-VPC traffic from the Dashboard Server to each deployment, plus combined C2+GOAD
@@ -217,7 +218,7 @@ aws ssm get-command-invocation --command-id <id> --instance-id <id> --region <re
 Separate IAM roles per VPC (C2 vs GOAD). See `docs/S3_CONFUSED_DEPUTY_FIX.md`.
 
 ### Secrets & Credentials
-- AWS Secrets Manager for passwords (bastion, team server)
+- AWS Secrets Manager for passwords (team server, attack box)
 - SSH keys generated locally, distributed via Ansible
 - `terraform.tfvars` for deployment config (`.gitignore`d)
 - Never commit: `.env`, credentials, SSH private keys, `terraform.tfvars`

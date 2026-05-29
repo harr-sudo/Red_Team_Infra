@@ -73,7 +73,7 @@ patches:
 network:
   subnet: 10.0.10.0/24
   private_ip: 10.0.10.10
-  reachable_from_operator: true         # via bastion / jumpbox tunnel
+  reachable_from_operator: true         # via Dashboard Server tunnel
   reachable_from_jumpbox: true
   open_ports_observed: [53, 88, 135, 389, 445, 464, 636, 3268, 3269, 3389, 5985, 9389]
 

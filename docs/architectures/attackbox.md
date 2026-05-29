@@ -29,17 +29,17 @@ terraform/modules/attack_box/
 
 | Deployment Type | VPC | Subnet | Private IP | Access Via | Key Exchange |
 |---|---|---|---|---|---|
-| **c2-adhoc** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel (bastion fallback) | No |
-| **c2-purple** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel (bastion fallback) | No |
-| **c2-full** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel (bastion fallback) | No |
-| **goad-mini** | GOAD VPC (192.168.56.0/24) | Private (192.168.56.0/26) | 192.168.56.50 | Dashboard Server tunnel (jumpbox fallback) | Yes (S3) |
-| **goad-light** | GOAD VPC (192.168.56.0/24) | Private (192.168.56.0/26) | 192.168.56.50 | Dashboard Server tunnel (jumpbox fallback) | Yes (S3) |
-| **goad-sccm** | GOAD VPC (192.168.56.0/24) | Private (192.168.56.0/26) | 192.168.56.50 | Dashboard Server tunnel (jumpbox fallback) | Yes (S3) |
-| **goad-full** | GOAD VPC (192.168.56.0/24) | Private (192.168.56.0/26) | 192.168.56.50 | Dashboard Server tunnel (jumpbox fallback) | Yes (S3) |
-| **goad-nha** | GOAD VPC (192.168.56.0/24) | Private (192.168.56.0/26) | 192.168.56.50 | Dashboard Server tunnel (jumpbox fallback) | Yes (S3) |
-| **combined-adhoc-mini** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel (bastion fallback) | No |
-| **combined-adhoc-light** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel (bastion fallback) | No |
-| **combined-full-full** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel (bastion fallback) | No |
+| **c2-adhoc** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel | No |
+| **c2-purple** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel | No |
+| **c2-full** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel | No |
+| **goad-mini** | GOAD VPC (192.168.56.0/24) | Private (192.168.56.0/26) | 192.168.56.50 | Dashboard Server tunnel | Yes (S3) |
+| **goad-light** | GOAD VPC (192.168.56.0/24) | Private (192.168.56.0/26) | 192.168.56.50 | Dashboard Server tunnel | Yes (S3) |
+| **goad-sccm** | GOAD VPC (192.168.56.0/24) | Private (192.168.56.0/26) | 192.168.56.50 | Dashboard Server tunnel | Yes (S3) |
+| **goad-full** | GOAD VPC (192.168.56.0/24) | Private (192.168.56.0/26) | 192.168.56.50 | Dashboard Server tunnel | Yes (S3) |
+| **goad-nha** | GOAD VPC (192.168.56.0/24) | Private (192.168.56.0/26) | 192.168.56.50 | Dashboard Server tunnel | Yes (S3) |
+| **combined-adhoc-mini** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel | No |
+| **combined-adhoc-light** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel | No |
+| **combined-full-full** | C2 VPC (10.0.0.0/16) | Private (10.0.10.0/24) | 10.0.10.50 | Dashboard Server tunnel | No |
 
 ### VPC Placement Logic (from `main.tf`)
 
@@ -62,16 +62,13 @@ enable_key_exchange = local.is_goad_only
 Dashboard Server (own VPC, EIP) ── VPC peering ──► reaches the attack box directly
 
 C2 VPC (10.0.0.0/16)
-├── Management Subnet (10.0.0.0/24)
-│   └── Bastion Host (10.0.0.10, EIP)  ← legacy/fallback SSH relay (NOT the primary entry point)
-│
 ├── Private Subnet (10.0.10.0/24) — NO public IPs
 │   ├── C2 Team Server (10.0.10.10)    ← CS Team Server (port 50050)
 │   └── Attack Box (10.0.10.50)        ← Windows workstation ← Dashboard reaches via peering
 │
 └── Security Groups:
     attack_box_sg:
-      Ingress: RDP 3389 + SSH 22 + WinRM 5985 from bastion_sg / dashboard SG
+      Ingress: RDP 3389 + SSH 22 + WinRM 5985 from dashboard SG (via VPC peering)
       Egress: All outbound (0.0.0.0/0)
     c2_team_server_sg (allows from attack_box_sg):
       Ingress: SSH 22 + CS mgmt 50050 from attack_box_sg
@@ -82,8 +79,6 @@ C2 VPC (10.0.0.0/16)
 # SSH tunnel through the Dashboard Server to attack box RDP (peering routes the last hop)
 ssh -i key.pem -L 13389:10.0.10.50:3389 ubuntu@<dashboard-eip>
 mstsc /v:localhost:13389   # Login: Administrator / <password from terraform output>
-
-# Legacy fallback (bastion): ssh -i key.pem -L 13389:10.0.10.50:3389 ubuntu@<bastion-eip>
 ```
 
 ## Architecture: GOAD-Only Mode
@@ -334,9 +329,9 @@ Defined in `terraform/modules/security/main.tf`:
 
 ```yaml
 Inbound:
-  - Port 3389 (RDP): from dashboard SG (via peering) + bastion_sg (legacy fallback)
-  - Port 22 (SSH): from dashboard SG (via peering) + bastion_sg (legacy fallback)
-  - Port 5985 (WinRM): from bastion_sg (TESTING ONLY — remove for production)
+  - Port 3389 (RDP): from dashboard SG (via VPC peering)
+  - Port 22 (SSH): from dashboard SG (via VPC peering)
+  - Port 5985 (WinRM): from dashboard SG (TESTING ONLY — remove for production)
 
 Outbound:
   - All traffic: 0.0.0.0/0
@@ -350,7 +345,7 @@ C2 Team Server SG — rules sourced from attack_box_sg:
   - Port 50050 (CS management): for running CS client directly from attack box
 ```
 
-The attack box is reachable from the Dashboard Server (over VPC peering) and, as a legacy fallback, the bastion host. No direct internet access inbound. The attack box has direct access to the C2 team server on both SSH and the CS management port, so operators can run the CS client from the attack box without needing any external SSH tunnel.
+The attack box is reachable from the Dashboard Server over VPC peering (the sole SSH/RDP jump). No direct internet access inbound. The attack box has direct access to the C2 team server on both SSH and the CS management port, so operators can run the CS client from the attack box without needing any external SSH tunnel.
 
 ### GOAD Mode: `goad_sg` (shared)
 
@@ -402,7 +397,7 @@ The GOAD security group is shared by all VMs (jumpbox, team server, attack box, 
 | `attack_box_instance_id` | EC2 instance ID | |
 | `attack_box_private_ip` | `10.0.10.50` or `192.168.56.50` | Depends on deployment type |
 | `attack_box_admin_password` | 30-char auto-generated or user-provided | Sensitive |
-| `attack_box_rdp_tunnel` | `ssh -L 13389:<ip>:3389 ...` | RDP tunnel through the Dashboard Server (bastion fallback) |
+| `attack_box_rdp_tunnel` | `ssh -L 13389:<ip>:3389 ...` | RDP tunnel through the Dashboard Server |
 
 ## IAM Permissions
 
@@ -466,10 +461,10 @@ findstr "PHASE 6" C:\Users\Administrator\Desktop\Deployment-Logs-Scripts\attackb
 ### Cannot RDP to Attack Box
 
 ```bash
-# Verify the SSH tunnel is active (through the Dashboard Server; bastion is a fallback)
+# Verify the SSH tunnel is active (through the Dashboard Server — the sole SSH jump)
 ssh -i key.pem -L 13389:10.0.10.50:3389 ubuntu@<dashboard-eip>
 
-# Check security group allows RDP from the dashboard SG (or bastion, as fallback)
+# Check security group allows RDP from the dashboard SG (via VPC peering)
 aws ec2 describe-security-groups --group-ids <attack-box-sg-id>
 
 # Verify the instance is running

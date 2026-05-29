@@ -89,7 +89,7 @@ The Dashboard Server — the production control plane that all deployments branc
 
 | Instance | Actions | Prefixes |
 |----------|---------|----------|
-| Team Server, Redirector, Bastion | `GetObject`, `ListBucket` | `archives/*`, `scripts/*` |
+| Team Server, Redirector | `GetObject`, `ListBucket` | `archives/*`, `scripts/*` |
 | Jumpbox | `GetObject`, `PutObject`, `ListBucket` | `archives/*`, `scripts/*`, `keys/*`, `status/*` |
 | Attack Box | `GetObject`, `ListBucket` + `secretsmanager:GetSecretValue` | `archives/*`, `scripts/*`, `keys/*` |
 | Dashboard Server | `GetObject`, `ListBucket` (via Dashboard VPC endpoint) | `archives/*`, `scripts/*` |

@@ -37,8 +37,8 @@ end-to-end (rather than retrofitting GOAD).
   stored in Secrets Manager (no point — they're public knowledge in
   the catalog repo).
 - **Operator access:** reuse existing models — RDP to lab Windows
-  hosts via the C2 bastion; SSM Session Manager for tllinux01. No
-  new ingress points.
+  hosts via the Dashboard Server (the sole SSH/RDP jump, over VPC
+  peering); SSM Session Manager for tllinux01. No new ingress points.
 - **MSSQL:** deferred. No catalog descriptor needs it today; easy
   add later as a feature flag on tlms01 or a new tlms02.
 - **Auto-shutdown / spot instances:** deferred to Phase 2.
@@ -91,13 +91,13 @@ deployment costs. No additional NAT / IGW / peering charges
 - **Same Internet Gateway** as C2
 - **Same private route table** (or a dedicated test-lab route table
   that also routes 0.0.0.0/0 through C2's NAT)
-- **No public IPs** on lab hosts — ingress only via C2 bastion +
-  SSM
+- **No public IPs** on lab hosts — ingress only via the Dashboard
+  Server (VPC peering) + SSM
 - **Security groups:**
   - Lab hosts ⇄ Lab hosts: free communication for AD replication +
     bolt-on traffic
-  - C2 bastion → Lab hosts: RDP (3389) + WinRM (5985, 5986)
-  - C2 jumpbox (if combined) → Lab hosts: WinRM for Ansible
+  - Dashboard Server (via peering) → Lab hosts: RDP (3389) + WinRM (5985, 5986)
+  - GOAD jumpbox (if combined) → Lab hosts: WinRM for Ansible provisioning
   - SSM endpoints: standard
 
 ### AD topology

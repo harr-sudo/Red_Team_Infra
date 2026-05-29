@@ -563,12 +563,12 @@ That is it. Operators do not need AWS CLI, Terraform, or any other tooling insta
 | **Where dashboard runs** | Operator laptop (dev/testing only) | AWS EC2 instance (own VPC, public EIP) |
 | **AWS auth** | `~/.aws/credentials` on each laptop | IAM instance role (auto-rotating) |
 | **Terraform runs on** | Operator laptop | Server |
-| **Instance access** | Bastion hop / SSM (legacy) | Jump via Dashboard Server (Terminal tab / VPC peering) |
+| **Instance access** | SSM / direct SSH to public hosts | Jump via Dashboard Server (Terminal tab / VPC peering) |
 | **CS archive** | Each operator needs it | SCP once to server |
 | **Multi-operator** | Each sets up independently | One server, SSH tunnel in |
-| **REST API** | Tunnel through bastion (legacy) | Direct via VPC peering |
+| **REST API** | SSH tunnel from laptop | Direct via VPC peering |
 
-> The per-deployment bastion is now **legacy/fallback** — the AWS Dashboard Server is the primary SSH jump into all instances.
+> There is no per-deployment SSH-relay bastion — the AWS Dashboard Server is the sole SSH jump into all instances.
 
 ---
 

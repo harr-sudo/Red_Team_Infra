@@ -8,7 +8,7 @@ C2 servers are deployed in **private subnets** for security, which means they're
 
 The **primary access path is the AWS-hosted Dashboard Server** — a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public EIP. It is the production control plane AND the SSH jump host: every deployment branches out from it via VPC peering, so it reaches every instance directly. Operators connect: **laptop → (SSH key + IP allow-list) → Dashboard Server → instances**.
 
-Running the dashboard on your laptop is a **dev instance only** — production always runs on the AWS Dashboard Server. The legacy bastion/proxy access methods further down are **fallback only**, retained for when the Dashboard Server is unavailable.
+Running the dashboard on your laptop is a **dev instance only** — production always runs on the AWS Dashboard Server. There is **no per-deployment SSH-relay bastion** — it has been removed from the architecture; the Dashboard Server is the sole jump. The generic proxy/VPN/SSM access patterns further down are background reference for when the Dashboard Server is not in front of a deployment; in production, always route through the Dashboard Server EIP.
 
 ---
 
@@ -42,19 +42,19 @@ The Dashboard Server sits inside AWS with VPC peering to all deployment VPCs, so
 
 ### Why the Dashboard Server Is Simpler
 
-| Concern | Legacy (bastion / local dev) | Dashboard Server |
-|---------|------------------------------|------------------|
+| Concern | Local dev (laptop) | Dashboard Server |
+|---------|--------------------|------------------|
 | AWS credentials | Configured on every operator laptop | IAM instance role on server (no creds on disk) |
-| SSH to instances | Bastion hop or SSM | Terminal tab in browser (single hop via peering) |
-| REST API access | Tunnel through bastion | Direct via VPC peering |
-| CS Client | Tunnel through bastion | Tunnel through Dashboard Server EIP |
+| SSH to instances | SSM / direct SSH to public hosts | Terminal tab in browser (single hop via peering) |
+| REST API access | SSH tunnel from laptop | Direct via VPC peering |
+| CS Client | Tunnel from laptop | Tunnel through Dashboard Server EIP |
 | Multi-operator | Each operator sets up everything | One server, operators just SSH tunnel in |
 
 ---
 
-## Legacy / Fallback Access Methods
+## Generic Access Patterns (Background Reference)
 
-> **Note:** The methods below are **legacy/fallback** — they were the access patterns before the AWS-hosted Dashboard Server became the primary jump (and apply when running the dashboard as a local dev instance). For day-to-day operations, use the Dashboard Server above. Where these examples SSH into a bastion or proxy as the entry point, the production equivalent tunnels through the Dashboard Server EIP instead.
+> **Note:** The patterns below are **generic background reference** for accessing private-subnet C2 servers — useful for understanding the options, or when running the dashboard as a local dev instance. For day-to-day production operations, use the Dashboard Server above. Where these examples SSH into a proxy/redirector as the entry point, the production equivalent tunnels through the Dashboard Server EIP instead. **Note: there is no per-deployment SSH-relay bastion in this framework** — the Dashboard Server is the jump.
 
 ---
 
@@ -145,19 +145,19 @@ socat TCP-LISTEN:50050,fork TCP:private-c2-ip:50050
 
 ---
 
-### Option 4: SSH Jump Host (Bastion)
+### Option 4: SSH Jump Host (the Dashboard Server)
 
 **How it works:**
-- Deploy dedicated bastion/jump host in public subnet
-- SSH through bastion to C2 servers
-- Use SSH ProxyCommand or ProxyJump
+- The AWS-hosted **Dashboard Server** is the dedicated jump host (its own VPC, public EIP, peered to every deployment VPC)
+- SSH through the Dashboard Server to C2 servers — no separate per-deployment relay host
+- Use SSH ProxyJump pointed at the Dashboard Server
 
 **Steps:**
 ```bash
 # SSH config
 Host c2-server
     HostName private-c2-ip
-    ProxyJump bastion-ip
+    ProxyJump ubuntu@<dashboard-eip>
     User ec2-user
     IdentityFile ~/.ssh/key.pem
 
@@ -166,13 +166,13 @@ ssh c2-server
 ```
 
 **Pros:**
-- ✅ Dedicated access server
-- ✅ Better security (separate from proxy)
-- ✅ Can restrict bastion access more tightly
+- ✅ Single dedicated jump for every deployment (via VPC peering)
+- ✅ No per-deployment relay host to deploy or manage
+- ✅ IAM instance role — no AWS creds on operator laptops
+- ✅ In-browser Terminal tab as an alternative to manual SSH
 
 **Cons:**
-- ⚠️ Additional EC2 instance (~$15-30/month)
-- ⚠️ Another server to manage
+- ⚠️ Operators must have SSH access (key + IP allow-list) to the Dashboard Server
 
 ---
 
@@ -307,7 +307,7 @@ aws ssm start-session \
 ### Option 4: Guacamole (Remote Desktop Gateway)
 
 **How it works:**
-- Deploy Apache Guacamole on proxy/bastion
+- Deploy Apache Guacamole on a public-subnet host (e.g. a redirector)
 - Web-based remote desktop gateway
 - Access via browser
 
@@ -372,7 +372,7 @@ Browser → Guacamole (Public) → C2 Server (Private)
 | **SSH Tunnel via Proxy** | ✅ Excellent | ✅ Good | Low | $0 | Medium |
 | **VPN to VPC** | ✅ Excellent | ✅ Excellent | Medium | $$ | High |
 | **Port Forwarding** | ✅ Good | ⚠️ Limited | Low | $0 | Medium |
-| **SSH Jump Host** | ✅ Good | ✅ Good | Low | $ | Medium |
+| **SSH Jump Host (Dashboard Server)** | ✅ Excellent | ✅ Excellent | Low | $ | High |
 | **AWS SSM** | ✅ Good | ✅ Good | Medium | $0 | High |
 | **CloudFlare Tunnel** | ✅ Good | ⚠️ Limited | Medium | $0 | Medium |
 | **Guacamole** | ⚠️ Limited | ✅ Excellent | High | $ | Medium |
@@ -473,7 +473,7 @@ Browser → Guacamole (Public) → C2 Server (Private)
 |--------|------------------------|
 | SSH Tunnel | $0 (uses existing proxy) |
 | VPN Server | ~$30-50 (t3.small instance) |
-| Bastion Host | ~$15-30 (t3.small instance) |
+| Dashboard Server jump | ~$32 (t3.medium, one per team — not per deployment) |
 | AWS SSM | $0 (included in EC2) |
 | Guacamole | ~$15-30 (t3.small instance) |
 

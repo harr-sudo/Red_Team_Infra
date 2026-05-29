@@ -95,7 +95,7 @@ ssh -L 1080:<goad-jumpbox-private-ip>:22 ubuntu@<dashboard-eip>
 ssh -D 1080 -p 1080 localhost
 ```
 
-> **Legacy/fallback:** the per-deployment bastion is no longer the primary entry. Only use `ssh -L 1080:<goad-jumpbox-private-ip>:22 ubuntu@<your-bastion-ip>` when the Dashboard Server is unavailable.
+> The Dashboard Server is the only SSH jump into the GOAD network — there is no per-deployment bastion. The GOAD jumpbox itself is reached *through* the Dashboard Server (it provisions the AD lab via Ansible; it is not an access bastion).
 
 ## Accessing the GOAD Lab
 
@@ -240,6 +240,11 @@ terraform destroy
 ┌─────────────────────────────────────────────────────────────────┐
 │                         AWS Account                              │
 │                                                                  │
+│  ┌──────────────────────┐  (Dashboard VPC 10.100.0.0/16)        │
+│  │  Dashboard Server    │  sole SSH jump — peered to BOTH VPCs   │
+│  │  (own VPC, EIP)      │──────────────┬──────────────┐         │
+│  └──────────────────────┘   VPC peering│   VPC peering │         │
+│                                        ▼              ▼          │
 │  ┌─────────────────────────┐    ┌─────────────────────────────┐ │
 │  │   Your C2 VPC           │    │      GOAD VPC               │ │
 │  │                         │    │                             │ │
@@ -248,10 +253,10 @@ terraform destroy
 │  │  │ (Cobalt Strike) │   │◄──►│  │ SRV02, SRV03        │   │ │
 │  │  └─────────────────┘   │ VPC│  │ (Windows Servers)   │   │ │
 │  │                         │Peer│  └─────────────────────┘   │ │
-│  │  ┌─────────────────┐   │    │                             │ │
-│  │  │ Your Bastion    │   │    │  ┌─────────────────────┐   │ │
-│  │  │ (Windows+WSL2)  │   │    │  │ GOAD Jumpbox        │   │ │
-│  │  └─────────────────┘   │    │  │ (Ubuntu, Ansible)   │   │ │
+│  │  ┌─────────────────┐   │    │  ┌─────────────────────┐   │ │
+│  │  │ Attack Box      │   │    │  │ GOAD Jumpbox        │   │ │
+│  │  │ (Windows+WSL2)  │   │    │  │ (Ubuntu, Ansible —  │   │ │
+│  │  └─────────────────┘   │    │  │  provisions the lab)│   │ │
 │  │                         │    │  └─────────────────────┘   │ │
 │  └─────────────────────────┘    └─────────────────────────────┘ │
 │                                                                  │

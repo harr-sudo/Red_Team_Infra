@@ -169,7 +169,7 @@ CCRTS-Lab adds **5 new deployment types** to the framework, taking the total fro
 | `combined-adhoc-ccrts-full` | C2 ad-hoc + ccrts-full, VPC peered | **~$485/mo** | C2 ops + full exam mirror with AD |
 | `combined-full-ccrts-full` | C2 full red team + ccrts-full, VPC peered | **~$580/mo** | Full red team operation with exam-mirror lab on the side |
 
-Pure `ccrts-*` deployments are **self-contained** — they include their own NAT gateway, IAM roles, and security groups. Combined deployments share the C2 deployment's bastion and IAM via VPC peering.
+Pure `ccrts-*` deployments are **self-contained** — they include their own NAT gateway, IAM roles, and security groups. All deployments are reached through the Dashboard Server (the sole SSH jump) via VPC peering; combined deployments additionally share the C2 deployment's IAM and peering routes.
 
 ### Bolt-on toggle
 

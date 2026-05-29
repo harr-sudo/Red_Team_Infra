@@ -61,7 +61,6 @@ The dashboard has its own IAM role with **VPC-endpoint-scoped S3 access** to the
 | GOAD Jumpbox | `instance_profile_name_goad` | `deployment_storage` module |
 | GOAD Team Server | `instance_profile_name_goad` | `deployment_storage` module |
 | Proxy Redirector | Manual variable | Not auto-assigned |
-| Bastion | Manual variable | Not auto-assigned |
 | Dashboard Server | Dashboard role (own VPC) | VPC-endpoint S3 + SSM/EC2 for control plane |
 
 ## 3-Layer Confused Deputy Protection

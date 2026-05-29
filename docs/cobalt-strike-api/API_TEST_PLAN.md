@@ -255,8 +255,8 @@ All of these were tested live against beacon 229070816 on EC2AMAZ-TCQBOJK (10.0.
 ## How to Run
 
 ```bash
-# 1. Ensure SSH tunnel is up
-ssh -L 50443:C2_IP:50443 ubuntu@BASTION_IP -i KEY
+# 1. Ensure SSH tunnel is up (through the Dashboard Server — the sole SSH jump)
+ssh -L 50443:C2_IP:50443 ubuntu@DASHBOARD_EIP -i KEY
 
 # 2. Start web app
 ./webapp/start.sh

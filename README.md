@@ -28,17 +28,16 @@ The infrastructure is built using:
 The **Dashboard Server** is a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) hosted in AWS. It is the **production control plane and SSH jump host** — every deployment branches out from it via VPC peering, and it is the single entry point into all instances (C2 servers, redirectors, attack box, GOAD jumpbox).
 
 - **Operator laptop** → SSH key + IP allow-list → **Dashboard Server** (public EIP). The UI is reached with `ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>`, then `http://localhost:5000`. Running the dashboard on your laptop is a **dev instance only** — production always runs on the AWS Dashboard Server.
-- **Deployments branch out from the Dashboard Server.** Its VPC is peered with every deployment VPC, so the dashboard reaches each instance directly. Per-deployment bastions / GOAD jumpboxes are **legacy/fallback**, no longer the primary entry path.
+- **Deployments branch out from the Dashboard Server.** Its VPC is peered with every deployment VPC, so the dashboard reaches each instance directly. There is no per-deployment SSH-relay bastion — the Dashboard Server is the sole jump. (The GOAD jumpbox is retained, but only as the AD-lab Ansible provisioning host — not an access path.)
 
 ### Infrastructure Components
 
-- **Dashboard Server**: AWS-hosted EC2 control plane + SSH jump host (own VPC, public EIP)
+- **Dashboard Server**: AWS-hosted EC2 control plane + sole SSH jump host (own VPC, public EIP)
 - **C2 Team Servers**: Command and control servers (private subnets)
 - **Proxy/Redirector Servers**: Traffic forwarding servers (public subnets)
-- **Bastion/Jump Box** (legacy/fallback): Windows Server with WSL2 for management access (public subnet) — superseded by the Dashboard Server as the primary jump
 - **VPC**: Isolated network with public/private subnets
 - **Security Groups**: Firewall rules for traffic control
-- **GOAD Labs** (Optional): Vulnerable Active Directory environments for testing
+- **GOAD Labs** (Optional): Vulnerable Active Directory environments for testing, with a GOAD jumpbox that provisions the AD lab via Ansible
 
 ## Quick Start
 
@@ -165,7 +164,7 @@ For team collaboration and version control, see the [GitHub Setup Guide](./docs/
 ```
 Red_Team_Infra/
 ├── terraform/          # Terraform configurations
-│   ├── modules/        # Infrastructure modules (VPC, C2 servers, proxies, bastion)
+│   ├── modules/        # Infrastructure modules (VPC, C2 servers, proxies, dashboard server)
 │   └── main.tf         # Main configuration
 ├── ansible/            # Ansible playbooks and roles
 ├── scripts/            # Automation scripts
@@ -181,16 +180,16 @@ See [PLAN.md](./PLAN.md) for detailed architecture and planning information.
 
 ## Key Features
 
-### 🪟 Windows Jump Box with WSL2 (legacy/fallback)
-> The AWS-hosted **Dashboard Server** is now the primary SSH jump into all instances. The per-deployment Windows bastion is kept as a legacy/fallback access path.
+### 🔑 Dashboard Server Jump Host (single SSH entry point)
+> The AWS-hosted **Dashboard Server** is the sole SSH jump into all instances. There is no per-deployment SSH-relay bastion — it has been removed from the architecture.
 
-- **Dedicated Windows Server bastion host** for fallback management access
-- **WSL2 (Ubuntu)** for SSH access to C2 servers when not using the dashboard
-- **RDP access** from home for Windows management
-- **Linux environment** via WSL2 for command-line operations
-- **Tools Repository** automatically deployed to `C:\Tools\` (Windows) and `/opt/tools/` (WSL2)
+- **Single entry point** — one SSH tunnel to the Dashboard Server reaches every instance via VPC peering
+- **In-browser Terminal** for SSH to any C2 server, redirector, attack box, or GOAD jumpbox — no manual hopping
+- **Tunnel shortcuts** for RDP (attack box / GOAD VMs), the CS client, and the REST API
+- **IAM instance role** — no AWS credentials stored on operator laptops
+- **Tools Repository** automatically deployed to the GOAD jumpbox / attack box during provisioning
 
-See [Bastion/Jump Box Guide](./docs/BASTION_JUMPBOX.md) for details.
+See [Dashboard Server Jump Host Guide](./docs/BASTION_JUMPBOX.md) for details (covers the Dashboard Server jump + the GOAD provisioning jumpbox).
 
 ### 🛠️ Tools Repository
 - **Private GitHub repository** for all red team tools
@@ -287,7 +286,7 @@ See [CCRTS-Lab Operator Guide](./docs/CCRTS_LAB.md) for deployment, connection, 
 
 - **[Getting Started Guide](./docs/GETTING_STARTED.md)** ⭐ - **Complete step-by-step setup guide for new users**
 - **[Web Application Guide](./webapp/README.md)** 🌐 - **User-friendly web interface** for infrastructure management
-- **[Bastion/Jump Box Guide](./docs/BASTION_JUMPBOX.md)** 🪟 - **Windows Server jump box with WSL2** - Easy access to C2 servers from home
+- **[Dashboard Server Jump Host Guide](./docs/BASTION_JUMPBOX.md)** 🔑 - **Single SSH jump into all instances** (+ the GOAD provisioning jumpbox)
 - **[Access Methods](./docs/ACCESS_METHODS.md)** 🔑 - **How to access C2 servers** - Various access methods and options
 - **[AWS Authentication Guide](./docs/AWS_AUTHENTICATION.md)** 🔐 - **How deployment connects to AWS** - Credential setup and authentication
 - **[Domain Requirements](./docs/DOMAIN_REQUIREMENTS.md)** ⚠️ - **REQUIRED PREREQUISITE** - Domain registration guide

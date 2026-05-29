@@ -2,25 +2,25 @@
 
 ## Overview
 
-The tools repository is automatically deployed to the jump box during infrastructure deployment. Tools are available at:
+The tools repository is automatically deployed during infrastructure deployment. Tools are available at:
 
-- **Windows**: `C:\Tools\`
-- **WSL2 (Ubuntu)**: `/opt/tools/`
+- **Windows attack box**: `C:\Tools\`
+- **GOAD jumpbox (Ubuntu)**: `/opt/tools/`
 
-> **Access note:** The AWS-hosted Dashboard Server is the primary SSH jump into all instances. The jump box (bastion) below is now **legacy/fallback** — reach it through the Dashboard Server when needed (e.g. `ssh -L 13389:<bastion-ip>:3389 ubuntu@<dashboard-eip>` then RDP to `localhost:13389`). The bastion still hosts the deployed tools repo.
+> **Access note:** The AWS-hosted Dashboard Server is the sole SSH jump into all instances — there is no per-deployment bastion. Reach the tool hosts through the Dashboard Server: RDP to the Windows attack box (`ssh -L 13389:<attackbox-private-ip>:3389 ubuntu@<dashboard-eip>` then RDP to `localhost:13389`) or SSH to the GOAD jumpbox via the dashboard.
 
 ## Access Methods
 
-### Method 1: RDP to Jump Box (Windows Access)
+### Method 1: RDP to the Attack Box (Windows tools at `C:\Tools\`)
 
-1. **Connect via RDP:**
+1. **Tunnel RDP through the Dashboard Server, then connect:**
    ```bash
-   # Get jump box IP from Terraform outputs
-   cat terraform-outputs.json | jq -r '.bastion_public_ip.value'
+   # Tunnel to the attack box (private subnet) via the Dashboard Server
+   ssh -L 13389:<attackbox-private-ip>:3389 ubuntu@<dashboard-eip>
    
-   # Connect via RDP (use your RDP client)
-   # Username: Administrator
-   # Password: Retrieved from AWS Systems Manager or set in terraform.tfvars
+   # Connect your RDP client to localhost:13389
+   # Username: Administrator (renamed per deployment)
+   # Password: Retrieved from AWS Secrets Manager
    ```
 
 2. **Access Tools:**
@@ -28,23 +28,16 @@ The tools repository is automatically deployed to the jump box during infrastruc
    - Navigate to `C:\Tools\`
    - All tools are organized in subdirectories
 
-### Method 2: SSH to Jump Box (WSL2 Access)
+### Method 2: SSH to the GOAD Jumpbox (Linux tools at `/opt/tools/`)
 
-1. **Connect via SSH:**
+1. **Connect via the Dashboard Server jump:**
    ```bash
-   # Get jump box IP
-   BASTION_IP=$(cat terraform-outputs.json | jq -r '.bastion_public_ip.value')
-   
-   # SSH to jump box (if SSH is enabled)
-   ssh Administrator@$BASTION_IP
+   # Reach the GOAD jumpbox (private) through the Dashboard Server
+   ssh -J ubuntu@<dashboard-eip> ubuntu@<goad-jumpbox-private-ip>
    ```
 
-2. **Access WSL2:**
+2. **Navigate to tools:**
    ```bash
-   # Enter WSL2
-   wsl
-   
-   # Navigate to tools
    cd /opt/tools
    
    # List tools
@@ -150,8 +143,8 @@ ansible-playbook -i inventory/hosts.yml playbooks/deploy-tools-repo.yml \
 
 2. **Check Ansible Inventory:**
    ```bash
-   # Ensure jump box is in inventory
-   cat ansible/inventory/hosts.yml | grep -A 5 bastion
+   # Ensure the tool host (attack box / GOAD jumpbox) is in inventory
+   cat ansible/inventory/hosts.yml | grep -A 5 -iE 'jumpbox|attack_box'
    ```
 
 3. **Check Deployment Logs:**
