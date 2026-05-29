@@ -35,8 +35,18 @@ GRAPH_ATTR = {
     "bgcolor": "white",
     "pad": "0.6",
     "splines": "spline",
-    "nodesep": "0.55",
-    "ranksep": "0.85",
+    # Landscape bias: tight vertical separation (nodesep, in LR = within-rank
+    # vertical gap) + generous horizontal separation (ranksep, the left→right
+    # step) pushes the layout WIDE rather than tall. `ratio=compress` packs
+    # ranks to reduce height further. The operator preference is a wide,
+    # landscape-oriented diagram.
+    "nodesep": "0.35",
+    "ranksep": "1.3",
+    # Landscape forcing: a numeric ratio (height/width) of 0.52 ≈ a 1.9:1
+    # wide canvas. graphviz scales the LR layout's width up to hit it, so
+    # the output is reliably landscape regardless of how many subnet
+    # clusters a given deployment stacks.
+    "ratio": "0.52",
     "fontname": "Helvetica",
     "fontsize": "11",
 }
