@@ -184,11 +184,19 @@
         .bw-cat {
             width: 100%;
             height: 100%;
-            transition: opacity var(--motion-duration-base) var(--motion-ease-walk);
+            transition: width var(--motion-duration-base) var(--motion-ease-walk),
+                        opacity var(--motion-duration-base) var(--motion-ease-walk);
+            overflow: hidden;
         }
+        /* 2026-05-29 bug-fix: when the dock is open the catalog must SHRINK
+           to the left portion (not stay 100% width) so the walkthrough panel
+           doesn't sit ON TOP of catalog rows and intercept clicks on their
+           ▶ Walkthrough buttons. The visible left portion is dimmed (62%)
+           but stays fully clickable — operator can swap walkthrough vulns
+           by clicking another row's ▶ Walkthrough without closing the dock. */
         .bw-split[data-dock-open="true"] .bw-cat {
+            width: var(--split-left, 40%);
             opacity: 0.62;
-            pointer-events: auto; /* still click-through to swap vuln */
         }
         .bw-walk {
             position: absolute;
