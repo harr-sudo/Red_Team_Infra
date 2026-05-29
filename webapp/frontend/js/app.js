@@ -35103,11 +35103,9 @@ APP.bolton = APP.bolton || {
             const saved = localStorage.getItem('boltonWtDockWidth');
             if (saved) pane.style.setProperty('--wt-dock-w', saved);
         } catch (_) {}
-        // Drop the #tab-container 1200px cap so the split fills the full page.
-        const tc = document.getElementById('tab-container');
-        if (tc) tc.classList.add('wt-fullwidth');
         // Cancel any pending hide from a prior close.
         if (this._wtDockHideTimer) { clearTimeout(this._wtDockHideTimer); this._wtDockHideTimer = null; }
+        const tc = document.getElementById('tab-container');
         const alreadyDocked = pane.classList.contains('is-wt-docked');
         dock.hidden = false;
         if (alreadyDocked) {
@@ -35127,7 +35125,11 @@ APP.bolton = APP.bolton || {
         void dock.offsetWidth;            // force reflow, commit start state
         dock.style.transition = '';        // restore the CSS transition
         void dock.offsetWidth;            // commit the transition restore
-        pane.classList.add('is-wt-docked'); // → translateX(0), animates in
+        // Start ALL three transitions in the same frame so the container
+        // widening, the catalog shrinking, and the dock sliding in animate
+        // together (no desync, no snap):
+        if (tc) tc.classList.add('wt-fullwidth'); // container 1200px → 3000px
+        pane.classList.add('is-wt-docked');        // catalog shrink + dock slide-in
         return true;
     },
 
@@ -35180,32 +35182,27 @@ APP.bolton = APP.bolton || {
         });
     },
 
-    /** Slide the walkthrough dock out + restore the catalog to full width,
-     * THEN remove it from layout so it doesn't park off-screen-right (which
-     * left a horizontal-scroll ghost — "close just moves it to the right"). */
+    /** Slide the walkthrough dock out while the container + catalog animate
+     * back to their resting layout IN THE SAME FRAME, then drop the dock from
+     * layout once the slide finishes. All three transitions (container
+     * max-width, catalog width, dock transform) are 280ms, so they move
+     * together — no "catalog follows the dock right then snaps back". */
     _closeWalkthroughDock() {
         const pane = document.getElementById('subpill-pane-bolt-ons');
         if (!pane) return;
         if (!pane.classList.contains('is-wt-docked')) return; // already closed
-        pane.classList.remove('is-wt-docked'); // → dock slides out, catalog grows back
         this.state.detailVulnId = null;
+        const tc = document.getElementById('tab-container');
+        // Kick all three transitions together: container shrinks 3000→1200,
+        // catalog grows calc(100%-w)→100%, dock slides translateX(0)→100%.
+        if (tc) tc.classList.remove('wt-fullwidth');
+        pane.classList.remove('is-wt-docked');
         const dock = pane.querySelector('[data-bolton-wt-dock]');
-        if (!dock) {
-            const tc0 = document.getElementById('tab-container');
-            if (tc0) tc0.classList.remove('wt-fullwidth');
-            return;
-        }
-        // After the slide-out transition: hide the dock (display:none) AND
-        // drop the #tab-container full-width override. Doing the width
-        // restore here (not immediately) keeps the slide-out smooth — the
-        // catalog isn't yanked back to the 1200px cap while the dock is still
-        // mid-animation. One clean reflow once everything has settled.
+        if (!dock) return;
+        // After the slide-out completes, remove the dock from layout
+        // (display:none) so it can't leave a horizontal-scroll ghost.
         const finalize = () => {
-            if (!pane.classList.contains('is-wt-docked')) {
-                dock.hidden = true;
-                const tc = document.getElementById('tab-container');
-                if (tc) tc.classList.remove('wt-fullwidth');
-            }
+            if (!pane.classList.contains('is-wt-docked')) dock.hidden = true;
             dock.removeEventListener('transitionend', onEnd);
             if (this._wtDockHideTimer) { clearTimeout(this._wtDockHideTimer); this._wtDockHideTimer = null; }
         };

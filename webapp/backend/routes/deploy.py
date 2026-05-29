@@ -260,10 +260,9 @@ def get_active_deployments():
                 continue
 
     deployments.sort(key=lambda d: d.get("completed_at", 0), reverse=True)
-    # Synthetic demo deployments — both prepended so they're the first
-    # two rows of the showcase. Order: c2-adhoc demo first (matches the
-    # historical "demo" entry operators are used to), CCRTS demo second.
-    deployments.insert(0, demo_data_service.deployment_state_ccrts())
+    # Synthetic demo deployment — the single c2-adhoc "demo" showcase row,
+    # prepended so it's the first entry. (2026-05-29 — the demo-ccrts row was
+    # removed: a CCRTS demo was never requested and only cluttered the picker.)
     deployments.insert(0, demo_data_service.deployment_state())
 
     return jsonify({"success": True, "deployments": deployments})
