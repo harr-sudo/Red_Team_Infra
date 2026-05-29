@@ -183,19 +183,27 @@
         }
         .bw-cat {
             width: 100%;
+            max-width: 1180px;    /* 2026-05-29 — central alignment when dock
+                                     closed (mirrors the original bolt-on
+                                     browser's max-width; sprawling to full
+                                     width felt wrong on wide monitors). */
+            margin: 0 auto;
             height: 100%;
             transition: width var(--motion-duration-base) var(--motion-ease-walk),
+                        max-width var(--motion-duration-base) var(--motion-ease-walk),
+                        margin var(--motion-duration-base) var(--motion-ease-walk),
                         opacity var(--motion-duration-base) var(--motion-ease-walk);
             overflow: hidden;
         }
-        /* 2026-05-29 bug-fix: when the dock is open the catalog must SHRINK
-           to the left portion (not stay 100% width) so the walkthrough panel
-           doesn't sit ON TOP of catalog rows and intercept clicks on their
-           ▶ Walkthrough buttons. The visible left portion is dimmed (62%)
-           but stays fully clickable — operator can swap walkthrough vulns
-           by clicking another row's ▶ Walkthrough without closing the dock. */
+        /* When dock OPEN: drop the max-width centering — catalog sits flush
+           against the left edge and takes the configured split share (default
+           40%), with the walkthrough at the right. Visible portion is dimmed
+           (62%) but fully clickable so operator can swap walkthrough vulns
+           by clicking another row's ▶ Walkthrough. */
         .bw-split[data-dock-open="true"] .bw-cat {
             width: var(--split-left, 40%);
+            max-width: none;
+            margin: 0;
             opacity: 0.62;
         }
         .bw-walk {
