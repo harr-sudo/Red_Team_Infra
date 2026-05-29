@@ -10,7 +10,7 @@ The **C2 Ad-Hoc** deployment provides a **lightweight, single-server Cobalt Stri
 
 | Component | Type | Subnet | Private IP | Public IP | Purpose |
 |-----------|------|--------|-----------|-----------|---------|
-| **Bastion Host** | t3.micro (Ubuntu 22.04) | Management (10.0.0.0/24) | 10.0.0.10 | EIP (Elastic IP) | SSH relay to private subnets |
+| **Bastion Host** | t3.micro (Ubuntu 22.04) | Management (10.0.0.0/24) | 10.0.0.10 | EIP (Elastic IP) | Legacy/fallback SSH relay (Dashboard Server is the primary entry point) |
 | **Redirector 1** | t3.small (nginx HTTPS) | DMZ (10.0.1.0/24) | 10.0.1.10 | EIP (Elastic IP) | Traffic forwarding (primary) |
 | **Redirector 2** | t3.small (nginx HTTPS) | DMZ (10.0.2.0/24) | 10.0.2.10 | EIP (Elastic IP) | Traffic forwarding (backup) |
 | **C2 Team Server** | t3.medium (Cobalt Strike) | Private (10.0.10.0/24) | 10.0.10.10 | None | Cobalt Strike team server |
@@ -27,7 +27,7 @@ The VPC has two gateways that serve fundamentally different purposes:
 - Inbound: Target beacon callbacks (HTTPS :443) arrive here, routed to redirectors
 - Outbound: Any instance with an Elastic IP goes out through the IGW
 - The Redirectors and Bastion all have EIPs and sit in public subnets routed through the IGW
-- The operator at home connects to the Bastion's EIP through the IGW
+- The operator does NOT connect here directly — they reach the **Dashboard Server** (in its own VPC), which then reaches this VPC over VPC peering. The bastion's EIP remains only as a legacy/fallback SSH relay.
 
 **NAT Gateway** — Outbound only, for private subnets:
 - The C2 Team Server and Attack Box sit in private subnets with NO public IPs
@@ -42,36 +42,42 @@ The Bastion, Redirector 1, and Redirector 2 each have a **single NIC** with a pr
 Bastion has 1 NIC → 1 private IP: 10.0.0.10
 
 AWS translates at the IGW (the instance never sees the public IP):
-  Inbound:  Operator connects to EIP (e.g. 54.x.x.x) → IGW translates → 10.0.0.10
+  Inbound:  Fallback SSH to bastion EIP (e.g. 54.x.x.x) → IGW translates → 10.0.0.10
   Outbound: 10.0.0.10 sends traffic out → IGW translates → appears as 54.x.x.x
 ```
 
 If you SSH into the bastion and run `ip addr`, you'll see **one NIC with 10.0.0.10** — the EIP never appears on the instance itself. AWS handles public↔private translation at the IGW before traffic reaches the instance.
 
-The bastion reaches private subnet instances (C2 at 10.0.10.10, Attack Box at 10.0.10.50) via **VPC internal routing** — all subnets in the same VPC can communicate through the local route table entry (`10.0.0.0/16 → local`). Security groups control which traffic is allowed between subnets, not routing.
+Primary operator access does not use the bastion at all — the **Dashboard Server reaches private subnet instances (C2 at 10.0.10.10, Attack Box at 10.0.10.50) directly over VPC peering**. Within this VPC those instances are reachable via **internal routing** — all subnets in the same VPC can communicate through the local route table entry (`10.0.0.0/16 → local`), and the peering route carries Dashboard traffic to them. Security groups control which traffic is allowed, not routing. The bastion can still SSH to the same private hosts as a fallback.
 
 #### Standard Mode (Redirectors Only)
 ```
+Operator laptop ── SSH key + IP allow-list ──► Dashboard Server (own VPC, EIP)
+                                                   │ VPC peering (10.100.0.0/16 ↔ 10.0.0.0/16)
+                                                   ▼ jump host to every instance below
+
 Internet
    ↓
 Internet Gateway (bidirectional — public subnet instances have EIPs)
    ↓
 Management Subnet (10.0.0.0/24)
-   └── Bastion Host (10.0.0.10, EIP) ← Operator SSH entry point
+   └── Bastion Host (10.0.0.10, EIP) ← legacy/fallback SSH relay (NOT the primary entry point)
    ↓
 DMZ Subnets (10.0.1.0/24, 10.0.2.0/24)
    ├── Redirector 1 (10.0.1.10, EIP) ← Beacon traffic (port 443)
    └── Redirector 2 (10.0.2.10, EIP) ← Beacon traffic (port 443)
    ↓
 Private Subnet (10.0.10.0/24) — NO public IPs, no direct internet access
-   ├── C2 Team Server (10.0.10.10)  ← Cobalt Strike (port 50050)
-   └── Attack Box (10.0.10.50)      ← Windows workstation (CS Client, tools)
+   ├── C2 Team Server (10.0.10.10)  ← Cobalt Strike (port 50050) ← Dashboard reaches directly
+   └── Attack Box (10.0.10.50)      ← Windows workstation (CS Client, tools) ← Dashboard reaches directly
    ↓
 NAT Gateway → Internet (outbound only — updates, S3 downloads, git clone)
 ```
 
 #### Domain Fronting Mode (Optional)
 ```
+Operator laptop ── SSH key + IP allow-list ──► Dashboard Server (own VPC, EIP) ── VPC peering ──► instances below
+
 Internet
    ↓
 CloudFront (CDN edge)          ← Beacon traffic to front domain
@@ -79,15 +85,15 @@ CloudFront (CDN edge)          ← Beacon traffic to front domain
 Internet Gateway
    ↓
 Management Subnet (10.0.0.0/24)
-   └── Bastion Host (10.0.0.10, EIP) ← Operator SSH entry point
+   └── Bastion Host (10.0.0.10, EIP) ← legacy/fallback SSH relay (NOT the primary entry point)
    ↓
 DMZ Subnets (10.0.1.0/24, 10.0.2.0/24)
    ├── Redirector 1 (10.0.1.10, EIP) ← Origin for CloudFront (HTTPS only)
    └── Redirector 2 (10.0.2.10, EIP) ← Origin for CloudFront (HTTPS only)
    ↓
 Private Subnet (10.0.10.0/24) — NO public IPs
-   ├── C2 Team Server (10.0.10.10)  ← Cobalt Strike (port 50050)
-   └── Attack Box (10.0.10.50)      ← Windows workstation (CS Client, tools)
+   ├── C2 Team Server (10.0.10.10)  ← Cobalt Strike (port 50050) ← Dashboard reaches directly
+   └── Attack Box (10.0.10.50)      ← Windows workstation (CS Client, tools) ← Dashboard reaches directly
    ↓
 NAT Gateway → Internet (outbound only)
 
@@ -145,40 +151,54 @@ Target → HTTPS to front domain (e.g. grid.crowdstrike.com)
 - **Red team tools** — cloned from GitHub repo to `C:\Tools` (PowerSploit, SharpTools, etc.)
 - **Payload staging** — empty `C:\Payloads` directory for operator use during engagement
 - **WSL2 with Ubuntu** — Linux tooling available alongside Windows
-- **Private subnet only** (10.0.10.50) — no public IP, accessed via SSH tunnel through bastion
+- **Private subnet only** (10.0.10.50) — no public IP, accessed via SSH tunnel through the Dashboard Server (bastion tunnel is a legacy fallback)
 - **Toggleable** — `enable_attack_box = true` (default), can be disabled to save costs
 
 ### 5. Operator Access Patterns
 
-#### Option A: SSH Tunnel to C2 (Recommended for CS Client on laptop)
+The **Dashboard Server is the operator's entry point and jump host.** It lives in its own VPC (10.100.0.0/16) peered with this C2 VPC, so it reaches every instance directly — no SSH-hopping. All tunnels below run THROUGH the dashboard's EIP. The operator's laptop only runs a *dev* instance of the dashboard; production runs on this AWS server.
+
+#### Option A: Dashboard Web UI (Recommended)
 ```bash
-# Create SSH tunnel from your laptop through bastion to C2 server
-ssh -i key.pem -L 50050:10.0.10.10:50050 ubuntu@<bastion-eip>
+# Single tunnel from your laptop to the Dashboard Server
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
+
+# Open the dashboard
+http://localhost:5000
+# In-browser terminal, topology, CS beacon management, deploy/destroy
+```
+
+#### Option B: SSH Tunnel to C2 through the Dashboard (CS Client on laptop)
+```bash
+# Tunnel through the Dashboard Server to the C2 server (peering routes the last hop)
+ssh -i key.pem -L 50050:10.0.10.10:50050 ubuntu@<dashboard-eip>
 
 # Connect Cobalt Strike client on your laptop to localhost
 Host: 127.0.0.1:50050
 ```
 
-#### Option B: RDP to Attack Box (Recommended for full workstation)
+#### Option C: RDP to Attack Box through the Dashboard (full workstation)
 ```bash
-# SSH tunnel from your laptop through bastion to attack box RDP
-ssh -i key.pem -L 3389:10.0.10.50:3389 ubuntu@<bastion-eip>
+# SSH tunnel from your laptop through the Dashboard Server to attack box RDP
+ssh -i key.pem -L 13389:10.0.10.50:3389 ubuntu@<dashboard-eip>
 
-# Then RDP to localhost
-mstsc /v:localhost:3389
+# Then RDP to localhost:13389
+mstsc /v:localhost:13389
 
 # Attack box has CS Client pre-installed — double-click desktop shortcut
 # Connects to C2 server at 10.0.10.10:50050 (same private subnet, direct access)
 ```
 
-#### Option C: Multiple Tunnels at Once
+#### Option D: Multiple Tunnels at Once
 ```bash
-# Tunnel both RDP to attack box and CS client to team server
+# Tunnel both RDP to attack box and CS client to team server via the Dashboard
 ssh -i key.pem \
-    -L 3389:10.0.10.50:3389 \
+    -L 13389:10.0.10.50:3389 \
     -L 50050:10.0.10.10:50050 \
-    ubuntu@<bastion-eip>
+    ubuntu@<dashboard-eip>
 ```
+
+> **Legacy fallback:** the bastion (10.0.0.10, EIP) still accepts SSH and can relay the same tunnels (`ssh -L 50050:10.0.10.10:50050 ubuntu@<bastion-eip>`) if the Dashboard Server is unavailable. It is no longer the primary path.
 
 ## Deployment
 
@@ -601,9 +621,9 @@ sudo systemctl reload nginx
    rm -rf ssh_keys/*
    ```
 
-## Dashboard Server (Server Mode)
+## Dashboard Server (Production Control Plane)
 
-When the web application is deployed in **server mode**, the dashboard runs on a dedicated EC2 instance in its own VPC and replaces the bastion as the primary management access point.
+The dashboard runs on a dedicated AWS EC2 instance in its own VPC. This is the **production control plane and SSH jump host** — the operator's entry point for this and every other deployment. The bastion is a legacy/fallback relay, no longer the primary access point. (The operator's laptop only runs a *dev* instance of the dashboard for development.)
 
 ### Dashboard Infrastructure
 
@@ -632,7 +652,7 @@ Security groups on each instance allow inbound traffic from the dashboard's secu
 
 ### Operator Access via Dashboard
 
-Instead of SSH-hopping through the bastion, the operator creates a single tunnel to the dashboard and interacts with everything through the web UI:
+The operator creates a single tunnel to the dashboard and interacts with everything through the web UI — the dashboard reaches every instance directly over VPC peering (no bastion hop):
 
 ```bash
 # SSH tunnel from operator laptop to dashboard (port 5000)
@@ -648,19 +668,20 @@ From the web UI the operator can:
 - **Beacon management** — interact with CS beacons via the REST API (port 50443)
 - **Deploy / destroy** — manage infrastructure lifecycle without a local Terraform install
 
-### Full Architecture with Dashboard (Server Mode)
+### Full Architecture with Dashboard
 
 ```
-Operator Laptop
+Operator Laptop  (dev instance of dashboard only — production runs in AWS)
    │
-   │ SSH tunnel (port 5000)
+   │ SSH key + IP allow-list, tunnel port 5000
    ▼
 ┌─────────────────────────────────────────────────┐
-│  Dashboard VPC  10.100.0.0/16                   │
+│  Dashboard VPC  10.100.0.0/16  (PRODUCTION)     │
 │  Subnet 10.100.1.0/24                           │
 │                                                 │
 │  Dashboard Server (10.100.1.10, EIP)            │
 │    - Flask web UI on :5000                      │
+│    - Control plane + SSH jump host              │
 │    - Direct SSH to all C2 instances             │
 │    - REST API client to CS on :50443            │
 └──────────────────────┬──────────────────────────┘
@@ -691,13 +712,14 @@ Beacon traffic (from targets):
 
 ### Dashboard vs Bastion
 
-| | Bastion (Local Mode) | Dashboard (Server Mode) |
+| | Dashboard Server (Primary) | Bastion (Legacy / Fallback) |
 |---|---|---|
-| **Operator connects to** | Bastion EIP via SSH | Dashboard EIP via SSH tunnel (:5000) |
-| **Reaches private instances via** | SSH hop from bastion shell | Direct SSH from dashboard (VPC peering) |
-| **CS client access** | `ssh -L 50050:10.0.10.10:50050` through bastion | Terminal tab in web UI, or REST API |
-| **Management UI** | None (CLI only) | Full web UI (topology, terminal, beacons) |
-| **Bastion still exists?** | Yes, primary entry point | Yes, but dashboard replaces it for daily use |
+| **Role** | Production control plane + SSH jump host | Fallback SSH relay only |
+| **Operator connects to** | Dashboard EIP via SSH tunnel (:5000) | Bastion EIP via SSH (fallback) |
+| **Reaches private instances via** | Direct from dashboard (VPC peering) | SSH hop from bastion shell |
+| **CS client access** | Terminal tab in web UI, REST API, or `ssh -L 50050:10.0.10.10:50050 ...@<dashboard-eip>` | `ssh -L 50050:10.0.10.10:50050 ...@<bastion-eip>` |
+| **Management UI** | Full web UI (topology, terminal, beacons) | None (CLI only) |
+| **Primary entry point?** | Yes — all deployments branch from here | No — only if the dashboard is unavailable |
 
 ## When to Upgrade
 

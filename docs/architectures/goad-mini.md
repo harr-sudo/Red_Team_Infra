@@ -30,7 +30,7 @@ GOAD VPC: 192.168.56.0/24
     └── Attack Box (.50) — Win Server 2022, CS Client + offensive tools
 ```
 
-**Two subnets, not one:** The jumpbox sits in the **public subnet** with an Elastic IP for direct SSH access. All AD VMs, the Team Server, and Attack Box sit in the **private subnet** with no public IPs.
+**Two subnets, not one:** The jumpbox sits in the **public subnet** with an Elastic IP. All AD VMs, the Team Server, and Attack Box sit in the **private subnet** with no public IPs. The jumpbox is now a **legacy/fallback SSH gateway** — the primary operator entry point is the AWS-hosted **Dashboard Server**, which peers with this GOAD VPC and reaches every instance directly (see the Dashboard Server section below).
 
 #### NAT Gateway
 
@@ -47,9 +47,10 @@ The jumpbox reaches private instances via **internal VPC routing** (not through 
 
 | Flow | Path | Purpose |
 |------|------|---------|
-| Operator → Jumpbox | SSH → IGW → Jumpbox (public IP) | Management access |
-| Jumpbox → AD VMs | Internal VPC routing (direct) | Lab access, RDP/WinRM |
-| Jumpbox → Team Server | Internal VPC routing (direct) | CS client connection |
+| Operator → Dashboard Server | SSH key + IP allow-list → Dashboard EIP | Primary entry point (jump host) |
+| Dashboard → all GOAD instances | VPC peering (direct routes) | Lab access, CS tunnel, RDP/WinRM |
+| Operator → Jumpbox (fallback) | SSH → IGW → Jumpbox (public IP) | Legacy management access |
+| Jumpbox → AD VMs (fallback) | Internal VPC routing (direct) | Lab access, RDP/WinRM |
 | AD VMs → Internet | Private subnet → NAT GW → IGW | Windows updates, downloads |
 | Team Server ↔ Attack Box | Internal VPC routing (CS 50050) | CS client to server |
 
@@ -82,8 +83,8 @@ Outbound Rules:
 ### 2. Cobalt Strike Infrastructure
 - **Team Server** (192.168.56.40) — dedicated Ubuntu instance in private subnet running CS on port 50050
 - **Attack Box** (192.168.56.50) — Windows Server 2022 with CS Client GUI, PowerSploit, VS Code, WSL2, and red team tools
-- **Access**: Operator SSH tunnels through jumpbox to reach Team Server (`ssh -L 50050:192.168.56.40:50050 ubuntu@<jumpbox-eip>`)
-- **Attack Box access**: RDP tunnel through jumpbox (`ssh -L 3390:192.168.56.50:3389 ubuntu@<jumpbox-eip>`)
+- **Access**: Operator tunnels through the **Dashboard Server** to reach Team Server (`ssh -L 50050:192.168.56.40:50050 ubuntu@<dashboard-eip>`); the jumpbox is a legacy fallback
+- **Attack Box access**: RDP tunnel through the Dashboard Server (`ssh -L 13389:192.168.56.50:3389 ubuntu@<dashboard-eip>`)
 
 ### 3. Built-in Vulnerabilities
 
@@ -128,37 +129,42 @@ The GOAD Mini lab includes common AD misconfigurations:
 
 ## Access Methods
 
-### 1. SSH to Jumpbox
+The **Dashboard Server** (AWS-hosted, own VPC peered with this lab) is the operator entry point and jump host. All tunnels below run THROUGH the dashboard's EIP, which reaches every lab instance directly over VPC peering. The jumpbox remains only as a legacy fallback.
+
+### 1. Dashboard Web UI (Recommended)
 ```bash
-ssh -i ~/.ssh/your-key.pem ubuntu@<jumpbox-eip>
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
+# Open http://localhost:5000 — in-browser terminal, topology, CS beacons, Ansible provisioning
 ```
 
 ### 2. Cobalt Strike Client Connection
 ```bash
-# SSH tunnel to Team Server (from operator laptop)
-ssh -L 50050:192.168.56.40:50050 -i ~/.ssh/your-key.pem ubuntu@<jumpbox-eip>
+# SSH tunnel to Team Server through the Dashboard Server (from operator laptop)
+ssh -L 50050:192.168.56.40:50050 -i ~/.ssh/your-key.pem ubuntu@<dashboard-eip>
 
 # Then connect CS Client to localhost:50050
 # Password: [Retrieved from deployment output]
 ```
 
-### 3. RDP to Attack Box (via Jumpbox tunnel)
+### 3. RDP to Attack Box (via Dashboard tunnel)
 ```bash
 # SSH tunnel for RDP (from operator laptop)
-ssh -L 3390:192.168.56.50:3389 -i ~/.ssh/your-key.pem ubuntu@<jumpbox-eip>
+ssh -L 13389:192.168.56.50:3389 -i ~/.ssh/your-key.pem ubuntu@<dashboard-eip>
 
-# Then RDP to localhost:3390
+# Then RDP to localhost:13389
 # User: Administrator | Password: [From deployment output]
 ```
 
-### 4. RDP to Domain Controller (via Jumpbox)
+### 4. RDP to Domain Controller (via Dashboard)
 ```bash
 # SSH tunnel for DC01 RDP
-ssh -L 3391:192.168.56.10:3389 -i ~/.ssh/your-key.pem ubuntu@<jumpbox-eip>
+ssh -L 3391:192.168.56.10:3389 -i ~/.ssh/your-key.pem ubuntu@<dashboard-eip>
 
 # Then RDP to localhost:3391
 xfreerdp /v:localhost:3391 /u:Administrator /p:'<password>' /cert:ignore
 ```
+
+> **Legacy fallback (jumpbox):** if the Dashboard Server is unavailable, the jumpbox EIP still works as the SSH gateway — swap `<dashboard-eip>` for `<jumpbox-eip>` in any tunnel above, or `ssh -i ~/.ssh/your-key.pem ubuntu@<jumpbox-eip>` for a direct shell.
 
 ## Attack Scenarios
 
@@ -184,7 +190,7 @@ bloodhound-python -d sevenkingdoms.local -u user -p password -ns 192.168.56.10 -
 1. Generate payload from CS client
 2. Upload to DC01 via SMB
 3. Execute via WMI/PsExec
-4. Beacon calls back to jumpbox CS server
+4. Beacon calls back to the Team Server (192.168.56.40)
 
 ## Cost Breakdown
 
@@ -224,10 +230,10 @@ bloodhound-python -d sevenkingdoms.local -u user -p password -ns 192.168.56.10 -
 ## Troubleshooting
 
 ### Issue: Cannot connect to Cobalt Strike
-**Solution**: SSH tunnel through jumpbox to Team Server
+**Solution**: SSH tunnel through the Dashboard Server to Team Server (jumpbox tunnel is a fallback)
 ```bash
 # Ensure tunnel is active
-ssh -L 50050:192.168.56.40:50050 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
+ssh -L 50050:192.168.56.40:50050 -i ~/.ssh/key.pem ubuntu@<dashboard-eip>
 # Then connect CS Client to localhost:50050
 ```
 
@@ -249,9 +255,9 @@ nc -zv 192.168.56.10 445
 nc -zv 192.168.56.10 135
 ```
 
-## Dashboard Server (Server Mode)
+## Dashboard Server (Production Control Plane)
 
-When the web application is deployed in **server mode**, the dashboard runs on a dedicated EC2 instance in its own VPC and provides direct management access to all GOAD instances without SSH-hopping through the jumpbox.
+The dashboard runs on a dedicated AWS EC2 instance in its own VPC. This is the **production control plane and SSH jump host** — the operator entry point that all deployments (including this lab) branch from. It reaches every GOAD instance directly over VPC peering, so no SSH-hopping through the jumpbox is needed; the jumpbox is a legacy fallback. (The operator's laptop only runs a *dev* instance of the dashboard for development.)
 
 ### Dashboard Infrastructure
 
@@ -279,7 +285,7 @@ Security groups allow inbound traffic from the dashboard's security group (or th
 
 ### Operator Access via Dashboard
 
-Instead of SSH-hopping through the jumpbox, the operator creates a single tunnel to the dashboard and uses the web UI:
+The operator creates a single tunnel to the dashboard and uses the web UI — the dashboard reaches every GOAD instance directly over VPC peering (no jumpbox hop):
 
 ```bash
 # SSH tunnel from operator laptop to dashboard (port 5000)
@@ -295,19 +301,20 @@ From the web UI the operator can:
 - **Beacon management** — interact with CS beacons via the REST API
 - **GOAD provisioning** — trigger and monitor Ansible provisioning runs
 
-### Full Architecture with Dashboard (Server Mode)
+### Full Architecture with Dashboard
 
 ```
-Operator Laptop
+Operator Laptop  (dev instance of dashboard only — production runs in AWS)
    │
-   │ SSH tunnel (port 5000)
+   │ SSH key + IP allow-list, tunnel port 5000
    ▼
 ┌─────────────────────────────────────────────────┐
-│  Dashboard VPC  10.100.0.0/16                   │
+│  Dashboard VPC  10.100.0.0/16  (PRODUCTION)     │
 │  Subnet 10.100.1.0/24                           │
 │                                                 │
 │  Dashboard Server (10.100.1.10, EIP)            │
 │    - Flask web UI on :5000                      │
+│    - Control plane + SSH jump host              │
 │    - Direct SSH to all GOAD instances           │
 └──────────────────────┬──────────────────────────┘
                        │ VPC Peering
@@ -330,13 +337,14 @@ Operator Laptop
 
 ### Dashboard vs Jumpbox
 
-| | Jumpbox (Local Mode) | Dashboard (Server Mode) |
+| | Dashboard Server (Primary) | Jumpbox (Legacy / Fallback) |
 |---|---|---|
-| **Operator connects to** | Jumpbox EIP via SSH | Dashboard EIP via SSH tunnel (:5000) |
-| **Reaches private instances via** | SSH hop from jumpbox shell | Direct SSH from dashboard (VPC peering) |
-| **CS client access** | `ssh -L 50050:192.168.56.40:50050` through jumpbox | Terminal tab in web UI |
-| **Management UI** | None (CLI only) | Full web UI (topology, terminal, beacons) |
-| **Jumpbox still exists?** | Yes, primary entry point | Yes, but dashboard replaces it for daily use |
+| **Role** | Production control plane + SSH jump host | Fallback SSH gateway only |
+| **Operator connects to** | Dashboard EIP via SSH tunnel (:5000) | Jumpbox EIP via SSH (fallback) |
+| **Reaches private instances via** | Direct from dashboard (VPC peering) | SSH hop from jumpbox shell |
+| **CS client access** | Terminal tab in web UI, or `ssh -L 50050:192.168.56.40:50050 ...@<dashboard-eip>` | `ssh -L 50050:192.168.56.40:50050 ...@<jumpbox-eip>` |
+| **Management UI** | Full web UI (topology, terminal, beacons) | None (CLI only) |
+| **Primary entry point?** | Yes — all deployments branch from here | No — only if the dashboard is unavailable |
 
 ## Learning Path
 

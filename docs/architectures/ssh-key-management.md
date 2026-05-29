@@ -10,14 +10,15 @@ The project uses a layered SSH key architecture with three categories of keys. P
 
 ### Category A: Operator External Key (User Access)
 
-The operator's own SSH key (ed25519 or RSA) is registered as an AWS key pair via `var.user_public_key`. The private key never enters Terraform state.
+The operator's own SSH key (ed25519 or RSA) is registered as an AWS key pair via `var.user_public_key`. The private key never enters Terraform state. In the current architecture the operator authenticates with this key to the **Dashboard Server** — the AWS-hosted production control plane and SSH jump host — which is the entry point for every deployment. The key is also installed on deployment instances so the legacy bastion/jumpbox fallback still works.
 
 ```
-Operator laptop → public key → terraform.tfvars → aws_key_pair → EC2 instances
-                  private key stays on operator's laptop
+Operator laptop → public key → terraform.tfvars → aws_key_pair → Dashboard Server (primary)
+                  private key stays on operator's laptop      └→ deployment instances (legacy fallback path)
 ```
 
-**Used by:** All Linux instances (C2 team servers, proxy redirectors, bastion, GOAD jumpbox)
+**Primary use:** authorizes the operator to the Dashboard Server (SSH-key auth + IP allow-list).
+**Also installed on:** all Linux instances (C2 team servers, proxy redirectors, bastion, GOAD jumpbox) so the legacy bastion/jumpbox path remains usable.
 
 ### Category B: Windows Instance Key (Auto-Generated RSA)
 
@@ -44,9 +45,18 @@ Private keys are generated on the host at boot time and exchanged via S3. This i
 | Attack box internal | ed25519 | Attack box PowerShell | S3 `keys/{id}/attackbox_internal.pub` |
 | Attack box WSL | ed25519 | Attack box WSL init | S3 `keys/{id}/wsl_attackbox_internal.pub` |
 
+### Category D: Dashboard Server Internal Access (Jump Host)
+
+The **Dashboard Server** is the production jump host and reaches deployment instances directly over VPC peering. It does not rely on the operator's laptop key for the last hop — it uses its own internal access:
+
+- **SSM (preferred):** the dashboard issues `aws ssm send-command` / `start-session` to instances via their IAM roles + SSM agent — no SSH key distribution to the dashboard required for these.
+- **Internal SSH key (Ansible):** for SSH-based actions (CS client tunnels, Ansible provisioning of GOAD), the dashboard holds an internal SSH private key whose public half is installed in instances' `authorized_keys`. This key lives on the dashboard server, not the operator's laptop.
+
+The operator's external key (Category A) only gets them as far as the Dashboard Server; from there the dashboard's own SSM/internal-key access carries them to every instance.
+
 ## S3 Key Exchange Flow (GOAD-Only Mode)
 
-The S3-based key exchange only activates for GOAD-only deployments (`enable_key_exchange = true`). C2/combined deployments skip this entirely — the attack box accesses C2 servers via bastion SSH tunnels instead.
+The S3-based key exchange only activates for GOAD-only deployments (`enable_key_exchange = true`). C2/combined deployments skip this entirely — the attack box reaches the C2 server directly within the same VPC, and the Dashboard Server reaches both over VPC peering.
 
 ### Sequence
 
@@ -127,13 +137,15 @@ These are manual-use tools, not part of the automated bootstrap:
 
 ## Operator Access Methods
 
-| Target | Method | Key Used |
-|--------|--------|----------|
-| Bastion (Windows) | RDP to public IP | Windows RSA key (password decryption) |
-| C2 Team Server | `ssh -L 50050:c2_ip:50050 ubuntu@bastion_ip` | Operator external key |
-| GOAD Jumpbox | SSH to public IP | Operator external key |
-| Attack Box (C2 mode) | RDP via bastion tunnel | Windows RSA key |
-| Attack Box (GOAD mode) | RDP to public IP / SSH via jumpbox | Windows RSA key / internal key |
+The operator's external key authorizes to the **Dashboard Server**, which is the entry point and jump host for everything below. The bastion/jumpbox rows are legacy fallbacks.
+
+| Target | Method (Primary) | Key Used |
+|--------|------------------|----------|
+| Dashboard Server | SSH tunnel to EIP (`ssh -L 5000:localhost:5000 ubuntu@dashboard_eip`) + IP allow-list | Operator external key |
+| C2 Team Server | `ssh -L 50050:c2_ip:50050 ubuntu@dashboard_eip` (or web UI terminal) | Operator external key → dashboard internal access |
+| Attack Box (C2 mode) | RDP via dashboard tunnel (`-L 13389:ab_ip:3389`) | Operator external key → dashboard; Windows RSA for password |
+| Attack Box (GOAD mode) | RDP via dashboard tunnel / SSH via dashboard | Dashboard internal access; Windows RSA / internal key |
+| Bastion / GOAD Jumpbox (fallback) | SSH to public IP | Operator external key |
 
 ## Related Files
 

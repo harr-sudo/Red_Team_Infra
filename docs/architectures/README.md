@@ -43,9 +43,9 @@ This directory contains detailed architecture documentation for all deployment m
 | **IAM Security** | Separate IAM roles per VPC with least privilege | [📄 iam-security.md](./iam-security.md) |
 | **SSH Key Management** | Automated SSH key distribution architecture | [📄 ssh-key-management.md](./ssh-key-management.md) |
 
-## Dashboard Server (Server Mode)
+## Dashboard Server (Production Control Plane)
 
-When the web application runs in **server mode**, a dedicated **Dashboard Server** (EC2 t3.medium, Ubuntu 22.04) is deployed in its own VPC and provides centralized management for all deployment types.
+The **Dashboard Server** (EC2 t3.medium, Ubuntu 22.04) is a dedicated AWS-hosted instance in its own VPC. It is the **production control plane and SSH jump host** — the single operator entry point that all deployments branch out from. Every deployment VPC (C2 / GOAD / CCRTS) is peered with the Dashboard VPC, so the dashboard reaches every instance directly. The operator's laptop only runs a *dev* instance of the dashboard for development; production always runs on this AWS server. Per-deployment bastions and GOAD jumpboxes are demoted to legacy/fallback relays.
 
 ### Dashboard VPC
 
@@ -80,9 +80,9 @@ Dashboard Server (10.100.1.10, EIP)
    └──► GOAD VPC instances (jumpbox, DCs, team server, attack box)
 ```
 
-The operator opens `http://localhost:5000` in a browser and uses the web UI to manage infrastructure, open terminal sessions, view topology, and interact with beacons. The dashboard effectively replaces the bastion (C2 deployments) or jumpbox (GOAD deployments) as the primary management entry point, though those instances remain available as fallback.
+The operator opens `http://localhost:5000` in a browser and uses the web UI to manage infrastructure, open terminal sessions, view topology, and interact with beacons. The dashboard is the primary management entry point that all deployments branch from — the per-deployment bastion (C2) and GOAD jumpbox remain only as legacy/fallback SSH relays, not the operator's day-to-day path.
 
-For deployment-specific details, see the "Dashboard Server (Server Mode)" section in each architecture document.
+For deployment-specific details, see the "Dashboard Server (Production Control Plane)" section in each architecture document.
 
 ## Architecture Diagrams
 

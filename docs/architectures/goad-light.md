@@ -45,6 +45,8 @@ GOAD VPC: 192.168.56.0/24
 
 **Trust Relationships**: Automated parent-child domain trust between sevenkingdoms.local and north.sevenkingdoms.local.
 
+**Operator access:** the jumpbox is now a **legacy/fallback SSH gateway**. The primary entry point is the AWS-hosted **Dashboard Server**, which lives in its own VPC peered with this GOAD VPC and reaches every instance directly — all CS and RDP tunnels run through the dashboard's EIP.
+
 #### NAT Gateway
 
 The NAT Gateway is **physically deployed in the public subnet** (it needs an Elastic IP and IGW access to function), but it **serves the private subnet**:
@@ -58,9 +60,10 @@ The NAT Gateway is **physically deployed in the public subnet** (it needs an Ela
 
 | Flow | Path | Purpose |
 |------|------|---------|
-| Operator → Jumpbox | SSH → IGW → Jumpbox (public IP) | Management access |
-| Jumpbox → AD VMs | Internal VPC routing (direct) | Lab access, RDP/WinRM |
-| Jumpbox → Team Server | Internal VPC routing (direct) | CS client tunneling |
+| Operator → Dashboard Server | SSH key + IP allow-list → Dashboard EIP | Primary entry point (jump host) |
+| Dashboard → all GOAD instances | VPC peering (direct routes) | Lab access, CS tunnel, RDP/WinRM |
+| Operator → Jumpbox (fallback) | SSH → IGW → Jumpbox (public IP) | Legacy management access |
+| Jumpbox → AD VMs (fallback) | Internal VPC routing (direct) | Lab access, RDP/WinRM |
 | AD VMs → Internet | Private subnet → NAT GW → IGW | Windows updates, downloads |
 | Team Server ↔ Attack Box | Internal VPC routing (CS 50050) | CS client to server |
 
@@ -75,7 +78,7 @@ The NAT Gateway is **physically deployed in the public subnet** (it needs an Ela
 ### 2. Dedicated C2 + Attack Box
 - **Team Server** (192.168.56.40) — dedicated Ubuntu instance running CS on port 50050
 - **Attack Box** (192.168.56.50) — Windows Server 2022 with CS Client GUI, PowerSploit, VS Code, WSL2, and red team tools
-- **Access**: Operator SSH tunnels through jumpbox to reach both
+- **Access**: Operator tunnels through the **Dashboard Server** to reach both (jumpbox is a legacy fallback)
 
 ### 3. Member Server (SRV02)
 - **File shares** for privilege escalation practice
@@ -199,48 +202,53 @@ golden_ticket /domain:north.sevenkingdoms.local /sid:S-1-5-21-... /krbtgt:<hash>
 
 ## Access Methods
 
-### 1. SSH to Jumpbox
+The **Dashboard Server** (AWS-hosted, own VPC peered with this lab) is the operator entry point and jump host. All tunnels below run THROUGH the dashboard's EIP, which reaches every lab instance directly over VPC peering. The jumpbox remains only as a legacy fallback.
+
+### 1. Dashboard Web UI (Recommended)
 ```bash
-ssh -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
+# Open http://localhost:5000 — in-browser terminal, topology, CS beacons, Ansible provisioning
 ```
 
 ### 2. Cobalt Strike Client Connection
 ```bash
-# SSH tunnel to Team Server (from operator laptop)
-ssh -L 50050:192.168.56.40:50050 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
+# SSH tunnel to Team Server through the Dashboard Server (from operator laptop)
+ssh -L 50050:192.168.56.40:50050 -i ~/.ssh/key.pem ubuntu@<dashboard-eip>
 
 # Then connect CS Client to localhost:50050
 # Password: [From deployment output]
 ```
 
-### 3. RDP to Attack Box (via Jumpbox tunnel)
+### 3. RDP to Attack Box (via Dashboard tunnel)
 ```bash
 # SSH tunnel for RDP (from operator laptop)
-ssh -L 3390:192.168.56.50:3389 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
+ssh -L 13389:192.168.56.50:3389 -i ~/.ssh/key.pem ubuntu@<dashboard-eip>
 
-# Then RDP to localhost:3390
+# Then RDP to localhost:13389
 # User: Administrator | Password: [From deployment output]
 ```
 
-### 4. RDP to Domain Controllers (via Jumpbox tunnel)
+### 4. RDP to Domain Controllers (via Dashboard tunnel)
 ```bash
 # DC01
-ssh -L 3391:192.168.56.10:3389 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
+ssh -L 3391:192.168.56.10:3389 -i ~/.ssh/key.pem ubuntu@<dashboard-eip>
 xfreerdp /v:localhost:3391 /u:Administrator /d:sevenkingdoms /p:'password'
 
 # DC02
-ssh -L 3392:192.168.56.11:3389 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
+ssh -L 3392:192.168.56.11:3389 -i ~/.ssh/key.pem ubuntu@<dashboard-eip>
 xfreerdp /v:localhost:3392 /u:Administrator /d:north /p:'password'
 ```
 
 ### 5. SOCKS Proxy for Tools
 ```bash
-# On your local machine
-ssh -D 1080 -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>
+# Open a SOCKS proxy through the Dashboard Server
+ssh -D 1080 -i ~/.ssh/key.pem ubuntu@<dashboard-eip>
 
 # Configure proxychains, then use tools through SOCKS proxy
 proxychains crackmapexec smb 192.168.56.0/26
 ```
+
+> **Legacy fallback (jumpbox):** if the Dashboard Server is unavailable, the jumpbox EIP still works as the SSH gateway — swap `<dashboard-eip>` for `<jumpbox-eip>` in any tunnel above, or `ssh -i ~/.ssh/key.pem ubuntu@<jumpbox-eip>` for a direct shell.
 
 ## Cost Breakdown
 

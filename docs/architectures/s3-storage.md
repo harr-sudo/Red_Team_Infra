@@ -81,6 +81,9 @@ Each VPC gets its own IAM role with policies scoped to that specific VPC. Cross-
 | C2-only (`c2-adhoc`, `c2-purple`, `c2-full`) | C2 VPC | `cs_download_c2` |
 | GOAD-only (`goad-mini`, `goad-light`, etc.) | GOAD VPC | `cs_download_goad` |
 | Combined (`combined-*`) | Both | `cs_download_c2` + `cs_download_goad` |
+| Dashboard Server (control plane) | Dashboard VPC (10.100.0.0/16) | Dashboard role (own VPC-endpoint S3 access) |
+
+The Dashboard Server — the production control plane that all deployments branch from — has its own IAM role reaching the bucket through its VPC endpoint, conditioned on the Dashboard VPC. This adds another authorized source; the **3-layer confused-deputy model is unchanged**.
 
 ### Instance Permissions
 
@@ -89,6 +92,7 @@ Each VPC gets its own IAM role with policies scoped to that specific VPC. Cross-
 | Team Server, Redirector, Bastion | `GetObject`, `ListBucket` | `archives/*`, `scripts/*` |
 | Jumpbox | `GetObject`, `PutObject`, `ListBucket` | `archives/*`, `scripts/*`, `keys/*`, `status/*` |
 | Attack Box | `GetObject`, `ListBucket` + `secretsmanager:GetSecretValue` | `archives/*`, `scripts/*`, `keys/*` |
+| Dashboard Server | `GetObject`, `ListBucket` (via Dashboard VPC endpoint) | `archives/*`, `scripts/*` |
 
 ## Secrets Manager
 

@@ -42,6 +42,14 @@ Maintains backwards compatibility with older single-VPC deployments.
 
 **Instance Profile:** `{project}-{env}-cs-download-profile`
 
+### Role 4: Dashboard Server (Control Plane VPC)
+
+**Created when:** the Dashboard Server is deployed (its own VPC, 10.100.0.0/16).
+
+**Used by:** the Dashboard Server EC2 instance — the production control plane and SSH jump host that every deployment branches from.
+
+The dashboard has its own IAM role with **VPC-endpoint-scoped S3 access** to the deployment bucket (reads archives/scripts, manages deployment state) plus the SSM and EC2 permissions it needs to drive and reach deployment instances. Its S3 access is conditioned on the Dashboard VPC the same way the C2/GOAD roles are conditioned on their VPCs — the **3-layer confused-deputy model is unchanged**, the dashboard's VPC is simply another authorized source.
+
 ## Instance Profile Assignment
 
 | Instance | Profile | Source |
@@ -54,6 +62,7 @@ Maintains backwards compatibility with older single-VPC deployments.
 | GOAD Team Server | `instance_profile_name_goad` | `deployment_storage` module |
 | Proxy Redirector | Manual variable | Not auto-assigned |
 | Bastion | Manual variable | Not auto-assigned |
+| Dashboard Server | Dashboard role (own VPC) | VPC-endpoint S3 + SSM/EC2 for control plane |
 
 ## 3-Layer Confused Deputy Protection
 

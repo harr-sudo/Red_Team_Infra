@@ -4,6 +4,8 @@
 
 This page provides a visual index of all architecture diagrams generated for the Red Team Infrastructure project.
 
+> **Access model:** across every diagram below, the operator's entry point is the AWS-hosted **Dashboard Server** (its own VPC, peered with each deployment VPC) acting as the production control plane and SSH jump host. Per-deployment bastions and GOAD jumpboxes shown in the diagrams are legacy/fallback SSH relays, not the primary access path. The operator's laptop runs only a *dev* instance of the dashboard. See [README — Dashboard Server](./README.md#dashboard-server-production-control-plane).
+
 ---
 
 ## GOAD Training Labs
