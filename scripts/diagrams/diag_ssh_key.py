@@ -5,7 +5,7 @@ operator's key never lands on deployment hosts.
 
 Key categories:
   A. Operator external key  -> Dashboard Server (IP allow-list) ONLY.
-  B. Windows RSA key (Terraform-generated) -> decrypts attack box/bastion pw.
+  B. Windows RSA key (Terraform-generated) -> decrypts the attack box pw.
   C. Host-generated internal ed25519 keys, exchanged via S3 (GOAD bootstrap).
 SSM is the PREFERRED path from the dashboard to instances (no SSH key hop).
 """
@@ -35,7 +35,7 @@ with rt_diagram("SSH Key Management — operator key stops at the Dashboard jump
         with Cluster("Linux instances"):
             jb = EC2("Jumpbox / Team Server / Redirector")
         with Cluster("Windows instances"):
-            ab = EC2("Attack Box / Bastion\nKey B: RSA 4096 (pw decrypt)")
+            ab = EC2("Attack Box\nKey B: RSA 4096 (pw decrypt)")
 
     # Dashboard holds the INTERNAL keys + reaches instances over peering / SSM.
     dash >> Edge(label="Key C internal (Ansible over VPC peering)",

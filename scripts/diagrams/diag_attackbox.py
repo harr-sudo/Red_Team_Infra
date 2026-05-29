@@ -6,8 +6,9 @@ peering into the deployment -> RDP tunnel to the attack box in the private
 subnet. The one-liner
     ssh -L 13389:<attackbox-ip>:3389 ubuntu@<dashboard-eip>
 forwards RDP 3389 over the dashboard jump; the operator then mstsc to
-localhost:13389. The per-deployment bastion remains LEGACY/fallback only.
-S3 + Secrets Manager feed the bootstrap (init script, CS archive, GitHub PAT).
+localhost:13389. The per-deployment bastion has been removed — the dashboard
+is the only jump. S3 + Secrets Manager feed the bootstrap (init script, CS
+archive, GitHub PAT).
 """
 from diagrams import Cluster, Edge
 from diagrams.aws.compute import EC2
@@ -24,8 +25,6 @@ with rt_diagram("Attack Box — Dashboard-jumped RDP (Win Server 2022 + WSL2)", 
         op >> OPERATOR_EDGE >> dash
 
     with Cluster("Deployment VPC  (C2 10.0.0.0/16  ·  GOAD 192.168.56.0/24)"):
-        with Cluster("Management subnet"):
-            bastion = EC2("Bastion / Jumpbox\nLEGACY / fallback")
         with Cluster("Private subnet  (10.0.10.0/24 · 192.168.56.0/26)"):
             nat = NATGateway("NAT GW")
             ab = EC2("Attack Box\n10.0.10.50 · Win Server 2022\nWSL2 · RDP 3389 / SSH 22 / WinRM")

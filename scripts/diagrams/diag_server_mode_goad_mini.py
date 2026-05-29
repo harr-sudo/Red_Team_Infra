@@ -4,7 +4,8 @@ Emphasises the AWS-hosted Dashboard Server as the production control plane +
 SSH jump. The operator reaches everything through ONE tunnel to the dashboard
 (`ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>`); the Dashboard VPC is
 peered with the GOAD VPC so the dashboard has direct routable access to every
-lab instance. The per-deployment jumpbox is LEGACY/fallback only.
+lab instance. The GOAD jumpbox is the Ansible AD-lab provisioning host (not a
+bastion); the dashboard is the SSH jump.
 """
 from diagrams import Cluster, Edge
 from diagrams.aws.compute import EC2
@@ -35,7 +36,7 @@ with rt_diagram("Server Mode — GOAD Mini (dashboard control plane)", "server-m
         with Cluster("Public 192.168.56.64/26"):
             igw_goad = InternetGateway("IGW")
             nat_goad = NATGateway("NAT GW")
-            jump = EC2("Jumpbox\n.100 · EIP · LEGACY/fallback")
+            jump = EC2("Jumpbox\n.100 · GOAD Ansible provisioning")
         with Cluster("Private 192.168.56.0/26"):
             dc01 = EC2("DC01 kingslanding\n.10 · sevenkingdoms.local")
             ts_goad = EC2("CS Team Server\n.40 · :50050")

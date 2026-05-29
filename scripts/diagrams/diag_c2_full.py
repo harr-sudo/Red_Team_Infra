@@ -6,7 +6,7 @@ Phase-based team servers (staging / post-ex / long-haul) at
 10.0.10.10 / .11 / .12. CloudFront sits in front of the redirectors to hide
 their EIPs behind CloudFront edge IPs. The Dashboard Server (own VPC,
 AWS-hosted prod control plane) is the hub all deployments branch from; the
-per-deployment bastion is LEGACY/fallback only.
+per-deployment bastion has been removed — the dashboard is the only jump.
 """
 from diagrams import Cluster, Edge
 from diagrams.aws.compute import EC2
@@ -35,8 +35,6 @@ with rt_diagram("C2 Full — Dashboard-fronted, 3 phase team servers + CloudFron
             r1 = EC2("Redirector 1\nHTTPS 443 · EIP")
             r2 = EC2("Redirector 2\nHTTPS 443 · EIP")
             r3 = EC2("Redirector 3\nHTTPS 443 · EIP")
-        with Cluster("Management 10.0.0.0/24"):
-            bastion = EC2("Bastion\n10.0.0.10 · LEGACY/fallback")
         with Cluster("Private 10.0.10.0/24"):
             nat = NATGateway("NAT GW")
             ts_stage = EC2("Team Server — Staging\n10.0.10.10")

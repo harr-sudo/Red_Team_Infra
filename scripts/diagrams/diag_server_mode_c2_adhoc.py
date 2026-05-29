@@ -5,7 +5,8 @@ Emphasises the AWS-hosted Dashboard Server as the production control plane +
 SSH jump. The operator reaches everything through ONE tunnel to the dashboard
 (`ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>`); the Dashboard VPC is
 peered with the C2 VPC so the dashboard has direct routable access to every
-instance. The per-deployment bastion is LEGACY/fallback only.
+instance. The per-deployment bastion has been removed — the dashboard is the
+only jump.
 """
 from diagrams import Cluster, Edge
 from diagrams.aws.compute import EC2
@@ -39,8 +40,6 @@ with rt_diagram("Server Mode — C2 Ad-Hoc (dashboard control plane)", "server-m
             igw_c2 = InternetGateway("IGW")
             r1 = EC2("Redirector 1\nHTTPS 443 · EIP")
             r2 = EC2("Redirector 2\nHTTPS 443 · EIP")
-        with Cluster("Management 10.0.0.0/24"):
-            bastion = EC2("Bastion\n10.0.0.10 · LEGACY/fallback")
         with Cluster("Private 10.0.10.0/24"):
             nat_c2 = NATGateway("NAT GW")
             ts = EC2("CS Team Server\n10.0.10.10\n:50050 CS · :50443 REST")

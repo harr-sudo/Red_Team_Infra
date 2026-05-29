@@ -1,6 +1,7 @@
 """goad-mini — single-DC AD lab (sevenkingdoms.local), fronted by the
 AWS-hosted Dashboard Server. Operator -> Dashboard hub -> peered GOAD VPC.
-The GOAD jumpbox is legacy/fallback; the dashboard is the real jump."""
+The GOAD jumpbox is the Ansible AD-lab provisioning host (not a bastion);
+the dashboard is the SSH jump."""
 from diagrams import Cluster, Edge
 from diagrams.aws.compute import EC2
 from diagrams.aws.network import InternetGateway, NATGateway
@@ -17,7 +18,7 @@ with rt_diagram("GOAD-Mini — Dashboard-fronted AD lab", "goad-mini-architectur
         with Cluster("Public subnet  .64/26"):
             igw = InternetGateway("IGW")
             nat = NATGateway("NAT GW\n(outbound for private)")
-            jump = EC2("Jumpbox\n.100 · EIP · LEGACY/fallback")
+            jump = EC2("Jumpbox\n.100 · GOAD Ansible provisioning")
 
         with Cluster("Private subnet  .0/26"):
             ts = EC2("CS Team Server\n.40 · :50050")

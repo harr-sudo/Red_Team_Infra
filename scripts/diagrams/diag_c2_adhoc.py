@@ -20,8 +20,6 @@ with rt_diagram("C2 Ad-Hoc — Dashboard-fronted (eu-central-1)", "c2-adhoc-arch
             igw = InternetGateway("IGW")
             r1 = EC2("Redirector 1\nHTTPS 443 · EIP")
             r2 = EC2("Redirector 2\nHTTPS 443 · EIP")
-        with Cluster("Management 10.0.0.0/24"):
-            bastion = EC2("Bastion\n10.0.0.10 · LEGACY/fallback")
         with Cluster("Private 10.0.10.0/24"):
             nat = NATGateway("NAT GW")
             ts = EC2("CS Team Server\n10.0.10.10")

@@ -20,7 +20,9 @@ THE ARCHITECTURE MODEL (post-2026-05-29):
     UI via `ssh -L 5000:localhost:5000`).
   * ALL deployments branch OUT from the Dashboard Server: its VPC is peered
     with every deployment VPC (C2 / GOAD / CCRTS), and it reaches every
-    instance directly. Per-deployment bastions are LEGACY/fallback only.
+    instance directly. The per-deployment bastion has been removed entirely
+    — the Dashboard Server is the only SSH jump. (The GOAD jumpbox remains,
+    but it is the Ansible AD-lab provisioning host, not a bastion.)
 """
 from contextlib import contextmanager
 

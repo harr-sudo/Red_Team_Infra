@@ -31,8 +31,6 @@ with rt_diagram("Combined — C2 Ad-Hoc + GOAD Mini (3-way VPC peering)", "combi
             igw_c2 = InternetGateway("IGW")
             r1 = EC2("Redirector 1\nHTTPS 443 · EIP")
             r2 = EC2("Redirector 2\nHTTPS 443 · EIP")
-        with Cluster("Management 10.0.0.0/24"):
-            bastion = EC2("Bastion\n10.0.0.10 · LEGACY/fallback")
         with Cluster("Private 10.0.10.0/24"):
             nat_c2 = NATGateway("NAT GW")
             ts = EC2("CS Team Server\n10.0.10.10")
@@ -43,7 +41,7 @@ with rt_diagram("Combined — C2 Ad-Hoc + GOAD Mini (3-way VPC peering)", "combi
         with Cluster("Public 192.168.56.64/26"):
             igw_goad = InternetGateway("IGW")
             nat_goad = NATGateway("NAT GW")
-            jump = EC2("Jumpbox\n.100 · EIP · LEGACY/fallback")
+            jump = EC2("Jumpbox\n.100 · GOAD Ansible provisioning")
         with Cluster("Private 192.168.56.0/26"):
             dc01 = EC2("DC01 kingslanding\n.10 · sevenkingdoms.local")
             ts_goad = EC2("CS Team Server\n.40")
