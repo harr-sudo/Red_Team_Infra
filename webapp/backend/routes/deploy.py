@@ -2308,27 +2308,21 @@ def deploy():
     GOAD_ONLY_TYPES = ['goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha']
     C2_ONLY_TYPES = ['c2-adhoc', 'c2-purple', 'c2-full']
     COMBINED_TYPES = ['combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full']
-    # CCRTS-Lab: pure ccrts-* ships its own CS-on-Kali (no upload), no
-    # public domain. combined-*-ccrts-* keeps the C2-side prereqs.
-    CCRTS_ONLY_TYPES = ['ccrts-mini', 'ccrts-full']
-    COMBINED_CCRTS_TYPES = [
-        'combined-adhoc-ccrts-mini',
-        'combined-adhoc-ccrts-full',
-        'combined-full-ccrts-full',
-    ]
+    # CCRTS-Lab: the single self-contained `ccrts` type ships its own
+    # CS-on-Kali (no upload) and is internal-only (no public domain).
+    CCRTS_ONLY_TYPES = ['ccrts']
 
     is_ccrts_only = deployment_type in CCRTS_ONLY_TYPES
 
-    # All deployments with CS need the CS file uploaded — EXCEPT pure
-    # ccrts-* which boot CS from the CREST Community Kali AMI directly.
+    # All deployments with CS need the CS file uploaded — EXCEPT the
+    # `ccrts` lab which boots CS from the CREST Community Kali AMI.
     requires_cobalt_strike = not is_ccrts_only
 
-    # Only C2 / Combined / combined-ccrts need a public domain. Pure
-    # ccrts-* is internal-only behind the dashboard server jump.
+    # Only C2 / Combined need a public domain. The `ccrts` lab is
+    # internal-only behind the dashboard server jump.
     requires_domain = (
         deployment_type in C2_ONLY_TYPES
         or deployment_type in COMBINED_TYPES
-        or deployment_type in COMBINED_CCRTS_TYPES
     )
     
     # Check prerequisite: Cobalt Strike file

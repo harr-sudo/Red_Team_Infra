@@ -11,31 +11,22 @@ GOAD_ONLY_DEPLOYMENT_TYPES = [
     'goad-mini', 'goad-light', 'goad-sccm', 'goad-full', 'goad-nha'
 ]
 
-# CCRTS-Lab deployment types — self-contained exam-mirror lab using
-# CREST Community AMIs. The pure ccrts-* variants ship with their own
-# CS-on-Kali distribution (no team server / redirector infra) so they
-# do NOT support bolt-ons or operations from the dashboard. The combined
-# variants pair a CCRTS lab with a real C2 deployment via VPC peering —
-# the C2 side keeps full dashboard support.
-CCRTS_ONLY_DEPLOYMENT_TYPES = ['ccrts-mini', 'ccrts-full']
-COMBINED_CCRTS_DEPLOYMENT_TYPES = [
-    'combined-adhoc-ccrts-mini',
-    'combined-adhoc-ccrts-full',
-    'combined-full-ccrts-full',
-]
-ALL_CCRTS_DEPLOYMENT_TYPES = (
-    CCRTS_ONLY_DEPLOYMENT_TYPES + COMBINED_CCRTS_DEPLOYMENT_TYPES
-)
+# CCRTS-Lab deployment type — a single, fully self-contained exam-mirror
+# lab using CREST Community AMIs. CS runs on the Kali host directly (from
+# the CREST AMI), so it ships with no team server / redirector infra and
+# does NOT support bolt-ons or operations from the dashboard. There is no
+# C2 integration and no combined mode — the lab is always standalone.
+CCRTS_ONLY_DEPLOYMENT_TYPES = ['ccrts']
+ALL_CCRTS_DEPLOYMENT_TYPES = CCRTS_ONLY_DEPLOYMENT_TYPES
 
 # Deployment types that require a domain name
-# Pure ccrts-* deployments are intentionally absent — the CCRTS lab is
-# fully self-contained and reachable only via the dashboard server jump
-# (no public DNS / SSL). combined-*-ccrts ARE listed because the C2 half
-# still needs a domain for redirectors + SSL.
+# The `ccrts` deployment is intentionally absent — the CCRTS lab is fully
+# self-contained and reachable only via the dashboard server jump (no
+# public DNS / SSL).
 DOMAIN_REQUIRED_DEPLOYMENT_TYPES = [
     'c2-adhoc', 'c2-purple', 'c2-full',
     'combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full',
-] + COMBINED_CCRTS_DEPLOYMENT_TYPES
+]
 
 
 class ConfigValidator:
@@ -55,17 +46,12 @@ class ConfigValidator:
 
     @staticmethod
     def is_ccrts_only_deployment(deployment_type: str) -> bool:
-        """True for the standalone CCRTS lab variants (no C2 infra)."""
+        """True for the standalone, self-contained CCRTS lab (no C2 infra)."""
         return deployment_type in CCRTS_ONLY_DEPLOYMENT_TYPES
 
     @staticmethod
-    def is_combined_ccrts_deployment(deployment_type: str) -> bool:
-        """True for combined-*-ccrts-* variants (C2 + CCRTS via VPC peering)."""
-        return deployment_type in COMBINED_CCRTS_DEPLOYMENT_TYPES
-
-    @staticmethod
     def is_ccrts_deployment(deployment_type: str) -> bool:
-        """True if the deployment touches the CCRTS lab in any form."""
+        """True if the deployment is the self-contained CCRTS lab."""
         return deployment_type in ALL_CCRTS_DEPLOYMENT_TYPES
 
     @staticmethod
@@ -199,37 +185,24 @@ class ConfigValidator:
     def validate_ccrts_config(config: Dict) -> Tuple[bool, List[str]]:
         """Validate CCRTS-Lab specific configuration.
 
+        The CCRTS lab is a single, fully self-contained deployment type
+        (``ccrts``) — there is no C2 integration, no combined mode, and
+        no size variants.
+
         Rules:
-          * `enable_ccrts_lab=true` is only valid on a pure ``c2-*``
-            deployment_type — mirrors the `enable_test_lab` gating in
-            terraform/main.tf. On ``ccrts-*`` / ``combined-*-ccrts-*``
-            the CCRTS lab is the deployment itself (always on), and on
-            ``goad-*`` / ``combined-*-mini|light|full`` the flag is
-            meaningless. Setting it elsewhere is a config bug we want
-            to surface BEFORE terraform spends time planning.
           * When the operator pins a pre-staged AMI via
             ``crest_kali_ami_override`` or ``crest_windows_ami_override``
             the value MUST look like an AWS AMI ID (`ami-` + hex).
             Anything else will silently break `aws_ami_copy` with a
             cryptic "InvalidAMIID.NotFound" 20 minutes into the plan.
-          * For pure ``ccrts-*`` deployments the project_name should use
-            the ``ccrts_<size>_*`` prefix (consistency with the existing
+          * For the ``ccrts`` deployment the project_name should use the
+            ``ccrts_*`` prefix (consistency with the existing
             ``c2_adhoc_*`` / ``goad_mini_*`` naming conventions). Soft
             warning only — we still accept the save so existing demo /
             test projects don't break.
         """
         errors: List[str] = []
         deployment_type = (config.get('deployment_type') or '').strip()
-
-        # enable_ccrts_lab is c2-only — same posture as enable_test_lab.
-        enable_ccrts_lab = config.get('enable_ccrts_lab', False)
-        if enable_ccrts_lab and not deployment_type.startswith('c2-'):
-            errors.append(
-                "enable_ccrts_lab=true is only valid on c2-* deployments. "
-                "For a standalone CCRTS lab choose deployment_type "
-                "'ccrts-mini' or 'ccrts-full'; for C2+CCRTS choose a "
-                "'combined-*-ccrts-*' variant."
-            )
 
         # AMI ID format check for the override knobs. AWS AMI IDs are
         # `ami-` followed by 8 (legacy) or 17 (current) lowercase hex
@@ -248,19 +221,17 @@ class ConfigValidator:
                 f"(e.g. 'ami-0123456789abcdef0'), got: {win_override}"
             )
 
-        # Project name prefix check (only enforced for pure ccrts-*).
+        # Project name prefix check (only enforced for the ccrts type).
         if deployment_type in CCRTS_ONLY_DEPLOYMENT_TYPES:
             project_name = (config.get('project_name') or '').strip()
-            if project_name:
-                size = deployment_type.split('-', 1)[1]  # mini | full
-                expected_prefix = f'ccrts_{size}_'
-                if not project_name.startswith(expected_prefix):
-                    errors.append(
-                        f"project_name for {deployment_type} should start "
-                        f"with '{expected_prefix}' (matching the "
-                        f"c2_adhoc_* / goad_mini_* convention), got: "
-                        f"{project_name}"
-                    )
+            expected_prefix = 'ccrts_'
+            if project_name and not project_name.startswith(expected_prefix):
+                errors.append(
+                    f"project_name for {deployment_type} should start "
+                    f"with '{expected_prefix}' (matching the "
+                    f"c2_adhoc_* / goad_mini_* convention), got: "
+                    f"{project_name}"
+                )
 
         return len(errors) == 0, errors
 
@@ -351,10 +322,9 @@ class ConfigValidator:
         if not attack_box_valid:
             errors.extend(attack_box_errors)
 
-        # Validate CCRTS-specific configuration (AMI overrides, prefix,
-        # enable_ccrts_lab gating). Runs on EVERY save so misuses of the
-        # flag on non-c2 deployments are caught even when ccrts isn't the
-        # active type.
+        # Validate CCRTS-specific configuration (CREST AMI overrides +
+        # project_name prefix). Runs on EVERY save so a stray override
+        # value is caught even when ccrts isn't the active type.
         ccrts_valid, ccrts_errors = ConfigValidator.validate_ccrts_config(config)
         if not ccrts_valid:
             errors.extend(ccrts_errors)

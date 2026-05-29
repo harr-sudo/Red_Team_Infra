@@ -2306,15 +2306,15 @@ APP.computeVisibleSubPills = function (active) {
     // as both a C2 and a GOAD for visibility — has bolt-ons, beacons,
     // payloads, manage, cleanup.
     const isDemo = isExisting && type === 'demo';
-    // 2026-05-28 — CCRTS support. Pure ccrts-* deployments are self-
-    // contained (CS runs on the Kali workstation from the CREST AMI),
-    // so the shared bolt-on catalog + Operations sub-pills DON'T apply.
-    // BUT the operator-explicit UX rule is to KEEP both pills VISIBLE
-    // in the rail with a disabled-state explainer (see
-    // APP.subPillNotApplicableReason). So we include 'bolt-ons' in the
-    // visible set for ccrts-* — the disabled-render path is handled in
-    // APP.bolton.init() + the Operations pane render hooks, not here.
-    const isCcrtsOnly = isExisting && type.startsWith('ccrts-');
+    // 2026-05-29 — CCRTS support. The self-contained `ccrts` deployment
+    // runs CS on the Kali workstation from the CREST AMI, so the shared
+    // bolt-on catalog + Operations sub-pills DON'T apply. BUT the
+    // operator-explicit UX rule is to KEEP both pills VISIBLE in the rail
+    // with a disabled-state explainer (see APP.subPillNotApplicableReason).
+    // So we include 'bolt-ons' in the visible set for `ccrts` — the
+    // disabled-render path is handled in APP.bolton.init() + the
+    // Operations pane render hooks, not here.
+    const isCcrtsOnly = isExisting && type === 'ccrts';
     // Cleanup is an orphan-resource viewer that's relevant in every mode —
     // it scans the whole account, not a specific deployment. Always append.
     const base = isDraft
@@ -2331,19 +2331,17 @@ APP.computeVisibleSubPills = function (active) {
 };
 
 /**
- * 2026-05-28 — Per-sub-pill "not applicable" explainer for ccrts-only
- * deployments. Returns a human-readable reason string when the
- * sub-pill should render a disabled / N/A empty state for the given
- * deployment type, or null when the sub-pill is fully usable.
+ * 2026-05-29 — Per-sub-pill "not applicable" explainer for the
+ * self-contained `ccrts` deployment. Returns a human-readable reason
+ * string when the sub-pill should render a disabled / N/A empty state
+ * for the given deployment type, or null when the sub-pill is fully
+ * usable.
  *
  * The user's UX rule (CCRTS Lab wiring):
- *   - Pure ccrts-* deployments use a self-contained exam environment
+ *   - The `ccrts` deployment is a fully-isolated exam-mirror environment
  *     (Cobalt Strike runs on the Kali workstation from the CREST AMI).
- *     Our shared C2 infra + bolt-on catalog target test_lab AD hosts,
- *     not the CCRTS AD — so Bolt-ons + Operations are disabled WITH an
- *     explainer (not hidden).
- *   - combined-*-ccrts deployments DO include real C2 infra → both
- *     pills remain fully active.
+ *     Our shared C2 infra + bolt-on catalog do not apply to it — so
+ *     Bolt-ons + Operations are disabled WITH an explainer (not hidden).
  *
  * Callers:
  *   - subpill-nav__pill / app-rail__child renderers: if non-null, tab
@@ -2352,32 +2350,32 @@ APP.computeVisibleSubPills = function (active) {
  *     renderers: if non-null, paint the .not-applicable-empty card
  *     instead of normal content.
  *
- * @param {string} deploymentType - e.g. "ccrts-mini", "combined-adhoc-ccrts-full"
+ * @param {string} deploymentType - e.g. "ccrts"
  * @param {string} subPill        - "bolt-ons" | "operations" | "beacons" | "terminal" | "payloads"
  * @returns {string|null}
  */
 APP.subPillNotApplicableReason = function (deploymentType, subPill) {
     if (!deploymentType) return null;
     const type = String(deploymentType).toLowerCase();
-    // Only pure ccrts-* deployments trigger N/A. combined-*-ccrts retains
-    // full bolt-on + operations capability because the C2 side is present.
-    if (!type.startsWith('ccrts-')) return null;
+    // The self-contained `ccrts` deployment triggers N/A — there is no
+    // shared C2 infra to bolt onto or operate from the dashboard.
+    if (type !== 'ccrts') return null;
     const sub = String(subPill || '').toLowerCase();
     const opsSubs = new Set(['operations', 'beacons', 'terminal', 'payloads']);
     if (sub === 'bolt-ons' || opsSubs.has(sub)) {
-        return 'Not applicable for CCRTS Lab — self-contained exam environment (CS runs on the Kali workstation from the CREST AMI). Switch to the C2 side from the dropdown to access this surface.';
+        return 'Not applicable for the CCRTS Lab — a self-contained exam-mirror environment (CS runs on the Kali workstation from the CREST AMI). The framework’s shared C2 tooling does not apply here.';
     }
     return null;
 };
 
 /**
- * 2026-05-28 — Render the canonical "Not applicable for CCRTS Lab
- * deployments" empty-state card used by Bolt-ons + Operations panes
- * when the active deployment is pure ccrts-*.
+ * 2026-05-29 — Render the canonical "Not applicable for the CCRTS Lab"
+ * empty-state card used by Bolt-ons + Operations panes when the active
+ * deployment is `ccrts`.
  *
  * The card style + body copy come from the operator's explicit UX rule
- * (CCRTS Lab wiring). Combined-*-ccrts retains full surface access, so
- * the card is never shown for those deployments.
+ * (CCRTS Lab wiring). The `ccrts` deployment is fully isolated with no
+ * shared C2 infra, so these surfaces never apply.
  *
  * @returns {string} HTML for a single .not-applicable-empty card.
  */
@@ -2385,9 +2383,9 @@ APP._renderNotApplicableEmpty = function () {
     return `
         <div class="not-applicable-empty">
             <div class="not-applicable-empty__icon" aria-hidden="true">ⓘ</div>
-            <h3>Not applicable for CCRTS Lab deployments</h3>
-            <p>The CCRTS Lab is a self-contained exam-mirror environment. Cobalt Strike runs on the Kali workstation itself (from the CREST AMI), so our shared C2 infrastructure and beacon catalog don't apply here. The bolt-on catalog targets our test_lab AD hosts, not the CCRTS AD.</p>
-            <p class="not-applicable-empty__hint">For combined-*-ccrts deployments, the C2 side has full Bolt-ons + Operations support — switch the deployment dropdown to the combined preset.</p>
+            <h3>Not applicable for the CCRTS Lab</h3>
+            <p>The CCRTS Lab is a fully self-contained exam-mirror environment. Cobalt Strike runs on the Kali workstation itself (from the CREST AMI), so the framework’s shared C2 infrastructure and beacon catalog don’t apply here.</p>
+            <p class="not-applicable-empty__hint">Connect to the lab through the Dashboard Server SSH jump — the Kali host is your attack platform.</p>
         </div>
     `;
 };
@@ -2482,12 +2480,12 @@ APP.computeOperationsVisible = function (active) {
     // 2026-05-22 — demo mode exposes Operations so beacons/terminal/payloads
     // can be showcased without a real C2 server provisioned.
     const isDemo = type === 'demo';
-    // 2026-05-28 — Pure ccrts-* deployments KEEP Operations visible per the
-    // operator's UX rule: the panes render a disabled / N/A empty-state
-    // explainer (see APP.subPillNotApplicableReason). Hiding would defeat
-    // the explainer's purpose of educating operators why the surface is
-    // self-contained on CCRTS.
-    const isCcrtsOnly = type.startsWith('ccrts-');
+    // 2026-05-29 — The self-contained `ccrts` deployment KEEPS Operations
+    // visible per the operator's UX rule: the panes render a disabled /
+    // N/A empty-state explainer (see APP.subPillNotApplicableReason).
+    // Hiding would defeat the explainer's purpose of educating operators
+    // why the surface is self-contained on CCRTS.
+    const isCcrtsOnly = type === 'ccrts';
     return isC2only || isCombined || isDemo || isCcrtsOnly;
 };
 
@@ -12889,43 +12887,22 @@ const DEPLOYMENT_CONFIGS = {
         architectureNote: '🔥 Full Infrastructure: Beacons route through redirectors. Realistic C2 operations.'
     },
     // ─────────────────────────────────────────────────────────────────
-    // CCRTS Lab — self-contained CREST exam prep environment.
+    // CCRTS Lab — single, fully self-contained CREST exam-mirror lab.
     // The Kali workstation runs Cobalt Strike from the CREST AMI itself
-    // (Pearson-VUE licensed). This means our shared C2 infrastructure
-    // and bolt-on catalog DO NOT apply to pure ccrts-* deployments —
-    // see APP.subPillNotApplicableReason() for the operator-facing
+    // (Pearson-VUE licensed). This means the framework's shared C2
+    // infrastructure and bolt-on catalog DO NOT apply — see
+    // APP.subPillNotApplicableReason() for the operator-facing
     // disabled-state explainer that gates Bolt-ons + Operations.
     // ─────────────────────────────────────────────────────────────────
-    'ccrts-mini': {
-        title: 'CCRTS Lab Mini (Exam Prep)',
+    'ccrts': {
+        title: 'CCRTS Lab (CREST Exam Mirror)',
         color: 'var(--brand)',
         type: 'ccrts',
         c2Mode: null,
         goadLab: null,
         requiresDomain: false,
         requiresCS: false, // CCRTS uses CREST's Pearson-VUE-licensed CS on the Kali AMI
-        architecture: 'ccrts-only',
-        selfContained: true,
-        components: [
-            { icon: '🐉', label: 'Kali Workstation', value: '1 (CS-on-host)' },
-            { icon: '🖥️', label: 'Windows WS', value: '1' },
-            { icon: '📊', label: 'ELK Stack', value: '1' },
-            { icon: '🔗', label: 'Bastion', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$210/mo' }
-        ],
-        details: '4-host self-contained exam-mirror environment. CS runs on the Kali workstation from the CREST Community AMI (Pearson-VUE licensed). No AD.',
-        bestFor: 'CREST CCRTS exam prep — tradecraft drills without AD',
-        architectureNote: '🎓 Self-contained exam mirror. Operator runs CS client locally → tunnel to Kali. Bolt-ons + shared Operations do not apply.'
-    },
-    'ccrts-full': {
-        title: 'CCRTS Lab Full (Exam Prep + AD)',
-        color: 'var(--brand)',
-        type: 'ccrts',
-        c2Mode: null,
-        goadLab: null,
-        requiresDomain: false,
-        requiresCS: false,
-        architecture: 'ccrts-only',
+        architecture: 'ccrts',
         selfContained: true,
         components: [
             { icon: '🐉', label: 'Kali Workstation', value: '1 (CS-on-host)' },
@@ -12933,84 +12910,11 @@ const DEPLOYMENT_CONFIGS = {
             { icon: '🏰', label: 'AD DC', value: '1 (ccrts.local)' },
             { icon: '👤', label: 'AD Workstation', value: '1' },
             { icon: '📊', label: 'ELK Stack', value: '1' },
-            { icon: '🔗', label: 'Bastion', value: '1' },
             { icon: '💰', label: 'Est. Cost', value: '~$310/mo' }
         ],
-        details: '6-host self-contained exam-mirror with AD (ccrts.local). Full Kerberos + AD attack surface. CS runs on the Kali workstation.',
-        bestFor: 'Full CREST CCRTS exam prep — including AD attacks',
-        architectureNote: '🎓 Self-contained exam mirror with AD. Operator runs CS client locally → tunnel to Kali. Bolt-ons + shared Operations do not apply.'
-    },
-    'combined-adhoc-ccrts-mini': {
-        title: 'C2 Ad-Hoc + CCRTS Mini',
-        color: 'var(--brand)',
-        type: 'combined-ccrts',
-        c2Mode: 'adhoc',
-        goadLab: null,
-        serverCount: 1,
-        requiresDomain: true,
-        requiresCS: true,
-        architecture: 'combined-ccrts',
-        components: [
-            { icon: '🎯', label: 'C2 Server', value: '1' },
-            { icon: '🔀', label: 'Redirectors', value: '2' },
-            { icon: '🛡️', label: 'Bastion', value: '1' },
-            { icon: '🐉', label: 'Kali WS', value: '1' },
-            { icon: '🖥️', label: 'Windows WS', value: '1' },
-            { icon: '📊', label: 'ELK', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$415/mo' }
-        ],
-        details: 'Full C2 infrastructure + CCRTS Mini lab. C2 side has its own attack box; CCRTS side runs CS on the Kali workstation.',
-        bestFor: 'Exam prep alongside real C2 tradecraft',
-        architectureNote: '🔥 Combined: shared C2 infra (with bolt-ons + operations) + self-contained CCRTS lab on a peered VPC.'
-    },
-    'combined-adhoc-ccrts-full': {
-        title: 'C2 Ad-Hoc + CCRTS Full',
-        color: 'var(--brand)',
-        type: 'combined-ccrts',
-        c2Mode: 'adhoc',
-        goadLab: null,
-        serverCount: 1,
-        requiresDomain: true,
-        requiresCS: true,
-        architecture: 'combined-ccrts',
-        components: [
-            { icon: '🎯', label: 'C2 Server', value: '1' },
-            { icon: '🔀', label: 'Redirectors', value: '2' },
-            { icon: '🛡️', label: 'Bastion', value: '1' },
-            { icon: '🐉', label: 'Kali WS', value: '1' },
-            { icon: '🖥️', label: 'Windows WS', value: '1' },
-            { icon: '🏰', label: 'CCRTS AD', value: '2 VMs' },
-            { icon: '📊', label: 'ELK', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$485/mo' }
-        ],
-        details: 'Full C2 infrastructure + CCRTS Full lab (with AD). Best of both worlds for engagement-style prep.',
-        bestFor: 'Full CREST prep with real C2 tradecraft alongside',
-        architectureNote: '🔥 Combined: shared C2 infra (with bolt-ons + operations) + self-contained CCRTS-with-AD lab on a peered VPC.'
-    },
-    'combined-full-ccrts-full': {
-        title: 'Full C2 Red Team + CCRTS Full',
-        color: 'var(--brand)',
-        type: 'combined-ccrts',
-        c2Mode: 'full-red-team',
-        goadLab: null,
-        serverCount: 3,
-        requiresDomain: true,
-        requiresCS: true,
-        architecture: 'combined-ccrts',
-        components: [
-            { icon: '🎯', label: 'C2 Servers', value: '3' },
-            { icon: '🔀', label: 'Redirectors', value: '2' },
-            { icon: '🛡️', label: 'Bastion', value: '1' },
-            { icon: '🐉', label: 'Kali WS', value: '1' },
-            { icon: '🖥️', label: 'Windows WS', value: '1' },
-            { icon: '🏰', label: 'CCRTS AD', value: '2 VMs' },
-            { icon: '📊', label: 'ELK', value: '1' },
-            { icon: '💰', label: 'Est. Cost', value: '~$580/mo' }
-        ],
-        details: 'Phased C2 (Staging/Post-Ex/Long-Haul) + CCRTS Full lab. Heaviest combined preset — full red team tradecraft + exam prep.',
-        bestFor: 'Senior operator engagements + CREST prep on the same stack',
-        phases: ['🚀 Staging', '⚡ Post-Ex', '🔒 Long-Haul'],
-        architectureNote: '🔥 Combined: phased C2 (with bolt-ons + operations) + self-contained CCRTS-with-AD lab on a peered VPC.'
+        details: 'CCRTS — self-contained CREST exam-mirror lab. 5 hosts (ccrts-kali, ccrts-win-ws, ccrts-dc01, ccrts-ad-ws01, ccrts-elk) on ccrts.local. CS runs on the Kali workstation from the CREST Community AMI (Pearson-VUE licensed). No C2 integration; Bolt-ons + Operations are N/A.',
+        bestFor: 'CREST CCRTS exam prep — full Kerberos + AD attack surface',
+        architectureNote: '🎓 Fully isolated exam mirror. Connect through the Dashboard Server SSH jump → Kali host. Bolt-ons + shared Operations do not apply.'
     }
 };
 
@@ -13033,12 +12937,7 @@ const PROJECT_NAME_PREFIXES = {
     'combined-adhoc-light': 'c2_goad_light',
     'combined-full-full': 'c2_goad_full',
     // CCRTS Lab (self-contained — CS runs on Kali from CREST AMI)
-    'ccrts-mini': 'ccrts_mini',
-    'ccrts-full': 'ccrts_full',
-    // Combined C2 + CCRTS (C2 side remains a full C2 with bolt-ons + ops)
-    'combined-adhoc-ccrts-mini': 'c2_ccrts_mini',
-    'combined-adhoc-ccrts-full': 'c2_ccrts_full',
-    'combined-full-ccrts-full': 'c2_ccrts_full_redteam'
+    'ccrts': 'ccrts'
 };
 
 /**
@@ -13060,12 +12959,7 @@ const DEPLOYMENT_TIMES = {
     'combined-adhoc-light': { min: 25, max: 40 },
     'combined-full-full': { min: 30, max: 45 },
     // CCRTS Lab (AMI copy from eu-west-2 → deployment region is the cold-start tail)
-    'ccrts-mini': { min: 25, max: 50 },
-    'ccrts-full': { min: 35, max: 60 },
-    // Combined C2 + CCRTS (CCRTS AMI copy runs in parallel with C2 provisioning)
-    'combined-adhoc-ccrts-mini': { min: 40, max: 70 },
-    'combined-adhoc-ccrts-full': { min: 40, max: 70 },
-    'combined-full-ccrts-full': { min: 40, max: 70 }
+    'ccrts': { min: 35, max: 60 }
 };
 
 /**
@@ -13366,7 +13260,7 @@ function updateDeploymentType() {
         // Show/hide Decoy theme section for C2 deployments (has redirectors)
         const decoySection = document.getElementById('decoy-theme-section');
         if (decoySection) {
-            const hasC2 = config.type === 'c2' || config.type === 'combined' || config.type === 'combined-ccrts';
+            const hasC2 = config.type === 'c2' || config.type === 'combined';
             decoySection.style.display = hasC2 ? 'block' : 'none';
         }
 
@@ -13381,22 +13275,20 @@ function updateDeploymentType() {
         // Show/hide SSL config section for C2 deployments
         const sslSection = document.getElementById('ssl-config-section');
         if (sslSection) {
-            const hasC2 = config.type === 'c2' || config.type === 'combined' || config.type === 'combined-ccrts';
+            const hasC2 = config.type === 'c2' || config.type === 'combined';
             sslSection.style.display = hasC2 ? 'block' : 'none';
         }
 
         // Show/hide Domain Fronting section for C2 deployments
         const domainFrontingSection = document.getElementById('domain-fronting-section');
         if (domainFrontingSection) {
-            const hasC2 = config.type === 'c2' || config.type === 'combined' || config.type === 'combined-ccrts';
+            const hasC2 = config.type === 'c2' || config.type === 'combined';
             domainFrontingSection.style.display = hasC2 ? 'block' : 'none';
         }
 
         // Show/hide File Portal section — only for deployments with redirectors (C2 and Combined)
         const supportsFilePortal = ['c2-adhoc', 'c2-purple', 'c2-full',
-            'combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full',
-            // 2026-05-28 — combined-*-ccrts retain redirectors (C2 side intact).
-            'combined-adhoc-ccrts-mini', 'combined-adhoc-ccrts-full', 'combined-full-ccrts-full'].includes(deploymentType);
+            'combined-adhoc-mini', 'combined-adhoc-light', 'combined-full-full'].includes(deploymentType);
         const fpSection = document.getElementById('file-portal-section');
         if (fpSection) {
             fpSection.style.display = supportsFilePortal ? 'block' : 'none';
@@ -13409,23 +13301,19 @@ function updateDeploymentType() {
             goadNetworkSection.style.display = hasGoad ? 'block' : 'none';
         }
 
-        // 2026-05-28 — CCRTS Lab config section (VPC CIDR, DC password,
-        // low-priv password, CREST AMI overrides). Shown for pure ccrts-*
-        // and combined-*-ccrts (which include the CCRTS lab).
+        // 2026-05-29 — CCRTS Lab config section (VPC CIDR, DC password,
+        // low-priv password, CREST AMI overrides). Shown only for the
+        // single self-contained `ccrts` deployment type.
         const ccrtsConfigSection = document.getElementById('ccrts-config-section');
         if (ccrtsConfigSection) {
-            const hasCcrts = config.type === 'ccrts' || config.type === 'combined-ccrts';
+            const hasCcrts = config.type === 'ccrts';
             ccrtsConfigSection.style.display = hasCcrts ? 'block' : 'none';
         }
 
-        // 2026-05-28 — "Add CCRTS Lab to this deployment" toggle. Only
-        // shown for c2-* presets (where CCRTS isn't already opted-in).
-        // Hidden for ccrts-* (the lab IS the deployment) and combined-*-ccrts
-        // (already opted-in by the preset).
-        const addCcrtsLabSection = document.getElementById('add-ccrts-lab-section');
-        if (addCcrtsLabSection) {
-            addCcrtsLabSection.style.display = (config.type === 'c2') ? 'block' : 'none';
-        }
+        // 2026-05-29 — The "Add CCRTS Lab to this deployment" bolt-on
+        // toggle and its DOM section were removed: CCRTS is now a single
+        // self-contained `ccrts` deployment type, never bolted onto a C2
+        // stack.
 
         // Show/hide Attack Box config section (available for all deployment types)
         const attackBoxSection = document.getElementById('attack-box-config-section');
@@ -13653,21 +13541,17 @@ APP.configureV2 = (function () {
             { id: 'goad-full',  label: 'goad-full',  desc: '5 hosts · full lab' },
             { id: 'goad-nha',   label: 'goad-nha',   desc: 'Hacker Academy · 5 hosts' }
         ],
-        // 2026-05-28 — CCRTS family. Self-contained CREST exam-mirror lab.
-        // See [[feedback-deployment-type-two-surfaces]] in memory — any new
-        // family MUST be wired here AND in the #cfg-family-row buttons in
-        // index.html.
+        // 2026-05-29 — CCRTS family. Single, fully self-contained CREST
+        // exam-mirror lab. See [[feedback-deployment-type-two-surfaces]]
+        // in memory — the type MUST be wired here AND in the
+        // #cfg-family-row buttons in index.html AND the legacy <select>.
         ccrts: [
-            { id: 'ccrts-mini', label: 'ccrts-mini', desc: '4 hosts · Kali + Win + ELK' },
-            { id: 'ccrts-full', label: 'ccrts-full', desc: '6 hosts · + AD DC + AD-WS on ccrts.local' }
+            { id: 'ccrts', label: 'ccrts', desc: '5 hosts · Kali + Win-WS + DC + AD-WS + ELK on ccrts.local' }
         ],
         combined: [
             { id: 'combined-adhoc-mini',       label: 'combined-adhoc-mini',       desc: 'c2-adhoc + goad-mini' },
             { id: 'combined-adhoc-light',      label: 'combined-adhoc-light',      desc: 'c2-adhoc + goad-light' },
-            { id: 'combined-full-full',        label: 'combined-full-full',        desc: 'c2-full + goad-full' },
-            { id: 'combined-adhoc-ccrts-mini', label: 'combined-adhoc-ccrts-mini', desc: 'c2-adhoc + ccrts-mini' },
-            { id: 'combined-adhoc-ccrts-full', label: 'combined-adhoc-ccrts-full', desc: 'c2-adhoc + ccrts-full' },
-            { id: 'combined-full-ccrts-full',  label: 'combined-full-ccrts-full',  desc: 'c2-full + ccrts-full' }
+            { id: 'combined-full-full',        label: 'combined-full-full',        desc: 'c2-full + goad-full' }
         ]
     };
 
@@ -32520,16 +32404,16 @@ APP.manage._scopeProjectViews = function (projectName) {
 
 /** Pull live data + render the hero / spec-list. Re-entrant. */
 /**
- * 2026-05-28 — Render the CCRTS connection-commands card from
- * terraform outputs. Shown for ccrts-* and combined-*-ccrts deployments
- * (the operator needs the same tunnel commands either way).
+ * 2026-05-29 — Render the CCRTS connection-commands card from
+ * terraform outputs. Shown for the single self-contained `ccrts`
+ * deployment type.
  *
  * Expected outputs (added by the CCRTS terraform module — backend agent
  * exposes these via /api/deploy/outputs):
  *   - kali_ssh_tunnel_cmd            — SSH tunnel to Kali workstation
  *   - windows_rdp_tunnel_cmd         — RDP tunnel to Windows workstation
- *   - dc_winrm_tunnel_cmd            — WinRM tunnel to AD DC (ccrts-full only)
- *   - ad_workstation_winrm_tunnel_cmd — WinRM tunnel to AD workstation (ccrts-full only)
+ *   - dc_winrm_tunnel_cmd            — WinRM tunnel to AD DC
+ *   - ad_workstation_winrm_tunnel_cmd — WinRM tunnel to AD workstation
  *   - kibana_tunnel_cmd              — HTTP tunnel to Kibana on the ELK host
  *
  * Each command renders via renderCopyableCommand() with a per-command
@@ -32542,7 +32426,7 @@ APP.manage._renderCcrtsCard = function (deployType, outputs) {
     const card = document.getElementById('manage-ccrts-card');
     if (!card) return;
     const type = String(deployType || '').toLowerCase();
-    const isCcrts = type.startsWith('ccrts-') || type.includes('-ccrts-');
+    const isCcrts = type === 'ccrts';
     if (!isCcrts) {
         card.hidden = true;
         return;
@@ -32555,7 +32439,7 @@ APP.manage._renderCcrtsCard = function (deployType, outputs) {
         return (typeof o === 'object' && 'value' in o) ? (o.value || '') : (o || '');
     };
     // Build the per-command list — only render rows whose terraform output
-    // is non-empty so ccrts-mini (no AD) doesn't paint stale DC rows.
+    // is non-empty so rows stay accurate while outputs hydrate.
     const commands = [
         { label: 'Kali Workstation (SSH tunnel — CS team server runs here):', cmd: getVal('kali_ssh_tunnel_cmd') },
         { label: 'Windows Workstation (RDP tunnel):', cmd: getVal('windows_rdp_tunnel_cmd') },
@@ -32750,9 +32634,9 @@ APP.manage._paintFromBundle = function (bundle) {
     APP.manage._evaluateGoadSection(deployType);
     APP.manage._scopeProjectViews(project);
 
-    // 2026-05-28 — CCRTS connection-commands card. Rendered for both
-    // pure ccrts-* and combined-*-ccrts deployments — operators always
-    // need the Kali / Windows / DC / Kibana tunnel commands.
+    // 2026-05-29 — CCRTS connection-commands card. Rendered for the
+    // single self-contained `ccrts` deployment — operators need the
+    // Kali / Windows / DC / Kibana tunnel commands.
     if (typeof APP.manage._renderCcrtsCard === 'function') {
         try { APP.manage._renderCcrtsCard(deployType, outputs); } catch (_) { /* fail-quiet */ }
     }

@@ -101,57 +101,20 @@ DEPLOYMENT_TYPE_MAP = {
         'description': 'C2 Full + GOAD Full (Full C2 + GOAD Lab)',
     },
 
-    # CCRTS-Lab modes (CREST CCRTS exam preparation)
-    # Pure ccrts-* runs CS-on-Kali from the CREST Community AMI — no
-    # separate team server / redirector / domain. Bolt-ons + operations
-    # surfaces are disabled in the dashboard.
-    'ccrts-mini': {
-        'type': 'ccrts-only',
-        'ccrts_lab': 'CCRTS-Mini',
+    # CCRTS-Lab mode (CREST CCRTS exam preparation)
+    # A single, fully self-contained lab: CS-on-Kali from the CREST
+    # Community AMI — no separate team server / redirector / domain and
+    # no C2 integration. Bolt-ons + operations surfaces are disabled in
+    # the dashboard.
+    'ccrts': {
+        'type': 'ccrts',
+        'ccrts_lab': 'CCRTS',
         'requires_domain': False,
         'requires_cs': False,
         'supports_boltons': False,
         'supports_operations': False,
-        'description': 'CCRTS Mini (4 hosts: Kali + Win-WS + ELK + NAT)',
-    },
-    'ccrts-full': {
-        'type': 'ccrts-only',
-        'ccrts_lab': 'CCRTS-Full',
-        'requires_domain': False,
-        'requires_cs': False,
-        'supports_boltons': False,
-        'supports_operations': False,
-        'description': 'CCRTS Full (6 hosts: +DC + AD-joined WS on ccrts.local)',
-    },
-    'combined-adhoc-ccrts-mini': {
-        'type': 'combined-ccrts',
-        'c2_mode': 'single',
-        'ccrts_lab': 'CCRTS-Mini',
-        'requires_domain': True,
-        'requires_cs': True,
-        'supports_boltons': True,
-        'supports_operations': True,
-        'description': 'C2 Ad-Hoc + CCRTS Mini (Full C2 + CCRTS Lab via VPC peering)',
-    },
-    'combined-adhoc-ccrts-full': {
-        'type': 'combined-ccrts',
-        'c2_mode': 'single',
-        'ccrts_lab': 'CCRTS-Full',
-        'requires_domain': True,
-        'requires_cs': True,
-        'supports_boltons': True,
-        'supports_operations': True,
-        'description': 'C2 Ad-Hoc + CCRTS Full (Full C2 + CCRTS Lab via VPC peering)',
-    },
-    'combined-full-ccrts-full': {
-        'type': 'combined-ccrts',
-        'c2_mode': 'phases',
-        'ccrts_lab': 'CCRTS-Full',
-        'requires_domain': True,
-        'requires_cs': True,
-        'supports_boltons': True,
-        'supports_operations': True,
-        'description': 'C2 Full + CCRTS Full (Phase C2 + CCRTS Lab via VPC peering)',
+        'description': 'CCRTS — self-contained CREST exam-mirror lab '
+                       '(5 hosts: Kali + Win-WS + DC + AD-joined WS + ELK on ccrts.local)',
     },
 }
 
@@ -232,8 +195,6 @@ class ConfigParser:
             'File Portal Configuration': ['enable_file_portal', 'portal_username', 'portal_password', 'portal_session_timeout'],
             'Attack Box Configuration': ['enable_attack_box', 'attack_box_instance_type', 'attack_box_root_volume_size', 'attack_box_admin_password'],
             'CCRTS Lab Configuration': [
-                'enable_ccrts_lab',
-                'ccrts_lab_size',
                 'ccrts_vpc_cidr',
                 'ccrts_public_subnet_cidr',
                 'ccrts_private_subnet_cidr',
