@@ -817,7 +817,11 @@ body > header h1 {
     word-wrap: break-word;
 }
 
-/* Tab output panels — hidden when empty, slide in when content appears */
+/* Tab output panels — hidden when empty, slide in when content appears.
+   2026-05-29 — brought onto the V3 motion tokens + a transform/opacity
+   reveal so the eye tracks the fade+slide (which reads smooth) rather than
+   the max-height growth (which overshoots on a short first line of output).
+   Uses --motion-easing-enter (ease-out) — correct curve for a reveal. */
 .tab-output-panel {
     max-height: 0;
     min-height: 0;
@@ -825,14 +829,22 @@ body > header h1 {
     margin: 0 12px;
     overflow: hidden;
     opacity: 0;
-    transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+    transform: translateY(-4px);
+    transition: max-height var(--motion-duration-base) var(--motion-easing-enter),
+                opacity var(--motion-duration-base) var(--motion-easing-enter),
+                transform var(--motion-duration-base) var(--motion-easing-enter),
+                padding var(--motion-duration-base) var(--motion-easing-enter);
 }
 .tab-output-panel.active {
     max-height: 500px;
     min-height: 80px;
     padding: 15px;
     opacity: 1;
+    transform: translateY(0);
     overflow-y: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+    .tab-output-panel { transition: none; transform: none; }
 }
 
 /* Ensure readable text on dark terminal backgrounds in light mode.
