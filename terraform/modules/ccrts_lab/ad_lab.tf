@@ -1,11 +1,11 @@
-# CCRTS Lab Module - Active Directory (ccrts-full only)
+# CCRTS Lab Module - Active Directory
 # =============================================================================
-# Deploys dc01 (DC for ccrts.local) and ad_ws01 (domain-joined member) when
-# lab_size = "ccrts-full". Both use the public Windows Server 2022 AMI —
-# the DC role is established at first boot via dc_init.ps1; the workstation
-# domain-joins via ad_ws_init.ps1.
+# Deploys dc01 (DC for ccrts.local) and ad_ws01 (domain-joined member). Both
+# always provision and use the public Windows Server 2022 AMI — the DC role is
+# established at first boot via dc_init.ps1; the workstation domain-joins via
+# ad_ws_init.ps1.
 #
-# The local.ad_vms map is populated in main.tf and gated on lab_size.
+# The local.ad_vms map is populated in main.tf (always all AD hosts).
 # =============================================================================
 
 resource "aws_instance" "ad" {
@@ -19,7 +19,7 @@ resource "aws_instance" "ad" {
 
   vpc_security_group_ids = [
     aws_security_group.lab_fabric.id,
-    each.key == "dc01" ? aws_security_group.ad_dc[0].id : aws_security_group.ad_ws[0].id,
+    each.key == "dc01" ? aws_security_group.ad_dc.id : aws_security_group.ad_ws.id,
   ]
 
   iam_instance_profile = var.iam_instance_profile_name != "" ? var.iam_instance_profile_name : null

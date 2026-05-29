@@ -52,13 +52,13 @@ output "windows_rdp_tunnel_cmd" {
 }
 
 output "dc_winrm_tunnel_cmd" {
-  description = "SSH tunnel to reach the AD DC WinRM (5985/5986) — ccrts-full only"
-  value       = var.lab_size == "ccrts-full" ? "ssh -L 5985:${local.ip_range}.40:5985 -L 5986:${local.ip_range}.40:5986 ubuntu@$${dashboard_eip}" : null
+  description = "SSH tunnel to reach the AD DC WinRM (5985/5986)"
+  value       = "ssh -L 5985:${local.ip_range}.40:5985 -L 5986:${local.ip_range}.40:5986 ubuntu@$${dashboard_eip}"
 }
 
 output "ad_workstation_winrm_tunnel_cmd" {
-  description = "SSH tunnel to reach the AD workstation WinRM — ccrts-full only"
-  value       = var.lab_size == "ccrts-full" ? "ssh -L 15985:${local.ip_range}.41:5985 -L 15986:${local.ip_range}.41:5986 ubuntu@$${dashboard_eip}" : null
+  description = "SSH tunnel to reach the AD workstation WinRM"
+  value       = "ssh -L 15985:${local.ip_range}.41:5985 -L 15986:${local.ip_range}.41:5986 ubuntu@$${dashboard_eip}"
 }
 
 output "kibana_tunnel_cmd" {
@@ -99,16 +99,16 @@ output "credentials" {
       username = "Administrator"
       password = var.windows_admin_password
     }
-    domain_admin = var.lab_size == "ccrts-full" ? {
+    domain_admin = {
       username = "CCRTS\\Administrator"
       password = var.dc_admin_password
       domain   = "ccrts.local"
-    } : null
-    domain_low_priv = var.lab_size == "ccrts-full" ? {
+    }
+    domain_low_priv = {
       username = "CCRTS\\jdoe"
       password = var.low_priv_password
       domain   = "ccrts.local"
-    } : null
+    }
   }
 }
 
@@ -118,35 +118,31 @@ output "credentials" {
 
 output "access_instructions" {
   description = "How to reach the CCRTS lab through the dashboard"
-  value = join("\n", concat(
-    [
-      "=== CCRTS Lab (${var.lab_size}) ===",
-      "All ingress flows THROUGH the dashboard server — no direct internet exposure on lab hosts.",
-      "Replace <dashboard-eip> with the dashboard server's EIP.",
-      "",
-      "--- Kali Attacker (${local.ip_range}.20) ---",
-      "ssh -L 2222:${local.ip_range}.20:22 ubuntu@<dashboard-eip>",
-      "  then: ssh -p 2222 kali@localhost",
-      "",
-      "--- Windows Workstation (${local.ip_range}.30) ---",
-      "ssh -L 3389:${local.ip_range}.30:3389 ubuntu@<dashboard-eip>",
-      "  then: RDP to localhost:3389 (Administrator / <see credentials>)",
-      "",
-      "--- ELK / Kibana (${local.ip_range}.50:5601) ---",
-      "ssh -L 5601:${local.ip_range}.50:5601 ubuntu@<dashboard-eip>",
-      "  then: http://localhost:5601",
-    ],
-    var.lab_size == "ccrts-full" ? [
-      "",
-      "--- AD DC dc01.ccrts.local (${local.ip_range}.40) ---",
-      "ssh -L 13389:${local.ip_range}.40:3389 ubuntu@<dashboard-eip>",
-      "  then: RDP to localhost:13389 (CCRTS\\Administrator)",
-      "",
-      "--- AD Workstation ad-ws01 (${local.ip_range}.41) ---",
-      "ssh -L 23389:${local.ip_range}.41:3389 ubuntu@<dashboard-eip>",
-      "  then: RDP to localhost:23389 (CCRTS\\jdoe / Welcome1!)",
-    ] : []
-  ))
+  value = join("\n", [
+    "=== CCRTS Lab ===",
+    "All ingress flows THROUGH the dashboard server — no direct internet exposure on lab hosts.",
+    "Replace <dashboard-eip> with the dashboard server's EIP.",
+    "",
+    "--- Kali Attacker (${local.ip_range}.20) ---",
+    "ssh -L 2222:${local.ip_range}.20:22 ubuntu@<dashboard-eip>",
+    "  then: ssh -p 2222 kali@localhost",
+    "",
+    "--- Windows Workstation (${local.ip_range}.30) ---",
+    "ssh -L 3389:${local.ip_range}.30:3389 ubuntu@<dashboard-eip>",
+    "  then: RDP to localhost:3389 (Administrator / <see credentials>)",
+    "",
+    "--- ELK / Kibana (${local.ip_range}.50:5601) ---",
+    "ssh -L 5601:${local.ip_range}.50:5601 ubuntu@<dashboard-eip>",
+    "  then: http://localhost:5601",
+    "",
+    "--- AD DC dc01.ccrts.local (${local.ip_range}.40) ---",
+    "ssh -L 13389:${local.ip_range}.40:3389 ubuntu@<dashboard-eip>",
+    "  then: RDP to localhost:13389 (CCRTS\\Administrator)",
+    "",
+    "--- AD Workstation ad-ws01 (${local.ip_range}.41) ---",
+    "ssh -L 23389:${local.ip_range}.41:3389 ubuntu@<dashboard-eip>",
+    "  then: RDP to localhost:23389 (CCRTS\\jdoe / Welcome1!)",
+  ])
 }
 
 # =============================================================================
@@ -159,13 +155,12 @@ output "deployment_summary" {
   description = "Summary of the CCRTS lab deployment"
   value = {
     category    = "ccrts-only"
-    lab_size    = var.lab_size
     vpc_id      = aws_vpc.ccrts.id
     vpc_cidr    = aws_vpc.ccrts.cidr_block
     region      = var.aws_region
     host_count  = length(local.base_vms) + length(local.ad_vms)
-    ad_enabled  = var.lab_size == "ccrts-full"
-    domain      = var.lab_size == "ccrts-full" ? "ccrts.local" : null
+    ad_enabled  = true
+    domain      = "ccrts.local"
     kali_ami    = local.kali_ami_id
     windows_ami = local.windows_ami_id
     ami_source  = var.crest_ami_source_region

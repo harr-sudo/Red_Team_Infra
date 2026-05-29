@@ -80,22 +80,20 @@ locals {
   # -------------------------------------------------------------------------
   # Deployment Type Detection
   # -------------------------------------------------------------------------
-  is_c2_only        = startswith(var.deployment_type, "c2-")
-  is_goad_only      = startswith(var.deployment_type, "goad-")
-  is_ccrts_only     = startswith(var.deployment_type, "ccrts-")
-  is_combined       = startswith(var.deployment_type, "combined-") && !contains(["combined-adhoc-ccrts-mini", "combined-adhoc-ccrts-full", "combined-full-ccrts-full"], var.deployment_type)
-  is_combined_ccrts = contains(["combined-adhoc-ccrts-mini", "combined-adhoc-ccrts-full", "combined-full-ccrts-full"], var.deployment_type)
+  is_c2_only    = startswith(var.deployment_type, "c2-")
+  is_goad_only  = startswith(var.deployment_type, "goad-")
+  is_ccrts_only = var.deployment_type == "ccrts"
+  is_combined   = startswith(var.deployment_type, "combined-")
 
   # -------------------------------------------------------------------------
   # What to Deploy
   # -------------------------------------------------------------------------
-  deploy_c2_infra        = local.is_c2_only || local.is_combined || local.is_combined_ccrts
+  deploy_c2_infra        = local.is_c2_only || local.is_combined
   deploy_goad            = local.is_goad_only || local.is_combined
-  deploy_ccrts           = local.is_ccrts_only || local.is_combined_ccrts || (local.is_c2_only && var.enable_ccrts_lab)
-  deploy_redirectors     = local.is_c2_only || local.is_combined || local.is_combined_ccrts
+  deploy_ccrts           = local.is_ccrts_only
+  deploy_redirectors     = local.is_c2_only || local.is_combined
   deploy_vpc_peering     = local.is_combined
-  deploy_ccrts_peering   = local.is_combined_ccrts || (local.is_c2_only && var.enable_ccrts_lab)
-  deploy_domain_fronting = (local.is_c2_only || local.is_combined || local.is_combined_ccrts) && var.enable_domain_fronting
+  deploy_domain_fronting = (local.is_c2_only || local.is_combined) && var.enable_domain_fronting
   install_cs_on_jumpbox  = local.is_goad_only # Only for GOAD-only mode
   deploy_attack_box      = var.enable_attack_box
 
@@ -146,35 +144,22 @@ locals {
   goad_lab_type = var.goad_lab_type != "" ? var.goad_lab_type : lookup(local.goad_lab_map, var.deployment_type, "")
 
   # -------------------------------------------------------------------------
-  # CCRTS Lab Type Mapping
+  # CCRTS Lab IP Range
   # -------------------------------------------------------------------------
+  # Single self-contained `ccrts` deployment — no size variants, no C2
+  # peering. The lab always provisions all 5 hosts (see modules/ccrts_lab).
   ccrts_ip_range = join(".", slice(split(".", split("/", var.ccrts_vpc_cidr)[0]), 0, 3))
-
-  ccrts_lab_size_map = {
-    "ccrts-mini"                = "ccrts-mini"
-    "ccrts-full"                = "ccrts-full"
-    "combined-adhoc-ccrts-mini" = "ccrts-mini"
-    "combined-adhoc-ccrts-full" = "ccrts-full"
-    "combined-full-ccrts-full"  = "ccrts-full"
-  }
-
-  # Resolve effective lab size: explicit var > deployment_type mapping > "ccrts-mini"
-  # (defaults to mini when enable_ccrts_lab is set on a c2-* deployment without explicit ccrts_lab_size)
-  effective_ccrts_lab_size = var.ccrts_lab_size != "" ? var.ccrts_lab_size : lookup(local.ccrts_lab_size_map, var.deployment_type, "ccrts-mini")
 
   # -------------------------------------------------------------------------
   # C2 Deployment Mode Mapping
   # -------------------------------------------------------------------------
   c2_mode_map = {
-    "c2-adhoc"                  = "single"
-    "c2-purple"                 = "redundancy"
-    "c2-full"                   = "phases"
-    "combined-adhoc-mini"       = "single"
-    "combined-adhoc-light"      = "single"
-    "combined-full-full"        = "phases"
-    "combined-adhoc-ccrts-mini" = "single"
-    "combined-adhoc-ccrts-full" = "single"
-    "combined-full-ccrts-full"  = "phases"
+    "c2-adhoc"             = "single"
+    "c2-purple"            = "redundancy"
+    "c2-full"              = "phases"
+    "combined-adhoc-mini"  = "single"
+    "combined-adhoc-light" = "single"
+    "combined-full-full"   = "phases"
   }
 
   # Use explicit c2_deployment_mode if set, otherwise derive from deployment_type
@@ -213,7 +198,7 @@ locals {
       GOADLab = local.goad_lab_type
     } : {},
     local.deploy_ccrts ? {
-      CCRTSLab = local.effective_ccrts_lab_size
+      CCRTSLab = "ccrts"
     } : {}
   )
 }
@@ -745,7 +730,7 @@ module "vpc_peering" {
 # Operator access is dashboard-jumped — no inbound from the internet.
 
 module "ccrts_lab" {
-  count  = local.deploy_ccrts ? 1 : 0
+  count  = local.is_ccrts_only ? 1 : 0
   source = "./modules/ccrts_lab"
 
   providers = {
@@ -753,23 +738,18 @@ module "ccrts_lab" {
     aws.crest_source = aws.crest_source
   }
 
-  lab_size            = local.effective_ccrts_lab_size
   vpc_cidr            = var.ccrts_vpc_cidr
   public_subnet_cidr  = var.ccrts_public_subnet_cidr
   private_subnet_cidr = var.ccrts_private_subnet_cidr
   availability_zone   = local.availability_zones[0]
 
-  # Cross-VPC ingress: only set when a peer / dashboard VPC is in play
-  peer_vpc_cidr      = local.deploy_ccrts_peering ? var.vpc_cidr : ""
+  # Self-contained lab — operator ingress flows ONLY from the dashboard VPC.
+  # No C2 VPC peering (see docs/CCRTS_LAB.md).
   dashboard_vpc_cidr = local.dashboard_vpc_cidr
 
   # Access
   key_pair_name   = local.effective_key_pair_name
   user_public_key = var.user_public_key
-
-  # IAM / S3 (reuse C2 instance profile when present so SSM agent has a role)
-  iam_instance_profile_name = length(module.cs_storage) > 0 && local.deploy_c2_infra ? module.cs_storage[0].instance_profile_name_c2 : ""
-  deployment_bucket         = length(module.cs_storage) > 0 ? module.cs_storage[0].bucket_name : ""
 
   # CREST AMI handling
   crest_ami_source_region    = "eu-west-2"
@@ -786,32 +766,6 @@ module "ccrts_lab" {
   aws_region   = var.aws_region
 
   tags = local.enhanced_tags
-}
-
-# =============================================================================
-# CCRTS VPC PEERING — Combined C2 + CCRTS variants only
-# =============================================================================
-# Reuses the existing vpc_peering module (its goad_vpc_id / goad_cidr inputs
-# are generically wired to "the other VPC" — naming is historical).
-
-module "ccrts_vpc_peering" {
-  count  = local.deploy_ccrts_peering ? 1 : 0
-  source = "./modules/vpc_peering"
-
-  c2_vpc_id   = module.vpc[0].vpc_id
-  goad_vpc_id = module.ccrts_lab[0].vpc_id
-  c2_route_table_ids = concat(
-    module.vpc[0].private_route_table_ids,
-    [module.vpc[0].public_route_table_id],
-    length(module.vpc[0].management_subnet_ids) > 0 ? [module.vpc[0].management_route_table_id] : []
-  )
-  goad_route_table_ids = module.ccrts_lab[0].route_table_ids
-  c2_cidr              = var.vpc_cidr
-  goad_cidr            = var.ccrts_vpc_cidr
-  project_name         = "${var.project_name}-ccrts"
-  tags                 = local.enhanced_tags
-
-  depends_on = [module.vpc, module.ccrts_lab]
 }
 
 # =============================================================================

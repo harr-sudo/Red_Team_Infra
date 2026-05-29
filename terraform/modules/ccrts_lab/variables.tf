@@ -6,20 +6,6 @@
 # =============================================================================
 
 # =============================================================================
-# Lab Sizing
-# =============================================================================
-
-variable "lab_size" {
-  description = "CCRTS lab variant. 'ccrts-mini' = 4 hosts (kali + windows-ws + elk + NAT). 'ccrts-full' = 6 hosts (adds AD DC + AD-joined workstation on ccrts.local)."
-  type        = string
-
-  validation {
-    condition     = contains(["ccrts-mini", "ccrts-full"], var.lab_size)
-    error_message = "lab_size must be one of: ccrts-mini, ccrts-full."
-  }
-}
-
-# =============================================================================
 # Network Configuration
 # =============================================================================
 
@@ -49,12 +35,6 @@ variable "private_subnet_cidr" {
 variable "availability_zone" {
   description = "AWS availability zone for the lab subnets"
   type        = string
-}
-
-variable "peer_vpc_cidr" {
-  description = "CIDR block of a peered C2 VPC. Empty string disables peering ingress."
-  type        = string
-  default     = ""
 }
 
 variable "dashboard_vpc_cidr" {
@@ -161,14 +141,14 @@ variable "windows_admin_password" {
 }
 
 variable "dc_admin_password" {
-  description = "Domain Administrator password for ccrts.local (only used when lab_size = ccrts-full)."
+  description = "Domain Administrator password for ccrts.local (the AD DC always provisions)."
   type        = string
   default     = "P@ssw0rd1!"
   sensitive   = true
 }
 
 variable "low_priv_password" {
-  description = "Password for the low-privilege domain user CCRTS\\jdoe (only used when lab_size = ccrts-full)."
+  description = "Password for the low-privilege domain user CCRTS\\jdoe (the AD DC always provisions)."
   type        = string
   default     = "Welcome1!"
   sensitive   = true

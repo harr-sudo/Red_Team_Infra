@@ -7,9 +7,9 @@
 #   - Sets the local Administrator password from the tfvar
 #   - Enables PowerShell Remoting + WinRM HTTPS
 #   - Installs Sysmon + the SwiftOnSecurity config
-# Domain-join is NOT done here — the workstation stays workgroup-only in
-# ccrts-mini. The AD-joined workstation in ccrts-full is a separate host
-# (ad_ws_init.ps1).
+# Domain-join is NOT done here — this workstation (windows-ws) stays
+# workgroup-only. The AD-joined workstation (ad-ws01) is a separate host
+# provisioned via ad_ws_init.ps1.
 # =============================================================================
 $ErrorActionPreference = "Continue"
 $LogPath = "C:\ProgramData\ccrts-ws-init.log"

@@ -7,9 +7,11 @@
 # underlying snapshots into the deploy region with aws_ami_copy. No EC2
 # instances, VPCs, or networking are ever provisioned in eu-west-2.
 #
-# Phases:
-#   ccrts-mini  = kali + windows workstation + ELK + NAT (4 hosts incl. NAT)
-#   ccrts-full  = mini + ccrts.local domain controller + AD-joined workstation
+# The lab is one fully-isolated configuration (aligned to upstream
+# spark42/ccrts-lab) — no size tiers, no C2 integration. It ALWAYS provisions
+# all 5 hosts:
+#   kali (.20), windows-ws (.30), dc01 (.40, ccrts.local DC),
+#   ad-ws01 (.41, domain-joined), elk (.50)
 # =============================================================================
 
 terraform {
@@ -56,9 +58,9 @@ data "aws_ami" "crest_windows_source" {
   }
 }
 
-# Windows Server 2022 — used for the optional AD DC and the AD-joined workstation
-# in ccrts-full. No CREST AMI is needed for the DC because the DC role does not
-# come pre-baked; promotion happens in dc_init.ps1.
+# Windows Server 2022 — used for the AD DC and the AD-joined workstation
+# (both always provision). No CREST AMI is needed for the DC because the DC
+# role does not come pre-baked; promotion happens in dc_init.ps1.
 data "aws_ami" "windows_server_2022" {
   most_recent = true
   owners      = ["amazon"]
@@ -146,7 +148,6 @@ locals {
 
   base_tags = merge(var.tags, {
     Lab       = local.lab_identifier
-    LabSize   = var.lab_size
     Component = "CCRTS"
   })
 
@@ -154,8 +155,8 @@ locals {
   kali_ami_id    = var.crest_kali_ami_override != "" ? var.crest_kali_ami_override : aws_ami_copy.crest_kali[0].id
   windows_ami_id = var.crest_windows_ami_override != "" ? var.crest_windows_ami_override : aws_ami_copy.crest_windows[0].id
 
-  # AD VMs - only deployed when lab_size = ccrts-full
-  ad_vms = var.lab_size == "ccrts-full" ? {
+  # AD VMs — always provisioned (dc01 = ccrts.local DC, ad_ws01 = domain-joined)
+  ad_vms = {
     dc01 = {
       hostname      = "dc01"
       role          = "domain_controller"
@@ -186,7 +187,7 @@ locals {
         join_password  = var.dc_admin_password
       })
     }
-  } : {}
+  }
 
   # Static lab VM summary (consumed by outputs.lab_vms)
   base_vms = [

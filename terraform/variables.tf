@@ -29,9 +29,10 @@ variable "environment" {
 # =============================================================================
 # This is the main variable that controls what gets deployed.
 # Options:
-#   C2-Only:   c2-adhoc, c2-purple, c2-full
-#   GOAD-Only: goad-mini, goad-light, goad-sccm, goad-full, goad-nha
-#   Combined:  combined-adhoc-mini, combined-adhoc-light, combined-full-full
+#   C2-Only:    c2-adhoc, c2-purple, c2-full
+#   GOAD-Only:  goad-mini, goad-light, goad-sccm, goad-full, goad-nha
+#   CCRTS-Only: ccrts (self-contained CREST exam-mirror lab)
+#   Combined:   combined-adhoc-mini, combined-adhoc-light, combined-full-full
 
 variable "deployment_type" {
   description = "Primary deployment type controlling what infrastructure to deploy"
@@ -44,14 +45,12 @@ variable "deployment_type" {
       "c2-adhoc", "c2-purple", "c2-full",
       # GOAD-Only modes (with CS on jumpbox)
       "goad-mini", "goad-light", "goad-sccm", "goad-full", "goad-nha",
-      # CCRTS-Only modes (CREST exam-mirror lab; CS-on-Kali from the CREST AMI)
-      "ccrts-mini", "ccrts-full",
+      # CCRTS-Only mode (self-contained CREST exam-mirror lab; CS-on-Kali from the CREST AMI)
+      "ccrts",
       # Combined modes (C2 + GOAD with VPC peering)
-      "combined-adhoc-mini", "combined-adhoc-light", "combined-full-full",
-      # Combined modes (C2 + CCRTS with VPC peering)
-      "combined-adhoc-ccrts-mini", "combined-adhoc-ccrts-full", "combined-full-ccrts-full"
+      "combined-adhoc-mini", "combined-adhoc-light", "combined-full-full"
     ], var.deployment_type)
-    error_message = "Invalid deployment_type. Must be one of: c2-adhoc, c2-purple, c2-full, goad-mini, goad-light, goad-sccm, goad-full, goad-nha, ccrts-mini, ccrts-full, combined-adhoc-mini, combined-adhoc-light, combined-full-full, combined-adhoc-ccrts-mini, combined-adhoc-ccrts-full, combined-full-ccrts-full"
+    error_message = "Invalid deployment_type. Must be one of: c2-adhoc, c2-purple, c2-full, goad-mini, goad-light, goad-sccm, goad-full, goad-nha, ccrts, combined-adhoc-mini, combined-adhoc-light, combined-full-full"
   }
 }
 
@@ -92,10 +91,12 @@ variable "goad_private_subnet_cidr" {
 # CCRTS Lab Configuration
 # =============================================================================
 # CCRTS = CREST Registered Tester for Simulated Targeted Attacks.
-# Self-contained exam-mirror lab in eu-central-1. CREST Community AMIs
-# (owner 126620636130) are auto-copied from eu-west-2 via aws_ami_copy.
-# Operator access flows ONLY through the dashboard server (no direct internet
-# ingress on the lab hosts).
+# Single self-contained exam-mirror lab in eu-central-1 (deployment_type =
+# "ccrts"). Always provisions all 5 hosts (Kali, Windows ws, AD DC, AD ws,
+# ELK) — no size tiers, no C2 integration. CREST Community AMIs (owner
+# 126620636130) are auto-copied from eu-west-2 via aws_ami_copy. Operator
+# access flows ONLY through the dashboard server (no direct internet ingress
+# on the lab hosts, and no peering to the C2 VPC).
 
 variable "ccrts_vpc_cidr" {
   description = "CIDR block for the CCRTS lab VPC"
@@ -115,23 +116,6 @@ variable "ccrts_private_subnet_cidr" {
   default     = "192.168.57.0/26"
 }
 
-variable "ccrts_lab_size" {
-  description = "Explicit CCRTS lab variant. Auto-derived from deployment_type if empty. Values: ccrts-mini, ccrts-full."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = var.ccrts_lab_size == "" || contains(["ccrts-mini", "ccrts-full"], var.ccrts_lab_size)
-    error_message = "ccrts_lab_size must be one of: ccrts-mini, ccrts-full, or empty (auto-configure)."
-  }
-}
-
-variable "enable_ccrts_lab" {
-  description = "Optional bolt-on flag for c2-* deployments — when true on a c2-* deployment_type, the CCRTS lab is provisioned alongside (combined behaviour) without needing to switch to a combined-* deployment_type."
-  type        = bool
-  default     = false
-}
-
 variable "crest_kali_ami_override" {
   description = "Pre-staged Kali AMI ID in the deploy region. Skips cross-region copy."
   type        = string
@@ -145,14 +129,14 @@ variable "crest_windows_ami_override" {
 }
 
 variable "ccrts_dc_admin_password" {
-  description = "CCRTS domain Administrator password (ccrts.local). Used only by ccrts-full."
+  description = "CCRTS domain Administrator password for ccrts.local (the AD DC always provisions in the ccrts lab)."
   type        = string
   default     = "P@ssw0rd1!"
   sensitive   = true
 }
 
 variable "ccrts_low_priv_password" {
-  description = "CCRTS low-privilege user password (CCRTS\\jdoe). Used only by ccrts-full."
+  description = "CCRTS low-privilege user password (CCRTS\\jdoe) on ccrts.local (the AD DC always provisions in the ccrts lab)."
   type        = string
   default     = "Welcome1!"
   sensitive   = true

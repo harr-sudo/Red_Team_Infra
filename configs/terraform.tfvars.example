@@ -229,9 +229,13 @@ enable_dns_validation = true  # Enable DNS validation for ACM certificates
 # =============================================================================
 # CCRTS Lab Configuration (CREST exam-mirror lab)
 # =============================================================================
-# Set deployment_type = "ccrts-mini" or "ccrts-full" for a stand-alone lab,
-# or one of "combined-adhoc-ccrts-mini" / "combined-adhoc-ccrts-full" /
-# "combined-full-ccrts-full" for a C2 + CCRTS peered deployment.
+# Set deployment_type = "ccrts" for the self-contained CREST exam-mirror lab.
+# This is one fully-isolated configuration (aligned to upstream
+# spark42/ccrts-lab): it ALWAYS provisions all 5 hosts — Kali (.20),
+# Windows ws (.30), AD DC dc01 (.40, ccrts.local), AD ws ad-ws01 (.41), and
+# ELK (.50). There are no size tiers and no C2 integration / VPC peering.
+#
+# deployment_type = "ccrts"
 #
 # CREST Community AMIs (owner 126620636130) are published in eu-west-2 only.
 # A second AWS provider alias reads the latest AMI IDs and aws_ami_copy moves
@@ -239,19 +243,11 @@ enable_dns_validation = true  # Enable DNS validation for ACM certificates
 # in eu-west-2 — only metadata reads + storage-layer snapshot copies.
 #
 # Operator access flows ONLY through the dashboard server — the lab hosts have
-# no inbound internet exposure.
+# no inbound internet exposure, and the lab VPC is not peered to the C2 VPC.
 #
 # ccrts_vpc_cidr            = "192.168.57.0/24"
 # ccrts_public_subnet_cidr  = "192.168.57.64/26"
 # ccrts_private_subnet_cidr = "192.168.57.0/26"
-#
-# # Optional: override the lab size when used as a bolt-on
-# # ccrts_lab_size = "ccrts-mini"
-#
-# # Optional: enable the CCRTS lab as a bolt-on on a c2-* deployment without
-# # switching deployment_type. Mutually compatible with c2-adhoc / c2-purple /
-# # c2-full.
-# # enable_ccrts_lab = false
 #
 # # Optional: skip the cross-region aws_ami_copy by supplying a pre-staged AMI
 # # in the deploy region (e.g. you've already copied them once for an earlier
