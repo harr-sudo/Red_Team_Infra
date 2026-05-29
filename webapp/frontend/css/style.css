@@ -10641,6 +10641,17 @@ body:has(.app-shell) {
     padding: 4px 8px 14px;
     border-bottom: 1px solid var(--border-subtle);
     margin-bottom: 12px;
+    /* 2026-05-29 — whole cell is now an <a> back to the Dashboard. */
+    text-decoration: none;
+    cursor: pointer;
+    border-radius: var(--radius-sm, 6px);
+    transition: background-color 160ms ease;
+}
+.app-rail__brand:hover {
+    background: var(--bg-section);
+}
+.app-rail__brand:hover .app-rail__brand-name {
+    color: var(--guide-accent-text, var(--text-primary));
 }
 
 .app-rail__brand-mark {
@@ -11393,21 +11404,34 @@ body:has(.app-shell) {
    walkthrough is active. The catalog page underneath is unchanged — it
    just shrinks to the left + dims to make room, and restores on close.
    Operator directive: page layout stays the same; this is walkthrough-only. */
+/* 2026-05-29 — Fill the full page width while the walkthrough is docked.
+   #tab-container normally caps content at 1200px centered (so wide
+   monitors don't stretch text). During a walkthrough we drop that cap so
+   the catalog + dock split uses the entire content area. Reverts on close. */
+#tab-container.wt-fullwidth {
+    max-width: none;
+}
+/* --wt-dock-w drives BOTH the dock width and the catalog's remaining width,
+   so the draggable resize handle only has to update this one variable. */
+.subpill-pane { --wt-dock-w: 58%; }
 #bolt-ons-scoped-content {
     transition: width 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
                 opacity 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
     width: 100%;
 }
 .subpill-pane.is-wt-docked #bolt-ons-scoped-content {
-    width: 44%;
+    width: calc(100% - var(--wt-dock-w, 58%));
     opacity: 0.6;
     pointer-events: auto; /* left portion stays clickable to swap vulns */
+}
+.subpill-pane.is-wt-dragging #bolt-ons-scoped-content {
+    transition: none; /* no lag while dragging the divider */
 }
 .bolton-wt-dock {
     position: absolute;
     top: 0; right: 0; bottom: 0;
-    width: 56%;
-    min-width: 480px;
+    width: var(--wt-dock-w, 58%);
+    min-width: 460px;
     display: flex;
     flex-direction: column;
     background: var(--bg-card);
@@ -11422,6 +11446,43 @@ body:has(.app-shell) {
 }
 .subpill-pane.is-wt-docked .bolton-wt-dock {
     transform: translateX(0);
+}
+.subpill-pane.is-wt-dragging .bolton-wt-dock {
+    transition: none; /* divider drag is 1:1, no transform lag */
+}
+/* Draggable resize divider — sits on the dock's left edge. Drag left to
+   widen the walkthrough, right to widen the catalog. */
+.bolton-wt-dock__resize {
+    position: absolute;
+    left: -3px; top: 0; bottom: 0;
+    width: 10px;
+    cursor: col-resize;
+    z-index: 5;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+}
+.bolton-wt-dock__resize::before {
+    content: "";
+    width: 2px;
+    height: 100%;
+    background: transparent;
+    transition: background-color 160ms ease;
+}
+.bolton-wt-dock__resize:hover::before,
+.subpill-pane.is-wt-dragging .bolton-wt-dock__resize::before {
+    background: var(--guide-accent);
+}
+.bolton-wt-dock__resize-grip {
+    position: absolute;
+    display: flex; flex-direction: column; gap: 3px;
+    opacity: 0.5;
+    transition: opacity 160ms ease;
+}
+.bolton-wt-dock__resize:hover .bolton-wt-dock__resize-grip,
+.subpill-pane.is-wt-dragging .bolton-wt-dock__resize-grip { opacity: 1; }
+.bolton-wt-dock__resize-grip span {
+    display: block; width: 3px; height: 3px; border-radius: 50%;
+    background: var(--brand-light);
 }
 .bolton-wt-dock__bar {
     display: flex;

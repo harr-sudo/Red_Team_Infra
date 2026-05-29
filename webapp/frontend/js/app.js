@@ -2881,6 +2881,15 @@ APP.shell = {
      * call multiple times (no-op on second pass via dataset.shellWired).
      */
     init() {
+        // 2026-05-29 — brand cell (top-left) returns to the Dashboard.
+        const brandHome = document.getElementById('app-rail-brand-home');
+        if (brandHome && !brandHome.dataset.shellWired) {
+            brandHome.dataset.shellWired = '1';
+            brandHome.addEventListener('click', (e) => {
+                e.preventDefault();
+                APP.navigateTo('dashboard');
+            });
+        }
         // Primary items (parent rows): click delegates to APP.navigateTo.
         document.querySelectorAll('.app-rail__item[data-rail-target]').forEach((btn) => {
             if (btn.dataset.shellWired) return;
@@ -6222,31 +6231,27 @@ if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function'
             }
         } catch (_) { /* noop — topbar may not be mounted yet */ }
     });
-    // 2026-05-28 — Hide the Dashboard "Try Demo Mode" CTA when the
-    // operator is on a real deployment. Operator directive: "when the
-    // user is NOT on the demo mode deployment, there should be no nudge".
-    // Visible cases:
-    //   - no active deployment (first-time user → demo is the natural entry)
-    //   - already on demo (no-op nudge but consistent surface)
-    // Hidden cases:
-    //   - any real deployment (c2-*, goad-*, combined-*) — don't intrude
-    //
-    // Phase 4 — same rule applies to the new "+ Provision a Demo Deployment"
-    // CTA: hidden when the operator is on any real deployment. A demo-draft-*
-    // deployment in progress counts as "demo-ish" so the CTA stays visible
-    // (acceptance criterion #8).
+    // 2026-05-29 — Operator directive (tightened): the Dashboard demo CTAs
+    // ("Try Demo Mode" + "Provision a Demo Deployment") should not intrude
+    // while the operator is working real infrastructure. They're hidden on:
+    //   - any real deployment (c2-* / goad-* / combined-*)
+    //   - all-mode (__all__) and draft (__draft__)
+    // They stay visible on:
+    //   - the demo deployment + in-progress demo-draft-* walkthroughs
+    //   - a fresh / empty dashboard (no deployment selected) — because the
+    //     "Try Demo Mode" button is itself the entry into demo; hiding it
+    //     there would make demo unreachable.
     APP.activeDeployment.subscribe(() => {
         try {
             const ad = APP.activeDeployment;
             const cur = (ad && ad.current) || '';
-            const isDemoDraftCur = /^demo-draft-/.test(cur);
-            const isReal = cur && cur !== 'demo'
-                && cur !== '__all__' && cur !== '__draft__'
-                && !isDemoDraftCur;
+            const isDemo = cur === 'demo' || /^demo-draft-/.test(cur);
+            const isNoSelection = !cur;          // fresh / nothing picked → entry
+            const show = isDemo || isNoSelection; // hide on real / __all__ / __draft__
             const btn = document.getElementById('dashboard-demo-btn');
-            if (btn) btn.hidden = isReal;
+            if (btn) btn.hidden = !show;
             const draftBtn = document.getElementById('dashboard-demo-draft-btn');
-            if (draftBtn) draftBtn.hidden = isReal;
+            if (draftBtn) draftBtn.hidden = !show;
         } catch (_) { /* defensive */ }
     });
 
@@ -35056,6 +35061,10 @@ APP.bolton = APP.bolton || {
             dock.setAttribute('role', 'dialog');
             dock.setAttribute('aria-label', 'Bolt-on walkthrough');
             dock.innerHTML = `
+                <div class="bolton-wt-dock__resize" data-bolton-wt-resize role="separator"
+                     aria-orientation="vertical" aria-label="Resize walkthrough panel" tabindex="0">
+                    <span class="bolton-wt-dock__resize-grip" aria-hidden="true"><span></span><span></span><span></span></span>
+                </div>
                 <div class="bolton-wt-dock__bar">
                     <button type="button" class="bolton-wt-dock__back" data-wt-dock-close>&larr; Back to bolt-ons</button>
                     <span class="bolton-wt-dock__eyebrow" data-bolton-wt-dock-eyebrow>Walkthrough</span>
@@ -35081,27 +35090,130 @@ APP.bolton = APP.bolton || {
                     }
                 });
             }
+            // Draggable resize divider — updates --wt-dock-w (the dock width;
+            // catalog width is calc(100% - that)). Persists to localStorage.
+            this._wireWalkthroughResize(pane, dock);
         }
         const eyebrow = dock.querySelector('[data-bolton-wt-dock-eyebrow]');
         if (eyebrow) eyebrow.textContent = vulnId || 'Walkthrough';
         const body = dock.querySelector('[data-bolton-wt-dock-body]');
         if (body) body.innerHTML = shellBody;
-        // Slide in + shrink the catalog. requestAnimationFrame so the
-        // transform transition fires even on the first open (the element
-        // was just appended at translateX(100%)).
-        requestAnimationFrame(() => pane.classList.add('is-wt-docked'));
+        // Restore the operator's persisted dock width (if any).
+        try {
+            const saved = localStorage.getItem('boltonWtDockWidth');
+            if (saved) pane.style.setProperty('--wt-dock-w', saved);
+        } catch (_) {}
+        // Drop the #tab-container 1200px cap so the split fills the full page.
+        const tc = document.getElementById('tab-container');
+        if (tc) tc.classList.add('wt-fullwidth');
+        // Cancel any pending hide from a prior close.
+        if (this._wtDockHideTimer) { clearTimeout(this._wtDockHideTimer); this._wtDockHideTimer = null; }
+        const alreadyDocked = pane.classList.contains('is-wt-docked');
+        dock.hidden = false;
+        if (alreadyDocked) {
+            // Re-open while already docked (operator clicked a different vuln's
+            // ▶ Walkthrough) — just swap content, no slide animation.
+            return true;
+        }
+        // Fresh open (or re-open after a close that set display:none). A
+        // transition cannot run FROM a display:none state, so: ensure the
+        // dock is parked at translateX(100%) with the transition suppressed,
+        // force a synchronous reflow to COMMIT that start state, then flip to
+        // translateX(0) — the browser now animates the slide every time
+        // (fixes the jump-cut on re-open).
+        dock.style.transition = 'none';
+        // (is-wt-docked is absent here, so the dock is at its default
+        //  translateX(100%) — the start state we want.)
+        void dock.offsetWidth;            // force reflow, commit start state
+        dock.style.transition = '';        // restore the CSS transition
+        void dock.offsetWidth;            // commit the transition restore
+        pane.classList.add('is-wt-docked'); // → translateX(0), animates in
         return true;
     },
 
-    /** Slide the walkthrough dock out + restore the catalog to full width. */
+    /** Wire the draggable divider on the dock's left edge. Updates
+     * --wt-dock-w (dock width %); catalog takes calc(100% - that).
+     * Constrained 40–75%; double-click resets to 58%; persists to LS. */
+    _wireWalkthroughResize(pane, dock) {
+        const handle = dock.querySelector('[data-bolton-wt-resize]');
+        if (!handle) return;
+        const DEFAULT = '58%', MIN = 40, MAX = 75;
+        let dragging = false;
+        const apply = (pct, persist) => {
+            pct = Math.max(MIN, Math.min(MAX, pct));
+            const val = pct.toFixed(2) + '%';
+            pane.style.setProperty('--wt-dock-w', val);
+            if (persist) { try { localStorage.setItem('boltonWtDockWidth', val); } catch (_) {} }
+        };
+        const onMove = (e) => {
+            if (!dragging) return;
+            const rect = pane.getBoundingClientRect();
+            // Dock occupies the RIGHT side; its width = distance from pointer
+            // to the pane's right edge.
+            const pct = ((rect.right - e.clientX) / rect.width) * 100;
+            apply(pct, false);
+        };
+        const onUp = (e) => {
+            if (!dragging) return;
+            dragging = false;
+            pane.classList.remove('is-wt-dragging');
+            try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+            // Persist the final width.
+            const cur = getComputedStyle(pane).getPropertyValue('--wt-dock-w').trim();
+            if (cur) { try { localStorage.setItem('boltonWtDockWidth', cur); } catch (_) {} }
+        };
+        handle.addEventListener('pointerdown', (e) => {
+            dragging = true;
+            pane.classList.add('is-wt-dragging');
+            try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+            e.preventDefault();
+        });
+        handle.addEventListener('pointermove', onMove);
+        handle.addEventListener('pointerup', onUp);
+        handle.addEventListener('pointercancel', onUp);
+        handle.addEventListener('dblclick', () => apply(58, true));
+        handle.addEventListener('keydown', (e) => {
+            const rect = pane.getBoundingClientRect();
+            const curPct = ((dock.getBoundingClientRect().width) / rect.width) * 100;
+            if (e.key === 'ArrowLeft') { apply(curPct + 2, true); e.preventDefault(); }
+            else if (e.key === 'ArrowRight') { apply(curPct - 2, true); e.preventDefault(); }
+        });
+    },
+
+    /** Slide the walkthrough dock out + restore the catalog to full width,
+     * THEN remove it from layout so it doesn't park off-screen-right (which
+     * left a horizontal-scroll ghost — "close just moves it to the right"). */
     _closeWalkthroughDock() {
         const pane = document.getElementById('subpill-pane-bolt-ons');
         if (!pane) return;
-        pane.classList.remove('is-wt-docked');
-        // Dock content is left mounted (hidden via the slide-out transform)
-        // so re-opening the same vuln is instant; openDetail re-renders the
-        // body on every call anyway.
+        if (!pane.classList.contains('is-wt-docked')) return; // already closed
+        pane.classList.remove('is-wt-docked'); // → dock slides out, catalog grows back
         this.state.detailVulnId = null;
+        const dock = pane.querySelector('[data-bolton-wt-dock]');
+        if (!dock) {
+            const tc0 = document.getElementById('tab-container');
+            if (tc0) tc0.classList.remove('wt-fullwidth');
+            return;
+        }
+        // After the slide-out transition: hide the dock (display:none) AND
+        // drop the #tab-container full-width override. Doing the width
+        // restore here (not immediately) keeps the slide-out smooth — the
+        // catalog isn't yanked back to the 1200px cap while the dock is still
+        // mid-animation. One clean reflow once everything has settled.
+        const finalize = () => {
+            if (!pane.classList.contains('is-wt-docked')) {
+                dock.hidden = true;
+                const tc = document.getElementById('tab-container');
+                if (tc) tc.classList.remove('wt-fullwidth');
+            }
+            dock.removeEventListener('transitionend', onEnd);
+            if (this._wtDockHideTimer) { clearTimeout(this._wtDockHideTimer); this._wtDockHideTimer = null; }
+        };
+        const onEnd = (ev) => { if (ev.target === dock && ev.propertyName === 'transform') finalize(); };
+        dock.addEventListener('transitionend', onEnd);
+        // Fallback for reduced-motion / interrupted transitions where
+        // transitionend never fires.
+        this._wtDockHideTimer = setTimeout(finalize, 360);
     },
 
     _switchDetailTab(tab) {

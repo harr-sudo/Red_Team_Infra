@@ -246,15 +246,19 @@
              Sub-pill list under Deployments deliberately omits "Bolt-ons" —
              that's agent D's slot.  -->
         <aside class="app-rail" role="navigation" aria-label="Primary">
-            <div class="app-rail__brand">
-                <a href="#dashboard" class="app-rail__brand-mark global-header__brand-mark" aria-label="Red Team Infrastructure home">
+            <!-- 2026-05-29 — whole brand cell is now a single click target that
+                 returns to the Dashboard; the 'v? · production' kicker was
+                 removed per operator request. -->
+            <a href="#dashboard" class="app-rail__brand" id="app-rail-brand-home"
+               data-rail-target="dashboard"
+               aria-label="Red Team Infrastructure — back to Dashboard">
+                <span class="app-rail__brand-mark global-header__brand-mark">
                     <span class="app-rail__brand-mark-inner global-header__brand-mark-inner"></span>
-                </a>
+                </span>
                 <div class="app-rail__brand-text">
                     <div class="app-rail__brand-name">RED TEAM INFRA</div>
-                    <div class="app-rail__brand-kicker" id="app-rail-brand-kicker">v? · production</div>
                 </div>
-            </div>
+            </a>
 
             <nav class="app-rail__nav" aria-label="Primary sections">
                 <!-- Dashboard -->
