@@ -18,6 +18,6 @@ output "admin_password" {
 }
 
 output "rdp_tunnel_command" {
-  description = "SSH tunnel command for RDP access through bastion/jumpbox"
-  value       = "ssh -L 3389:${aws_instance.attack_box.private_ip}:3389 -i <key> ubuntu@<bastion_or_jumpbox_ip>"
+  description = "SSH tunnel command for RDP access through the dashboard server (C2/combined) or the GOAD jumpbox (goad-only)"
+  value       = "ssh -L 13389:${aws_instance.attack_box.private_ip}:3389 -i <key> ubuntu@<dashboard_eip_or_jumpbox_ip>"
 }

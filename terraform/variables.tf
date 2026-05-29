@@ -567,39 +567,6 @@ variable "proxy_redirector_user_data" {
 }
 
 # =============================================================================
-# Bastion Host Configuration (Linux SSH Relay)
-# =============================================================================
-variable "enable_bastion" {
-  description = "Enable bastion host for SSH relay access to private subnets"
-  type        = bool
-  default     = true
-}
-
-variable "bastion_instance_type" {
-  description = "EC2 instance type for bastion host (SSH relay only)"
-  type        = string
-  default     = "t3.micro"
-}
-
-variable "bastion_ami_id" {
-  description = "AMI ID for bastion host (leave empty to use latest Ubuntu 22.04 LTS)"
-  type        = string
-  default     = ""
-}
-
-variable "bastion_root_volume_size" {
-  description = "Root volume size in GB for bastion host"
-  type        = number
-  default     = 20
-}
-
-variable "bastion_iam_instance_profile_name" {
-  description = "IAM instance profile name for bastion host"
-  type        = string
-  default     = ""
-}
-
-# =============================================================================
 # Attack Box Configuration (Windows Workstation)
 # =============================================================================
 

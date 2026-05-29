@@ -16,16 +16,7 @@ resource "aws_security_group" "c2_team_server_sg" {
   description = "Security group for C2 team servers in private subnets"
   vpc_id      = var.vpc_id
 
-  # SSH access from bastion host
-  ingress {
-    description     = "SSH from bastion host"
-    from_port       = var.ssh_port
-    to_port         = var.ssh_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.bastion_sg.id]
-  }
-
-  # SSH access from management IPs (fallback - can be removed if only using bastion)
+  # SSH access from management IPs (fallback for break-glass; primary jump is the dashboard server)
   ingress {
     description = "SSH from management CIDR blocks"
     from_port   = var.ssh_port
@@ -162,28 +153,6 @@ resource "aws_security_group_rule" "redirector_https_cloudfront" {
 # CROSS-REFERENCE RULES (separate to avoid circular dependency)
 # =============================================================================
 
-# Allow C2 servers to receive traffic from bastion (operator SSH tunnel for CS client)
-resource "aws_security_group_rule" "c2_from_bastion" {
-  type                     = "ingress"
-  from_port                = var.c2_server_port
-  to_port                  = var.c2_server_port
-  protocol                 = "tcp"
-  source_security_group_id = aws_security_group.bastion_sg.id
-  security_group_id        = aws_security_group.c2_team_server_sg.id
-  description              = "C2 port from bastion (operator SSH tunnel)"
-}
-
-resource "aws_security_group_rule" "c2_rest_api_from_bastion" {
-  count                    = var.enable_cs_rest_api ? 1 : 0
-  type                     = "ingress"
-  from_port                = 50443
-  to_port                  = 50443
-  protocol                 = "tcp"
-  source_security_group_id = aws_security_group.bastion_sg.id
-  security_group_id        = aws_security_group.c2_team_server_sg.id
-  description              = "CS REST API from bastion (SSH tunnel)"
-}
-
 # Allow C2 servers to receive beacon traffic from proxy/redirectors (listener port)
 resource "aws_security_group_rule" "c2_from_proxy" {
   type                     = "ingress"
@@ -228,74 +197,14 @@ resource "aws_security_group_rule" "c2_mgmt_from_attack_box" {
   description              = "C2 client from attack box (management port)"
 }
 
-# Security Group for Bastion Host (Linux SSH Relay)
-resource "aws_security_group" "bastion_sg" {
-  name        = "${var.project_name}-${var.environment}-bastion-sg"
-  description = "Security group for bastion host - SSH only"
-  vpc_id      = var.vpc_id
-
-  # SSH access from management IPs only
-  ingress {
-    description = "SSH from management CIDR blocks"
-    from_port   = var.ssh_port
-    to_port     = var.ssh_port
-    protocol    = "tcp"
-    cidr_blocks = var.management_cidr_blocks
-  }
-
-  # Outbound - all traffic allowed (for SSH to C2 servers, internet access, etc.)
-  egress {
-    description = "All outbound traffic"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(
-    var.tags,
-    {
-      Name      = "${var.project_name}-${var.environment}-bastion-sg"
-      Type      = "SecurityGroup"
-      Component = "BastionHost"
-    }
-  )
-}
-
-# Allow bastion to SSH to redirectors (nginx config management)
-resource "aws_security_group_rule" "redirector_ssh_from_bastion" {
-  type                     = "ingress"
-  from_port                = var.ssh_port
-  to_port                  = var.ssh_port
-  protocol                 = "tcp"
-  source_security_group_id = aws_security_group.bastion_sg.id
-  security_group_id        = aws_security_group.proxy_redirector_sg.id
-  description              = "SSH from bastion host for redirector management"
-}
-
 # Security Group for Attack Box (Windows Workstation)
 resource "aws_security_group" "attack_box_sg" {
   name        = "${var.project_name}-${var.environment}-attack-box-sg"
   description = "Security group for Windows attack box in private subnet"
   vpc_id      = var.vpc_id
 
-  # RDP access from bastion host only
-  ingress {
-    description     = "RDP from bastion host"
-    from_port       = 3389
-    to_port         = 3389
-    protocol        = "tcp"
-    security_groups = [aws_security_group.bastion_sg.id]
-  }
-
-  # SSH access from bastion host (for OpenSSH on Windows)
-  ingress {
-    description     = "SSH from bastion host"
-    from_port       = var.ssh_port
-    to_port         = var.ssh_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.bastion_sg.id]
-  }
+  # RDP + SSH ingress comes from the dashboard server only, via the
+  # attackbox_from_dashboard_rdp / attackbox_from_dashboard_ssh rules below.
 
   # Outbound - all traffic allowed (for tool downloads, C2 connections, etc.)
   egress {
@@ -345,19 +254,6 @@ resource "aws_security_group_rule" "c2_from_goad" {
   cidr_blocks       = [var.goad_vpc_cidr]
   security_group_id = aws_security_group.c2_team_server_sg.id
   description       = "Allow beacon callbacks from GOAD VMs"
-}
-
-# Allow bastion to reach GOAD VMs (for management)
-resource "aws_security_group_rule" "bastion_to_goad" {
-  count = var.enable_vpc_peering && var.goad_vpc_cidr != "" ? 1 : 0
-
-  type              = "egress"
-  from_port         = 0
-  to_port           = 65535
-  protocol          = "tcp"
-  cidr_blocks       = [var.goad_vpc_cidr]
-  security_group_id = aws_security_group.bastion_sg.id
-  description       = "Allow bastion to reach GOAD VMs via VPC peering"
 }
 
 # Allow attack box to reach GOAD VMs (for direct operations)
@@ -423,18 +319,28 @@ resource "aws_security_group_rule" "redirector_from_dashboard" {
   description              = "SSH from dashboard server"
 }
 
-# Note: No dashboard → attack box rule. Attack box is Windows (no SSH).
-# RDP access goes through bastion tunnel: dashboard → bastion SSH → RDP forward → attack box.
+# Dashboard → Attack box: RDP + SSH.
+# RDP access: dashboard → attack box directly via the attackbox_from_dashboard_rdp
+# rule + an operator `ssh -L 13389:<attackbox-ip>:3389 ubuntu@<dashboard-eip>` tunnel.
+resource "aws_security_group_rule" "attackbox_from_dashboard_rdp" {
+  count                    = var.dashboard_sg_id != "" ? 1 : 0
+  type                     = "ingress"
+  from_port                = 3389
+  to_port                  = 3389
+  protocol                 = "tcp"
+  source_security_group_id = var.dashboard_sg_id
+  security_group_id        = aws_security_group.attack_box_sg.id
+  description              = "RDP from dashboard server (operator SSH -L tunnel)"
+}
 
-# Dashboard → Bastion: SSH (for terminal access + tunnel forwarding)
-resource "aws_security_group_rule" "bastion_from_dashboard_ssh" {
+resource "aws_security_group_rule" "attackbox_from_dashboard_ssh" {
   count                    = var.dashboard_sg_id != "" ? 1 : 0
   type                     = "ingress"
   from_port                = var.ssh_port
   to_port                  = var.ssh_port
   protocol                 = "tcp"
   source_security_group_id = var.dashboard_sg_id
-  security_group_id        = aws_security_group.bastion_sg.id
-  description              = "SSH from dashboard server"
+  security_group_id        = aws_security_group.attack_box_sg.id
+  description              = "SSH from dashboard server (operator SSH -L tunnel)"
 }
 

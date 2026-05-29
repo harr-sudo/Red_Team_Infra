@@ -167,26 +167,7 @@ output "c2_servers" {
 }
 
 # =============================================================================
-# 5. BASTION HOST OUTPUTS (Linux SSH Relay)
-# =============================================================================
-
-output "bastion_public_ip" {
-  description = "Public IP address of the bastion host"
-  value       = local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_public_ip : null
-}
-
-output "bastion_private_ip" {
-  description = "Private IP address of the bastion host"
-  value       = local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_private_ip : null
-}
-
-output "bastion_ssh_command" {
-  description = "SSH connection command for bastion host"
-  value       = local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_ssh_command : null
-}
-
-# =============================================================================
-# 5b. ATTACK BOX OUTPUTS (Windows Workstation)
+# 5. ATTACK BOX OUTPUTS (Windows Workstation)
 # =============================================================================
 
 output "attack_box_instance_id" {
@@ -206,7 +187,7 @@ output "attack_box_admin_password" {
 }
 
 output "attack_box_rdp_tunnel" {
-  description = "SSH tunnel command for RDP to attack box through bastion/jumpbox"
+  description = "SSH tunnel command for RDP to attack box through the dashboard server"
   value       = local.deploy_attack_box && length(module.attack_box) > 0 ? module.attack_box[0].rdp_tunnel_command : null
 }
 
@@ -240,7 +221,7 @@ output "file_portal_info" {
     url      = var.primary_domain_name != "" ? "https://www.${var.primary_domain_name}/login" : "https://${module.proxy_redirector[0].proxy_redirector_public_ips[0]}/login"
     username = var.portal_username
     password = var.portal_password
-  } : {
+    } : {
     enabled  = false
     url      = null
     username = null
@@ -393,10 +374,10 @@ output "cs_connection_info" {
         )
       ) : null
     )
-    port             = var.c2_server_port  # CS client management port (50050)
+    port             = var.c2_server_port # CS client management port (50050)
     rest_api_enabled = var.enable_cs_rest_api
     rest_api_port    = var.enable_cs_rest_api ? 50443 : null
-    method = local.is_goad_only ? "direct" : "ssh_tunnel"
+    method           = local.is_goad_only ? "direct" : "ssh_tunnel"
   }
   sensitive = true
 }
@@ -420,8 +401,8 @@ output "access_instructions" {
     } : local.is_combined ? {
     type = "combined"
     steps = [
-      "1. SSH to bastion: ssh -i key.pem ubuntu@${local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_public_ip : "N/A"}",
-      "2. Create SSH tunnel through bastion to C2 server",
+      "1. SSH to the dashboard server: ssh -i key.pem ubuntu@${length(module.dashboard_server) > 0 ? module.dashboard_server[0].dashboard_public_ip : "<dashboard-eip>"}",
+      "2. Create an SSH tunnel through the dashboard server to the C2 server",
       "3. Connect CS client through tunnel",
       "4. GOAD VMs accessible via VPC peering from C2 servers",
       "5. Jumpbox IP: ${local.deploy_goad && length(module.goad) > 0 ? module.goad[0].jumpbox_public_ip : "N/A"}"
@@ -429,8 +410,8 @@ output "access_instructions" {
     } : local.deploy_c2_infra ? {
     type = "c2-only"
     steps = [
-      "1. SSH to bastion: ssh -i key.pem ubuntu@${local.deploy_bastion && var.enable_bastion && length(module.bastion) > 0 ? module.bastion[0].bastion_public_ip : "N/A"}",
-      "2. SSH tunnel: ssh -L 50050:<c2_private_ip>:50050 -i <key> ubuntu@<bastion_ip>",
+      "1. SSH to the dashboard server: ssh -i key.pem ubuntu@${length(module.dashboard_server) > 0 ? module.dashboard_server[0].dashboard_public_ip : "<dashboard-eip>"}",
+      "2. SSH tunnel: ssh -L 50050:<c2_private_ip>:50050 -i <key> ubuntu@<dashboard-eip>",
       "3. Connect CS client to localhost:50050",
       "4. Redirectors: ${local.deploy_redirectors && length(module.proxy_redirector) > 0 ? join(", ", module.proxy_redirector[0].proxy_redirector_public_ips) : "N/A"}"
     ]

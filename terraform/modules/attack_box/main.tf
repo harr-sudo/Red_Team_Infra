@@ -8,9 +8,9 @@
 # - Optimized for workstation use (server bloat removed, Defender disabled)
 #
 # Used by ALL deployment types:
-# - C2-only: Placed in C2 VPC private subnet, accessed via bastion RDP tunnel
+# - C2-only: Placed in C2 VPC private subnet, accessed via dashboard-server RDP tunnel
 # - GOAD-only: Placed in GOAD VPC private subnet, accessed via jumpbox SSH tunnel
-# - Combined: Placed in C2 VPC private subnet, accessed via bastion RDP tunnel
+# - Combined: Placed in C2 VPC private subnet, accessed via dashboard-server RDP tunnel
 # =============================================================================
 
 terraform {

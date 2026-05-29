@@ -28,7 +28,7 @@ variable "ssh_port" {
 }
 
 variable "c2_server_port" {
-  description = "CS client management port (50050). Used for operator connections via bastion/attack box."
+  description = "CS client management port (50050). Used for operator connections via the dashboard server / attack box."
   type        = number
   default     = 50050
 }
@@ -72,7 +72,7 @@ variable "tags" {
 }
 
 variable "enable_cs_rest_api" {
-  description = "Enable REST API port (50443) access from bastion to C2 servers"
+  description = "Enable REST API port (50443) access from the dashboard server to C2 servers"
   type        = bool
   default     = false
 }

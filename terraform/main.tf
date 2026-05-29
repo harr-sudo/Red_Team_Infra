@@ -93,7 +93,6 @@ locals {
   deploy_goad            = local.is_goad_only || local.is_combined
   deploy_ccrts           = local.is_ccrts_only || local.is_combined_ccrts || (local.is_c2_only && var.enable_ccrts_lab)
   deploy_redirectors     = local.is_c2_only || local.is_combined || local.is_combined_ccrts
-  deploy_bastion         = local.is_c2_only || local.is_combined || local.is_combined_ccrts
   deploy_vpc_peering     = local.is_combined
   deploy_ccrts_peering   = local.is_combined_ccrts || (local.is_c2_only && var.enable_ccrts_lab)
   deploy_domain_fronting = (local.is_c2_only || local.is_combined || local.is_combined_ccrts) && var.enable_domain_fronting
@@ -107,12 +106,10 @@ locals {
   # -------------------------------------------------------------------------
   # Static IP Allocation (C2 VPC)
   # -------------------------------------------------------------------------
-  # Management Subnet (10.0.0.0/24): .10 = Bastion
   # DMZ Subnet 1 (10.0.1.0/24): .10 = Redirector 1
   # DMZ Subnet 2 (10.0.2.0/24): .10 = Redirector 2
   # Private Subnet 1 (10.0.10.0/24): .10 = C2 Server 1, .11 = C2 Server 3, .50 = Attack Box
   # Private Subnet 2 (10.0.11.0/24): .10 = C2 Server 2
-  bastion_private_ip     = "10.0.0.10"
   attack_box_private_ip  = "10.0.10.50"
   c2_server_private_ips  = ["10.0.10.10", "10.0.11.10"]
   redirector_private_ips = ["10.0.1.10", "10.0.2.10"]
@@ -274,13 +271,13 @@ resource "aws_key_pair" "deployer" {
 
 # Auto-generated RSA key for Windows instances (AWS requires RSA for Windows AMIs)
 resource "tls_private_key" "windows" {
-  count     = local.deploy_attack_box || local.deploy_bastion ? 1 : 0
+  count     = local.deploy_attack_box ? 1 : 0
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
 resource "aws_key_pair" "windows" {
-  count = local.deploy_attack_box || local.deploy_bastion ? 1 : 0
+  count = local.deploy_attack_box ? 1 : 0
 
   key_name   = "${var.project_name}-${var.environment}-windows-key"
   public_key = tls_private_key.windows[0].public_key_openssh
@@ -526,15 +523,16 @@ module "test_lab" {
   vpc_cidr = var.vpc_cidr
 
   # Place the lab subnet in the SAME AZ as the first C2 private subnet so
-  # bastion -> lab traffic doesn't incur cross-AZ data transfer charges.
+  # dashboard -> lab traffic doesn't incur cross-AZ data transfer charges.
   subnet_cidr       = var.test_lab_subnet_cidr
   availability_zone = module.vpc[0].private_subnet_azs[0]
 
   # Reuse the C2 VPC's existing private route table -> NAT GW.
   c2_private_route_table_id = module.vpc[0].private_route_table_id
 
-  # Ingress from the C2 bastion (RDP / SSH).
-  c2_bastion_sg_id = module.security[0].bastion_security_group_id
+  # Ingress from the dashboard server (RDP / SSH). Null-safe in the module when
+  # no dashboard SG is wired (local.dashboard_sg_id == "").
+  c2_bastion_sg_id = local.dashboard_sg_id
 
   # Phase 1 is c2-* only — no GOAD jumpbox exists for these deployments.
   c2_jumpbox_sg_id = null
@@ -600,31 +598,6 @@ module "proxy_redirector" {
   portal_username        = var.portal_username
   portal_password        = var.portal_password
   portal_session_timeout = var.portal_session_timeout
-}
-
-# =============================================================================
-# BASTION HOST MODULE (Linux SSH Relay)
-# =============================================================================
-
-module "bastion" {
-  count = local.deploy_bastion && var.enable_bastion ? 1 : 0
-
-  source = "./modules/bastion"
-
-  project_name = var.project_name
-  environment  = var.environment
-  # OPSEC: Bastion in management subnet (isolated from redirectors in DMZ)
-  # Falls back to public subnet if management subnet is not configured
-  public_subnet_id           = length(module.vpc[0].management_subnet_ids) > 0 ? module.vpc[0].management_subnet_ids[0] : module.vpc[0].public_subnet_ids[0]
-  security_group_id          = module.security[0].bastion_security_group_id
-  key_pair_name              = local.effective_key_pair_name
-  instance_type              = var.bastion_instance_type
-  ami_id                     = var.bastion_ami_id
-  root_volume_size           = var.bastion_root_volume_size
-  enable_detailed_monitoring = var.enable_detailed_monitoring
-  iam_instance_profile_name  = var.bastion_iam_instance_profile_name != "" ? var.bastion_iam_instance_profile_name : (length(module.cs_storage) > 0 ? module.cs_storage[0].instance_profile_name_c2 : "")
-  private_ip                 = local.bastion_private_ip
-  tags                       = local.enhanced_tags
 }
 
 # =============================================================================
@@ -748,8 +721,8 @@ module "vpc_peering" {
 
   c2_vpc_id   = module.vpc[0].vpc_id
   goad_vpc_id = module.goad[0].vpc_id
-  # BUG FIX: Include ALL route tables so bastion + redirectors can reach GOAD VMs
-  # Previously only private RT had peering routes — bastion couldn't reach GOAD
+  # Include ALL route tables so C2 servers + redirectors (and the dashboard via
+  # its own peering) can reach GOAD VMs across every subnet tier.
   c2_route_table_ids = concat(
     module.vpc[0].private_route_table_ids,
     [module.vpc[0].public_route_table_id],

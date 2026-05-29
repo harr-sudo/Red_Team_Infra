@@ -62,8 +62,9 @@ variable "c2_private_route_table_id" {
 }
 
 variable "c2_bastion_sg_id" {
-  description = "Source security group ID for RDP / SSH ingress to lab hosts (the C2 bastion SG)"
+  description = "Source SG allowed to reach the test lab (the dashboard server). Empty/null is tolerated — the RDP/SSH ingress rules are skipped when no source SG is wired."
   type        = string
+  default     = null
 }
 
 variable "c2_jumpbox_sg_id" {

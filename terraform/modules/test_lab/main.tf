@@ -25,10 +25,10 @@ terraform {
 locals {
   # Static private IPs derived from var.subnet_cidr.
   # tldc01 .10, tlms01 .11, tlws01 .12, tllinux01 .13
-  dc_private_ip      = cidrhost(var.subnet_cidr, 10)
-  ms_private_ip      = cidrhost(var.subnet_cidr, 11)
-  ws_private_ip      = cidrhost(var.subnet_cidr, 12)
-  linux_private_ip   = cidrhost(var.subnet_cidr, 13)
+  dc_private_ip    = cidrhost(var.subnet_cidr, 10)
+  ms_private_ip    = cidrhost(var.subnet_cidr, 11)
+  ws_private_ip    = cidrhost(var.subnet_cidr, 12)
+  linux_private_ip = cidrhost(var.subnet_cidr, 13)
 
   name_prefix = "${var.project_name}-testlab"
 
@@ -150,7 +150,7 @@ resource "aws_subnet" "test_lab" {
   cidr_block        = var.subnet_cidr
   availability_zone = var.availability_zone
 
-  # No public IPs on lab hosts — ingress is bastion / SSM only.
+  # No public IPs on lab hosts — ingress is dashboard server / SSM only.
   map_public_ip_on_launch = false
 
   tags = merge(local.base_tags, {
@@ -208,8 +208,8 @@ resource "aws_security_group_rule" "fabric_self" {
   self              = true
 }
 
-# Per-host SGs — hold the role-specific ingress (RDP from bastion, WinRM from
-# jumpbox, SSH from bastion). Keeping them separate so future bolt-on rules
+# Per-host SGs — hold the role-specific ingress (RDP from dashboard, WinRM from
+# jumpbox, SSH from dashboard). Keeping them separate so future bolt-on rules
 # (e.g. exposing port 80 on tlms01 IIS to operator IPs) only touch the right
 # host.
 
@@ -218,12 +218,15 @@ resource "aws_security_group" "tldc01" {
   description = "tldc01 (Windows Server 2022, Domain Controller)"
   vpc_id      = var.vpc_id
 
-  ingress {
-    description     = "RDP from C2 bastion"
-    from_port       = 3389
-    to_port         = 3389
-    protocol        = "tcp"
-    security_groups = [var.c2_bastion_sg_id]
+  dynamic "ingress" {
+    for_each = var.c2_bastion_sg_id == "" || var.c2_bastion_sg_id == null ? [] : [var.c2_bastion_sg_id]
+    content {
+      description     = "RDP from dashboard server"
+      from_port       = 3389
+      to_port         = 3389
+      protocol        = "tcp"
+      security_groups = [ingress.value]
+    }
   }
 
   dynamic "ingress" {
@@ -259,12 +262,15 @@ resource "aws_security_group" "tlms01" {
   description = "tlms01 (Windows Server 2022, Member Server)"
   vpc_id      = var.vpc_id
 
-  ingress {
-    description     = "RDP from C2 bastion"
-    from_port       = 3389
-    to_port         = 3389
-    protocol        = "tcp"
-    security_groups = [var.c2_bastion_sg_id]
+  dynamic "ingress" {
+    for_each = var.c2_bastion_sg_id == "" || var.c2_bastion_sg_id == null ? [] : [var.c2_bastion_sg_id]
+    content {
+      description     = "RDP from dashboard server"
+      from_port       = 3389
+      to_port         = 3389
+      protocol        = "tcp"
+      security_groups = [ingress.value]
+    }
   }
 
   dynamic "ingress" {
@@ -300,12 +306,15 @@ resource "aws_security_group" "tlws01" {
   description = "tlws01 (Windows 11 Pro Workstation)"
   vpc_id      = var.vpc_id
 
-  ingress {
-    description     = "RDP from C2 bastion"
-    from_port       = 3389
-    to_port         = 3389
-    protocol        = "tcp"
-    security_groups = [var.c2_bastion_sg_id]
+  dynamic "ingress" {
+    for_each = var.c2_bastion_sg_id == "" || var.c2_bastion_sg_id == null ? [] : [var.c2_bastion_sg_id]
+    content {
+      description     = "RDP from dashboard server"
+      from_port       = 3389
+      to_port         = 3389
+      protocol        = "tcp"
+      security_groups = [ingress.value]
+    }
   }
 
   dynamic "ingress" {
@@ -341,12 +350,15 @@ resource "aws_security_group" "tllinux01" {
   description = "tllinux01 (Ubuntu 22.04, Linux Member)"
   vpc_id      = var.vpc_id
 
-  ingress {
-    description     = "SSH from C2 bastion"
-    from_port       = 22
-    to_port         = 22
-    protocol        = "tcp"
-    security_groups = [var.c2_bastion_sg_id]
+  dynamic "ingress" {
+    for_each = var.c2_bastion_sg_id == "" || var.c2_bastion_sg_id == null ? [] : [var.c2_bastion_sg_id]
+    content {
+      description     = "SSH from dashboard server"
+      from_port       = 22
+      to_port         = 22
+      protocol        = "tcp"
+      security_groups = [ingress.value]
+    }
   }
 
   egress {
