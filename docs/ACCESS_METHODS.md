@@ -1,52 +1,60 @@
 # Access Methods for C2 Servers
 
-This document provides ideas and options for accessing C2 team servers from home and for management purposes.
+This document describes how operators access C2 team servers for operations and management.
 
 ## Overview
 
-C2 servers are deployed in **private subnets** for security, which means they're not directly accessible from the internet. Here are various methods to access them.
+C2 servers are deployed in **private subnets** for security, which means they're not directly accessible from the internet.
 
-The framework supports two deployment modes — **Server Mode** and **Local Mode** — each with different access patterns.
+The **primary access path is the AWS-hosted Dashboard Server** — a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public EIP. It is the production control plane AND the SSH jump host: every deployment branches out from it via VPC peering, so it reaches every instance directly. Operators connect: **laptop → (SSH key + IP allow-list) → Dashboard Server → instances**.
+
+Running the dashboard on your laptop is a **dev instance only** — production always runs on the AWS Dashboard Server. The legacy bastion/proxy access methods further down are **fallback only**, retained for when the Dashboard Server is unavailable.
 
 ---
 
-## Server Mode (Recommended)
+## Dashboard Server (Primary)
 
-When the dashboard runs on a centralized EC2 server, most access complexity disappears. The server sits inside AWS with VPC peering to all deployment VPCs, so it can reach every instance directly.
+The Dashboard Server sits inside AWS with VPC peering to all deployment VPCs, so it can reach every instance directly. It is the single jump host for all access.
 
 ### Operator Access
 
-1. **SSH tunnel into the dashboard server:**
+1. **SSH tunnel into the Dashboard Server** (public EIP, SSH key + IP allow-list):
    ```bash
-   ssh -L 5000:localhost:5000 harris@<dashboard-server-ip>
+   ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
    ```
    Then open `http://localhost:5000` in your browser.
 
 2. **Terminal tab** — The dashboard provides an in-browser SSH terminal to all deployed instances (C2 team servers, redirectors, attack box, jumpbox). No manual SSH tunnels or bastion hopping required.
 
-3. **REST API** — The Cobalt Strike REST API and all management endpoints are reachable directly from the dashboard server via VPC peering. No port forwarding or tunnels needed on the server side.
+3. **REST API** — The Cobalt Strike REST API and all management endpoints are reachable directly from the Dashboard Server via VPC peering. No port forwarding or tunnels needed on the server side.
 
-4. **CS Client tunnel** — The Cobalt Strike GUI client still runs on your laptop and needs a tunnel to the team server's port 50050. Use the **Tunnel button** in the Terminal tab to set this up, or manually:
+4. **CS Client tunnel** — The Cobalt Strike GUI client still runs on your laptop and needs a tunnel to the team server's port 50050, routed **through the Dashboard Server**. Use the **Tunnel button** in the Terminal tab to set this up, or manually:
    ```bash
-   # Through the dashboard server
-   ssh -L 50050:<c2-private-ip>:50050 harris@<dashboard-server-ip>
+   # Through the Dashboard Server EIP
+   ssh -L 50050:<c2-private-ip>:50050 ubuntu@<dashboard-eip>
    ```
 
-### Why Server Mode Is Simpler
+5. **RDP to attack box / GOAD VMs** — tunnel through the Dashboard Server:
+   ```bash
+   ssh -L 13389:<attackbox-ip>:3389 ubuntu@<dashboard-eip>
+   # then RDP to localhost:13389
+   ```
 
-| Concern | Local Mode | Server Mode |
-|---------|-----------|-------------|
+### Why the Dashboard Server Is Simpler
+
+| Concern | Legacy (bastion / local dev) | Dashboard Server |
+|---------|------------------------------|------------------|
 | AWS credentials | Configured on every operator laptop | IAM instance role on server (no creds on disk) |
-| SSH to instances | Bastion hop or SSM | Terminal tab in browser |
+| SSH to instances | Bastion hop or SSM | Terminal tab in browser (single hop via peering) |
 | REST API access | Tunnel through bastion | Direct via VPC peering |
-| CS Client | Tunnel through bastion | Tunnel through dashboard server |
+| CS Client | Tunnel through bastion | Tunnel through Dashboard Server EIP |
 | Multi-operator | Each operator sets up everything | One server, operators just SSH tunnel in |
 
 ---
 
-## Local Mode
+## Legacy / Fallback Access Methods
 
-> **Note:** The methods below apply to **Local Mode** (running the dashboard from your laptop). If you are using Server Mode, see the section above.
+> **Note:** The methods below are **legacy/fallback** — they were the access patterns before the AWS-hosted Dashboard Server became the primary jump (and apply when running the dashboard as a local dev instance). For day-to-day operations, use the Dashboard Server above. Where these examples SSH into a bastion or proxy as the entry point, the production equivalent tunnels through the Dashboard Server EIP instead.
 
 ---
 

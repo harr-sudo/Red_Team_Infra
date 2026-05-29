@@ -6,16 +6,16 @@ This document explains how the Red Team Infrastructure deployment connects to yo
 
 The deployment uses the **AWS credential chain** to authenticate with AWS. This means Terraform and AWS CLI automatically look for credentials in a specific order until they find valid ones.
 
-The framework supports two deployment modes with different authentication models:
+There are two authentication models, matching where the dashboard runs:
 
-- **Server Mode** — IAM instance role on the dashboard EC2 server (recommended)
-- **Local Mode** — AWS credentials configured on your laptop
+- **Dashboard Server (production)** — IAM instance role on the AWS-hosted dashboard EC2 server. This is the production path.
+- **Local Dev** — AWS credentials configured on your laptop, for development/testing only.
 
 ---
 
-## Server Mode Authentication
+## Dashboard Server Authentication (production)
 
-When the dashboard runs on a centralized EC2 server (t3.medium in its own VPC at 10.100.0.0/16), authentication is handled by an **IAM instance role** attached to the server.
+When the dashboard runs on its dedicated EC2 server (t3.medium in its own VPC at 10.100.0.0/16, the production control plane + SSH jump), authentication is handled by an **IAM instance role** attached to the server.
 
 ### How It Works
 
@@ -59,8 +59,8 @@ They do **not** need:
 ### Verification (On the Server)
 
 ```bash
-# SSH into the dashboard server
-ssh harris@<dashboard-server-ip>
+# SSH into the Dashboard Server (public EIP)
+ssh ubuntu@<dashboard-eip>
 
 # Verify the instance role is working
 aws sts get-caller-identity
@@ -69,9 +69,9 @@ aws sts get-caller-identity
 
 ---
 
-## Local Mode Authentication
+## Local Dev Authentication
 
-> **Note:** This section applies when running the dashboard from your laptop. If you are using Server Mode, see the section above.
+> **Note:** This section applies when running the dashboard from your laptop **for development/testing only**. Production runs on the AWS Dashboard Server — see the section above.
 
 ## How It Works
 
@@ -466,7 +466,7 @@ terraform validate
 
 ### Using Web Application
 
-1. Connect to dashboard: `ssh -L 5000:localhost:5000 <operator>@<dashboard-ip>`
+1. Connect to the Dashboard Server: `ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>`
 2. Go to **Health** tab
 3. Click **Check AWS**
 4. Verify account and user information

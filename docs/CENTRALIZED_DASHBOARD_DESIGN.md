@@ -7,23 +7,25 @@
 
 ## Overview
 
-The dashboard supports two deployment modes from a single codebase — no code forks, no feature flags. The same Flask app, frontend, and Terraform modules work in both:
+The dashboard supports two run targets from a single codebase — no code forks, no feature flags. The same Flask app, frontend, and Terraform modules work in both:
 
-- **Local Mode** — runs on the operator's laptop for single-user engagements
-- **Server Mode** — runs on an EC2 instance in AWS for multi-operator shared access
+- **Dashboard Server (production)** — runs on a dedicated EC2 instance in AWS (own VPC, public EIP). This is the **production control plane and SSH jump host**: every deployment branches out from it via VPC peering, and it is the single entry point into all instances. Supports multi-operator shared access.
+- **Local Dev** — runs on the operator's laptop for development/testing only. Not the production path.
+
+> The per-deployment bastion is **legacy/fallback** — the Dashboard Server is the primary jump into all instances.
 
 ---
 
 ## Dual-Mode Architecture
 
-| | Local Mode | Server Mode |
+| | Local Dev | Dashboard Server (production) |
 |---|---|---|
-| **Runs on** | Operator's laptop | EC2 instance (`t3.medium`) |
+| **Runs on** | Operator's laptop (dev/testing) | EC2 instance (`t3.medium`, own VPC, public EIP) |
 | **Accessed via** | `http://localhost:5000` directly | SSH tunnel → `http://localhost:5000` |
 | **AWS credentials** | Operator's `~/.aws/credentials` | IAM instance role (no creds on disk) |
 | **Terraform state** | Local `.tfstate` per workspace | S3 backend + DynamoDB locking |
 | **CS archive** | `uploads/` in project dir | `/opt/redteam/uploads/` on EBS (SCP once) |
-| **Terminal SSH** | ProxyJump through bastion | Direct via VPC peering |
+| **Terminal SSH** | ProxyJump through bastion (legacy) | Jump via Dashboard Server (direct VPC peering) |
 | **Operator identity** | Single user (no tracking) | Per-user Linux accounts + audit trail |
 | **Multi-operator** | No | Yes (2+ operators via SSH tunnel) |
 | **Prerequisites** | Terraform, AWS CLI, Python, SSH | SSH client + browser (nothing else) |
@@ -48,7 +50,7 @@ The dashboard supports two deployment modes from a single codebase — no code f
 ```
 1. Clone the repo
 2. ./scripts/server/setup-dashboard.sh
-3. ssh -L 5000:localhost:5000 <operator>@<dashboard-ip>
+3. ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
 4. Open http://localhost:5000
 5. Configure deployment on the Configuration page
 6. Deploy
@@ -99,9 +101,9 @@ Prerequisites: AWS account, SSH key, registered domain.
 
 ## 2. Operator Access
 
-**SSH tunnel per operator:**
+**SSH tunnel per operator (to the Dashboard Server EIP):**
 ```bash
-ssh -L 5000:localhost:5000 harris@<dashboard-ip>
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
 # Open http://localhost:5000
 ```
 
@@ -200,7 +202,7 @@ May overlap but managed independently. Dashboard module prompts for `dashboard_a
 
 ## 7. CS Archive Management
 
-- SCP once to server: `scp cobaltstrike-dist.tar harris@<dashboard-ip>:/opt/redteam/uploads/`
+- SCP once to server: `scp cobaltstrike-dist.tar ubuntu@<dashboard-eip>:/opt/redteam/uploads/`
 - Persists on EBS, reused for every deployment
 - Dashboard detects existing archive — skips "upload CS archive" prerequisite
 - Only re-SCP when upgrading CS version

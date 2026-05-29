@@ -99,10 +99,10 @@ See `docs/CCRTS_LAB.md` for the full operator guide.
 ## Key Commands
 
 ```bash
-# Dashboard server (recommended entry point)
+# Dashboard Server (AWS-hosted production control plane + SSH jump — primary entry point)
 ./scripts/server/setup-dashboard.sh           # First-time server provisioning
 ./scripts/server/dashboard-manage.sh start    # start/stop/restart/status/logs/upgrade
-ssh -L 5000:localhost:5000 <user>@<dashboard-ip>  # SSH tunnel for dashboard access
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>  # SSH tunnel for dashboard access (local run = dev only)
 
 # Terraform
 cd terraform
@@ -130,12 +130,20 @@ aws ssm get-command-invocation --command-id <id> --instance-id <id> --region <re
 - **Prefer SSM over SSH hopping** for running commands on internal instances (C2 servers, redirectors, attack box)
 - All EC2 instances have SSM agent installed and IAM roles attached
 - Use `aws ssm send-command` for non-interactive commands, `aws ssm start-session` for interactive shells
-- SSM eliminates the need for SSH key distribution to bastion for multi-hop access
-- SSH is still used for: operator CS client tunnel (`ssh -L 50050:...`), bastion direct access
+- SSM eliminates the need for SSH key distribution for multi-hop access
+- SSH is still used for: operator → Dashboard Server tunnel, and the CS client tunnel through the Dashboard Server (`ssh -L 50050:<c2-ip>:50050 ubuntu@<dashboard-eip>`)
 - **Use SSM for remote management and diagnostics:** checking service status, reading bootstrap logs, verifying setup steps, restarting services, and troubleshooting deployment issues on any instance
 - **Use `AWS-RunPowerShellScript`** for Windows instances (attack box, bastion), **`AWS-RunShellScript`** for Linux (C2 servers, redirectors, jumpbox)
 - **Always retrieve command output** via `aws ssm get-command-invocation` — SSM commands are async and may take time to complete
 - **Bootstrap log locations:** Linux team servers: `/var/log/cs-install.log`, Windows attack box: `C:\Users\Administrator\Desktop\Deployment-Logs-Scripts\attackbox-init.log`, setup status JSON: `/opt/cobaltstrike/bootstrap-status` (Linux) or `C:\ProgramData\setup-status.json` (Windows)
+
+### Operator Access Methods
+- **Dashboard Server is the jump host.** A dedicated EC2 instance in its own VPC (`10.100.0.0/16`) hosted in AWS is the production control plane AND SSH jump. It has a public EIP, gated by SSH key + IP allow-list. Every deployment branches out from it via VPC peering, so it reaches all instances (C2 servers, redirectors, attack box, GOAD jumpbox) directly.
+- **Operator path:** operator laptop → (SSH key + IP allow-list) → Dashboard Server → instances. The dashboard is the jump; the operator's laptop only ever SSHes to the Dashboard Server.
+- **Dashboard UI:** `ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>`, then open `http://localhost:5000`. Running the dashboard locally on the laptop is a **dev instance only** — production runs on the AWS Dashboard Server.
+- **CS client tunnel** (CS GUI runs on the laptop): `ssh -L 50050:<c2-ip>:50050 ubuntu@<dashboard-eip>`, then connect the CS client to `localhost:50050`. This is a local port forward through the Dashboard Server, not a reverse tunnel.
+- **RDP to attack box / GOAD VMs:** `ssh -L 13389:<attackbox-ip>:3389 ubuntu@<dashboard-eip>`, then RDP to `localhost:13389`.
+- **Legacy/fallback:** the per-deployment Windows bastion and GOAD jumpbox still exist for fallback access, but are **no longer the primary entry**. Do not frame `ssh -L ... ubuntu@bastion_ip` as the operator entry path — route through the Dashboard Server EIP instead.
 
 ## Coding Conventions
 
@@ -196,10 +204,10 @@ aws ssm get-command-invocation --command-id <id> --instance-id <id> --region <re
 
 ### Network
 - **VPC isolation:** Private subnets for C2 servers, public subnets for redirectors
-- **Bastion host pattern:** Single entry point for SSH/RDP access
+- **Dashboard Server jump pattern:** The AWS-hosted Dashboard Server (own VPC `10.100.0.0/16`, public EIP) is the single SSH/RDP entry point; deployments branch out from it via VPC peering. The per-deployment bastion is legacy/fallback only.
 - **Security group granularity:** Separate groups per component type
 - **Management CIDR blocks:** Whitelist operator IPs only
-- **VPC peering:** Controlled cross-VPC traffic for combined C2+GOAD
+- **VPC peering:** Controlled cross-VPC traffic from the Dashboard Server to each deployment, plus combined C2+GOAD
 
 ### S3 — Confused Deputy Protection (3 Layers)
 1. **IAM Role Trust Policy:** `aws:SourceAccount` + `aws:SourceVpc` conditions

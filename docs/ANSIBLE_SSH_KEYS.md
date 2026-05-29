@@ -183,11 +183,13 @@ ansible-playbook -i inventory/hosts.yml playbooks/distribute-ssh-keys.yml \
     -e "ssh_public_key_file=/tmp/all-keys.pub"
 ```
 
-## From Jump Box (WSL2)
+## From Jump Box (WSL2) — legacy/fallback
+
+> The AWS-hosted Dashboard Server now manages SSH keys via its own keypair + SSM (see [Server Mode SSH Keys](#server-mode-ssh-keys) below). The jump-box/bastion workflow here is **legacy/fallback** only.
 
 ### Complete Workflow
 
-1. **RDP to jump box:**
+1. **RDP to jump box (legacy bastion):**
    ```bash
    mstsc /v:bastion-public-ip
    ```

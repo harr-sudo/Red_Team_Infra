@@ -36,12 +36,12 @@ cp configs/terraform.tfvars.example configs/terraform.tfvars
 pip install -r requirements.txt
 ```
 
-## Local Mode Commands
+## Local Dev Commands (laptop)
 
 ```bash
-# Dashboard server (first-time setup)
+# Provision the AWS Dashboard Server (production control plane + jump)
 ./scripts/server/setup-dashboard.sh
-# Then SSH tunnel: ssh -L 5000:localhost:5000 <user>@<dashboard-ip>
+# Then SSH tunnel: ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
 
 # Full deployment
 ./scripts/deployment/deploy.sh
@@ -53,11 +53,11 @@ pip install -r requirements.txt
 ./scripts/deployment/destroy.sh
 ```
 
-## Server Mode Commands
+## Dashboard Server Commands (production)
 
 ```bash
-# Connect to dashboard (from operator laptop)
-ssh -L 5000:localhost:5000 harris@<dashboard-ip>
+# Connect to the Dashboard Server (from operator laptop, via EIP)
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
 
 # Setup script (first time on the server)
 ./scripts/server/setup-dashboard.sh

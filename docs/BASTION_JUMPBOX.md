@@ -1,19 +1,21 @@
-# Bastion Host - Linux SSH Relay
+# Bastion Host - Linux SSH Relay (Legacy / Fallback)
 
-> **Server Mode Note:** In Server Mode, the centralized dashboard server replaces most bastion functions. The dashboard provides in-browser SSH via the Terminal tab and has direct access to all instances through VPC peering. The bastion is still created for fallback/legacy access but is no longer the primary access path. See the Centralized Dashboard Design doc for server mode architecture.
+> **Primary access is the Dashboard Server, not the bastion.** The AWS-hosted **Dashboard Server** — a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public EIP — is THE production control plane and SSH jump host. Every deployment branches out from it via VPC peering, and it reaches all instances directly. The per-deployment bastion documented below is **legacy/fallback only**. The operator's local machine runs only a **dev instance** of the dashboard; production always runs on the AWS Dashboard Server. See the Centralized Dashboard Design doc for the full architecture.
 
-## Server Mode vs Local Mode
+## Dashboard Server (primary) vs Bastion (legacy/fallback)
 
-In **Server Mode**, the dashboard server handles what the bastion traditionally does:
+The AWS-hosted **Dashboard Server** is the primary jump and does everything the bastion traditionally did:
 
-- **SSH access to instances** — The Terminal tab in the dashboard provides in-browser SSH to all C2 servers, redirectors, and the attack box. No manual bastion hopping required.
-- **VPC peering** — The dashboard server's VPC (10.100.0.0/16) is peered with all deployment VPCs, giving it direct network access to every instance.
-- **Bastion is still useful for:**
-  - **RDP tunnel to attack box** — If you prefer a native RDP client over the web terminal, you can still tunnel through the bastion (or through the dashboard server).
-  - **Direct SSH from operator laptop** — As a fallback when the dashboard is down or for operators who prefer CLI-only workflows.
-  - **Legacy compatibility** — Existing scripts and SSH configs that reference the bastion will continue to work.
+- **SSH access to instances** — The Terminal tab in the dashboard provides in-browser SSH to all C2 servers, redirectors, and the attack box. The Dashboard Server is a single-hop jump into every instance — no bastion hopping.
+- **VPC peering** — The Dashboard Server's VPC (10.100.0.0/16) is peered with all deployment VPCs, giving it direct network access to every instance.
+- **Operator tunnels go through the Dashboard Server EIP**, e.g. `ssh -L 50050:<c2-ip>:50050 ubuntu@<dashboard-eip>` for the CS client and `ssh -L 13389:<attackbox-ip>:3389 ubuntu@<dashboard-eip>` for RDP.
 
-In **Local Mode**, the bastion remains the primary access point as described below.
+The **bastion is legacy/fallback only**. It is still created, but it is no longer the primary access path. It remains useful for:
+
+- **Fallback access** — when the Dashboard Server is unavailable, or for operators who prefer a CLI-only workflow.
+- **Legacy compatibility** — existing scripts and SSH configs that reference the bastion still work.
+
+The remainder of this document describes the legacy bastion access patterns. For day-to-day operations, route through the Dashboard Server instead.
 
 ---
 
@@ -21,7 +23,9 @@ In **Local Mode**, the bastion remains the primary access point as described bel
 
 The bastion is a **lightweight Ubuntu 22.04 LTS instance** in the management subnet. It serves as an SSH relay/tunnel host for accessing private-subnet resources (C2 team servers, attack box). No red team tools are installed on the bastion — all operations happen on the Windows attack box.
 
-## Architecture
+## Architecture (legacy path)
+
+> Primary access is operator laptop → Dashboard Server (AWS) → instances. The diagram below shows the legacy bastion path, retained for fallback only.
 
 ```
 Operator Laptop

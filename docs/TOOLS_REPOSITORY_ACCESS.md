@@ -7,6 +7,8 @@ The tools repository is automatically deployed to the jump box during infrastruc
 - **Windows**: `C:\Tools\`
 - **WSL2 (Ubuntu)**: `/opt/tools/`
 
+> **Access note:** The AWS-hosted Dashboard Server is the primary SSH jump into all instances. The jump box (bastion) below is now **legacy/fallback** — reach it through the Dashboard Server when needed (e.g. `ssh -L 13389:<bastion-ip>:3389 ubuntu@<dashboard-eip>` then RDP to `localhost:13389`). The bastion still hosts the deployed tools repo.
+
 ## Access Methods
 
 ### Method 1: RDP to Jump Box (Windows Access)

@@ -21,13 +21,21 @@ The infrastructure is built using:
 - **Ansible**: Configuration management and software deployment
 - **AWS Services**: EC2, VPC, S3, CloudWatch, and more
 - **Bash/Python Scripts**: Orchestration and automation
-- **Web Application**: Local management interface (Flask + JavaScript)
+- **Web Application**: Flask + JavaScript management interface, hosted on the AWS Dashboard Server
+
+### Access Model
+
+The **Dashboard Server** is a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) hosted in AWS. It is the **production control plane and SSH jump host** — every deployment branches out from it via VPC peering, and it is the single entry point into all instances (C2 servers, redirectors, attack box, GOAD jumpbox).
+
+- **Operator laptop** → SSH key + IP allow-list → **Dashboard Server** (public EIP). The UI is reached with `ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>`, then `http://localhost:5000`. Running the dashboard on your laptop is a **dev instance only** — production always runs on the AWS Dashboard Server.
+- **Deployments branch out from the Dashboard Server.** Its VPC is peered with every deployment VPC, so the dashboard reaches each instance directly. Per-deployment bastions / GOAD jumpboxes are **legacy/fallback**, no longer the primary entry path.
 
 ### Infrastructure Components
 
+- **Dashboard Server**: AWS-hosted EC2 control plane + SSH jump host (own VPC, public EIP)
 - **C2 Team Servers**: Command and control servers (private subnets)
 - **Proxy/Redirector Servers**: Traffic forwarding servers (public subnets)
-- **Bastion/Jump Box**: Windows Server with WSL2 for management access (public subnet)
+- **Bastion/Jump Box** (legacy/fallback): Windows Server with WSL2 for management access (public subnet) — superseded by the Dashboard Server as the primary jump
 - **VPC**: Isolated network with public/private subnets
 - **Security Groups**: Firewall rules for traffic control
 - **GOAD Labs** (Optional): Vulnerable Active Directory environments for testing
@@ -38,7 +46,7 @@ The infrastructure is built using:
 
 ### Quick Start
 
-Deploy the dashboard to a dedicated EC2 instance in AWS. Operators access it via SSH tunnel — they only need an SSH key and a browser.
+Production runs on the **AWS Dashboard Server** — a dedicated EC2 instance that is the control plane and SSH jump host for every deployment. Operators access it via SSH tunnel; they only need an SSH key and a browser. (Running the dashboard on your laptop is a dev instance only.)
 
 ```bash
 # 1. Clone the repo and provision the dashboard server
@@ -46,13 +54,13 @@ git clone https://github.com/harr-sudo/Red_Team_Infra.git
 cd Red_Team_Infra
 ./scripts/server/setup-dashboard.sh
 
-# 2. SSH tunnel in
-ssh -L 5000:localhost:5000 youruser@<dashboard-ip>
+# 2. SSH tunnel in to the Dashboard Server (public EIP)
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
 
 # 3. Open http://localhost:5000
 ```
 
-Configure your deployment, upload Cobalt Strike, and deploy — all through the browser. Second operator onboarding: add their SSH public key + IP to the dashboard Terraform config, `terraform apply`, done.
+Configure your deployment, upload Cobalt Strike, and deploy — all through the browser. Deployments branch out from the Dashboard Server via VPC peering, so it is the jump into every instance. Second operator onboarding: add their SSH public key + IP to the dashboard Terraform config, `terraform apply`, done.
 
 See [Centralized Dashboard Design](./docs/CENTRALIZED_DASHBOARD_DESIGN.md) for full architecture.
 
@@ -132,7 +140,7 @@ cp configs/terraform.tfvars.example configs/terraform.tfvars
 
 # 8. Deploy infrastructure
 ./scripts/deployment/deploy.sh
-# Or use web dashboard: ssh -L 5000:localhost:5000 <user>@<dashboard-ip>
+# Or use the AWS Dashboard Server (production): ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
 ```
 
 ### First Time Setup
@@ -173,9 +181,11 @@ See [PLAN.md](./PLAN.md) for detailed architecture and planning information.
 
 ## Key Features
 
-### 🪟 Windows Jump Box with WSL2
-- **Dedicated Windows Server bastion host** for management access
-- **WSL2 (Ubuntu)** for easy SSH access to C2 servers
+### 🪟 Windows Jump Box with WSL2 (legacy/fallback)
+> The AWS-hosted **Dashboard Server** is now the primary SSH jump into all instances. The per-deployment Windows bastion is kept as a legacy/fallback access path.
+
+- **Dedicated Windows Server bastion host** for fallback management access
+- **WSL2 (Ubuntu)** for SSH access to C2 servers when not using the dashboard
 - **RDP access** from home for Windows management
 - **Linux environment** via WSL2 for command-line operations
 - **Tools Repository** automatically deployed to `C:\Tools\` (Windows) and `/opt/tools/` (WSL2)

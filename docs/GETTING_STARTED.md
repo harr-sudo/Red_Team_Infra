@@ -4,12 +4,12 @@ This guide will walk you through setting up and deploying the Red Team Infrastru
 
 ## Deployment Modes
 
-This project supports two ways to run the dashboard:
+Production runs on the **AWS Dashboard Server**. There are two ways to run the dashboard:
 
-- **Local Mode** — Run everything from your laptop. You need AWS credentials, Terraform, and all prerequisites installed locally.
-- **Server Mode (Recommended)** — Run the dashboard on a centralized EC2 server. Operators SSH tunnel in. AWS credentials are handled by an IAM instance role. One server serves the whole team.
+- **Dashboard Server (production)** — The dashboard runs on a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public EIP. It is the production control plane AND the SSH jump host: every deployment branches out from it via VPC peering. Operators SSH tunnel in; AWS credentials are handled by an IAM instance role. One server serves the whole team. **This is the path for real engagements.**
+- **Local Dev** — Run the dashboard from your laptop for development/testing only. You need AWS credentials, Terraform, and all prerequisites installed locally. Not the production path — use the AWS Dashboard Server for that.
 
-Choose your mode and follow the corresponding setup section below.
+For production, follow [Server Mode Setup](#server-mode-setup). For local development, follow the Local Dev section below.
 
 ## Table of Contents
 
@@ -25,9 +25,9 @@ Choose your mode and follow the corresponding setup section below.
 
 ---
 
-## Local Mode Setup
+## Local Dev Setup
 
-> **Note:** This section covers running the dashboard from your laptop. If you want to run it on a centralized server, skip to [Server Mode Setup](#server-mode-setup).
+> **Note:** This section covers running the dashboard from your laptop **for development/testing only**. Production runs on the AWS Dashboard Server — skip to [Server Mode Setup](#server-mode-setup) for the real-engagement path.
 
 ## Prerequisites
 
@@ -525,14 +525,14 @@ This script will:
 SCP the Cobalt Strike archive to the server once. It will be reused for all future deployments:
 
 ```bash
-scp cobaltstrike-dist.tgz harris@<dashboard-server-ip>:~/
+scp cobaltstrike-dist.tgz ubuntu@<dashboard-eip>:~/
 ```
 
 ### Step 4: SSH Tunnel In and Open the Dashboard
 
 ```bash
-# Create the SSH tunnel
-ssh -L 5000:localhost:5000 harris@<dashboard-server-ip>
+# Create the SSH tunnel to the Dashboard Server (public EIP)
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
 
 # Open in your browser
 # http://localhost:5000
@@ -547,26 +547,28 @@ The dashboard will detect it is running in server mode and enable:
 
 Each additional operator needs:
 
-1. **SSH access to the dashboard server** — Add their public key to `~/.ssh/authorized_keys` on the server.
+1. **SSH access to the Dashboard Server** — Add their public key (and source IP to the allow-list) so they can reach the server.
 2. **SSH tunnel command:**
    ```bash
-   ssh -L 5000:localhost:5000 <operator-username>@<dashboard-server-ip>
+   ssh -L 5000:localhost:5000 <operator-username>@<dashboard-eip>
    ```
 3. **Browser** — Open `http://localhost:5000` after tunneling in.
 
 That is it. Operators do not need AWS CLI, Terraform, or any other tooling installed locally. The server handles everything.
 
-### Server Mode vs Local Mode Summary
+### Dashboard Server (production) vs Local Dev Summary
 
-| | Local Mode | Server Mode |
+| | Local Dev | Dashboard Server (production) |
 |---|-----------|-------------|
-| **Where dashboard runs** | Operator laptop | EC2 instance |
+| **Where dashboard runs** | Operator laptop (dev/testing only) | AWS EC2 instance (own VPC, public EIP) |
 | **AWS auth** | `~/.aws/credentials` on each laptop | IAM instance role (auto-rotating) |
 | **Terraform runs on** | Operator laptop | Server |
-| **Instance access** | Bastion hop / SSM | Terminal tab (in-browser SSH) |
+| **Instance access** | Bastion hop / SSM (legacy) | Jump via Dashboard Server (Terminal tab / VPC peering) |
 | **CS archive** | Each operator needs it | SCP once to server |
 | **Multi-operator** | Each sets up independently | One server, SSH tunnel in |
-| **REST API** | Tunnel through bastion | Direct via VPC peering |
+| **REST API** | Tunnel through bastion (legacy) | Direct via VPC peering |
+
+> The per-deployment bastion is now **legacy/fallback** — the AWS Dashboard Server is the primary SSH jump into all instances.
 
 ---
 

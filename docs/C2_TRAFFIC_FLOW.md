@@ -95,13 +95,17 @@ Target ◀──HTTPS response (commands)──── Redirector ◀────
 
 ### 2. Operator Access (SSH Tunnel)
 
+> **Primary path:** operator → AWS-hosted **Dashboard Server** (jump host) → team server. The bastion diagram below is the **legacy/fallback** path. See [Server Mode Traffic Flow](#server-mode-traffic-flow) below for the production path.
+
 ```
-Operator ──SSH──▶ Bastion (port 22) ──tunnel──▶ Team Server (port 50050)
+Operator ──SSH──▶ Dashboard Server (EIP, port 22) ──tunnel──▶ Team Server (port 50050)
+                  (legacy fallback: ──▶ Bastion ──tunnel──▶ Team Server)
 ```
 
 - **Initiated by**: Operator
-- **Command**: `ssh -L 50050:10.0.10.10:50050 ubuntu@bastion_ip`
-- **Security Groups**: Management CIDR → Bastion SG (22), Bastion SG → C2 SG (50050)
+- **Command (primary)**: `ssh -L 50050:10.0.10.10:50050 ubuntu@<dashboard-eip>`
+- **Command (legacy fallback)**: `ssh -L 50050:10.0.10.10:50050 ubuntu@bastion_ip`
+- **Security Groups**: Management CIDR → Dashboard SG (22), Dashboard VPC peering → C2 SG (50050)
 - **CS Client**: Connects to `localhost:50050` (tunneled to team server)
 
 ### 3. SSL Certificate Validation (DNS-01 via Route53)
@@ -358,8 +362,10 @@ STEP 1 — Target beacon sends check-in (HTTPS GET)
 **All 4 steps happen on the SAME TCP connection** that the target opened. The team server never opens a connection outbound.
 
 ```bash
-# The SSH tunnel command:
-ssh -L 50050:10.0.10.10:50050 ubuntu@bastion_public_ip
+# The SSH tunnel command (production — through the Dashboard Server EIP):
+ssh -L 50050:10.0.10.10:50050 ubuntu@<dashboard-eip>
+# Legacy/fallback (through the per-deployment bastion):
+#   ssh -L 50050:10.0.10.10:50050 ubuntu@bastion_public_ip
 # Then CS client connects to localhost:50050
 ```
 
@@ -451,8 +457,8 @@ Dashboard Server (10.100.0.0/16)
 
 5. **CS client still uses SSH tunnel** — Operators who want to run the CS GUI client on their laptop still create an SSH tunnel, but now through the dashboard server instead of the bastion:
    ```bash
-   # Server mode: tunnel CS client through dashboard server
-   ssh -L 50050:10.0.10.10:50050 harris@<dashboard-ip>
+   # Tunnel CS client through the Dashboard Server (public EIP)
+   ssh -L 50050:10.0.10.10:50050 ubuntu@<dashboard-eip>
    # Then CS client connects to localhost:50050
    ```
 

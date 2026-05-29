@@ -22,9 +22,9 @@ Get a vulnerable Active Directory lab running alongside your C2 infrastructure i
 
 ### Option 1: Via Web Application (Recommended)
 
-1. **Connect to the dashboard**:
+1. **Connect to the Dashboard Server** (AWS-hosted control plane + jump):
    ```bash
-   ssh -L 5000:localhost:5000 <operator>@<dashboard-ip>
+   ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
    # Open http://localhost:5000
    ```
 
@@ -83,18 +83,19 @@ If VPC peering is configured between your C2 VPC and GOAD VPC:
 - Beacons can call back directly through the redirector
 - No proxy needed, but requires proper routing
 
-### Method 3: Through Your Bastion
+### Method 3: Through the Dashboard Server (jump host)
+
+The AWS-hosted Dashboard Server is the primary jump into the GOAD network — tunnel through its EIP. (See [Server Mode Access](#server-mode-access) below for the in-browser Terminal tab, which needs no manual tunnel.)
 
 ```bash
-# SSH tunnel from your bastion to GOAD jumpbox
-# Then proxy Cobalt Strike traffic through
-
-# From your laptop:
-ssh -L 1080:<goad-jumpbox-private-ip>:22 ubuntu@<your-bastion-ip>
+# SSH tunnel from your laptop to the GOAD jumpbox, through the Dashboard Server:
+ssh -L 1080:<goad-jumpbox-private-ip>:22 ubuntu@<dashboard-eip>
 
 # Then create SOCKS proxy through the tunnel
 ssh -D 1080 -p 1080 localhost
 ```
+
+> **Legacy/fallback:** the per-deployment bastion is no longer the primary entry. Only use `ssh -L 1080:<goad-jumpbox-private-ip>:22 ubuntu@<your-bastion-ip>` when the Dashboard Server is unavailable.
 
 ## Accessing the GOAD Lab
 
@@ -107,16 +108,16 @@ When running the dashboard in server mode, access to the GOAD lab is simplified 
 - **GOAD provisioning** can be triggered directly from the dashboard UI; the server communicates with the jumpbox over the peered network to run Ansible
 - **No SOCKS proxy needed** for dashboard-initiated operations — the server reaches GOAD VMs directly
 
-Operators only need to SSH tunnel to the dashboard server itself:
+Operators only need to SSH tunnel to the Dashboard Server itself (production control plane + jump):
 ```bash
-ssh -L 5000:localhost:5000 harris@<dashboard-ip>
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
 # Then open http://localhost:5000 and use the Terminal tab for GOAD access
 ```
 
-For RDP access to Windows GOAD VMs from the operator laptop, tunnel through the dashboard server:
+For RDP access to Windows GOAD VMs from the operator laptop, tunnel through the Dashboard Server:
 ```bash
-ssh -L 3389:192.168.56.10:3389 harris@<dashboard-ip>
-# Then RDP to localhost:3389
+ssh -L 13389:192.168.56.10:3389 ubuntu@<dashboard-eip>
+# Then RDP to localhost:13389
 ```
 
 ### SSH to Jumpbox (Local Mode)
