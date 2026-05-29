@@ -5,7 +5,7 @@
 #   2. CS Storage (S3)
 #   3. VPC/Network
 #   4. C2 Infrastructure
-#   5. Bastion
+#   5. Attack Box
 #   6. Redirectors
 #   7. GOAD (Phase 2)
 #   8. Access Instructions
