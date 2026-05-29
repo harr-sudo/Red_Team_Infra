@@ -19,7 +19,7 @@
             --rti-subpill-h:  44px;
             --split-left:     45%;
             --split-handle-w: 6px;
-            --steprail-w:     140px;
+            --steprail-w:     220px;
             --motion-ease-walk: cubic-bezier(0.25, 0.46, 0.45, 0.94);
         }
 
@@ -329,11 +329,56 @@
         }
         .bw-cat__host:focus { outline: none; border-color: var(--guide-accent); }
 
+        /* 2026-05-29 — multi-axis filter blocks. Each axis (Category /
+           State / Detection) gets its own labeled row of chips. Summary
+           stats row sits at the bottom of the header, computed live. */
+        .bw-cat__filter-block {
+            display: grid;
+            grid-template-columns: 78px 1fr;
+            gap: 10px;
+            align-items: start;
+            padding: 8px 22px;
+            border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent);
+            background: color-mix(in srgb, var(--bg-body) 90%, var(--brand) 6%);
+            flex-shrink: 0;
+        }
+        .bw-cat__filter-block:last-of-type {
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .bw-cat__filter-label {
+            font-family: var(--font-family-mono);
+            font-size: 9.5px; font-weight: 700;
+            letter-spacing: 0.14em; text-transform: uppercase;
+            color: var(--text-secondary);
+            padding-top: 6px;
+        }
+        .bw-cat__stats {
+            display: flex; flex-wrap: wrap; gap: 6px;
+            padding: 10px 22px 12px;
+            background: var(--bg-section);
+            border-bottom: 1px solid var(--border-subtle);
+            flex-shrink: 0;
+        }
+        .bw-cat__stat {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 3px 9px;
+            border-radius: 999px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            font-family: var(--font-family-mono);
+            font-size: 10px; font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+        }
+        .bw-cat__stat--total { color: var(--text-primary); }
+        .bw-cat__stat--installed { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
+        .bw-cat__stat--available { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+        .bw-cat__stat--incompat  { background: var(--warning-bg); color: var(--warning-text); border-color: var(--warning-border); }
+        .bw-cat__stat--conflicts { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-border); }
+        .bw-cat__stat--patched   { background: var(--bg-section); color: var(--text-secondary); }
+        .bw-cat__stat--zero { opacity: 0.55; }
         .bw-cat__chips {
             display: flex; flex-wrap: wrap; gap: 6px;
-            padding: 12px 22px;
-            border-bottom: 1px solid var(--border-subtle);
-            background: color-mix(in srgb, var(--bg-body) 90%, var(--brand) 6%);
             flex-shrink: 0;
         }
         .bw-cat__chip {
@@ -456,6 +501,27 @@
             transform: translateY(-1px);
         }
         .bw-cat__row-walk:active { transform: translateY(0); }
+        .bw-cat__row-walk--disabled,
+        .bw-cat__row-walk:disabled {
+            background: var(--bg-section);
+            border-color: var(--border-subtle);
+            color: var(--text-muted, var(--text-secondary));
+            cursor: not-allowed;
+            opacity: 0.55;
+        }
+        .bw-cat__row-walk--disabled:hover,
+        .bw-cat__row-walk:disabled:hover {
+            background: var(--bg-section);
+            border-color: var(--border-subtle);
+            transform: none;
+        }
+        .bw-cat__row-nocurric {
+            font-family: var(--font-family-mono);
+            font-size: 10px;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+        .bw-cat__row--no-curric { opacity: 0.86; }
 
         .bw-cat__empty {
             padding: 32px 14px;
@@ -1490,13 +1556,40 @@
                     </div>
                 </div>
 
-                <div class="bw-cat__chips" id="catChips">
-                    <button class="bw-cat__chip is-active" type="button" data-cat="all">All</button>
-                    <button class="bw-cat__chip" type="button" data-cat="identity-kerberos">AD Identity</button>
-                    <button class="bw-cat__chip" type="button" data-cat="adcs">ADCS</button>
-                    <button class="bw-cat__chip" type="button" data-cat="acl">AD ACL</button>
-                    <button class="bw-cat__chip" type="button" data-cat="known-cve">Known CVE</button>
-                    <button class="bw-cat__chip" type="button" data-cat="protocol-network">Network</button>
+                <div class="bw-cat__filter-block">
+                    <span class="bw-cat__filter-label">Category</span>
+                    <div class="bw-cat__chips" id="catChips">
+                        <button class="bw-cat__chip is-active" type="button" data-cat="all">All</button>
+                        <button class="bw-cat__chip" type="button" data-cat="identity-kerberos">AD Identity</button>
+                        <button class="bw-cat__chip" type="button" data-cat="adcs">ADCS</button>
+                        <button class="bw-cat__chip" type="button" data-cat="acl">AD ACL</button>
+                        <button class="bw-cat__chip" type="button" data-cat="known-cve">Known CVE</button>
+                        <button class="bw-cat__chip" type="button" data-cat="protocol-network">Network</button>
+                        <button class="bw-cat__chip" type="button" data-cat="privilege-escalation">Priv Esc</button>
+                    </div>
+                </div>
+                <div class="bw-cat__filter-block">
+                    <span class="bw-cat__filter-label">State</span>
+                    <div class="bw-cat__chips" id="stateChips">
+                        <button class="bw-cat__chip is-active" type="button" data-state="all">All</button>
+                        <button class="bw-cat__chip" type="button" data-state="installed">Installed</button>
+                        <button class="bw-cat__chip" type="button" data-state="available">Available</button>
+                        <button class="bw-cat__chip" type="button" data-state="incompat">Incompatible</button>
+                        <button class="bw-cat__chip" type="button" data-state="conflicts">Conflicts</button>
+                        <button class="bw-cat__chip" type="button" data-state="patched">Patched</button>
+                    </div>
+                </div>
+                <div class="bw-cat__filter-block">
+                    <span class="bw-cat__filter-label">Detection</span>
+                    <div class="bw-cat__chips" id="detChips">
+                        <button class="bw-cat__chip is-active" type="button" data-det="all">All</button>
+                        <button class="bw-cat__chip" type="button" data-det="covered">Covered</button>
+                        <button class="bw-cat__chip" type="button" data-det="partial">Partial</button>
+                        <button class="bw-cat__chip" type="button" data-det="norule">No rule</button>
+                    </div>
+                </div>
+                <div class="bw-cat__stats" id="catStats">
+                    <!-- populated by renderCatalog -->
                 </div>
 
                 <ul class="bw-cat__list" id="catList">
@@ -1574,6 +1667,29 @@ const LS_RAIL  = 'boltonStepRailCollapsed';
 // panel by default (matches the operator's picked layout from the AskUser
 // preview vote).
 const DEFAULT_RATIO = 0.40;
+
+// ─── VULN STATE MAP ────────────────────────────────────────────────────
+// 2026-05-29 — Per-vuln browser-mode state for the multi-axis filter.
+// Real backend will surface this via the bolt-on facts endpoint;
+// hardcoded here for the preview. Values: installed / available /
+// incompat / conflicts / patched.
+const VULN_STATE_MAP = {
+    'bolton.identity-kerberos.kerberoastable-svc': 'installed',
+    'bolton.known-cve.zerologon':                  'available',
+    'bolton.adcs.esc1-misconfigured-template':     'installed',
+    'bolton.identity-kerberos.asrep-roastable':    'available',
+    'bolton.acl.adminsdholder-writeowner':         'available',
+    'bolton.protocol-network.llmnr-nbtns-poisoning': 'installed',
+    'bolton.known-cve.printnightmare':             'patched',
+    // 7 lightweight rows (no curriculum yet, but visible in browser)
+    'bolton.credentials.gpp-cpassword-sysvol':     'available',
+    'bolton.identity-kerberos.unconstrained-delegation': 'incompat',
+    'bolton.protocol-network.smb-signing-disabled': 'incompat',
+    'bolton.acl.laps-readable-by-domain-users':    'incompat',
+    'bolton.acl.generic-write-user':               'incompat',
+    'bolton.adcs.esc2-any-purpose':                'incompat',
+    'bolton.privilege-escalation.unquoted-service-path': 'incompat',
+};
 
 // ─── VULN DATA ─────────────────────────────────────────────────────────
 const VULNS = [
@@ -2530,6 +2646,100 @@ const VULNS = [
     },
 ];
 
+// ─── LIGHTWEIGHT VULN ROWS (no curriculum yet — visible in browser only) ─
+// 2026-05-29 — 7 additional rows so the browser shows the realistic
+// 14-vuln catalog the operator would see in production. These rows
+// have steps:[] which the renderer treats as "No walkthrough yet" —
+// the ▶ Walkthrough button is disabled with a tooltip explainer.
+const LIGHTWEIGHT_VULNS = [
+    {
+        id: 'bolton.credentials.gpp-cpassword-sysvol', slug: 'gpp-cpassword-sysvol',
+        category: 'identity-kerberos', host: 'tldc01',
+        name: 'GPP cpassword in SYSVOL',
+        pills: [
+            { cls: 'bw-pill--info', text: 'available' },
+            { cls: 'bw-pill--success', text: 'covered' },
+            { cls: '', text: 'AD Identity' },
+        ],
+        steps: [],
+        detection: { coverage: 'covered' },
+    },
+    {
+        id: 'bolton.identity-kerberos.unconstrained-delegation', slug: 'unconstrained-delegation',
+        category: 'identity-kerberos', host: 'tldc01',
+        name: 'Unconstrained Delegation',
+        pills: [
+            { cls: 'bw-pill--warn', text: 'incompat' },
+            { cls: 'bw-pill--warn', text: 'partial' },
+            { cls: '', text: 'AD Identity' },
+        ],
+        steps: [],
+        detection: { coverage: 'partial' },
+    },
+    {
+        id: 'bolton.protocol-network.smb-signing-disabled', slug: 'smb-signing-disabled',
+        category: 'protocol-network', host: 'tlms01',
+        name: 'SMB Signing Disabled',
+        pills: [
+            { cls: 'bw-pill--warn', text: 'incompat' },
+            { cls: 'bw-pill--success', text: 'covered' },
+            { cls: '', text: 'Network' },
+        ],
+        steps: [],
+        detection: { coverage: 'covered' },
+    },
+    {
+        id: 'bolton.acl.laps-readable-by-domain-users', slug: 'laps-readable',
+        category: 'acl', host: 'tlms01',
+        name: 'LAPS Readable by Domain Users',
+        pills: [
+            { cls: 'bw-pill--warn', text: 'incompat' },
+            { cls: 'bw-pill--danger', text: 'no rule' },
+            { cls: '', text: 'AD ACL' },
+        ],
+        steps: [],
+        detection: { coverage: 'norule' },
+    },
+    {
+        id: 'bolton.acl.generic-write-user', slug: 'generic-write-user',
+        category: 'acl', host: 'tldc01',
+        name: 'GenericWrite on Privileged User',
+        pills: [
+            { cls: 'bw-pill--warn', text: 'incompat' },
+            { cls: 'bw-pill--warn', text: 'partial' },
+            { cls: '', text: 'AD ACL' },
+        ],
+        steps: [],
+        detection: { coverage: 'partial' },
+    },
+    {
+        id: 'bolton.adcs.esc2-any-purpose', slug: 'esc2-any-purpose',
+        category: 'adcs', host: 'tldc01',
+        name: 'ADCS ESC2 — AnyPurpose EKU template',
+        pills: [
+            { cls: 'bw-pill--warn', text: 'incompat' },
+            { cls: 'bw-pill--warn', text: 'partial' },
+            { cls: '', text: 'ADCS' },
+        ],
+        steps: [],
+        detection: { coverage: 'partial' },
+    },
+    {
+        id: 'bolton.privilege-escalation.unquoted-service-path', slug: 'unquoted-service-path',
+        category: 'privilege-escalation', host: 'tlms01',
+        name: 'Unquoted Service Path → SYSTEM',
+        pills: [
+            { cls: 'bw-pill--warn', text: 'incompat' },
+            { cls: 'bw-pill--success', text: 'covered' },
+            { cls: '', text: 'Priv Esc' },
+        ],
+        steps: [],
+        detection: { coverage: 'covered' },
+    },
+];
+// Splice lightweights into the main array so the browser sees 14 total
+VULNS.push(...LIGHTWEIGHT_VULNS);
+
 // ─── DEFAULT STATE ──────────────────────────────────────────────────────
 const DEFAULT_STATE = {
     // 2026-05-29 — UX correction: default to dockOpen:false so the
@@ -2541,6 +2751,8 @@ const DEFAULT_STATE = {
     activeTab: 'walkthrough',
     splitRatio: DEFAULT_RATIO,
     filterCategory: 'all',
+    filterState: 'all',           // 2026-05-29 — multi-axis filter
+    filterDetection: 'all',        // 2026-05-29 — multi-axis filter
     filterHost: 'all',
     filterSearch: '',
     perVuln: {},
@@ -2720,18 +2932,32 @@ function renderCatalog() {
     filtered.forEach(v => {
         const pv = perVuln(v.id);
         const total = v.steps.length;
+        const hasCurriculum = total > 0;
         const done = pv.completedSteps.length;
         const li = document.createElement('li');
         li.className = 'bw-cat__row' + (v.id === state.selectedVulnId ? ' is-selected' : '');
+        if (!hasCurriculum) li.className += ' bw-cat__row--no-curric';
         li.dataset.id = v.id;
 
         const pillsHtml = v.pills.map(p =>
             `<span class="bw-pill ${p.cls}">${escapeHtml(p.text)}</span>`
         ).join('');
 
-        const statusHtml = done > 0
-            ? `<span class="check">✓</span>${done}/${total}`
-            : `Step 1/${total}`;
+        const statusHtml = !hasCurriculum
+            ? `<span class="bw-cat__row-nocurric">No curriculum yet</span>`
+            : (done > 0
+                ? `<span class="check">✓</span>${done}/${total}`
+                : `Step 1/${total}`);
+
+        // 2026-05-29 — disable the ▶ Walkthrough button for vulns without
+        // curriculum data. Operator can still see the row + state + detection
+        // info in the browser, just can't launch a walkthrough.
+        const walkBtn = hasCurriculum
+            ? `<button class="bw-cat__row-walk" type="button" data-walk-vuln="${escapeHtml(v.id)}"
+                       title="Open walkthrough (slides in from right)">▶ Walkthrough</button>`
+            : `<button class="bw-cat__row-walk bw-cat__row-walk--disabled" type="button"
+                       disabled
+                       title="No walkthrough curriculum yet for this vulnerability">▶ Walkthrough</button>`;
 
         li.innerHTML = `
             <div>
@@ -2741,32 +2967,68 @@ function renderCatalog() {
             </div>
             <div class="bw-cat__row-actions">
                 <div class="bw-cat__row-status">${statusHtml}</div>
-                <button class="bw-cat__row-walk" type="button" data-walk-vuln="${escapeHtml(v.id)}"
-                        title="Open walkthrough (slides in from right)">▶ Walkthrough</button>
+                ${walkBtn}
             </div>
         `;
         // Row click — selects vuln (and swaps walkthrough content if dock already open)
         li.addEventListener('click', (ev) => {
-            if (ev.target.closest('[data-walk-vuln]')) return; // button handles it
+            if (ev.target.closest('[data-walk-vuln]')) return;
             selectVuln(v.id);
         });
-        // Button click — opens dock for this vuln (or swaps content if already open)
-        li.querySelector('[data-walk-vuln]').addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            openDock(v.id);
-        });
+        // Button click — opens dock for this vuln (no-op when disabled)
+        if (hasCurriculum) {
+            li.querySelector('[data-walk-vuln]').addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                openDock(v.id);
+            });
+        }
         list.appendChild(li);
     });
+}
+
+function stateOf(v) {
+    return v.state || VULN_STATE_MAP[v.id] || 'available';
 }
 
 function matchesFilters(v) {
     if (state.filterHost !== 'all' && v.host !== state.filterHost) return false;
     if (state.filterCategory !== 'all' && v.category !== state.filterCategory) return false;
+    if (state.filterState !== 'all' && stateOf(v) !== state.filterState) return false;
+    if (state.filterDetection !== 'all') {
+        const cov = (v.detection && v.detection.coverage) || 'norule';
+        if (cov !== state.filterDetection) return false;
+    }
     if (state.filterSearch) {
         const q = state.filterSearch.toLowerCase();
         if (!v.name.toLowerCase().includes(q) && !v.id.toLowerCase().includes(q)) return false;
     }
     return true;
+}
+
+/* Compute + render the summary stats chip row from the FULL catalog
+   (not the filtered subset — the operator wants global counts) so the
+   chip row stays stable as filters change. */
+function renderCatalogStats() {
+    const stats = document.getElementById('catStats');
+    if (!stats) return;
+    const total = VULNS.length;
+    const buckets = { installed: 0, available: 0, incompat: 0, conflicts: 0, patched: 0 };
+    VULNS.forEach(v => {
+        const s = stateOf(v);
+        if (buckets[s] !== undefined) buckets[s]++;
+    });
+    const chips = [
+        ['total',     `${total} bolt-ons`],
+        ['installed', `Installed · ${buckets.installed}`],
+        ['available', `Available · ${buckets.available}`],
+        ['incompat',  `Incompatible · ${buckets.incompat}`],
+        ['conflicts', `Conflicts · ${buckets.conflicts}`],
+        ['patched',   `Patched · ${buckets.patched}`],
+    ];
+    stats.innerHTML = chips.map(([k, label]) => {
+        const zero = (k !== 'total') && (buckets[k] === 0);
+        return `<span class="bw-cat__stat bw-cat__stat--${k}${zero ? ' bw-cat__stat--zero' : ''}">${escapeHtml(label)}</span>`;
+    }).join('');
 }
 
 function selectVuln(id) {
@@ -2794,13 +3056,9 @@ function initCatalogControls() {
         saveState();
         renderCatalog();
     });
-    // Chips
+    // Category chips
     document.querySelectorAll('#catChips .bw-cat__chip').forEach(chip => {
-        if (chip.dataset.cat === state.filterCategory) {
-            chip.classList.add('is-active');
-        } else {
-            chip.classList.remove('is-active');
-        }
+        chip.classList.toggle('is-active', chip.dataset.cat === state.filterCategory);
         chip.addEventListener('click', () => {
             state.filterCategory = chip.dataset.cat;
             document.querySelectorAll('#catChips .bw-cat__chip').forEach(c => c.classList.toggle('is-active', c === chip));
@@ -2808,6 +3066,28 @@ function initCatalogControls() {
             renderCatalog();
         });
     });
+    // 2026-05-29 — State filter chips
+    document.querySelectorAll('#stateChips .bw-cat__chip').forEach(chip => {
+        chip.classList.toggle('is-active', chip.dataset.state === state.filterState);
+        chip.addEventListener('click', () => {
+            state.filterState = chip.dataset.state;
+            document.querySelectorAll('#stateChips .bw-cat__chip').forEach(c => c.classList.toggle('is-active', c === chip));
+            saveState();
+            renderCatalog();
+        });
+    });
+    // 2026-05-29 — Detection filter chips
+    document.querySelectorAll('#detChips .bw-cat__chip').forEach(chip => {
+        chip.classList.toggle('is-active', chip.dataset.det === state.filterDetection);
+        chip.addEventListener('click', () => {
+            state.filterDetection = chip.dataset.det;
+            document.querySelectorAll('#detChips .bw-cat__chip').forEach(c => c.classList.toggle('is-active', c === chip));
+            saveState();
+            renderCatalog();
+        });
+    });
+    // Summary stats (computed from the full catalog, not the filtered subset)
+    renderCatalogStats();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -3014,11 +3294,9 @@ function buildStepArticle(v, step, stepIdx) {
 
     article.innerHTML = html;
 
-    // Assessment
-    if (step.assessment) {
-        const quiz = buildQuizSection(v.id, step);
-        article.appendChild(quiz);
-    }
+    // 2026-05-29 — MCQ assessments removed per user feedback ("get rid of
+    // those stupid assessments") — distracting from the walkthrough flow.
+    // Mark-complete in the footer stays as the manual completion action.
 
     // Footer (Back / Mark / Continue)
     const foot = document.createElement('footer');
@@ -3230,16 +3508,18 @@ function buildDetectionsView(v) {
         ? '● Coverage: covered'
         : v.detection.coverage === 'partial' ? '● Coverage: partial' : '● Coverage: no rule';
 
+    // 2026-05-29 — Detections source links now open in a new tab.
+    // Copy URL button removed (the new-tab link replaces its purpose;
+    // operator's browser handles copy via right-click → Copy link).
     let rowsHtml = v.detection.rules.map((r, i) => `
         <tr>
             <td>${escapeHtml(r.name)}</td>
             <td class="bw-det__uuid">${escapeHtml(r.uuid)}</td>
             <td><span class="bw-pill ${r.coverage === 'full' ? 'bw-pill--success' : r.coverage === 'indirect' ? 'bw-pill--warn' : ''}">${escapeHtml(r.coverage)}</span></td>
             <td>
-                <div class="bw-det__link-cell">
-                    <a href="${r.url}" class="bw-det__link" data-gh-url onclick="event.preventDefault();console.log('Would open ${r.url}');">github.com/elastic/detection-rules</a>
-                    <button class="bw-det__copy" type="button" data-copy-url="${escapeHtml(r.url)}">Copy URL</button>
-                </div>
+                <a href="${escapeHtml(r.url)}" class="bw-det__link"
+                   target="_blank" rel="noopener noreferrer"
+                   title="Opens in a new tab">github.com/elastic/detection-rules ↗</a>
             </td>
         </tr>
     `).join('');
@@ -3264,17 +3544,8 @@ function buildDetectionsView(v) {
         </div>
     `;
 
-    // Wire copy-URL buttons
-    wrap.querySelectorAll('[data-copy-url]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const url = btn.getAttribute('data-copy-url');
-            const old = btn.textContent;
-            copyToClipboard(url, null);
-            btn.classList.add('is-copied');
-            btn.textContent = '✓ Copied';
-            setTimeout(() => { btn.classList.remove('is-copied'); btn.textContent = old; }, 1500);
-        });
-    });
+    // Copy-URL buttons removed 2026-05-29 — links open in new tab instead.
+    // KQL block keeps its Copy button (wired via wireCopyButtons).
     setTimeout(() => wireCopyButtons(wrap), 0);
 
     return wrap;
