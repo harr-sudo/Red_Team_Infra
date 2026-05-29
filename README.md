@@ -261,22 +261,18 @@ See [GOAD Quick Start](./docs/GOAD_QUICK_START.md) for deployment instructions.
 
 ### 🎓 CCRTS-Lab (CREST Exam Mirror)
 
-AWS-hosted rehearsal environment that mirrors the **CCRTS** (CREST Certified Red Team Specialist) exam estate. Uses the publicly available CREST Community AMIs (account `126620636130`) copied cross-region into `eu-central-1`, optionally augmented with an AD estate and an ELK stack for detection rule iteration.
+AWS-hosted rehearsal environment that mirrors the **CCRTS** (CREST Certified Red Team Specialist) exam estate. Uses the publicly available CREST Community AMIs (account `126620636130`) copied cross-region into `eu-central-1`, with an AD estate and an ELK stack for detection rule iteration. A single, fully self-contained deployment type — no size tiers and no C2 integration, matching upstream [`spark42/ccrts-lab`](https://gitlab.com/spark42/ccrts-lab).
 
 | Lab | Hosts | Description | Est. Cost |
 |-----|-------|-------------|-----------|
-| **ccrts-mini** | 4 | Kali + Windows workstation + ELK + NAT (no AD) | ~$210/mo |
-| **ccrts-full** | 6 | mini + DC (ccrts.local) + member workstation | ~$310/mo |
-| **combined-adhoc-ccrts-mini** | C2 ad-hoc + ccrts-mini | C2 ops with rehearsal lab attached | ~$415/mo |
-| **combined-adhoc-ccrts-full** | C2 ad-hoc + ccrts-full | C2 ops with full exam mirror | ~$485/mo |
-| **combined-full-ccrts-full** | C2 full red team + ccrts-full | Full engagement + exam mirror | ~$580/mo |
+| **ccrts** | 5 | Kali + Windows ws + DC (ccrts.local) + domain-joined ws + ELK (self-contained, no C2) | ~$310/mo |
 
 **Key Features:**
 - 🇬🇧 CREST Community AMIs (Kali + Windows) auto-discovered and copied to `eu-central-1`
-- 🏰 Optional `ccrts.local` AD estate (DC + domain-joined Win11 workstation)
+- 🏰 `ccrts.local` AD estate (DC + domain-joined Win workstation)
 - 📊 Single-node ELK stack for detection rule development
-- 🔐 Self-contained — connects through the dashboard EC2 jump host (no public-facing services)
-- ⚠️ Cobalt Strike not included — exam CS is licensed only inside Pearson VUE; bring your own
+- 🔐 Fully isolated — connects through the dashboard EC2 jump host (no public-facing services, no C2 peering)
+- ⚠️ Cobalt Strike not included — exam CS is licensed only inside Pearson VUE; bring your own (runs on the Kali host directly)
 
 See [CCRTS-Lab Operator Guide](./docs/CCRTS_LAB.md) for deployment, connection, and upgrade details.
 

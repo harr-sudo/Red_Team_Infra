@@ -91,33 +91,19 @@ This page provides a visual index of all architecture diagrams generated for the
 
 ## CCRTS-Lab (CREST Exam Mirror)
 
-> **Status:** Diagrams pending — regen task scheduled. Placeholder paths shown below.
-
-### CCRTS Mini — Kali + Windows + ELK (no AD)
-**Pending — diagram regen task scheduled** (`../../generated-diagrams/ccrts-mini-architecture.png`)
-**Cost**: ~$210/month | **Hosts**: 4 (ccrts-kali, ccrts-win-ws, ccrts-elk, NAT) | **VPC**: 192.168.57.0/24
+### CCRTS — Self-contained CREST exam-mirror lab
+![CCRTS](../../generated-diagrams/ccrts-architecture.png)
+**Cost**: ~$310/month | **Hosts**: 5 (ccrts-kali, ccrts-win-ws, ccrts-dc01, ccrts-ad-ws01, ccrts-elk) + NAT | **VPC**: 192.168.57.0/24 (fully isolated — no C2) | **AD Domain**: ccrts.local
 [📖 Full Documentation](../CCRTS_LAB.md)
 
 ---
 
-### CCRTS Full — Kali + Windows + AD + ELK
-**Pending — diagram regen task scheduled** (`../../generated-diagrams/ccrts-full-architecture.png`)
-**Cost**: ~$310/month | **Hosts**: 6 (mini + ccrts-dc01 + ccrts-ad-ws01) | **AD Domain**: ccrts.local
-[📖 Full Documentation](../CCRTS_LAB.md)
+## Bolt-on Test Lab
 
----
-
-### Combined: C2 Ad-Hoc + CCRTS Mini
-**Pending — diagram regen task scheduled** (`../../generated-diagrams/combined-c2-ccrts-mini.png`)
-**Cost**: ~$415/month | **VPC Peering**: ✅ (C2 10.0.0.0/16 ↔ CCRTS 192.168.57.0/24)
-[📖 Full Documentation](../CCRTS_LAB.md#combined-modes--when-to-use-what)
-
----
-
-### Combined: C2 Full + CCRTS Full
-**Pending — diagram regen task scheduled** (`../../generated-diagrams/combined-full-ccrts-full.png`)
-**Cost**: ~$580/month | **VPC Peering**: ✅ | **Complete Engagement + Exam Mirror**
-[📖 Full Documentation](../CCRTS_LAB.md#combined-modes--when-to-use-what)
+### Test Lab — bolt-on subnet inside the C2 VPC
+![Test Lab](../../generated-diagrams/test-lab-architecture.png)
+**Enabled by**: `enable_test_lab = true` on a `c2-*` deployment | **Hosts**: 4 (tldc01, tlms01, tlws01, tllinux01) | **Subnet**: 10.0.20.0/24 inside the C2 VPC (no new VPC/NAT — reuses the C2 NAT GW) | **AD Domain**: testlab.local
+[📖 Test Lab Design](../internal/TESTLAB_DESIGN.md)
 
 ---
 

@@ -4,59 +4,63 @@
 
 **CCRTS** (CREST Certified Red Team Specialist) is a UK-issued red team certification administered at Pearson VUE testing centres. The exam provides candidates with two locked-down workstations — a **Kali Linux** AMI and a **Windows** AMI — both customised and published by CREST. The **CCRTS-Lab** feature in this dashboard provisions an AWS-hosted environment that mirrors the exam estate so operators can rehearse against the same images, networking shape, and tooling layout they will see on test day.
 
-The lab is built around the publicly available **CREST Community AMIs** (AWS account `126620636130`), optionally augmented with a small **Active Directory** estate (DC + member workstation) and an **ELK** stack for detection rule development. It is deliberately self-contained — it does not consume the framework's shared C2 redirector infrastructure, and Cobalt Strike from the exam environment is **not** included in the downloadable AMIs.
+It is exposed as a **single, fully self-contained deployment type — `ccrts`**. There are **no size tiers** (no mini/full split) and **no C2 integration** (no combined modes, no bolt-on-to-C2, no C2 VPC peering). The lab always provisions the same 5 hosts and lives entirely on its own in an isolated VPC.
 
-This documentation set draws inspiration from the open-source [`spark42/ccrts-lab`](https://gitlab.com/spark42/ccrts-lab) project by Richard Mader. Where Spark42 publishes a single-region Vagrant + Terraform recipe, this dashboard module:
+The lab is built around the publicly available **CREST Community AMIs** (AWS account `126620636130`), augmented with a small **Active Directory** estate (DC + domain-joined workstation) and an **ELK** stack for detection rule development. It is deliberately self-contained — it does not consume the framework's shared C2 redirector infrastructure, and Cobalt Strike from the exam environment is **not** included in the downloadable AMIs (CS runs on the Kali host directly — bring your own licensed install).
+
+This module mirrors the open-source [`spark42/ccrts-lab`](https://gitlab.com/spark42/ccrts-lab) project by Richard Mader, which is published as **a single modular lab configuration — not a multi-size offering**. Where Spark42 publishes a single-region Vagrant + Terraform recipe, this dashboard module:
 
 - Pins all deployment to `eu-central-1` (the framework's standard region) via cross-region `aws_ami_copy`.
-- Wraps the lab as a first-class deployment type selectable from the dashboard UI.
-- Adds optional combined modes that bolt the lab onto an existing C2 deployment.
+- Wraps the lab as a first-class, self-contained deployment type selectable from the dashboard UI.
 - Manages CREST AMI version drift through the Cleanup pane.
 
 ### Why this lab exists
 
 - **Rehearsal parity.** Candidates can practise with the exact CREST AMI builds rather than approximations.
-- **Detection iteration.** The optional ELK stack ingests host telemetry so operators can refine OPSEC against Sigma/Elastic SIEM rules before sitting the exam.
-- **Self-contained networking.** Lab sits in its own `192.168.57.0/24` VPC chosen specifically to avoid collisions with the C2 VPC (`10.0.0.0/16`), GOAD VPC (`192.168.56.0/24`), and the optional test lab (`10.99.50.0/24`).
+- **Detection iteration.** The ELK stack ingests host telemetry so operators can refine OPSEC against Sigma/Elastic SIEM rules before sitting the exam.
+- **Fully isolated networking.** Lab sits in its own `192.168.57.0/24` VPC chosen specifically to avoid collisions with the C2 VPC (`10.0.0.0/16`), GOAD VPC (`192.168.56.0/24`), and the optional test lab (`10.0.20.0/24`). There is no peering to a C2 deployment — the lab stands alone.
 
 ---
 
 ## Architecture
 
+![CCRTS architecture](../generated-diagrams/ccrts-architecture.png)
+
 ```
 Operator laptop
    │  (browser + SSH client)
    │
-   ├── SSH tunnel ──▶ Dashboard EC2 (jump host)
-   │                       │
-   │                       │  VPC peering / cross-VPC routing
-   │                       ▼
-   │             CCRTS VPC — 192.168.57.0/24
-   │             ┌────────────────────────────────────────────┐
-   │             │  Private subnet (192.168.57.0/26)          │
-   │             │   • ccrts-kali        192.168.57.20        │
-   │             │   • ccrts-win-ws      192.168.57.30        │
-   │             │   • ccrts-dc01        192.168.57.40 (full) │
-   │             │   • ccrts-ad-ws01     192.168.57.41 (full) │
-   │             │   • ccrts-elk         192.168.57.50        │
-   │             │                                            │
-   │             │  Public subnet  (192.168.57.64/26)         │
-   │             │   • NAT GW (egress only — no lab hosts)    │
-   │             └────────────────────────────────────────────┘
-   │
-   └── (combined-*-ccrts only) ──▶ C2 VPC (10.0.0.0/16)
-                                       VPC peered to CCRTS VPC
+   └── SSH tunnel ──▶ Dashboard EC2 (sole jump host)
+                           │
+                           │  VPC peering / cross-VPC routing
+                           ▼
+                 CCRTS VPC — 192.168.57.0/24  (fully isolated — no C2)
+                 ┌────────────────────────────────────────────┐
+                 │  Private subnet (192.168.57.0/26)          │
+                 │   • ccrts-kali        192.168.57.20        │
+                 │   • ccrts-win-ws      192.168.57.30        │
+                 │   • ccrts-dc01        192.168.57.40        │
+                 │   • ccrts-ad-ws01     192.168.57.41        │
+                 │   • ccrts-elk         192.168.57.50        │
+                 │                                            │
+                 │  Public subnet  (192.168.57.64/26)         │
+                 │   • NAT GW (egress only — no lab hosts)    │
+                 └────────────────────────────────────────────┘
 ```
+
+There is **no C2 VPC** and **no C2 peering** — the `ccrts` lab is a standalone environment reached only through the Dashboard Server jump.
 
 ### Host inventory
 
-| Host | OS | Instance | IP | Role | Present in |
-|---|---|---|---|---|---|
-| **ccrts-kali** | Kali Linux (CREST AMI) | `t3.medium` | `192.168.57.20` | Attack platform — CREST Kali candidate image | mini + full |
-| **ccrts-win-ws** | Windows (CREST AMI) | `t3.large` | `192.168.57.30` | CCRTS candidate workstation | mini + full |
-| **ccrts-dc01** | Windows Server 2022 | `t3.medium` | `192.168.57.40` | Domain controller for `ccrts.local` | full only |
-| **ccrts-ad-ws01** | Windows 11 | `t3.medium` | `192.168.57.41` | Domain-joined member workstation | full only |
-| **ccrts-elk** | Ubuntu 22.04 | `t3.large` | `192.168.57.50` | Elasticsearch + Kibana + Logstash 8.19 (single-node, no auth) | mini + full |
+All 5 hosts are **always present** — `ccrts` has no size tiers, so there is no "mini" subset.
+
+| Host | OS | Instance | IP | Role |
+|---|---|---|---|---|
+| **ccrts-kali** | Kali Linux (CREST AMI) | `t3.medium` | `192.168.57.20` | Attack platform — CREST Kali candidate image (CS runs here) |
+| **ccrts-win-ws** | Windows (CREST AMI) | `t3.large` | `192.168.57.30` | CCRTS candidate workstation |
+| **ccrts-dc01** | Windows Server 2022 | `t3.medium` | `192.168.57.40` | Domain controller for `ccrts.local` |
+| **ccrts-ad-ws01** | Windows 11 | `t3.medium` | `192.168.57.41` | Domain-joined member workstation |
+| **ccrts-elk** | Ubuntu 22.04 | `t3.large` | `192.168.57.50` | Elasticsearch + Kibana + Logstash 8.19 (single-node, no auth) |
 
 ### Network CIDRs
 
@@ -79,7 +83,7 @@ CCRTS-Lab has lighter prerequisites than the C2 deployment types:
 | AWS account with EC2/VPC/IAM/EBS/CopyImage permissions | **Required** |
 | CCRTS exam booking with CREST / Pearson VUE | **Not required** — Community AMIs are publicly accessible |
 | Registered domain + Route 53 zone | **Not required** — lab has no public-facing services |
-| Cobalt Strike archive uploaded to S3 | **Not required for `ccrts-*` only** deployments |
+| Cobalt Strike archive uploaded to S3 | **Not required** — `ccrts` is self-contained and does not use the framework's C2 tooling |
 | Cobalt Strike licence | **Recommended** for operators wanting parity with the Pearson VUE environment (the CS install is licensed inside the exam centre but **not** included in the downloadable AMI; bring your own) |
 
 **Important:** CCRTS-Lab is intended for licensed red team operators preparing for, or training around, the CCRTS certification. The lab AMIs and AD estate are not hardened — see [Default credentials](#default-credentials) for the security posture.
@@ -157,30 +161,15 @@ See [Upgrading CREST AMIs](#upgrading-crest-amis) for what happens when CREST pu
 
 ---
 
-## Deployment types
+## Deployment type
 
-CCRTS-Lab adds **5 new deployment types** to the framework, taking the total from 11 to 16:
+CCRTS-Lab adds **one** deployment type to the framework, taking the total from 11 to 12:
 
 | `deployment_type` | Hosts | Est. monthly | Use case |
 |---|---|---|---|
-| `ccrts-mini` | 4 (kali, win-ws, elk, NAT) | **~$210/mo** | Standalone exam-mirror practice without AD |
-| `ccrts-full` | 6 (kali, win-ws, dc01, ad-ws01, elk, NAT) | **~$310/mo** | Full exam mirror — Kali + Windows + AD estate |
-| `combined-adhoc-ccrts-mini` | C2 ad-hoc + ccrts-mini, VPC peered | **~$415/mo** | C2 ops alongside exam rehearsal (no AD) |
-| `combined-adhoc-ccrts-full` | C2 ad-hoc + ccrts-full, VPC peered | **~$485/mo** | C2 ops + full exam mirror with AD |
-| `combined-full-ccrts-full` | C2 full red team + ccrts-full, VPC peered | **~$580/mo** | Full red team operation with exam-mirror lab on the side |
+| `ccrts` | 5 (kali, win-ws, dc01, ad-ws01, elk) + NAT | **~$310/mo** | Self-contained CREST exam mirror — Kali + Windows + AD estate + ELK |
 
-Pure `ccrts-*` deployments are **self-contained** — they include their own NAT gateway, IAM roles, and security groups. All deployments are reached through the Dashboard Server (the sole SSH jump) via VPC peering; combined deployments additionally share the C2 deployment's IAM and peering routes.
-
-### Bolt-on toggle
-
-Alternatively, any `c2-*` deployment can enable the lab via the bolt-on flag (parallels `enable_test_lab`):
-
-```hcl
-deployment_type   = "c2-adhoc"
-enable_ccrts_lab  = true
-```
-
-This brings up the CCRTS VPC alongside the C2 VPC with peering — equivalent in effect to `combined-adhoc-ccrts-full` but reusing the operator's preferred C2 sizing.
+The `ccrts` deployment is **fully self-contained** — it includes its own VPC, NAT gateway, IAM roles, and security groups, and provisions all 5 hosts every time. It is reached **only** through the Dashboard Server (the sole SSH jump) via VPC peering between the Dashboard VPC and the CCRTS VPC. There is no C2 VPC and no C2 peering: matching upstream `spark42/ccrts-lab`, the lab stands alone with no size tiers, no combined modes, and no bolt-on-to-C2 path.
 
 ---
 
@@ -190,17 +179,15 @@ All CCRTS variables live in `terraform/variables.tf` and can be set in `configs/
 
 | Variable | Default | Description |
 |---|---|---|
-| `deployment_type` | `c2-adhoc` | Set to `ccrts-mini`, `ccrts-full`, or any `combined-*-ccrts-*` mode |
-| `enable_ccrts_lab` | `false` | Bolt-on toggle for `c2-*` deployments |
+| `deployment_type` | `c2-adhoc` | Set to `ccrts` for the self-contained exam-mirror lab |
 | `ccrts_vpc_cidr` | `192.168.57.0/24` | CCRTS VPC CIDR — change only if conflicting with another VPC |
 | `ccrts_kali_instance_type` | `t3.medium` | Override Kali workstation sizing |
 | `ccrts_win_instance_type` | `t3.large` | Override Windows workstation sizing |
-| `ccrts_dc_instance_type` | `t3.medium` | Override DC sizing (full only) |
-| `ccrts_ad_ws_instance_type` | `t3.medium` | Override AD member sizing (full only) |
+| `ccrts_dc_instance_type` | `t3.medium` | Override DC sizing |
+| `ccrts_ad_ws_instance_type` | `t3.medium` | Override AD member workstation sizing |
 | `ccrts_elk_instance_type` | `t3.large` | Override ELK node sizing |
-| `ccrts_enable_elk` | `true` | Disable to skip the ELK host (~$80/mo savings) |
-| `ccrts_ad_domain` | `ccrts.local` | AD domain FQDN (full only) |
-| `ccrts_ad_netbios` | `CCRTS` | NetBIOS short name (full only) |
+| `ccrts_ad_domain` | `ccrts.local` | AD domain FQDN |
+| `ccrts_ad_netbios` | `CCRTS` | NetBIOS short name |
 | `ccrts_ad_admin_password` | `P@ssw0rd1!` | Domain administrator password — change for long-lived deployments |
 | `ccrts_ad_user_password` | `Welcome1!` | Low-priv `jdoe` user password |
 | `ccrts_management_cidr_blocks` | `[]` | Optional direct-access CIDRs (not normally needed — dashboard is the jump host) |
@@ -276,33 +263,13 @@ The lab uses the credentials below intentionally — they match the published CR
 ## What's NOT included
 
 - **Cobalt Strike.** Per Spark42's blog and confirmed by CREST documentation, the CS install on the exam Kali AMI is **licensed only inside Pearson VUE's network** and is **not part of the downloadable Community AMI**. Operators wanting CS in the lab must bring their own licensed install and deploy it onto the Kali host manually.
-- **Bolt-ons (Sliver, Mythic, etc.).** Pure `ccrts-*` deployments do not support the Bolt-ons sub-pill on the dashboard. The lab is a self-contained exam mirror and CS runs on the Kali workstation itself — the shared C2 bolt-on tooling does not apply. The bolt-ons pill is rendered **disabled** with an inline explainer.
-- **Operations pane.** Pure `ccrts-*` deployments do not integrate with the dashboard's Operations sub-pill (beacon catalogue, listener management, PE Payload Generator). CS lives on the Kali host directly and is operated through the CS client there. The Operations pill is rendered **disabled** with an inline explainer.
+- **Bolt-ons (Sliver, Mythic, etc.).** The `ccrts` deployment does not support the Bolt-ons sub-pill on the dashboard. The lab is a self-contained exam mirror and CS runs on the Kali workstation itself — the shared C2 bolt-on tooling does not apply. The bolt-ons pill is rendered **disabled** with an inline explainer.
+- **Operations pane.** The `ccrts` deployment does not integrate with the dashboard's Operations sub-pill (beacon catalogue, listener management, PE Payload Generator). CS lives on the Kali host directly and is operated through the CS client there. The Operations pill is rendered **disabled** with an inline explainer.
+- **C2 integration.** There are no combined modes, no bolt-on-to-C2 flag, and no C2 VPC peering. `ccrts` is a standalone lab — it never shares a deployment with C2 infrastructure.
 - **Domain fronting / CloudFront.** Lab traffic does not traverse the framework's redirector + fronting infrastructure.
 - **Route 53 / ACM.** No public DNS or certificates are provisioned — the lab is private-only.
 
-The disabled-pill UX only applies to **pure `ccrts-*`** modes. `combined-*-ccrts` deployments retain full bolt-ons and operations support, because the C2 side of the deployment is fully present.
-
----
-
-## Combined modes — when to use what
-
-| Mode | Use when… |
-|---|---|
-| `ccrts-mini` / `ccrts-full` | You want an isolated exam-rehearsal sandbox with nothing else running. Cheapest and simplest. |
-| `combined-adhoc-ccrts-mini` | You're running a low-intensity engagement (single team server) and want exam rehearsal on the side without spinning up AD. |
-| `combined-adhoc-ccrts-full` | You're running a low-intensity engagement and want a full CCRTS rehearsal including the AD estate. |
-| `combined-full-ccrts-full` | You're running a phase-based red team engagement (3 team servers) and want a full exam-mirror lab alongside. |
-| `enable_ccrts_lab = true` on a `c2-*` | You already have your preferred C2 sizing pinned and want to add the lab without changing the deployment type. |
-
-### VPC peering details (combined modes)
-
-The CCRTS VPC (`192.168.57.0/24`) and C2 VPC (`10.0.0.0/16`) are bidirectionally peered. Routes are added on:
-
-- **CCRTS public + private route tables** → C2 VPC (via the peering connection)
-- **C2 public + private + management route tables** → CCRTS VPC (via the peering connection)
-
-This allows a beacon callback flowing through the C2 redirectors to land on the Kali workstation, and lets the Kali host reach assets inside the C2 VPC (e.g., for cross-lab pivot rehearsal). Security groups are **not** automatically opened between the VPCs — operators add specific allow rules as their rehearsal scenarios require.
+The disabled Bolt-ons + Operations pills are intrinsic to `ccrts` — there is no combined variant that re-enables them, because the C2 side is never present.
 
 ---
 
@@ -310,25 +277,17 @@ This allows a beacon callback flowing through the C2 redirectors to land on the 
 
 Monthly figures assume `eu-central-1` on-demand pricing and 24x7 uptime. Stopping instances when not in use reduces compute cost to ~$0 (EBS-only). The AMI snapshot storage overhead persists across stop/start cycles.
 
-| Component | mini | full | Notes |
-|---|---|---|---|
-| Kali workstation (`t3.medium`) | $30 | $30 | |
-| Windows workstation (`t3.large`) | $66 | $66 | Windows licensing premium |
-| Domain controller (`t3.medium`) | – | $30 | full only |
-| AD member workstation (`t3.medium`) | – | $30 | full only |
-| ELK (`t3.large`) | $66 | $66 | |
-| NAT Gateway | $32 | $32 | Per-hour + data |
-| EBS volumes (~50 GB × hosts) | $10 | $20 | |
-| **CREST AMI snapshot storage** | $15-20 | $15-20 | One-time copy, persists in `eu-central-1` |
-| **Total** | **~$210/mo** | **~$310/mo** | |
-
-Combined modes add the cost of the underlying `c2-*` deployment:
-
-| Combined mode | Approx. monthly |
-|---|---|
-| `combined-adhoc-ccrts-mini` | ~$415/mo |
-| `combined-adhoc-ccrts-full` | ~$485/mo |
-| `combined-full-ccrts-full` | ~$580/mo |
+| Component | Cost | Notes |
+|---|---|---|
+| Kali workstation (`t3.medium`) | $30 | |
+| Windows workstation (`t3.large`) | $66 | Windows licensing premium |
+| Domain controller (`t3.medium`) | $30 | |
+| AD member workstation (`t3.medium`) | $30 | |
+| ELK (`t3.large`) | $66 | |
+| NAT Gateway | $32 | Per-hour + data |
+| EBS volumes (~50 GB × hosts) | $20 | |
+| **CREST AMI snapshot storage** | $15-20 | One-time copy, persists in `eu-central-1` |
+| **Total** | **~$310/mo** | |
 
 > **The AMI snapshot line item is the only cost that is non-obvious.** Even with all instances destroyed, the copied AMIs and their snapshots continue to cost ~$15-20/month until manually deleted via the Cleanup pane.
 
@@ -423,6 +382,6 @@ The DC takes the longest to provision (~15 minutes) because it has to promote it
 - **CREST Community AMIs (AWS account `126620636130`):** Listed in the EC2 console under Community AMIs in `eu-west-2`, `us-east-1`, `ap-southeast-1`, `ap-southeast-2`
 - **Internal modules:**
   - `terraform/modules/ccrts_lab/main.tf` — module orchestration
-  - `terraform/modules/vpc_peering/main.tf` — peering for combined modes
+  - `terraform/modules/vpc_peering/main.tf` — Dashboard VPC ↔ CCRTS VPC peering (the operator jump path)
   - `webapp/backend/routes/ccrts.py` — dashboard backend routes
   - `webapp/frontend/js/app.js` — UX gating for disabled bolt-ons + operations pills

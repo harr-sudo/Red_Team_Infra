@@ -73,25 +73,24 @@ generated-diagrams/         # Architecture diagrams (PNG)
 
 ## Deployment Modes
 
-The `deployment_type` variable drives all architecture decisions. There are 16 options across 4 categories:
+The `deployment_type` variable drives all architecture decisions. There are 12 options across 4 categories:
 
 - **C2-Only:** `c2-adhoc` (1 server), `c2-purple` (2 servers, redundancy), `c2-full` (3 servers, phase-based)
 - **GOAD-Only:** `goad-mini`, `goad-light`, `goad-sccm`, `goad-full`, `goad-nha` (standalone AD labs)
 - **Combined (C2 + GOAD):** `combined-adhoc-mini`, `combined-adhoc-light`, `combined-full-full` (C2 + GOAD with VPC peering)
-- **CCRTS-Lab:** `ccrts-mini`, `ccrts-full` (exam-mirror lab) plus `combined-adhoc-ccrts-mini`, `combined-adhoc-ccrts-full`, `combined-full-ccrts-full` (C2 + CCRTS with VPC peering)
+- **CCRTS-Lab:** `ccrts` (single self-contained CREST exam-mirror lab — no size tiers, no C2 integration)
 
 ### CCRTS Lab
 
-CREST Certified Red Team Specialist exam-mirror lab. Provisions the publicly available CREST Community AMIs (owner account `126620636130`) by copying them from `eu-west-2` into `eu-central-1` via `aws_ami_copy` — no infrastructure is provisioned in the source region, only metadata reads and storage-layer snapshot copies.
+A single, fully self-contained CREST Certified Red Team Specialist exam-mirror lab (`deployment_type = "ccrts"`), matching upstream [`spark42/ccrts-lab`](https://gitlab.com/spark42/ccrts-lab) — one modular config, **no size tiers and no C2 integration** (no combined modes, no bolt-on-to-C2, no C2 VPC peering). Provisions the publicly available CREST Community AMIs (owner account `126620636130`) by copying them from `eu-west-2` into `eu-central-1` via `aws_ami_copy` — no infrastructure is provisioned in the source region, only metadata reads and storage-layer snapshot copies.
 
 - **Module location:** `terraform/modules/ccrts_lab/`
-- **VPC CIDR:** `192.168.57.0/24` (chosen to avoid collision with C2 `10.0.0.0/16`, GOAD `192.168.56.0/24`, test_lab `10.99.50.0/24`)
-- **Hosts:** `ccrts-kali` (.20), `ccrts-win-ws` (.30), `ccrts-dc01` (.40, full only), `ccrts-ad-ws01` (.41, full only), `ccrts-elk` (.50)
-- **AD domain:** `ccrts.local` / NetBIOS `CCRTS` (full deployments only)
+- **VPC CIDR:** `192.168.57.0/24` (fully isolated; chosen to avoid collision with C2 `10.0.0.0/16`, GOAD `192.168.56.0/24`, test_lab `10.0.20.0/24`). Private subnet `192.168.57.0/26` holds all lab hosts; public subnet `192.168.57.64/26` is NAT GW egress only.
+- **Hosts (always all 5):** `ccrts-kali` (.20, CREST Kali AMI), `ccrts-win-ws` (.30, CREST Windows AMI), `ccrts-dc01` (.40, Win Server 2022 DC), `ccrts-ad-ws01` (.41, domain-joined Win ws), `ccrts-elk` (.50, Ubuntu ELK)
+- **AD domain:** `ccrts.local` / NetBIOS `CCRTS`
 - **First-deploy timing:** 20-30 min for cross-region AMI copy on first apply; subsequent applies are no-ops until CREST publishes a new image
-- **Bolt-on flag:** `enable_ccrts_lab = true` attaches the lab to any `c2-*` deployment (mirrors `enable_test_lab`)
-- **Self-contained UX:** Pure `ccrts-*` deployments do **not** support the Bolt-ons or Operations sub-pills — CS lives on the Kali workstation directly and the framework's shared C2 tooling does not apply. The frontend renders both pills as disabled with an explainer. `combined-*-ccrts` deployments retain full bolt-ons + operations integration because the C2 side is present.
-- **Connection model:** No bastion inside the CCRTS VPC — operator tunnels through the dashboard EC2 (`ssh -L <local>:192.168.57.X:<port> ubuntu@<dashboard-eip>`)
+- **Self-contained UX:** the `ccrts` deployment does **not** support the Bolt-ons or Operations sub-pills — CS lives on the Kali workstation directly and the framework's shared C2 tooling does not apply. The frontend renders both pills as disabled with an explainer.
+- **Connection model:** No bastion inside the CCRTS VPC — the AWS Dashboard Server is the sole SSH jump; the operator tunnels through the dashboard EIP (`ssh -L <local>:192.168.57.X:<port> ubuntu@<dashboard-eip>`), reaching the lab over the dashboard↔CCRTS VPC peering.
 - **Cost overhead:** ~$5-10/mo per copied AMI in EBS snapshot storage in the operator's account, plus ~$1 one-time data transfer per copy
 
 See `docs/CCRTS_LAB.md` for the full operator guide.
