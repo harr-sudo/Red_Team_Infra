@@ -590,6 +590,97 @@ body > header h1 {
     margin: 0 6px;
 }
 
+/* ── Operations · Topology — OLD graph rendered INLINE (2026-06-02) ───────────
+   The legacy beacon-graph engine is shown as a constrained INLINE PREVIEW
+   inside the Topology pane (not the full 560-640px takeover). A corner
+   "Full screen" button promotes it to the overlay. Class contract (set by
+   app.js): `.beacon-topology--inline` on the container, with a
+   `.beacon-topology__fullscreen-btn` in the top-right corner.
+
+   `.beacon-topology--inline` is authored self-sufficiently (it does NOT
+   depend on a base `.beacon-topology` rule existing) so the inline preview
+   renders correctly on its own. The graph canvas (an <svg> or <canvas>
+   injected by the engine) is stretched to fill the box and clipped, so the
+   preview reads as a smaller window onto the same graph.
+
+   Dual-theme: the canvas sits on --bg-terminal (always dark in both themes);
+   the border/radius use palette tokens that flip safely. Verified in dark
+   and [data-theme="light"]. */
+.beacon-topology--inline {
+    position: relative;
+    width: 100%;
+    /* DOWN-sized from the full-screen 560-640px: a constrained inline window.
+       400px reads as a preview; max-height keeps it honest on short columns. */
+    height: 400px;
+    max-height: 440px;
+    background: var(--bg-terminal);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm, 8px);
+    overflow: hidden;
+    cursor: grab;
+}
+.beacon-topology--inline.is-dragging { cursor: grabbing; }
+/* The engine injects an <svg>/<canvas> (or a wrapper div) as the direct
+   child — stretch it to fill the constrained box so the graph fits the
+   inline height instead of overflowing the old full-screen dimensions. */
+.beacon-topology--inline > svg,
+.beacon-topology--inline > canvas,
+.beacon-topology--inline > .beacon-topology__canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* Corner "Full screen" promote button. Matches the .cfg-btn-secondary /
+   .btn-secondary neutral chrome (bg-elevated + text-secondary), both AA-safe
+   in dark and light. >=24px target (7px*2 + ~14px line-box ≈ 28px tall).
+   No emoji — caller supplies a text label (and may add an inline SVG icon). */
+.beacon-topology__fullscreen-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    appearance: none;
+    padding: 7px 12px;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs, 6px);
+    font-family: var(--font-family-base);
+    font-size: 11.5px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    cursor: pointer;
+    /* MOTION 6 — single calm curve; only background/border/color/transform
+       actually move. */
+    transition: all .3s cubic-bezier(.16, 1, .3, 1);
+}
+.beacon-topology__fullscreen-btn:hover {
+    background: var(--border);
+    color: var(--text-primary);
+    border-color: var(--border-light);
+}
+.beacon-topology__fullscreen-btn:focus-visible {
+    outline: none;
+    border-color: var(--brand-light);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-light) 28%, transparent);
+}
+.beacon-topology__fullscreen-btn:active { transform: scale(.97); }
+/* Optional leading glyph (inline SVG) supplied by the caller — geometry only. */
+.beacon-topology__fullscreen-btn svg {
+    display: block;
+    width: 12px;
+    height: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+    .beacon-topology__fullscreen-btn { transition: none; }
+    .beacon-topology__fullscreen-btn:active { transform: none; }
+}
+
 /* ============================================================================
    SECTION CARDS — Unified styling for config/deploy/prereq sections
    ============================================================================ */
@@ -14840,13 +14931,19 @@ textarea.cfg-input {
 }
 .cfg-savebar__btn--primary {
     background: var(--burgundy-dark);
-    color: var(--gold);
+    /* 2026-06-02 — was var(--gold): identical bug to the .cfg-btn-confirm fix.
+       In light mode --gold resolves to dark olive (#495C2D) sitting on the
+       dark --burgundy-dark (#091620) fill = dark-on-dark, ~1.4:1, unreadable.
+       --text-on-primary is near-white (#FFFFFF) in BOTH themes:
+         dark  : #FFFFFF on #4D5C32 = 7.3:1  (passes AA)
+         light : #FFFFFF on #091620 = 18.9:1 (passes AA) */
+    color: var(--text-on-primary);
     border-color: var(--burgundy-dark);
 }
 .cfg-savebar__btn--primary:hover:not([disabled]) {
     filter: brightness(1.1);
     background: var(--burgundy-dark);
-    color: var(--gold);
+    color: var(--text-on-primary);
     border-color: var(--burgundy-dark);
 }
 .cfg-savebar__btn--danger {
