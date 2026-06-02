@@ -391,6 +391,57 @@
         <!-- Tab Content Container -->
         <div id="tab-container">
 
+            <!-- 2026-06-02 — GLOBAL guided-demo progress stepper. Mounted here
+                 (first child of #tab-container, ABOVE every .tab-page) so it
+                 persists across BOTH the Deployments tab AND the Operations
+                 tab — step 5 (Operations) navigates to operations-tab and the
+                 stepper must stay visible there. Hidden by default; the single
+                 paint path APP.demo.render() shows it during the walkthrough
+                 and IS the nav (the per-tab .subpill-nav is hidden while the
+                 demo runs). Node states (done/current/future) + the contextual
+                 action button are painted by APP.demo.render(). Sticky so it
+                 stays pinned as the content column scrolls. -->
+            <div class="demo-stepper" id="demo-stepper" hidden>
+                <ol class="demo-stepper__nodes" role="list" aria-label="Demo walkthrough progress">
+                    <li class="demo-stepper__node" data-demo-step="start"
+                        role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('start')">
+                        <span class="demo-stepper__marker" aria-hidden="true"></span>
+                        <span class="demo-stepper__label">Start</span>
+                    </li>
+                    <li class="demo-stepper__node" data-demo-step="configure"
+                        role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('configure')">
+                        <span class="demo-stepper__marker" aria-hidden="true">1</span>
+                        <span class="demo-stepper__label">Configure</span>
+                    </li>
+                    <li class="demo-stepper__node" data-demo-step="deploy"
+                        role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('deploy')">
+                        <span class="demo-stepper__marker" aria-hidden="true">2</span>
+                        <span class="demo-stepper__label">Deploy</span>
+                    </li>
+                    <li class="demo-stepper__node" data-demo-step="manage"
+                        role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('manage')">
+                        <span class="demo-stepper__marker" aria-hidden="true">3</span>
+                        <span class="demo-stepper__label">Manage</span>
+                    </li>
+                    <li class="demo-stepper__node" data-demo-step="bolt-ons"
+                        role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('bolt-ons')">
+                        <span class="demo-stepper__marker" aria-hidden="true">4</span>
+                        <span class="demo-stepper__label">Bolt-ons</span>
+                    </li>
+                    <li class="demo-stepper__node" data-demo-step="operations"
+                        role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('operations')">
+                        <span class="demo-stepper__marker" aria-hidden="true">5</span>
+                        <span class="demo-stepper__label">Operations</span>
+                    </li>
+                    <li class="demo-stepper__node" data-demo-step="done"
+                        role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('done')">
+                        <span class="demo-stepper__marker" aria-hidden="true"></span>
+                        <span class="demo-stepper__label">Done</span>
+                    </li>
+                </ol>
+                <div class="demo-stepper__action"><!-- filled by APP.demo.render() --></div>
+            </div>
+
             <!-- Dashboard Page — M-Dashboard launchpad (Decisions #19, #20, #21).
                  12-widget action-dense overview. Architecture tab is folded into
                  the widget + modal (Decision #21); legacy callers go through
@@ -624,43 +675,10 @@
                  accessible during the refactor; default behavior shows only the new
                  merged tab. -->
             <div class="tab-page" data-page="deployments-tab" style="display: none;">
-                <!-- 2026-06-02 — Unified guided demo. ONE persistent progress
-                     stepper replaces the two confusing demo modes + the 3
-                     per-pane ribbons. Hidden by default; APP.demo.render()
-                     (app.js) shows it during the walkthrough and IS the nav
-                     (the .subpill-nav below is hidden while the demo runs).
-                     Node states (done/current/future) + the contextual action
-                     button are painted by APP.demo.render(). -->
-                <div class="demo-stepper" id="demo-stepper" hidden>
-                    <ol class="demo-stepper__nodes" role="list" aria-label="Demo walkthrough progress">
-                        <li class="demo-stepper__node" data-demo-step="start"
-                            role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('start')">
-                            <span class="demo-stepper__marker" aria-hidden="true"></span>
-                            <span class="demo-stepper__label">Start</span>
-                        </li>
-                        <li class="demo-stepper__node" data-demo-step="configure"
-                            role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('configure')">
-                            <span class="demo-stepper__marker" aria-hidden="true">1</span>
-                            <span class="demo-stepper__label">Configure</span>
-                        </li>
-                        <li class="demo-stepper__node" data-demo-step="deploy"
-                            role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('deploy')">
-                            <span class="demo-stepper__marker" aria-hidden="true">2</span>
-                            <span class="demo-stepper__label">Deploy</span>
-                        </li>
-                        <li class="demo-stepper__node" data-demo-step="manage"
-                            role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('manage')">
-                            <span class="demo-stepper__marker" aria-hidden="true">3</span>
-                            <span class="demo-stepper__label">Manage</span>
-                        </li>
-                        <li class="demo-stepper__node" data-demo-step="done"
-                            role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('done')">
-                            <span class="demo-stepper__marker" aria-hidden="true"></span>
-                            <span class="demo-stepper__label">Done</span>
-                        </li>
-                    </ol>
-                    <div class="demo-stepper__action"><!-- filled by APP.demo.render() --></div>
-                </div>
+                <!-- 2026-06-02 — The guided-demo progress stepper now lives at
+                     the top of #tab-container (GLOBAL) so it persists across the
+                     Deployments AND Operations tabs (step 5 = Operations). It is
+                     no longer a child of this tab. See #demo-stepper above. -->
 
                 <!-- 2026-06-02 — Demo welcome / Start screen. Shown only while
                      APP.demo.step === 'start'; the Begin button enters step 1. -->
@@ -4177,7 +4195,7 @@ ns-143.awsdns-17.org
                 <div id="payloads-scoped-content">
                 <h2 class="page-title">Tools Upload</h2>
                 <div style="background: rgba(143, 164, 100, 0.1); border: none; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 0.88em; color: var(--text-secondary);">
-                    Upload files to the Windows Attack Box via SCP through the bastion host. Use this for Outflank tools, custom loaders, or any binaries your operators need.
+                    Upload files to the Windows Attack Box via SCP through the Dashboard Server jump host. Use this for Outflank tools, custom loaders, or any binaries your operators need.
                 </div>
 
                 <!-- Phase 3B.3 — Two-column V3 layout.

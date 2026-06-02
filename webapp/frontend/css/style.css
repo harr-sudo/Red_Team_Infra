@@ -5405,13 +5405,19 @@ body { padding-top: 64px; }
     gap: 16px;
     flex-wrap: wrap;
     padding: 12px 16px;
-    margin: 0 0 16px 0;
+    /* 2026-06-02 — Now mounted GLOBALLY as the first child of #tab-container
+       (outside .tab-page, which carries the 30px page padding). Re-apply the
+       same horizontal inset + a top gap so the bar lines up with page content
+       on BOTH the Deployments and Operations tabs. */
+    margin: 30px 30px 0 30px;
     background: var(--bg-section);
     border: 1px solid var(--border);
     border-radius: var(--radius);
+    /* Sticky below the fixed top utility bar (matches .subpill-nav offset) so
+       the stepper stays pinned as either tab's content column scrolls. */
     position: sticky;
-    top: 0;
-    z-index: 4;
+    top: var(--app-topbar-h);
+    z-index: 6;
 }
 .demo-stepper[hidden] { display: none; }
 
@@ -5455,12 +5461,15 @@ body { padding-top: 64px; }
     animation-delay: calc(var(--i, 0) * 60ms);
 }
 /* Connectors are ::before pseudo-elements, so :nth-child counts only the
-   five real <li> nodes — staggered reveal lands 60ms apart in order. */
+   seven real <li> nodes (Start · 1 Configure · 2 Deploy · 3 Manage ·
+   4 Bolt-ons · 5 Operations · Done) — staggered reveal lands 60ms apart. */
 .demo-stepper__node:nth-child(1) { --i: 0; }
 .demo-stepper__node:nth-child(2) { --i: 1; }
 .demo-stepper__node:nth-child(3) { --i: 2; }
 .demo-stepper__node:nth-child(4) { --i: 3; }
 .demo-stepper__node:nth-child(5) { --i: 4; }
+.demo-stepper__node:nth-child(6) { --i: 5; }
+.demo-stepper__node:nth-child(7) { --i: 6; }
 @keyframes demo-node-in {
     from { opacity: 0; transform: translateY(4px); }
     to   { opacity: 1; transform: translateY(0); }

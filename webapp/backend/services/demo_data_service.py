@@ -89,7 +89,9 @@ def deployment_state() -> dict[str, Any]:
         # `output` is the terraform-output dict the frontend consumes;
         # `output_summary` is the human-readable string for log surfaces.
         "output": {
-            "bastion_public_ip": {"value": "203.0.113.10", "type": "string"},
+            # 2026-06-02 — No bastion_public_ip: the per-deployment bastion was
+            # removed framework-wide; operators jump through the Dashboard
+            # Server (its own VPC, not a deployment output).
             "c2_team_server_private_ips": {"value": ["10.0.10.20"], "type": "list"},
             "redirector_public_ip": {"value": "203.0.113.50", "type": "string"},
             "ansible_inventory_path": {"value": "/demo/ansible/inventory.yml", "type": "string"},
@@ -128,7 +130,7 @@ def deployment_state() -> dict[str, Any]:
         "progress_percent": 100,
         "current_phase": "operational",
         "phases_completed": [
-            "vpc", "security", "bastion", "c2_team_server",
+            "vpc", "security", "c2_team_server",
             "redirector", "test_lab", "ansible_provisioning",
             "post_deploy_validation",
         ],
@@ -144,8 +146,8 @@ def deployment_state() -> dict[str, Any]:
         # a flat dict with the keys below. Without these, the overlay
         # only renders Operator + Dashboard Server. 2026-05-23 — populated
         # the full c2-adhoc + test_lab field set so the demo paints the
-        # complete topology (domain → redirector → team server → attack
-        # box + bastion + test_lab hosts).
+        # complete topology (domain -> redirector -> team server -> attack
+        # box + test_lab hosts; no per-deployment bastion).
         "outputs": {
             # Identity
             "project_name": DEMO_PROJECT,
@@ -178,11 +180,9 @@ def deployment_state() -> dict[str, Any]:
             "c2_team_server_private_ips": ["10.0.10.20"],
             "cs_teamserver_password": "demo-pass-do-not-use",
             "malleable_profile": "demo-jquery.profile",
-            # Bastion (Management subnet)
-            "bastion_public_ip": "203.0.113.10",
-            "bastion_private_ip": "10.0.0.10",
-            "bastion_instance_id": "i-0demobastion01",
-            "bastion_state": "running",
+            # 2026-06-02 — No bastion block: the per-deployment SSH-relay
+            # bastion was removed framework-wide. The Dashboard Server is the
+            # sole jump host (own VPC, EIP) and is not a deployment output.
             # Attack box (Windows operator host, C2 private subnet)
             "attackbox_private_ip": "10.0.10.30",
             "attackbox_instance_id": "i-0demoattack01",
@@ -412,6 +412,13 @@ def payload_artifacts() -> list[dict[str, Any]]:
 # ──────────────────────────────────────────────────────────────────────
 
 def resources() -> list[dict[str, Any]]:
+    # 2026-06-02 — Coherent single-deployment fleet for the showcased
+    # `c2-adhoc` (+ test_lab) deployment. The per-deployment bastion was
+    # removed framework-wide — the AWS-hosted Dashboard Server is the sole
+    # SSH/RDP jump host (its own VPC, not part of this deployment's resource
+    # set), so there is NO bastion instance or bastion security group here.
+    # The GOAD rows were dropped too: c2-adhoc has no AD lab (the test_lab
+    # hosts are surfaced separately via lab_hosts()).
     return [
         {"type": "aws_vpc", "name": "demo-vpc", "id": "vpc-0demo01",
          "region": "eu-central-1", "state": "live",
@@ -424,10 +431,9 @@ def resources() -> list[dict[str, Any]]:
          "details": {"cidr": "10.0.1.0/24", "az": "eu-central-1a"}},
         {"type": "aws_internet_gateway", "name": "demo-igw", "id": "igw-0demo01",
          "region": "eu-central-1", "state": "live", "details": {}},
-        {"type": "aws_instance", "name": "demo-bastion", "id": "i-0demobastion",
+        {"type": "aws_nat_gateway", "name": "demo-nat", "id": "nat-0demo01",
          "region": "eu-central-1", "state": "live",
-         "details": {"instance_type": "t3.small", "private_ip": "10.0.0.10",
-                     "public_ip": "203.0.113.10"}},
+         "details": {"public_ip": "203.0.113.60"}},
         {"type": "aws_instance", "name": "demo-c2-team-server", "id": "i-0democ2",
          "region": "eu-central-1", "state": "live",
          "details": {"instance_type": "t3.medium", "private_ip": "10.0.10.20"}},
@@ -435,21 +441,15 @@ def resources() -> list[dict[str, Any]]:
          "region": "eu-central-1", "state": "live",
          "details": {"instance_type": "t3.micro", "private_ip": "10.0.1.20",
                      "public_ip": "203.0.113.50"}},
-        {"type": "aws_instance", "name": "demo-goad-dc01", "id": "i-0demodc01",
+        {"type": "aws_instance", "name": "demo-attack-box", "id": "i-0demoattack01",
          "region": "eu-central-1", "state": "live",
-         "details": {"instance_type": "t3.medium", "private_ip": "10.0.20.10"}},
-        {"type": "aws_instance", "name": "demo-goad-srv01", "id": "i-0demosrv01",
-         "region": "eu-central-1", "state": "live",
-         "details": {"instance_type": "t3.medium", "private_ip": "10.0.20.20"}},
-        {"type": "aws_instance", "name": "demo-goad-ws01", "id": "i-0demows01",
-         "region": "eu-central-1", "state": "live",
-         "details": {"instance_type": "t3.small", "private_ip": "10.0.20.42"}},
-        {"type": "aws_security_group", "name": "demo-sg-bastion",
-         "id": "sg-0demobastion", "region": "eu-central-1", "state": "live",
-         "details": {"ingress_count": 3}},
+         "details": {"instance_type": "t2.large", "private_ip": "10.0.10.30"}},
         {"type": "aws_security_group", "name": "demo-sg-c2",
          "id": "sg-0democ2", "region": "eu-central-1", "state": "live",
          "details": {"ingress_count": 2}},
+        {"type": "aws_security_group", "name": "demo-sg-redirector",
+         "id": "sg-0demoredir", "region": "eu-central-1", "state": "live",
+         "details": {"ingress_count": 3}},
     ]
 
 
@@ -668,7 +668,7 @@ def seed_demo_audit_entries() -> None:
                  {"is_demo": True, "deployment_type": DEMO_MODELS_DEPLOYMENT_TYPE}),
                 ("deploy.complete", DEMO_PROJECT,
                  {"is_demo": True, "duration_seconds": 1080,
-                  "phases": ["vpc", "security", "bastion", "c2_team_server",
+                  "phases": ["vpc", "security", "c2_team_server",
                              "redirector", "test_lab"]}),
                 ("beacon.exec", DEMO_PROJECT,
                  {"is_demo": True, "bid": "demo-root-WS01",

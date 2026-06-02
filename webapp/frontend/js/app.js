@@ -2283,15 +2283,16 @@ APP.activeDeployment = (function () {
  */
 APP.computeVisibleSubPills = function (active) {
     // 2026-06-02 — Unified guided demo. While the walkthrough is in
-    // progress, expose the full create→manage path so the numbered steps
-    // (Configure → Deploy → Manage) are actually reachable. Without this
-    // the static-demo branch below would collapse the rail to
-    // manage+bolt-ons+cleanup and HIDE Configure/Deploy, snapping the
-    // operator straight to Manage mid-walkthrough. The stepper is the nav
-    // during the demo, but the underlying pane visibility must still allow
-    // every step's pane to render. Cleanup tags along (account-wide viewer).
+    // progress, expose the full create→manage→bolt-ons path so EVERY
+    // numbered step (Configure → Deploy → Manage → Bolt-ons) is reachable.
+    // Without bolt-ons here the static-demo branch would drop it from the
+    // rail and step 4's pane could not render (BUG 2). Operations is a
+    // separate top-level tab (computeOperationsVisible), not a sub-pill.
+    // The stepper is the nav during the demo, but the underlying pane
+    // visibility must still allow every step's pane to render. Cleanup tags
+    // along (account-wide viewer).
     if (APP.demo && APP.demo.active) {
-        return ['configure', 'deploy', 'manage', 'cleanup'];
+        return ['configure', 'deploy', 'manage', 'bolt-ons', 'cleanup'];
     }
     const isDraft    = active.isDraft();
     const isAll      = active.isAll();
@@ -3182,7 +3183,15 @@ APP._runSubPillInit = function (parentTabName, subPillName) {
                 } catch (_) {}
                 return false;
             })();
-            const isDraftMode = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+            // 2026-06-02 (BUG 1 fix) — during the guided demo's build phase
+            // (Configure / Deploy steps) treat Configure like draft mode so
+            // applyDraftMode() force-mounts the V2 composer instead of the
+            // edit-mode legacy path (which renders the live-deployment
+            // escape-hatch and would drop the operator out of the demo).
+            const inDemoBuild = !!(APP.demo && APP.demo.active
+                && (APP.demo.step === 'configure' || APP.demo.step === 'deploy'));
+            const isDraftMode = inDemoBuild
+                || (APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft());
             if (isDraftMode && APP.configureV2 && typeof APP.configureV2.applyDraftMode === 'function' && !wantsWizard) {
                 APP.configureV2.applyDraftMode();
             } else if (inNewMode && APP.journey && typeof APP.journey._mountInline === 'function') {
@@ -4785,19 +4794,32 @@ APP.journey = (function () {
 //
 // One walkthrough replaces the two confusing legacy demo modes (static
 // `demo` + `demo-draft-<ts>`). The entire flow runs on the existing canned
-// `demo` project: Start → 1 Configure → 2 Deploy → 3 Manage → Done. A single
-// persistent top stepper IS the nav during the demo; the normal .subpill-nav
-// is hidden. The synthetic Configure-save (~15194/33217/33273) and Deploy-
-// Apply (~18091) branches already fire on isDemoDraft() (true for `demo`), so
-// no demo-draft-<ts> machinery is needed — APP.demo just drives step state +
-// navigation on `demo`.
+// `demo` project and is a complete product tour:
+//   Start → 1 Configure → 2 Deploy → 3 Manage → 4 Bolt-ons → 5 Operations → Done
+// A single persistent GLOBAL top stepper (mounted at #tab-container, above
+// every .tab-page) IS the nav during the demo; the per-tab .subpill-nav is
+// hidden. Steps 1-4 live on the Deployments tab; step 5 (Operations) crosses
+// to the Operations tab — the global stepper persists across both.
+//
+// The synthetic Configure-save (~15194/33217/33273) and Deploy-Apply (~18091)
+// branches fire on isDemoDraft() (true for `demo`), so no demo-draft-<ts>
+// machinery is needed — APP.demo just drives step state + navigation on `demo`.
+// Because `current` stays `demo` for the whole tour, deployment_type resolves
+// to `demo` → Bolt-ons + Operations stay reachable (computeVisibleSubPills /
+// computeOperationsVisible), and the Configure step force-renders the V2
+// composer (applyDraftMode's inDemoBuild branch) instead of the live-deployment
+// escape-hatch.
 //
 // State source of truth is APP.demo.step; render() is the single paint path.
 // ============================================================================
 APP.demo = {
     active: false,            // guided walkthrough in progress
-    step: null,               // 'start'|'configure'|'deploy'|'manage'|'done'
-    STEPS: ['configure', 'deploy', 'manage'],  // the 3 numbered steps
+    step: null,               // 'start'|<STEPS>|'done'
+    // The 5 numbered steps. 'start' and 'done' are the terminal anchors.
+    STEPS: ['configure', 'deploy', 'manage', 'bolt-ons', 'operations'],
+    // One-shot guard so _seedComposer() doesn't clobber operator edits on
+    // every configure-step re-render. Reset on restart()/exit().
+    _composerSeeded: false,
 
     /** Enter the guided walkthrough from the start screen. */
     start() {
@@ -4867,8 +4889,10 @@ APP.demo = {
         // Anchor clicks.
         if (step === 'start') { this.step = 'start'; this.active = true; this._persist(); this.render(); return; }
         if (step === 'done') {
-            // Only reachable once Manage (the last numbered step) is current/done.
-            if (this.step === 'manage' || this.step === 'done') this.finish();
+            // Only reachable once the LAST numbered step (Operations) is
+            // current/done.
+            const last = order[order.length - 1];
+            if (this.step === last || this.step === 'done') this.finish();
         }
     },
 
@@ -4884,6 +4908,7 @@ APP.demo = {
     restart() {
         this.active = true;
         this.step = 'start';
+        this._composerSeeded = false;   // re-seed the composer on the next pass
         this._persist();
         this.render();
     },
@@ -4892,6 +4917,7 @@ APP.demo = {
     exit() {
         this.active = false;
         this.step = null;
+        this._composerSeeded = false;
         try {
             sessionStorage.removeItem('demoActive');
             sessionStorage.removeItem('demoStep');
@@ -4939,7 +4965,7 @@ APP.demo = {
         try {
             const a = sessionStorage.getItem('demoActive');
             const s = sessionStorage.getItem('demoStep') || '';
-            const valid = ['start', 'configure', 'deploy', 'manage', 'done'];
+            const valid = ['start', 'configure', 'deploy', 'manage', 'bolt-ons', 'operations', 'done'];
             if (s && valid.includes(s)) {
                 this.step = s;
                 // active is the live-walkthrough flag; 'done' can be a
@@ -4950,23 +4976,100 @@ APP.demo = {
     },
 
     /**
-     * Single source of truth for demo chrome. Shows/hides the stepper +
-     * welcome card, sets node states, and parks the contextual action
-     * button on the stepper's right. When NOT in the demo, restores the
-     * normal .subpill-nav and bails.
+     * 2026-06-02 — Seed the Configure V2 composer with a representative
+     * c2-adhoc configuration so the Configure step paints a pre-filled-looking
+     * surface (chip header + materialised Identity fields + early sections
+     * confirmed) instead of the blank "pick a family" landing stage. Idempotent:
+     * runs every configure render but only mutates once (guard flag), so node
+     * re-clicks don't re-seed over operator edits. Best-effort — the composer
+     * module may not be wired yet on very early boot.
+     */
+    _seedComposer() {
+        try {
+            const cv2 = APP.configureV2;
+            if (!cv2 || !cv2._state) return;
+            const st = cv2._state;
+            if (this._composerSeeded) return;
+            this._composerSeeded = true;
+            // Representative showcase: External C2 · c2-adhoc (matches the
+            // backend demo fixture's models_deployment_type).
+            st.family = 'c2';
+            st.type = 'c2-adhoc';
+            st.identityStage = 'sub';   // collapse pickers → confirmed chip row
+            // Pre-fill the project-name input so the hero + chip row read as a
+            // real, named deployment. Mark it user-edited so the composer's
+            // updateProjectName() auto-fill (which would stamp the ugly
+            // browser-UA machine suffix) doesn't clobber the clean demo name.
+            const projInput = document.getElementById('cfg-project-name');
+            if (projInput) {
+                projInput.value = 'c2_adhoc_demo_engagement';
+                projInput.dataset.cfgUserEdited = '1';
+            }
+            // Mark the first few sections confirmed so the composer reads as a
+            // tour of a mostly-complete config (Identity + Network + SSH).
+            if (st.confirmed && typeof st.confirmed.add === 'function') {
+                ['identity', 'network', 'ssh'].forEach(s => st.confirmed.add(s));
+            }
+        } catch (_) { /* composer not mounted yet — non-fatal */ }
+    },
+
+    /**
+     * 2026-06-02 — Auto-pick a host in the Bolt-ons sub-pill so the catalog
+     * paints populated rows during the demo. loadHosts() fills the dropdown
+     * asynchronously, so poll briefly for the <option> then drive the native
+     * change event (which calls APP.bolton.selectHost → fetch facts + catalog).
+     * Aborts silently if the operator left the bolt-ons step before it lands.
+     */
+    _selectDemoBoltonHost(host) {
+        let tries = 0;
+        const tick = () => {
+            if (this.step !== 'bolt-ons') return;   // operator moved on — abort
+            const sel = document.getElementById('bolton-host-select');
+            const ready = sel && Array.from(sel.options).some(o => o.value === host);
+            if (ready) {
+                if (sel.value !== host) {
+                    sel.value = host;
+                    sel.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                return;
+            }
+            if (tries++ < 25) setTimeout(tick, 120);   // up to ~3s
+        };
+        setTimeout(tick, 120);
+    },
+
+    /**
+     * Single source of truth for demo chrome. Shows/hides the GLOBAL stepper +
+     * welcome card, sets node states across all 7 nodes, parks the contextual
+     * action button on the stepper's right, and navigates to the surface for
+     * the current step (steps 1-4 → Deployments tab; step 5 → Operations tab).
+     * When NOT in the demo, restores the per-tab .subpill-nav and bails.
      */
     render() {
         const stepper = document.getElementById('demo-stepper');
         const welcome = document.getElementById('demo-welcome');
-        const tabPage = document.querySelector('.tab-page[data-page="deployments-tab"]');
-        const subnav = tabPage ? tabPage.querySelector('.subpill-nav') : null;
-        const content = tabPage ? tabPage.querySelector('.subpill-content') : null;
+        // The stepper is GLOBAL now, but the .subpill-nav / .subpill-content it
+        // replaces live PER tab. Gather both so we hide them during the demo
+        // and restore both when it ends — step 5 (Operations) crosses tabs.
+        const depPage = document.querySelector('.tab-page[data-page="deployments-tab"]');
+        const opsPage = document.querySelector('.tab-page[data-page="operations-tab"]');
+        const subnavs = [];
+        const contents = [];
+        [depPage, opsPage].forEach(p => {
+            if (!p) return;
+            const sn = p.querySelector('.subpill-nav');
+            const ct = p.querySelector('.subpill-content');
+            if (sn) subnavs.push(sn);
+            if (ct) contents.push(ct);
+        });
+        // The Deployments-tab subpill-content hosts the Start welcome toggle.
+        const depContent = depPage ? depPage.querySelector('.subpill-content') : null;
 
         const inDemo = this.active || this.step === 'done';
 
         // Toggle the leaf-pane "Demo" corner pills regardless of stepper
-        // (they mark synthetic data on showcase panes the stepper doesn't
-        // sequence — Bolt-ons / Beacons / Topology / Terminal / Payloads).
+        // (they mark synthetic data on showcase panes — Bolt-ons / Beacons /
+        // Topology / Terminal / Payloads).
         try {
             document.querySelectorAll('[data-demo-pill]').forEach(el => {
                 if (inDemo) el.removeAttribute('hidden');
@@ -4977,20 +5080,24 @@ APP.demo = {
         if (!inDemo) {
             if (stepper) stepper.hidden = true;
             if (welcome) welcome.hidden = true;
-            if (subnav) subnav.hidden = false;     // restore normal nav
-            if (content) content.hidden = false;
+            subnavs.forEach(sn => { sn.hidden = false; });   // restore normal nav
+            contents.forEach(ct => { ct.hidden = false; });
             return;
         }
 
-        // In the demo: stepper IS the nav.
+        // In the demo: the GLOBAL stepper IS the nav — hide every per-tab subnav.
         if (stepper) stepper.hidden = false;
-        if (subnav) subnav.hidden = true;
+        subnavs.forEach(sn => { sn.hidden = true; });
+        // Default: show all pane content (the Start branch below hides the
+        // Deployments content while the welcome card is up).
+        contents.forEach(ct => { ct.hidden = false; });
 
-        const order = this.STEPS;                  // ['configure','deploy','manage']
+        const order = this.STEPS;   // ['configure','deploy','manage','bolt-ons','operations']
         const curIdx = order.indexOf(this.step);
         const isDone = this.step === 'done';
 
-        // Paint node states. Nodes: start | configure | deploy | manage | done.
+        // Paint node states across all 7 nodes:
+        // start · 1 configure · 2 deploy · 3 manage · 4 bolt-ons · 5 operations · done
         if (stepper) {
             stepper.querySelectorAll('.demo-stepper__node').forEach(node => {
                 const ns = node.getAttribute('data-demo-step');
@@ -5041,16 +5148,22 @@ APP.demo = {
 
         if (this.step === 'start') {
             if (welcome) welcome.hidden = false;
-            if (content) content.hidden = true;
+            if (depContent) depContent.hidden = true;
+            // Make sure we're on the Deployments tab so the welcome card shows.
+            if (typeof APP.navigateTo === 'function') APP.navigateTo('deployments-tab');
             if (action) action.appendChild(mkBtn('Begin walkthrough →', 'primary', () => APP.demo.begin()));
             return;
         }
 
-        // Steps 1-3 + done all show the live content panes.
+        // Steps 1-5 + done all show the live content panes.
         if (welcome) welcome.hidden = true;
-        if (content) content.hidden = false;
+        if (depContent) depContent.hidden = false;
 
         if (this.step === 'configure') {
+            // Seed a representative c2-adhoc config so the V2 composer paints a
+            // pre-filled-looking surface (NOT an empty family picker) when
+            // applyDraftMode's inDemoBuild branch force-mounts it.
+            this._seedComposer();
             if (typeof APP.navigateTo === 'function') APP.navigateTo('deployments-tab', 'configure');
             if (action) action.appendChild(mkBtn('Next: Deploy →', 'primary', () => APP.demo.next()));
         } else if (this.step === 'deploy') {
@@ -5058,6 +5171,21 @@ APP.demo = {
             if (action) action.appendChild(mkBtn('Next: Manage →', 'primary', () => APP.demo.next()));
         } else if (this.step === 'manage') {
             if (typeof APP.navigateTo === 'function') APP.navigateTo('deployments-tab', 'manage');
+            if (action) action.appendChild(mkBtn('Next: Bolt-ons →', 'primary', () => APP.demo.next()));
+        } else if (this.step === 'bolt-ons') {
+            if (typeof APP.navigateTo === 'function') APP.navigateTo('deployments-tab', 'bolt-ons');
+            // Pre-select a representative target host (tldc01 — the demo DC,
+            // seeded with two installed bolt-ons) so the catalog renders
+            // populated rows instead of the "pick a host" empty state. The
+            // host dropdown is filled asynchronously by loadHosts(), so defer
+            // the selection until the option exists.
+            this._selectDemoBoltonHost('tldc01');
+            if (action) action.appendChild(mkBtn('Next: Operations →', 'primary', () => APP.demo.next()));
+        } else if (this.step === 'operations') {
+            // Step 5 crosses to the Operations top-level tab; its default
+            // sub-pill (Beacons) renders the synthetic beacon tree. The global
+            // stepper stays mounted/visible above the operations content.
+            if (typeof APP.navigateTo === 'function') APP.navigateTo('operations-tab', 'beacons');
             if (action) action.appendChild(mkBtn('Finish demo →', 'primary', () => APP.demo.finish()));
         } else if (this.step === 'done') {
             if (typeof APP.navigateTo === 'function') APP.navigateTo('deployments-tab', 'manage');
@@ -14123,7 +14251,11 @@ APP.configureV2 = (function () {
             rows.push({ name: 'Test lab · tlws01 (workstation)', type: 't3.small × 1',  monthly: PRICING['t3.small'] });
             rows.push({ name: 'Test lab · tllinux01 (linux)', type: 't3.small × 1',  monthly: PRICING['t3.small'] });
         }
-        rows.push({ name: 'Bastion (Windows)', type: 't3.medium × 1', monthly: PRICING['t3.medium'] });
+        // 2026-06-02 — Removed the per-deployment "Bastion (Windows)" line.
+        // The per-deployment SSH-relay bastion was dropped framework-wide; the
+        // AWS-hosted Dashboard Server is the sole jump host and is provisioned
+        // separately (not part of a deployment's cost), so it no longer belongs
+        // in the per-deployment cost estimate.
         if ($('#cfg-enable-fronting')?.checked) rows.push({ name: 'CloudFront + ACM', type: 'on-demand', monthly: 5 });
         const total = rows.reduce((s, r) => s + r.monthly, 0);
         return { rows, total };
@@ -15136,7 +15268,19 @@ HTTP/1.1 200 OK
     function applyDraftMode() {
         const pane = document.getElementById('configure-v2-pane');
         if (!pane) return;
-        const isDraft = APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft();
+        // 2026-06-02 (BUG 1 fix) — During the guided demo's build phase
+        // (Configure / Deploy steps) the active deployment is the literal
+        // `demo` project, which isExisting()===true. Without this, Configure
+        // falls into the `else if (isExisting)` escape-hatch below and renders
+        // the "+ New Deployment" empty state whose button DROPS THE OPERATOR
+        // OUT OF THE DEMO. Treat the demo build phase exactly like a draft so
+        // the V2 composer mounts (seeded with a representative c2-adhoc config
+        // by APP.demo._seedComposer()). The synthetic Save branch still keys on
+        // isDemoDraft() (true because current==='demo'), so nothing persists.
+        const inDemoBuild = !!(APP.demo && APP.demo.active
+            && (APP.demo.step === 'configure' || APP.demo.step === 'deploy'));
+        const isDraft = inDemoBuild
+            || (APP.activeDeployment && APP.activeDeployment.isDraft && APP.activeDeployment.isDraft());
         const isAll = APP.activeDeployment && APP.activeDeployment.isAll && APP.activeDeployment.isAll();
         const legacyEditor = document.querySelector('#configure-edit-pane .configuration-editor');
         const legacyAdvanced = document.getElementById('configure-advanced-details');
@@ -16226,6 +16370,29 @@ async function _deploySummarySaveRow(rowEl, row, config) {
     await loadConfigSummary();
 }
 
+/**
+ * 2026-06-02 — Synthetic config for the demo's Deploy-step Configuration
+ * Summary. Mirrors the backend demo fixture (demo_data_service.deployment_state
+ * models a c2-adhoc + test_lab deployment) so Configure / Deploy / Manage all
+ * describe the SAME deployment. Shape matches what _deploySummaryBuildRows()
+ * + DEPLOYMENT_CONFIGS expect.
+ */
+function _demoDeploySummaryConfig() {
+    return {
+        deployment_type: 'c2-adhoc',
+        engagement_type: 'c2-adhoc',
+        project_name: 'c2_adhoc_demo_engagement',
+        environment: 'dev',
+        aws_region: 'eu-central-1',
+        management_cidr_blocks: ['203.0.113.10/32'],
+        key_pair_name: 'red-team-keypair',
+        primary_domain_name: 'demo-engagement.example.com',
+        c2_subdomain: 'api',
+        enable_test_lab: true,
+        enable_cs_rest_api: true,
+    };
+}
+
 async function loadConfigSummary() {
     const summarySection = document.getElementById('config-summary-section');
     const specList = document.getElementById('deploy-summary-spec-list');
@@ -16233,6 +16400,36 @@ async function loadConfigSummary() {
     const heroName = document.getElementById('deploy-summary-hero-name');
     const heroType = document.getElementById('deploy-summary-hero-type');
     if (!summarySection || !specList) return;
+
+    // 2026-06-02 (demo coherence) — During the guided demo the Deploy step's
+    // Configuration Summary must reflect the SAME synthetic c2-adhoc
+    // deployment shown in Configure + Manage. The global /api/config endpoint
+    // returns the operator's last-saved real config (which was rendering a
+    // stale "CCRTS · Combined · red-team-infra" header here), so short-circuit
+    // to a representative in-memory config instead of fetching. Rows render
+    // read-only (no backend writes) since nothing is provisioned in the demo.
+    const _inDemo = !!((APP.demo && (APP.demo.active || APP.demo.step === 'done'))
+        || (APP.activeDeployment && APP.activeDeployment.current === 'demo'));
+    if (_inDemo) {
+        try {
+            const demoConfig = _demoDeploySummaryConfig();
+            const demoDeployConfig = DEPLOYMENT_CONFIGS[demoConfig.deployment_type];
+            summarySection.style.display = 'block';
+            if (heroName) heroName.textContent = demoConfig.project_name;
+            if (heroType) heroType.textContent = demoDeployConfig?.title || demoConfig.deployment_type;
+            _deploySummaryUpdateStatus(demoConfig.project_name);
+            // Read-only rows (strip editable so clicks don't open editors that
+            // would POST to /api/config).
+            const rows = _deploySummaryBuildRows(demoConfig, demoDeployConfig, null)
+                .map(r => Object.assign({}, r, { editable: false }));
+            specList.innerHTML = rows.map(_deploySummaryRenderRow).join('');
+            if (warningsDiv) { warningsDiv.style.display = 'none'; warningsDiv.innerHTML = ''; }
+        } catch (e) {
+            console.error('demo deploy summary render failed', e);
+            summarySection.style.display = 'none';
+        }
+        return;
+    }
 
     try {
         const response = await fetch(`${API_BASE}/config`);
@@ -17349,6 +17546,22 @@ function updateDeployPageForType() {
     const domainPrereqSection = document.getElementById('domain-prereq-section');
     const warningDiv = document.getElementById('deployment-prereq-warning');
 
+    // 2026-06-02 (demo coherence) — During the guided demo the Deploy step's
+    // identity/spec is carried by the read-only Configuration Summary
+    // (loadConfigSummary's demo branch). This legacy deploy-type-info card is
+    // redundant there AND renders from DEPLOYMENT_CONFIGS, which still carries
+    // emojis + a stale per-deployment "Bastion" component — both of which would
+    // contradict the bastion-free / no-emoji demo. Suppress the whole card +
+    // the prereq warning while the walkthrough is active.
+    const _inDemo = !!((APP.demo && (APP.demo.active || APP.demo.step === 'done'))
+        || (APP.activeDeployment && APP.activeDeployment.current === 'demo'));
+    if (_inDemo) {
+        if (deployTypeInfo) deployTypeInfo.style.display = 'none';
+        if (domainPrereqSection) domainPrereqSection.style.display = 'none';
+        if (warningDiv) warningDiv.style.display = 'none';
+        return;
+    }
+
     // Get the selected deployment type from config
     const deploymentTypeSelect = document.getElementById('deployment-type');
     const deploymentType = deploymentTypeSelect?.value || '';
@@ -18185,7 +18398,18 @@ async function deleteSSHKey() {
 async function updateDeploymentPrerequisites() {
     const deployBtn = document.getElementById('deploy-btn');
     const warningDiv = document.getElementById('deployment-prereq-warning');
-    
+
+    // 2026-06-02 (demo coherence) — The demo models a deployment that is
+    // already fully provisioned, so the live prereq checks (SSH key / CS file /
+    // domain) are irrelevant and would paint a misleading "Prerequisites
+    // Missing" banner. Skip them while the walkthrough is active.
+    const _inDemo = !!((APP.demo && (APP.demo.active || APP.demo.step === 'done'))
+        || (APP.activeDeployment && APP.activeDeployment.current === 'demo'));
+    if (_inDemo) {
+        if (warningDiv) { warningDiv.style.display = 'none'; warningDiv.innerHTML = ''; }
+        return;
+    }
+
     // Get deployment type config
     const deploymentTypeSelect = document.getElementById('deployment-type');
     const deploymentType = deploymentTypeSelect?.value || '';
@@ -28144,23 +28368,22 @@ const TERMINAL = {
         const jumpboxSshIp = outputs.jumpbox_private_ip || outputs.jumpbox_public_ip;
 
         // 2026-05-28 (P2-OC) — Demo deployment: source instance buttons from
-        // the synthetic test_lab_host_inventory + bastion + attack box. All
-        // entries are flagged is_demo so the SSH WebSocket short-circuits
-        // to a local bash with a fake login banner (see terminal.py).
+        // the synthetic test_lab_host_inventory + attack box. All entries are
+        // flagged is_demo so the SSH WebSocket short-circuits to a local bash
+        // with a fake login banner (see terminal.py).
+        // 2026-06-02 — No Bastion chip + no emoji icons: the per-deployment
+        // bastion was removed framework-wide (operators jump through the
+        // Dashboard Server, modelled as the SSH gateway), and the project bans
+        // emojis. Each host reaches via the Dashboard Server, so `bastion` is
+        // null here (the demo SSH is a local PTY regardless).
         const isDemo = !!(this.selectedDeployment && this.selectedDeployment.deployment_type === 'demo')
             || !!(outputs && outputs.is_demo);
         if (isDemo) {
-            // Bastion + attack box — synthetic IPs from demo_data_service.
-            const bastionDemoIp = outputs.bastion_private_ip || outputs.bastion_public_ip || '10.0.0.10';
-            instances.push({
-                label: 'Bastion', host: bastionDemoIp, user: 'ubuntu',
-                bastion: null, icon: '🛡', state: 'running', isDemo: true,
-            });
             const abIpDemo = outputs.attackbox_private_ip || '10.0.10.30';
             // Attack box is Windows so we tag it but skip SSH (matches real flow).
             instances.push({
                 label: 'Attack Box', host: abIpDemo, user: 'Administrator',
-                bastion: bastionDemoIp, icon: '🪟', state: 'running', isDemo: true,
+                bastion: null, state: 'running', isDemo: true,
                 _windows: true,
             });
             // test_lab hosts — pull from inventory map (also exposed as
@@ -28181,8 +28404,7 @@ const TERMINAL = {
                     label: host.toUpperCase(),
                     host: ip,
                     user: isLinux ? 'ubuntu' : 'ansible',
-                    bastion: bastionDemoIp,
-                    icon: isLinux ? '🐧' : '🏢',
+                    bastion: null,
                     state: 'running',
                     isDemo: true,
                 });
@@ -28195,9 +28417,9 @@ const TERMINAL = {
                 const onClick = inst._windows
                     ? `alert('Attack Box is Windows — use the RDP tunnel button below (demo).')`
                     : `TERMINAL.openSSH('${_escDemo(inst.host)}', '${_escDemo(inst.user)}', ${inst.bastion ? "'" + _escDemo(inst.bastion) + "'" : 'null'}, '${_escDemo(inst.label)}', true)`;
-                return `<button class="btn btn-sm btn-info" title="DEMO — local PTY only" onclick="${onClick}">${stateDot}${inst.icon} ${_escDemo(inst.label)}${demoPill}</button>`;
+                return `<button class="btn btn-sm btn-info" title="DEMO — local PTY only" onclick="${onClick}">${stateDot}${_escDemo(inst.label)}${demoPill}</button>`;
             }).join('');
-            btnRow.innerHTML = html + `<span style="display:inline-block;margin-left:8px;color:var(--text-muted);font-size:0.75em;">(demo — sessions are local bash with a fake SSH banner)</span>`;
+            btnRow.innerHTML = html + `<span style="display:inline-block;margin-left:8px;color:var(--text-muted);font-size:0.75em;">(demo — sessions are local bash with a fake SSH banner, via the Dashboard Server)</span>`;
             return;
         }
 
@@ -35908,13 +36130,14 @@ APP.bolton = APP.bolton || {
         // for states that don't permit install (operators can study before the
         // host is compatible). Renders the book glyph + the step count.
         const walkthroughBtn = r.has_curriculum
-            ? `<button class="spec-edit-btn bt-row__walkthrough" type="button" data-bolton-action="openDetail" data-vuln-id="${id}" data-initial-tab="walkthrough" aria-label="Open walkthrough">📖 Walkthrough · ${r.curriculum_step_count || 0}</button>`
+            ? `<button class="spec-edit-btn bt-row__walkthrough" type="button" data-bolton-action="openDetail" data-vuln-id="${id}" data-initial-tab="walkthrough" aria-label="Open walkthrough">Walkthrough · ${r.curriculum_step_count || 0}</button>`
             : '';
         // Status check button — surfaces the install/uninstall verify probe
         // result for this bolt-on on this host. Available regardless of
         // state so operators can confirm "is this thing actually installed"
         // / "did uninstall really clean up" without dispatching a re-install.
-        const statusBtn = `<button class="spec-edit-btn bt-row__status" type="button" data-bolton-action="checkStatus" data-vuln-id="${id}" title="Run install/uninstall verify probes and show the live state.">🔍 Status</button>`;
+        // 2026-06-02 — emoji glyphs dropped (project rule: no emojis in UI).
+        const statusBtn = `<button class="spec-edit-btn bt-row__status" type="button" data-bolton-action="checkStatus" data-vuln-id="${id}" title="Run install/uninstall verify probes and show the live state.">Status</button>`;
         const s = (r.state || '').toUpperCase();
         if (s === 'ALREADY_INSTALLED') {
             return [
