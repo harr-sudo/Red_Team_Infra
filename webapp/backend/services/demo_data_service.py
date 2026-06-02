@@ -380,11 +380,11 @@ def payload_artifacts() -> list[dict[str, Any]]:
         {
             "filename": "beacon-demo-https-stageless.exe",
             "kind": "stageless_pe",
-            "listener": "demo-https",
+            "listener": "demo-https-cdn",
             "size_bytes": 287232,
             "sha256": "a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00",
             "generated_at": _iso(now - timedelta(hours=1, minutes=30)),
-            "operator": "harriskhalid",
+            "operator": "demo",
         },
         {
             "filename": "beacon-demo-http-stager.exe",
@@ -393,16 +393,16 @@ def payload_artifacts() -> list[dict[str, Any]]:
             "size_bytes": 11264,
             "sha256": "deadbeef00112233445566778899aabbccddeeff112233445566778899aabbcc",
             "generated_at": _iso(now - timedelta(hours=1, minutes=10)),
-            "operator": "harriskhalid",
+            "operator": "demo",
         },
         {
             "filename": "beacon-demo-https-stageless.dll",
             "kind": "stageless_dll",
-            "listener": "demo-https",
+            "listener": "demo-https-cdn",
             "size_bytes": 281600,
-            "sha256": "feedfacecafebabe00112233445566778899aabbccddeeff112233445566778899",
+            "sha256": "feedfacecafebabe00112233445566778899aabbccddeeff1122334455667788",
             "generated_at": _iso(now - timedelta(minutes=42)),
-            "operator": "harriskhalid",
+            "operator": "demo",
         },
     ]
 

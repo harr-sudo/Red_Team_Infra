@@ -584,8 +584,8 @@ _KEYSTROKES: list[dict[str, Any]] = [
         "user": "TESTLAB\\jdoe",
         "captured_at": _iso(_now() - timedelta(minutes=33)),
         "text": (
-            "<keylog from 2026-05-28 14:12:33>\n"
-            "harris<TAB>SecretPass123!<ENTER>"
+            "[CMD] (explorer.exe)\n"
+            "TESTLAB\\jdoe<TAB>Summer2026!<ENTER>"
         ),
         "size": 64,
     },
@@ -627,10 +627,10 @@ _NET_FIXTURES = {
             {"name": "Administrator", "rid": 500, "description": "Built-in admin"},
             {"name": "Guest", "rid": 501, "disabled": True},
             {"name": "krbtgt", "rid": 502, "description": "Key Distribution Center Service"},
-            {"name": "jdoe", "rid": 1104, "description": "John Doe"},
-            {"name": "asmith", "rid": 1105, "description": "Alice Smith"},
-            {"name": "bwood", "rid": 1106, "description": "Bob Wood"},
-            {"name": "cnguyen", "rid": 1107, "description": "Chau Nguyen"},
+            {"name": "jdoe", "rid": 1104, "description": "Jordan Doyle - Finance"},
+            {"name": "asmith", "rid": 1105, "description": "Alice Smith - HR"},
+            {"name": "bwood", "rid": 1106, "description": "Ben Wood - IT Helpdesk"},
+            {"name": "cnguyen", "rid": 1107, "description": "Chau Nguyen - Sales"},
             {"name": "svc_sql", "rid": 1108, "description": "SQL service"},
             {"name": "svc_iis", "rid": 1109, "description": "IIS service"},
             {"name": "svc_backup", "rid": 1110, "description": "Backup service"},
@@ -950,7 +950,8 @@ def generate_payload(kind: str, config: dict[str, Any]) -> dict[str, Any]:
         "size": 248320,
         "size_bytes": 248320,
         "kind": kind,
-        "listener": config.get("listenerName", "demo-https"),
+        # Default to a real demo listener (see demo_beacon_ops.DEMO_LISTENERS).
+        "listener": config.get("listenerName", "demo-https-cdn"),
         "message": "payload generated (demo)",
     })
 

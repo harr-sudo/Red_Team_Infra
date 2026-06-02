@@ -47,8 +47,11 @@ DEMO_LISTENERS: list[dict[str, Any]] = [
         "id": "demo-https-cdn",
         "name": "demo-https-cdn",
         "payload": "windows/beacon_https/reverse_https",
-        "host": "cdn.example-demo.com",
-        "hosts": ["cdn.example-demo.com", "edge.example-demo.com"],
+        # Same domain as the deployment (primary_domain_name) and the C2-hosts
+        # surface in demo_beacon_data.py — primary + backup redirector FQDNs.
+        "host": "https-cdn.demo-engagement.example.com",
+        "hosts": ["https-cdn.demo-engagement.example.com",
+                  "https-backup.demo-engagement.example.com"],
         "port": 443,
         "httpPort": 443,
         "profile": "default-cdn-malleable.profile",
@@ -263,8 +266,8 @@ def _hashdump_output() -> str:
         "krbtgt:502:aad3b435b51404eeaad3b435b51404ee:cccccccccccccccccccccccccccccccc:::\n"
         "jdoe:1104:aad3b435b51404eeaad3b435b51404ee:dddddddddddddddddddddddddddddddd:::\n"
         "svc_sql:1108:aad3b435b51404eeaad3b435b51404ee:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:::\n"
-        "svc_web:1112:aad3b435b51404eeaad3b435b51404ee:ffffffffffffffffffffffffffffffff:::\n"
-        "asmith:1116:aad3b435b51404eeaad3b435b51404ee:11111111111111111111111111111111:::\n"
+        "svc_iis:1109:aad3b435b51404eeaad3b435b51404ee:ffffffffffffffffffffffffffffffff:::\n"
+        "asmith:1105:aad3b435b51404eeaad3b435b51404ee:11111111111111111111111111111111:::\n"
     )
 
 
@@ -297,7 +300,7 @@ def _mimikatz_output() -> str:
         "        kerberos :\n"
         "          * Username : jdoe\n"
         "          * Domain   : TESTLAB.LOCAL\n"
-        "          * Password : DemoPassword123!\n"
+        "          * Password : Summer2026!\n"
     )
 
 
@@ -319,10 +322,10 @@ def _net_user_output() -> str:
     return (
         "User accounts for \\\\TLDC01\n\n"
         "-------------------------------------------------------------------------------\n"
-        "Administrator            asmith                   bwhite\n"
-        "DefaultAccount           Guest                    jdoe\n"
-        "krbtgt                   svc_sql                  svc_web\n"
-        "svc_backup\n"
+        "Administrator            asmith                   bwood\n"
+        "cnguyen                  DefaultAccount           Guest\n"
+        "jdoe                     krbtgt                   svc_backup\n"
+        "svc_iis                  svc_sql\n"
         "The command completed successfully.\n"
     )
 
