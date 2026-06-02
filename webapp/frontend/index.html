@@ -826,7 +826,7 @@
                                 <div class="cfg-rail__head">Configure</div>
                                 <div class="cfg-rail__progress">
                                     <div class="cfg-rail__progress-text">
-                                        <strong id="cfg-rail-progress-text">0 of 8</strong> sections complete
+                                        <strong id="cfg-rail-progress-text">0 of 9</strong> sections complete
                                     </div>
                                     <div class="cfg-rail__progress-bar">
                                         <div class="cfg-rail__progress-fill" id="cfg-rail-progress-fill"></div>
@@ -1606,7 +1606,7 @@
                                 </select>
                                 <button class="btn btn-secondary" onclick="_route53DomainsCache = null; loadRoute53Domains()" title="Refresh domains from Route 53" style="padding: 6px 12px; white-space: nowrap;">Refresh</button>
                             </div>
-                            <small>Domains registered in your AWS Route 53 account. <a href="https://console.aws.amazon.com/route53/home#DomainListing:" target="_blank" style="color: var(--accent-muted);">Register a new domain</a> if none are listed.</small>
+                            <small>Domains registered in your AWS Route 53 account. <a href="https://console.aws.amazon.com/route53/home#DomainListing:" target="_blank" style="color: var(--info-text);">Register a new domain</a> if none are listed.</small>
                         </div>
 
                         <div class="form-group">
@@ -2086,7 +2086,7 @@ ns-143.awsdns-17.org
                         <div id="profile-catalog-status" class="cfg-callout cfg-callout--info" style="margin-bottom: 15px; display: none;">
                             <p style="margin: 0 0 8px 0; font-size: 0.9em;">
                                 <strong>Catalog profile selected.</strong> This profile is from the
-                                <a href="https://github.com/BC-SECURITY/Malleable-C2-Profiles" target="_blank" style="color: var(--accent-muted);">BC-SECURITY Malleable C2 Profiles</a> collection.
+                                <a href="https://github.com/BC-SECURITY/Malleable-C2-Profiles" target="_blank" style="color: var(--info-text);">BC-SECURITY Malleable C2 Profiles</a> collection.
                             </p>
                             <ol style="margin: 0; padding-left: 20px; font-size: 0.88em;">
                                 <li>Profile will be deployed to <code>/opt/cobaltstrike/profiles/custom.profile</code> on the team server</li>
@@ -3245,7 +3245,7 @@ ns-143.awsdns-17.org
                                             type="button"
                                             id="bolton-enable-detection"
                                             title="One-click install of the Elastic stack + Sysmon/Winlogbeat/Filebeat across every test_lab host">
-                                        🛡 Enable detection layer
+                                        <svg class="icon" aria-hidden="true"><use href="#icon-health"/></svg> Enable detection layer
                                     </button>
                                 </div>
                             </section>
@@ -3282,7 +3282,7 @@ ns-143.awsdns-17.org
                             <div class="bolton-live__filters" id="bolton-filters" hidden aria-label="Filters">
                                 <div class="bolton-filter-bar">
                                     <div class="bolton-filter-bar__search">
-                                        <span class="bolton-filter-bar__search-icon" aria-hidden="true">🔍</span>
+                                        <span class="bolton-filter-bar__search-icon" aria-hidden="true"><svg class="icon icon--sm" width="13" height="13" aria-hidden="true"><use href="#icon-search"/></svg></span>
                                         <input type="search"
                                                class="bolton-filter-bar__search-input"
                                                id="bolton-filter-search"
