@@ -417,38 +417,24 @@
                         <div class="dashboard-hero__resume-label">Resume</div>
                         <div class="dashboard-hero__resume-name" id="dashboard-resume-name">&mdash;</div>
                     </button>
-                    <!-- 2026-05-22 — demo deployment CTA. Selects the synthetic
-                         `demo` deployment so an operator can showcase the full
-                         dashboard (Manage, Bolt-ons, Operations, curriculum)
-                         without provisioning anything.
-
-                         2026-05-28 — Operator directive: don't nudge demo when
-                         the operator is already on a real deployment. The
-                         APP.activeDeployment subscriber below (wired in
-                         app.js) toggles `hidden` on this button based on
-                         the active deployment — visible only when no
-                         deployment is selected OR demo is already active. -->
+                    <!-- 2026-06-02 — Single demo entry. One unified guided
+                         walkthrough (APP.demo): Start → 1 Configure → 2 Deploy
+                         → 3 Manage → Done, driven entirely on the synthetic
+                         `demo` project — nothing is provisioned in AWS. The
+                         APP.activeDeployment subscriber in app.js toggles
+                         `hidden` on this button (visible only when no
+                         deployment is selected OR demo is already active) so
+                         it never nudges while the operator works real infra. -->
                     <button class="dashboard-hero__demo" id="dashboard-demo-btn" type="button"
-                            onclick="APP.startDemoMode && APP.startDemoMode()">
-                        <span class="dashboard-hero__demo-glyph" aria-hidden="true">▶</span>
+                            onclick="APP.demo && APP.demo.start()">
+                        <span class="dashboard-hero__demo-glyph" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false">
+                                <path d="M4 2.5v11a.5.5 0 0 0 .77.42l8.5-5.5a.5.5 0 0 0 0-.84l-8.5-5.5A.5.5 0 0 0 4 2.5z"/>
+                            </svg>
+                        </span>
                         <div class="dashboard-hero__text">
                             <div class="dashboard-hero__demo-label">Try Demo Mode</div>
-                            <div class="dashboard-hero__demo-sub">Synthetic deployment · no AWS calls</div>
-                        </div>
-                    </button>
-                    <!-- Phase 4 — New "+ Provision a Demo Deployment" CTA.
-                         Walks the operator through Configure → Deploy → Manage
-                         → Operations with a 30s synthetic Apply tick. No AWS
-                         calls; the DEMO ribbon stays visible on every surface.
-                         Visibility mirrors #dashboard-demo-btn (hidden when on
-                         a real deployment) — wired in the same activeDeployment
-                         subscriber in app.js. -->
-                    <button class="dashboard-hero__demo-draft" id="dashboard-demo-draft-btn" type="button"
-                            onclick="APP.startDemoDraftFlow && APP.startDemoDraftFlow()">
-                        <span class="dashboard-hero__demo-glyph" aria-hidden="true">⊕</span>
-                        <div class="dashboard-hero__text">
-                            <div class="dashboard-hero__demo-label">Provision a Demo Deployment</div>
-                            <div class="dashboard-hero__demo-sub">Walk the full Configure → Deploy → Manage flow · no AWS</div>
+                            <div class="dashboard-hero__demo-sub">Guided walkthrough · synthetic · no AWS</div>
                         </div>
                     </button>
                 </section>
@@ -638,6 +624,61 @@
                  accessible during the refactor; default behavior shows only the new
                  merged tab. -->
             <div class="tab-page" data-page="deployments-tab" style="display: none;">
+                <!-- 2026-06-02 — Unified guided demo. ONE persistent progress
+                     stepper replaces the two confusing demo modes + the 3
+                     per-pane ribbons. Hidden by default; APP.demo.render()
+                     (app.js) shows it during the walkthrough and IS the nav
+                     (the .subpill-nav below is hidden while the demo runs).
+                     Node states (done/current/future) + the contextual action
+                     button are painted by APP.demo.render(). -->
+                <div class="demo-stepper" id="demo-stepper" hidden>
+                    <ol class="demo-stepper__nodes" role="list" aria-label="Demo walkthrough progress">
+                        <li class="demo-stepper__node" data-demo-step="start"
+                            role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('start')">
+                            <span class="demo-stepper__marker" aria-hidden="true"></span>
+                            <span class="demo-stepper__label">Start</span>
+                        </li>
+                        <li class="demo-stepper__node" data-demo-step="configure"
+                            role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('configure')">
+                            <span class="demo-stepper__marker" aria-hidden="true">1</span>
+                            <span class="demo-stepper__label">Configure</span>
+                        </li>
+                        <li class="demo-stepper__node" data-demo-step="deploy"
+                            role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('deploy')">
+                            <span class="demo-stepper__marker" aria-hidden="true">2</span>
+                            <span class="demo-stepper__label">Deploy</span>
+                        </li>
+                        <li class="demo-stepper__node" data-demo-step="manage"
+                            role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('manage')">
+                            <span class="demo-stepper__marker" aria-hidden="true">3</span>
+                            <span class="demo-stepper__label">Manage</span>
+                        </li>
+                        <li class="demo-stepper__node" data-demo-step="done"
+                            role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('done')">
+                            <span class="demo-stepper__marker" aria-hidden="true"></span>
+                            <span class="demo-stepper__label">Done</span>
+                        </li>
+                    </ol>
+                    <div class="demo-stepper__action"><!-- filled by APP.demo.render() --></div>
+                </div>
+
+                <!-- 2026-06-02 — Demo welcome / Start screen. Shown only while
+                     APP.demo.step === 'start'; the Begin button enters step 1. -->
+                <section class="demo-welcome" id="demo-welcome" hidden aria-labelledby="demo-welcome-heading">
+                    <div class="demo-welcome__card">
+                        <p class="demo-welcome__eyebrow">DEMO MODE</p>
+                        <h2 class="demo-welcome__heading" id="demo-welcome-heading">Demo mode</h2>
+                        <p class="demo-welcome__body">
+                            Walk through building a synthetic red-team deployment end to end.
+                            Nothing is provisioned in AWS and nothing is billed.
+                        </p>
+                        <button class="btn btn-primary demo-welcome__begin" type="button"
+                                onclick="APP.demo && APP.demo.begin()">Begin walkthrough</button>
+                        <button class="demo-welcome__skip" type="button"
+                                onclick="APP.demo && APP.demo.viewFinished()">Skip to finished example</button>
+                    </div>
+                </section>
+
                 <div class="subpill-nav" role="tablist" aria-label="Deployments sub-views">
                     <button class="subpill-nav__pill is-active"
                             role="tab"
@@ -667,19 +708,9 @@
                 </div>
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="configure" id="subpill-pane-configure">
-                        <!-- Phase 4 — Persistent DEMO ribbon. Mounted by
-                             APP.demoRibbon (app.js) on every Deployments +
-                             Operations sub-pill pane when the walkthrough
-                             flow is active. The ribbon is hidden by default
-                             and toggled visible via the activeDeployment
-                             subscriber so it can never leak onto real
-                             deployments. -->
-                        <div class="demo-ribbon" data-demo-ribbon="configure" data-demo-skip-target="deploy" hidden>
-                            <span class="demo-ribbon__eyebrow">GUIDED TOUR</span>
-                            <span class="demo-ribbon__step">Step 1 of 3</span>
-                            <span class="demo-ribbon__text">Fill in the synthetic config — no AWS resources are provisioned.</span>
-                            <button class="demo-ribbon__skip" type="button" data-demo-skip-to="deploy">Skip to Deploy &rarr;</button>
-                        </div>
+                        <!-- 2026-06-02 — Per-pane DEMO ribbon removed. The
+                             unified guided demo uses the single persistent
+                             #demo-stepper at the top of the deployments tab. -->
                         <!-- 2026-05-21 — All-mode empty state container removed.
                              computeVisibleSubPills() returns ['manage','cleanup']
                              in All mode, so the Configure sub-pill button itself
@@ -2250,13 +2281,8 @@ ns-143.awsdns-17.org
                     </div><!-- /#configure-scoped-content -->
                     </div><!-- /#subpill-pane-configure ← 2026-05-22: missing close added; deploy/manage/cleanup/bolt-ons were nested inside configure pane and inherited its display:none -->
                     <div class="subpill-pane" data-subpill-pane="deploy" id="subpill-pane-deploy" hidden>
-                        <!-- Phase 4 — DEMO ribbon (see Configure pane note). -->
-                        <div class="demo-ribbon" data-demo-ribbon="deploy" data-demo-skip-target="manage" hidden>
-                            <span class="demo-ribbon__eyebrow">GUIDED TOUR</span>
-                            <span class="demo-ribbon__step">Step 2 of 3</span>
-                            <span class="demo-ribbon__text">Apply runs a synthetic 30s tick — no terraform, no AWS.</span>
-                            <button class="demo-ribbon__skip" type="button" data-demo-skip-to="manage">Skip to Manage &rarr;</button>
-                        </div>
+                        <!-- 2026-06-02 — Per-pane DEMO ribbon removed (unified
+                             demo uses the single #demo-stepper). -->
                         <!-- 2026-05-21 — All-mode empty state container removed
                              (see Configure pane note). Deploy is per-deployment
                              only; the pill is hidden in All mode. -->
@@ -2730,13 +2756,8 @@ ns-143.awsdns-17.org
                     </div><!-- /#deploy-scoped-content -->
                     </div>
                     <div class="subpill-pane" data-subpill-pane="manage" id="subpill-pane-manage" hidden>
-                        <!-- Phase 4 — DEMO ribbon (see Configure pane note). -->
-                        <div class="demo-ribbon" data-demo-ribbon="manage" data-demo-skip-target="bolt-ons" hidden>
-                            <span class="demo-ribbon__eyebrow">GUIDED TOUR</span>
-                            <span class="demo-ribbon__step">Step 3 of 3</span>
-                            <span class="demo-ribbon__text">Your synthetic deployment — populated with canned topology + beacons.</span>
-                            <button class="demo-ribbon__skip" type="button" data-demo-skip-to="bolt-ons">Explore Bolt-ons &rarr;</button>
-                        </div>
+                        <!-- 2026-06-02 — Per-pane DEMO ribbon removed (unified
+                             demo uses the single #demo-stepper). -->
                         <!-- 2026-05-19 (deployments nav restructure) — All-mode
                              fleet view. Visible when APP.activeDeployment.isAll();
                              rendered by APP.manageFleet.render() from

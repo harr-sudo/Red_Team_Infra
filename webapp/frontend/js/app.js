@@ -2154,18 +2154,15 @@ APP.activeDeployment = (function () {
         isAll() { return _current === ALL_SENTINEL; },
         isDraft() { return _current === DRAFT_SENTINEL; },
         /**
-         * Phase 4 — true when the operator is walking the synthetic
-         * "+ Provision a Demo Deployment" flow. Resolved from either:
-         *   * a module-level marker set by APP.startDemoDraftFlow (so the
-         *     ribbon + skip buttons paint immediately on Configure entry
-         *     before any state file exists)
-         *   * a project name matching demo-draft-* (the load-bearing
-         *     signal once Deploy Apply has spawned the synthetic state)
-         *   * the literal "demo" showcase project (so the ribbon also
-         *     paints over the static demo for consistency)
+         * True when the active deployment is the synthetic demo. The unified
+         * guided demo (APP.demo, 2026-06-02) runs entirely on the literal
+         * `demo` project, so this is the load-bearing signal the synthetic
+         * Configure-save and Deploy-Apply branches use to validate-without-
+         * persist / tick-without-terraform. The `demo-draft-*` regex is kept
+         * only as a backwards-compat fallback for any still-persisted legacy
+         * walkthrough state — the dual demo-draft flow itself is retired.
          */
         isDemoDraft() {
-            if (typeof APP !== 'undefined' && APP._demoDraftActive === true) return true;
             const cur = _current || '';
             return cur === 'demo' || /^demo-draft-/.test(cur);
         },
@@ -2285,6 +2282,17 @@ APP.activeDeployment = (function () {
  * @returns {string[]} list of visible sub-pill names
  */
 APP.computeVisibleSubPills = function (active) {
+    // 2026-06-02 — Unified guided demo. While the walkthrough is in
+    // progress, expose the full create→manage path so the numbered steps
+    // (Configure → Deploy → Manage) are actually reachable. Without this
+    // the static-demo branch below would collapse the rail to
+    // manage+bolt-ons+cleanup and HIDE Configure/Deploy, snapping the
+    // operator straight to Manage mid-walkthrough. The stepper is the nav
+    // during the demo, but the underlying pane visibility must still allow
+    // every step's pane to render. Cleanup tags along (account-wide viewer).
+    if (APP.demo && APP.demo.active) {
+        return ['configure', 'deploy', 'manage', 'cleanup'];
+    }
     const isDraft    = active.isDraft();
     const isAll      = active.isAll();
     const isExisting = active.isExisting();
@@ -4772,80 +4780,315 @@ APP.journey = (function () {
 // project_name default, focuses + selects the project_name input, and clears
 // the active deployment in the global picker (form is no longer tied to one).
 
+// ============================================================================
+// 2026-06-02 — UNIFIED GUIDED DEMO (APP.demo).
+//
+// One walkthrough replaces the two confusing legacy demo modes (static
+// `demo` + `demo-draft-<ts>`). The entire flow runs on the existing canned
+// `demo` project: Start → 1 Configure → 2 Deploy → 3 Manage → Done. A single
+// persistent top stepper IS the nav during the demo; the normal .subpill-nav
+// is hidden. The synthetic Configure-save (~15194/33217/33273) and Deploy-
+// Apply (~18091) branches already fire on isDemoDraft() (true for `demo`), so
+// no demo-draft-<ts> machinery is needed — APP.demo just drives step state +
+// navigation on `demo`.
+//
+// State source of truth is APP.demo.step; render() is the single paint path.
+// ============================================================================
+APP.demo = {
+    active: false,            // guided walkthrough in progress
+    step: null,               // 'start'|'configure'|'deploy'|'manage'|'done'
+    STEPS: ['configure', 'deploy', 'manage'],  // the 3 numbered steps
+
+    /** Enter the guided walkthrough from the start screen. */
+    start() {
+        if (!APP.activeDeployment || typeof APP.activeDeployment.set !== 'function') return;
+        this.active = true;
+        this.step = 'start';
+        // Pin the canned showcase project. isDemoDraft()==='demo' so all the
+        // synthetic Save/Apply branches keep working; Manage shows the fleet.
+        APP.activeDeployment.set('demo');
+        if (typeof APP._setActiveDeploymentType === 'function') {
+            try { APP._setActiveDeploymentType(); } catch (_) {}
+        }
+        this._persist();
+        if (typeof APP.navigateTo === 'function') {
+            APP.navigateTo('deployments-tab');
+        }
+        this.render();
+    },
+
+    /** Start screen → first numbered step. */
+    begin() {
+        this.active = true;
+        this.step = 'configure';
+        this._persist();
+        this.render();
+    },
+
+    /** Advance configure→deploy→manage; from manage → finish(). */
+    next() {
+        const order = this.STEPS;
+        const i = order.indexOf(this.step);
+        if (i === -1 || i >= order.length - 1) {
+            this.finish();
+            return;
+        }
+        this.step = order[i + 1];
+        this._persist();
+        this.render();
+    },
+
+    /**
+     * Stepper-node click. Allow navigation to the current step or any
+     * already-completed step only — never jump ahead past unseen steps.
+     * 'start' and 'done' are reachable as the terminal anchors.
+     */
+    goTo(step) {
+        if (!step) return;
+        const order = this.STEPS;
+        const curIdx = order.indexOf(this.step);
+        const tgtIdx = order.indexOf(step);
+        // Numbered-step click: only current or earlier (completed) steps.
+        if (tgtIdx !== -1) {
+            if (this.step === 'done') {
+                // From the finished state, allow re-entering any numbered step.
+                this.active = true;
+                this.step = step;
+                this._persist();
+                this.render();
+                return;
+            }
+            if (curIdx === -1 || tgtIdx > curIdx) return;  // future — ignore
+            this.step = step;
+            this._persist();
+            this.render();
+            return;
+        }
+        // Anchor clicks.
+        if (step === 'start') { this.step = 'start'; this.active = true; this._persist(); this.render(); return; }
+        if (step === 'done') {
+            // Only reachable once Manage (the last numbered step) is current/done.
+            if (this.step === 'manage' || this.step === 'done') this.finish();
+        }
+    },
+
+    /** Numbered steps complete → terminal Done state. */
+    finish() {
+        this.active = true;
+        this.step = 'done';
+        this._persist();
+        this.render();
+    },
+
+    /** Done → back to the Start screen (re-run the walkthrough). */
+    restart() {
+        this.active = true;
+        this.step = 'start';
+        this._persist();
+        this.render();
+    },
+
+    /** Leave the demo entirely: clear state, drop the selection, go home. */
+    exit() {
+        this.active = false;
+        this.step = null;
+        try {
+            sessionStorage.removeItem('demoActive');
+            sessionStorage.removeItem('demoStep');
+        } catch (_) {}
+        if (APP.activeDeployment && typeof APP.activeDeployment.set === 'function') {
+            APP.activeDeployment.set(null);
+        }
+        if (typeof APP.navigateTo === 'function') {
+            APP.navigateTo('dashboard');
+        }
+        this.render();
+    },
+
+    /**
+     * Dropdown picks the `demo` project WITHOUT going through start(): land
+     * the operator on the finished example — Manage view + stepper showing
+     * the Done state. NOT an in-progress walkthrough (active=false) so a
+     * subsequent dropdown switch to a real project tears the stepper down.
+     */
+    viewFinished() {
+        this.active = false;
+        this.step = 'done';
+        this._persist();
+        if (APP.activeDeployment && typeof APP.activeDeployment.set === 'function'
+            && APP.activeDeployment.current !== 'demo') {
+            APP.activeDeployment.set('demo');
+            if (typeof APP._setActiveDeploymentType === 'function') {
+                try { APP._setActiveDeploymentType(); } catch (_) {}
+            }
+        }
+        if (typeof APP.navigateTo === 'function') {
+            APP.navigateTo('deployments-tab', 'manage');
+        }
+        this.render();
+    },
+
+    _persist() {
+        try {
+            sessionStorage.setItem('demoActive', this.active ? '1' : '0');
+            sessionStorage.setItem('demoStep', this.step || '');
+        } catch (_) { /* private browsing — non-fatal */ }
+    },
+
+    _restore() {
+        try {
+            const a = sessionStorage.getItem('demoActive');
+            const s = sessionStorage.getItem('demoStep') || '';
+            const valid = ['start', 'configure', 'deploy', 'manage', 'done'];
+            if (s && valid.includes(s)) {
+                this.step = s;
+                // active is the live-walkthrough flag; 'done' can be a
+                // not-active finished-example view (viewFinished) too.
+                this.active = a === '1';
+            }
+        } catch (_) { /* private browsing — non-fatal */ }
+    },
+
+    /**
+     * Single source of truth for demo chrome. Shows/hides the stepper +
+     * welcome card, sets node states, and parks the contextual action
+     * button on the stepper's right. When NOT in the demo, restores the
+     * normal .subpill-nav and bails.
+     */
+    render() {
+        const stepper = document.getElementById('demo-stepper');
+        const welcome = document.getElementById('demo-welcome');
+        const tabPage = document.querySelector('.tab-page[data-page="deployments-tab"]');
+        const subnav = tabPage ? tabPage.querySelector('.subpill-nav') : null;
+        const content = tabPage ? tabPage.querySelector('.subpill-content') : null;
+
+        const inDemo = this.active || this.step === 'done';
+
+        // Toggle the leaf-pane "Demo" corner pills regardless of stepper
+        // (they mark synthetic data on showcase panes the stepper doesn't
+        // sequence — Bolt-ons / Beacons / Topology / Terminal / Payloads).
+        try {
+            document.querySelectorAll('[data-demo-pill]').forEach(el => {
+                if (inDemo) el.removeAttribute('hidden');
+                else el.setAttribute('hidden', '');
+            });
+        } catch (_) {}
+
+        if (!inDemo) {
+            if (stepper) stepper.hidden = true;
+            if (welcome) welcome.hidden = true;
+            if (subnav) subnav.hidden = false;     // restore normal nav
+            if (content) content.hidden = false;
+            return;
+        }
+
+        // In the demo: stepper IS the nav.
+        if (stepper) stepper.hidden = false;
+        if (subnav) subnav.hidden = true;
+
+        const order = this.STEPS;                  // ['configure','deploy','manage']
+        const curIdx = order.indexOf(this.step);
+        const isDone = this.step === 'done';
+
+        // Paint node states. Nodes: start | configure | deploy | manage | done.
+        if (stepper) {
+            stepper.querySelectorAll('.demo-stepper__node').forEach(node => {
+                const ns = node.getAttribute('data-demo-step');
+                node.classList.remove('is-done', 'is-current', 'is-future');
+                node.removeAttribute('aria-current');
+                let state = 'future';
+                if (ns === 'start') {
+                    // Start is "done" once we've moved past it (or finished).
+                    if (this.step === 'start') state = 'current';
+                    else state = 'done';
+                } else if (ns === 'done') {
+                    if (isDone) state = 'current';
+                    else state = 'future';
+                } else {
+                    // Numbered step.
+                    const idx = order.indexOf(ns);
+                    if (isDone) {
+                        state = 'done';
+                    } else if (this.step === 'start') {
+                        state = 'future';
+                    } else if (idx < curIdx) {
+                        state = 'done';
+                    } else if (idx === curIdx) {
+                        state = 'current';
+                    } else {
+                        state = 'future';
+                    }
+                }
+                node.classList.add('is-' + state);
+                if (state === 'current') node.setAttribute('aria-current', 'step');
+            });
+        }
+
+        // Contextual action(s) on the right.
+        const action = stepper ? stepper.querySelector('.demo-stepper__action') : null;
+        if (action) action.innerHTML = '';
+        // Reuse the canonical .btn component (deployments-tab override gives
+        // AA-safe --brand + --text-inverse in both themes) — never a one-off
+        // colour pairing. `variant` is 'primary' | 'secondary'.
+        const mkBtn = (label, variant, handler) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'btn btn-sm demo-stepper__btn btn-' + variant;
+            b.textContent = label;
+            b.addEventListener('click', handler);
+            return b;
+        };
+
+        if (this.step === 'start') {
+            if (welcome) welcome.hidden = false;
+            if (content) content.hidden = true;
+            if (action) action.appendChild(mkBtn('Begin walkthrough →', 'primary', () => APP.demo.begin()));
+            return;
+        }
+
+        // Steps 1-3 + done all show the live content panes.
+        if (welcome) welcome.hidden = true;
+        if (content) content.hidden = false;
+
+        if (this.step === 'configure') {
+            if (typeof APP.navigateTo === 'function') APP.navigateTo('deployments-tab', 'configure');
+            if (action) action.appendChild(mkBtn('Next: Deploy →', 'primary', () => APP.demo.next()));
+        } else if (this.step === 'deploy') {
+            if (typeof APP.navigateTo === 'function') APP.navigateTo('deployments-tab', 'deploy');
+            if (action) action.appendChild(mkBtn('Next: Manage →', 'primary', () => APP.demo.next()));
+        } else if (this.step === 'manage') {
+            if (typeof APP.navigateTo === 'function') APP.navigateTo('deployments-tab', 'manage');
+            if (action) action.appendChild(mkBtn('Finish demo →', 'primary', () => APP.demo.finish()));
+        } else if (this.step === 'done') {
+            if (typeof APP.navigateTo === 'function') APP.navigateTo('deployments-tab', 'manage');
+            if (action) {
+                const label = document.createElement('span');
+                label.className = 'demo-stepper__done-label';
+                label.textContent = 'Demo complete.';
+                action.appendChild(label);
+                action.appendChild(mkBtn('Restart', 'secondary', () => APP.demo.restart()));
+                action.appendChild(mkBtn('Exit demo', 'primary', () => APP.demo.exit()));
+            }
+        }
+    },
+};
+
 /**
- * 2026-05-22 — Dashboard CTA: enter demo mode. Selects the synthetic
- * `demo` deployment (served by /api/deploy/active) and navigates to the
- * Manage sub-pill so the operator immediately sees the canned fleet.
- *
- * Idempotent — selecting demo when already on demo just re-navigates.
+ * 2026-06-02 — Back-compat alias. Older call sites (Dashboard hero CTA,
+ * any external embeds) called APP.startDemoMode(); route them into the
+ * unified guided demo entry.
  */
 APP.startDemoMode = function () {
-    if (!APP.activeDeployment || typeof APP.activeDeployment.set !== 'function') return;
-    APP.activeDeployment.set('demo');
-    if (typeof APP._setActiveDeploymentType === 'function') {
-        APP._setActiveDeploymentType();
-    }
-    // Land on Manage so the canned fleet is immediately visible. The
-    // operator can switch to Bolt-ons / Operations from the sub-pill nav.
-    if (typeof APP.navigateTo === 'function') {
-        APP.navigateTo('deployments-tab', 'manage');
-    }
+    if (APP.demo && typeof APP.demo.start === 'function') APP.demo.start();
 };
 
 /**
- * Phase 4 — "+ Provision a Demo Deployment" entry point. Pins a fresh
- * demo-draft-<base36-ts> project, sets the demo-draft mode flags, and
- * lands on Configure. Subsequent surfaces (Configure save, Deploy Apply,
- * Manage, Operations) detect the demo-draft state via
- * APP.activeDeployment.isDemoDraft() and route through their synthetic
- * branches.
- *
- * Distinct from APP.startDemoMode (which pins the static `demo` showcase
- * deployment). This one walks the full provisioning flow with a 30s
- * simulated Apply tick.
+ * 2026-06-02 — The dual demo flow is gone. The old
+ * "+ Provision a Demo Deployment" entry now funnels into the single
+ * guided walkthrough so there is exactly one way into demo mode.
  */
 APP.startDemoDraftFlow = function () {
-    if (!APP.activeDeployment || typeof APP.activeDeployment.set !== 'function') return;
-    const projectName = 'demo-draft-' + Date.now().toString(36);
-    // Pin as the active deployment (NOT the draft sentinel — the demo
-    // walkthrough should look like a real, named draft). The generalized
-    // backend is_demo_project() matches the "demo-draft-*" prefix.
-    APP.activeDeployment.set(projectName);
-    if (APP.activeDeployment.draftProject !== undefined) {
-        APP.activeDeployment.draftProject = projectName;
-    }
-    // Module-level marker so isDemoDraft() returns true even before the
-    // backend has spawned a state file. The draft-prefix check is the
-    // load-bearing signal once a state file exists.
-    APP._demoDraftActive = true;
-    APP._demoDraftProject = projectName;
-    // 2026-05-28 — persist to sessionStorage so a mid-tour reload (before
-    // Apply has written a backend state file) doesn't drop the operator
-    // out of the walkthrough. Cleared by APP._clearDemoDraftFlow().
-    try {
-        sessionStorage.setItem('demoDraftActive', '1');
-        sessionStorage.setItem('demoDraftProject', projectName);
-    } catch (_) { /* private browsing — non-fatal */ }
-    try { if (APP.demoRibbon && APP.demoRibbon.refresh) APP.demoRibbon.refresh(); } catch (_) {}
-    if (typeof APP.navigateTo === 'function') {
-        APP.navigateTo('deployments-tab', 'configure');
-    }
-};
-
-/**
- * Tear down the in-memory + sessionStorage demo-draft markers. Called
- * when the operator explicitly leaves the tour (e.g. switches to a real
- * deployment from the dropdown). Does NOT delete the backend state
- * file — that's a Cleanup-action concern.
- */
-APP._clearDemoDraftFlow = function () {
-    APP._demoDraftActive = false;
-    APP._demoDraftProject = null;
-    try {
-        sessionStorage.removeItem('demoDraftActive');
-        sessionStorage.removeItem('demoDraftProject');
-    } catch (_) {}
-    try { if (APP.demoRibbon && APP.demoRibbon.refresh) APP.demoRibbon.refresh(); } catch (_) {}
+    if (APP.demo && typeof APP.demo.start === 'function') APP.demo.start();
 };
 
 APP.startNewDeployment = function () {
@@ -6229,127 +6472,78 @@ if (APP.activeDeployment && typeof APP.activeDeployment.subscribe === 'function'
             }
         } catch (_) { /* noop — topbar may not be mounted yet */ }
     });
-    // 2026-05-29 — Operator directive (tightened): the Dashboard demo CTAs
-    // ("Try Demo Mode" + "Provision a Demo Deployment") should not intrude
-    // while the operator is working real infrastructure. They're hidden on:
+    // 2026-06-02 — Single demo CTA visibility. The one "Try Demo Mode"
+    // button (#dashboard-demo-btn) is the sole entry into the unified
+    // guided walkthrough. It should not intrude while the operator is
+    // working real infrastructure. Hidden on:
     //   - any real deployment (c2-* / goad-* / combined-*)
     //   - all-mode (__all__) and draft (__draft__)
-    // They stay visible on:
-    //   - the demo deployment + in-progress demo-draft-* walkthroughs
-    //   - a fresh / empty dashboard (no deployment selected) — because the
-    //     "Try Demo Mode" button is itself the entry into demo; hiding it
-    //     there would make demo unreachable.
+    // Visible on:
+    //   - the demo deployment (showcase / finished example)
+    //   - a fresh / empty dashboard (no deployment selected) — the button
+    //     is itself the entry into demo; hiding it there strands the user.
     APP.activeDeployment.subscribe(() => {
         try {
             const ad = APP.activeDeployment;
             const cur = (ad && ad.current) || '';
-            const isDemo = cur === 'demo' || /^demo-draft-/.test(cur);
+            const isDemo = cur === 'demo';
             const isNoSelection = !cur;          // fresh / nothing picked → entry
             const show = isDemo || isNoSelection; // hide on real / __all__ / __draft__
             const btn = document.getElementById('dashboard-demo-btn');
             if (btn) btn.hidden = !show;
-            const draftBtn = document.getElementById('dashboard-demo-draft-btn');
-            if (draftBtn) draftBtn.hidden = !show;
         } catch (_) { /* defensive */ }
     });
 
-    // Phase 4 — DEMO ribbon visibility subscriber. Toggles every
-    // [data-demo-ribbon] node based on APP.activeDeployment.isDemoDraft()
-    // so the operator can never confuse a walkthrough surface with a real
-    // deployment. APP.demoRibbon.refresh() can be called directly from
-    // startDemoDraftFlow for immediate paint.
+    // 2026-06-02 — Guided-demo lifecycle subscriber. Two jobs:
+    //   1. Dropdown-pick of `demo` while the walkthrough is NOT active →
+    //      land on the finished example (Manage + stepper Done state).
+    //   2. Selecting anything OTHER than `demo` tears the walkthrough down
+    //      so the stepper never paints over real infrastructure.
+    // Always re-runs APP.demo.render() so the single stepper stays in sync.
     APP.activeDeployment.subscribe((name) => {
-        // 2026-05-28 — Auto-clear the demo-draft markers when the operator
-        // navigates to anything other than a demo-draft-* project (or the
-        // static 'demo'). Without this, _demoDraftActive=true would persist
-        // after the operator picked a real deployment from the dropdown,
-        // making isDemoDraft() incorrectly return true and painting the
-        // tour ribbon over real infrastructure.
         const cur = name || '';
-        const isDemoSurface = cur === 'demo' || /^demo-draft-/.test(cur);
-        if (!isDemoSurface && APP._demoDraftActive) {
-            APP._demoDraftActive = false;
-            APP._demoDraftProject = null;
-            try {
-                sessionStorage.removeItem('demoDraftActive');
-                sessionStorage.removeItem('demoDraftProject');
-            } catch (_) {}
-        }
-        try { if (APP.demoRibbon && APP.demoRibbon.refresh) APP.demoRibbon.refresh(); }
-        catch (_) { /* noop — ribbons may not be mounted yet */ }
+        try {
+            if (cur === 'demo') {
+                // Picking demo from the dropdown (not via start()/render())
+                // surfaces the finished example. start()/begin()/render()
+                // set step before .set('demo') fires, so only fall into
+                // viewFinished when no step is established yet.
+                if (!APP.demo.active && !APP.demo.step) {
+                    APP.demo.viewFinished();
+                    return;
+                }
+            } else if (APP.demo.active || APP.demo.step) {
+                // Left the demo project — exit the walkthrough quietly
+                // (don't re-navigate; the operator already chose a target).
+                APP.demo.active = false;
+                APP.demo.step = null;
+                try {
+                    sessionStorage.removeItem('demoActive');
+                    sessionStorage.removeItem('demoStep');
+                } catch (_) {}
+            }
+            APP.demo.render();
+        } catch (_) { /* noop — demo chrome may not be mounted yet */ }
     });
 }
-
-/**
- * Phase 4 — DEMO ribbon controller. Single source of truth for ribbon
- * visibility + skip-button wiring. Mounted once per page load; refreshes
- * on every activeDeployment change.
- */
-APP.demoRibbon = (function () {
-    let _wired = false;
-    function refresh() {
-        const ad = APP.activeDeployment;
-        // Two flavours of demo state:
-        //   isDemoDraft   — operator clicked "Provision a Demo Deployment"
-        //                   and is walking the Configure/Deploy/Manage tour.
-        //                   Tour ribbon stays visible across the 3 walkthrough
-        //                   panes; leaf panes (Bolt-ons / Operations sub-pills)
-        //                   show the corner DEMO pill instead.
-        //   isDemoStatic  — operator picked the pre-existing 'demo' deployment
-        //                   ("Try Demo Mode"). Leaf-pane pills still apply
-        //                   (so the operator never confuses synthetic data
-        //                   with real infra), but the walkthrough ribbons
-        //                   are NOT shown — there's nothing to walk through.
-        const isDemoDraft = !!(ad && typeof ad.isDemoDraft === 'function' && ad.isDemoDraft());
-        const cur = (ad && ad.current) || '';
-        const isDemoStatic = cur === 'demo' && !isDemoDraft;
-        const anyDemo = isDemoDraft || isDemoStatic;
-        // Walkthrough ribbons — only on demo-draft.
-        document.querySelectorAll('[data-demo-ribbon]').forEach(el => {
-            if (isDemoDraft) el.removeAttribute('hidden');
-            else el.setAttribute('hidden', '');
-        });
-        // Corner pills on leaf panes — visible on either demo flavour.
-        document.querySelectorAll('[data-demo-pill]').forEach(el => {
-            if (anyDemo) el.removeAttribute('hidden');
-            else el.setAttribute('hidden', '');
-        });
-        if (!_wired) {
-            // Delegate click handling once. Skip buttons carry
-            // data-demo-skip-to="<subpill-name>" so a single listener
-            // dispatches to APP.navigateTo for every ribbon.
-            document.addEventListener('click', (evt) => {
-                const btn = evt.target && evt.target.closest
-                    ? evt.target.closest('[data-demo-skip-to]') : null;
-                if (!btn) return;
-                const target = btn.getAttribute('data-demo-skip-to');
-                if (!target) return;
-                if (typeof APP.navigateTo === 'function') {
-                    APP.navigateTo('deployments-tab', target);
-                }
-            });
-            _wired = true;
-        }
-    }
-    return { refresh };
-})();
-// First paint on DOMContentLoaded so ribbons reflect any persisted
-// demo-draft state (e.g. operator reloaded mid-walkthrough). The
-// subscriber above also re-paints on every activeDeployment change.
+// 2026-06-02 — First paint after the DOM is ready: restore any persisted
+// demo state (operator reloaded mid-walkthrough) and render the stepper.
 document.addEventListener('DOMContentLoaded', () => {
-    // 2026-05-28 — Rehydrate the demo-draft markers from sessionStorage
-    // before the first paint so a reload mid-Configure (no backend state
-    // file yet) doesn't drop the operator out of the walkthrough. The
-    // post-Apply case already self-heals via the demo-draft-* name regex
-    // in isDemoDraft() — this only covers the pre-Apply window.
     try {
-        if (sessionStorage.getItem('demoDraftActive') === '1') {
-            APP._demoDraftActive = true;
-            const stashedName = sessionStorage.getItem('demoDraftProject') || '';
-            if (stashedName) APP._demoDraftProject = stashedName;
+        if (APP.demo && typeof APP.demo._restore === 'function') {
+            APP.demo._restore();
+            // If we restored an in-progress (or finished-example) demo,
+            // re-pin the `demo` project so the synthetic branches + Manage
+            // fleet line up with the stepper.
+            if ((APP.demo.active || APP.demo.step === 'done')
+                && APP.activeDeployment
+                && APP.activeDeployment.current !== 'demo'
+                && typeof APP.activeDeployment.set === 'function') {
+                APP.activeDeployment.set('demo');
+            }
+            APP.demo.render();
         }
-    } catch (_) { /* private browsing — non-fatal */ }
-    try { APP.demoRibbon.refresh(); } catch (_) {}
+    } catch (_) { /* private browsing / early boot — non-fatal */ }
 });
 
 function refreshElasticRulesCard() {
@@ -15212,11 +15406,14 @@ async function saveConfig() {
                 if (APP && APP.toast) APP.toast('Step 1 complete — opening Deploy…', 'success');
                 // 2026-05-28 — guided-tour handoff: auto-advance to Deploy
                 // ~1.2s after the toast so the operator sees the success
-                // signal, then naturally lands on the next step. Without
-                // this the only way forward was the small "Skip to Deploy →"
-                // link in the ribbon — too easy to miss.
+                // signal, then naturally lands on the next step.
+                // 2026-06-02 — during the unified guided demo, advance via
+                // APP.demo.next() so the top stepper's step state stays in
+                // sync (it also navigates). Fall back to a raw nav otherwise.
                 setTimeout(() => {
-                    if (typeof APP.navigateTo === 'function') {
+                    if (APP.demo && APP.demo.active && APP.demo.step === 'configure') {
+                        APP.demo.next();
+                    } else if (typeof APP.navigateTo === 'function') {
                         APP.navigateTo('deployments-tab', 'deploy');
                     }
                 }, 1200);
@@ -18088,20 +18285,20 @@ async function startDeployment() {
     const active = APP.activeDeployment && APP.activeDeployment.effectiveProject
         ? APP.activeDeployment.effectiveProject() : null;
     const isAll = APP.activeDeployment && APP.activeDeployment.isAll && APP.activeDeployment.isAll();
-    // ── Phase 4: synthetic demo-draft Apply ──────────────────────────
-    // When the operator clicks Apply during a demo-draft walkthrough,
-    // bypass the entire prereq pipeline (CS file, domain, AWS CLI, SSH
-    // key) and POST is_demo_draft=true to the backend, which spawns a
-    // 30s simulated tick. Polling + the progress overlay re-use the
-    // existing real-Apply pipeline so the operator gets the same visual
-    // feedback they would in a live deployment.
+    // ── Synthetic demo Apply ──────────────────────────────────────────
+    // When the operator clicks Apply during the guided demo (active
+    // deployment === `demo`), bypass the entire prereq pipeline (CS file,
+    // domain, AWS CLI, SSH key) and POST is_demo_draft=true to the backend,
+    // which spawns a simulated tick. Polling + the progress overlay re-use
+    // the existing real-Apply pipeline so the operator gets the same visual
+    // feedback they would in a live deployment. (The top stepper drives the
+    // step→Manage hand-off; this branch just animates the Apply.)
     const isDemoDraft = APP.activeDeployment
         && typeof APP.activeDeployment.isDemoDraft === 'function'
         && APP.activeDeployment.isDemoDraft();
     if (isDemoDraft) {
-        const projectName = APP._demoDraftProject
-            || (APP.activeDeployment && APP.activeDeployment.current)
-            || ('demo-draft-' + Date.now().toString(36));
+        const projectName = (APP.activeDeployment && APP.activeDeployment.current)
+            || 'demo';
         window.currentDeploymentProject = projectName;
         if (window.activeDeploymentProjects) {
             window.activeDeploymentProjects.add(projectName);

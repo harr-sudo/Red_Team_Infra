@@ -5376,148 +5376,291 @@ body { padding-top: 64px; }
     .dashboard-hero__demo:hover { transform: none; }
 }
 
-/* ───────────────────────────────────────────────────────────────────────
-   Phase 4 — "+ Provision a Demo Deployment" CTA.
-   Mirrors .dashboard-hero__demo (Try Demo Mode) but with a distinguishing
-   double-line inset edge in --brand-light so the operator can tell the
-   two CTAs apart at a glance. TASTE V3 dials 5/6/5:
-   - VARIANCE: same shape grammar as the showcase demo CTA, swapped accent
-   - MOTION: same 280ms cubic-bezier hover lift; reduced-motion strips
-   - DENSITY: same internal padding to keep the hero row balanced
-   ─────────────────────────────────────────────────────────────────────── */
-.dashboard-hero__demo-draft {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    padding: 14px 20px;
-    border-radius: var(--radius);
-    cursor: pointer;
-    font-family: inherit;
-    text-align: left;
-    display: inline-flex;
-    align-items: center;
-    gap: 14px;
-    color: var(--text-primary);
-    transition: border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
-                transform 280ms cubic-bezier(0.4, 0, 0.2, 1),
-                background-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
-    /* Distinguishing cue vs the static demo CTA: a brighter --brand-light
-       left edge (no opacity blend) so the two cards read as adjacent but
-       not identical. */
-    box-shadow: inset 4px 0 0 0 var(--brand-light);
-}
-.dashboard-hero__demo-draft:hover {
-    border-color: var(--brand-light);
-    background: var(--bg-card-hover);
-    transform: translateY(-1px);
-}
-.dashboard-hero__demo-draft:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
-}
-.dashboard-hero__demo-draft .dashboard-hero__demo-glyph {
-    color: var(--brand-light);
-    font-size: 18px;
-    line-height: 1;
-    flex-shrink: 0;
-    /* No pulse on this one — it's a walkthrough entry, not an "always-on"
-       showcase demo, and the operator's about to enter an active flow. */
-}
-.dashboard-hero__demo-draft .dashboard-hero__demo-label {
-    color: var(--brand-light);  /* tighter accent on the label so the
-                                   walkthrough CTA reads as the "action"
-                                   sibling vs the showcase "preview". */
-}
-@media (prefers-reduced-motion: reduce) {
-    .dashboard-hero__demo-draft { transition: none; }
-    .dashboard-hero__demo-draft:hover { transform: none; }
-}
+/* ═══════════════════════════════════════════════════════════════════════
+   2026-06-02 — UNIFIED GUIDED DEMO.
+   One persistent progress stepper (replaces the two confusing demo modes +
+   the 3 per-pane ribbons) and a focal Start/welcome card. Drives the whole
+   Start → 1 Configure → 2 Deploy → 3 Manage → Done flow on the synthetic
+   `demo` project. The stepper IS the nav during the demo (the .subpill-nav
+   is hidden), so it sits sticky-ish at the top of the deployments content.
 
-/* ───────────────────────────────────────────────────────────────────────
-   Phase 4 — DEMO ribbon. Mounted on every Deployments + Operations
-   sub-pill pane when the walkthrough flow is active. Persistent so the
-   operator can never confuse it with a real deployment. TASTE V3 dials
-   5/6/5 — calm border-left accent, no motion beyond the 280ms transition
-   for hover/state changes, mono eyebrow + readable body text on
-   --text-secondary so contrast clears 4.5:1 in both themes.
-   ─────────────────────────────────────────────────────────────────────── */
-/* ── Demo tour strip (2026-05-28 polish) ──────────────────────────────
-   Replaces the original heavy ribbon on walkthrough panes (Configure /
-   Deploy / Manage). Now reads as a slim guided-tour hint rather than a
-   blocking banner. Uses the dedicated `--guide-accent` (soft teal) so
-   the operator's eye learns "teal = demo guidance" — distinct from
-   brand-olive (primary actions), warning-amber (issues), success-green
-   (completed). Step indicator surfaces walkthrough progress.
-   TASTE 5/6/5: calm 280ms transition, prefers-reduced-motion strip,
-   palette vars only, contrast >=4.5:1 in both themes.                  */
-.demo-ribbon {
+   TASTE dials 5 / 6 / 5:
+   - VARIANCE 5: a clean horizontal segmented bar (nodes left, action right)
+     with connector lines — structured, not symmetrical-bland.
+   - MOTION 6: `transition: all .3s cubic-bezier(.16,1,.3,1)`, animate only
+     transform/opacity, tactile :active scale, staggered node reveal,
+     prefers-reduced-motion strips everything.
+   - DENSITY 5: comfortable padding on the welcome card, compact on the bar.
+
+   Palette vars ONLY (no raw hex). Dual-theme safe: text on the bar/card
+   uses --text-primary / --text-secondary (NOT --gold/--accent — those go
+   low-contrast on the light olive surfaces per the project's light gotcha).
+   The teal --guide-accent is reserved for the "current" emphasis ring; its
+   companion --guide-accent-text clears 4.5:1 in both themes.
+   ═══════════════════════════════════════════════════════════════════════ */
+.demo-stepper {
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 6px 12px;
-    margin: 0 0 10px 0;
-    background: var(--guide-accent-soft);
-    border-left: 2px solid var(--guide-accent);
-    border-radius: var(--radius-sm, 4px);
-    font-size: 11.5px;
-    line-height: 1.4;
-    color: var(--text-secondary);
-    transition: background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
-                border-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    margin: 0 0 16px 0;
+    background: var(--bg-section);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    position: sticky;
+    top: 0;
+    z-index: 4;
 }
-.demo-ribbon[hidden] { display: none; }
-.demo-ribbon__eyebrow {
-    font-family: var(--font-family-mono);
-    font-size: 10px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--guide-accent-text);
-    font-weight: 700;
-    flex-shrink: 0;
-}
-.demo-ribbon__step {
-    font-family: var(--font-family-mono);
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    color: var(--guide-accent-text);
-    opacity: 0.85;
-    padding: 1px 7px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--guide-accent) 22%, transparent);
-    flex-shrink: 0;
-}
-.demo-ribbon__text {
-    font-size: 11.5px;
-    color: var(--text-secondary);
+.demo-stepper[hidden] { display: none; }
+
+.demo-stepper__nodes {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
     flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: wrap;
 }
-.demo-ribbon__skip {
-    background: transparent;
-    border: 0;
-    color: var(--guide-accent-text);
-    padding: 2px 4px;
-    border-radius: 3px;
-    font-size: 11px;
-    font-family: inherit;
-    font-weight: 600;
-    cursor: pointer;
+/* Connector line between nodes — border-based so it's transform-safe. */
+.demo-stepper__node + .demo-stepper__node::before {
+    content: "";
+    width: 18px;
+    height: 0;
+    border-top: 1px solid var(--border-strong);
+    margin: 0 2px;
     flex-shrink: 0;
-    text-decoration: underline;
-    text-decoration-color: color-mix(in srgb, var(--guide-accent) 40%, transparent);
-    text-underline-offset: 3px;
-    transition: color 280ms cubic-bezier(0.4, 0, 0.2, 1),
-                text-decoration-color 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: border-color .3s cubic-bezier(.16, 1, .3, 1);
 }
-.demo-ribbon__skip:hover {
-    color: var(--guide-accent);
-    text-decoration-color: var(--guide-accent);
+.demo-stepper__node {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px 5px 6px;
+    border-radius: var(--radius-full);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    /* MOTION 6 — single calm spring-ish curve on everything; only
+       transform/opacity/color/border actually move. */
+    transition: all .3s cubic-bezier(.16, 1, .3, 1);
+    /* Staggered reveal when the stepper appears (delay set per-node below). */
+    animation: demo-node-in .42s cubic-bezier(.16, 1, .3, 1) both;
+    animation-delay: calc(var(--i, 0) * 60ms);
 }
-.demo-ribbon__skip:focus-visible {
+/* Connectors are ::before pseudo-elements, so :nth-child counts only the
+   five real <li> nodes — staggered reveal lands 60ms apart in order. */
+.demo-stepper__node:nth-child(1) { --i: 0; }
+.demo-stepper__node:nth-child(2) { --i: 1; }
+.demo-stepper__node:nth-child(3) { --i: 2; }
+.demo-stepper__node:nth-child(4) { --i: 3; }
+.demo-stepper__node:nth-child(5) { --i: 4; }
+@keyframes demo-node-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.demo-stepper__node:hover {
+    color: var(--text-secondary);
+    background: var(--bg-card);
+}
+.demo-stepper__node:focus-visible {
     outline: 2px solid var(--guide-accent);
     outline-offset: 2px;
 }
+.demo-stepper__node:active { transform: scale(.98); }
+
+.demo-stepper__marker {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    flex-shrink: 0;
+    transition: all .3s cubic-bezier(.16, 1, .3, 1);
+}
+.demo-stepper__label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: inherit;
+    white-space: nowrap;
+}
+
+/* ── Node states ──────────────────────────────────────────────────── */
+/* Completed — muted success, check glyph drawn via ::after on the marker. */
+.demo-stepper__node.is-done {
+    color: var(--text-secondary);
+}
+.demo-stepper__node.is-done .demo-stepper__marker {
+    border-color: var(--success-border);
+    background: var(--success-bg);
+    color: transparent;            /* hide the number; show the check */
+    position: relative;
+}
+.demo-stepper__node.is-done .demo-stepper__marker::after {
+    content: "";
+    position: absolute;
+    width: 5px;
+    height: 9px;
+    border: solid var(--success-text);
+    border-width: 0 2px 2px 0;
+    transform: translateY(-1px) rotate(45deg);
+}
+/* Current — guide-accent emphasis ring + readable text. */
+.demo-stepper__node.is-current {
+    background: var(--guide-accent-soft);
+    border-color: color-mix(in srgb, var(--guide-accent) 45%, transparent);
+    color: var(--text-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--guide-accent) 18%, transparent);
+}
+.demo-stepper__node.is-current .demo-stepper__marker {
+    border-color: var(--guide-accent);
+    background: var(--guide-accent-soft);
+    color: var(--guide-accent-text);
+}
+.demo-stepper__node.is-current .demo-stepper__label {
+    color: var(--text-primary);
+}
+/* Future — dimmed. */
+.demo-stepper__node.is-future {
+    color: var(--text-muted);
+    opacity: 0.75;
+}
+.demo-stepper__node.is-future .demo-stepper__marker {
+    border-color: var(--border);
+    background: transparent;
+    color: var(--text-muted);
+}
+/* Light up the connector once the segment to its LEFT is completed. */
+.demo-stepper__node.is-current::before,
+.demo-stepper__node.is-done::before {
+    border-top-color: var(--guide-accent);
+}
+
+/* ── Action zone (right side) ─────────────────────────────────────── */
+.demo-stepper__action {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+.demo-stepper__done-label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--success-text);
+    white-space: nowrap;
+}
+/* The action buttons reuse the canonical .btn / .btn-primary / .btn-secondary
+   component (which has the AA-safe deployments-tab --brand + --text-inverse
+   pairing in both themes). We only add the tactile :active press + a no-wrap
+   guard on top — never our own colour pairing. */
+.demo-stepper__btn { white-space: nowrap; }
+.demo-stepper__btn:active { transform: scale(.98); }
+
+/* ── Start / welcome card ─────────────────────────────────────────── */
+.demo-welcome {
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px 48px;
+}
+.demo-welcome[hidden] { display: none; }
+.demo-welcome__card {
+    /* This card MAY be centered — it's the focal Start screen. */
+    max-width: 520px;
+    width: 100%;
+    text-align: center;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 36px 36px 32px;
+    box-shadow: 0 18px 40px -24px color-mix(in srgb, var(--brand-dark) 50%, transparent);
+    animation: demo-welcome-in .5s cubic-bezier(.16, 1, .3, 1) both;
+}
+@keyframes demo-welcome-in {
+    from { opacity: 0; transform: translateY(8px) scale(.99); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.demo-welcome__eyebrow {
+    font-family: var(--font-family-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--guide-accent-text);
+    font-weight: 700;
+    margin: 0 0 10px 0;
+}
+.demo-welcome__heading {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 10px 0;
+    letter-spacing: -0.01em;
+}
+.demo-welcome__body {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin: 0 auto 24px;
+    max-width: 42ch;
+}
+/* Begin button reuses .btn .btn-primary (AA-safe in both themes); we only
+   bump the padding so the focal Start CTA reads larger than a row button. */
+.demo-welcome__begin {
+    font-size: 14px;
+    padding: 11px 26px;
+}
+.demo-welcome__begin:active { transform: scale(.98); }
+.demo-welcome__skip {
+    display: block;
+    margin: 14px auto 0;
+    background: transparent;
+    border: 0;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-color: var(--border-strong);
+    transition: color .3s cubic-bezier(.16, 1, .3, 1),
+                text-decoration-color .3s cubic-bezier(.16, 1, .3, 1);
+}
+.demo-welcome__skip:hover {
+    color: var(--text-secondary);
+    text-decoration-color: var(--text-muted);
+}
+.demo-welcome__skip:focus-visible {
+    outline: 2px solid var(--guide-accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+}
+
 @media (prefers-reduced-motion: reduce) {
-    .demo-ribbon,
-    .demo-ribbon__skip { transition: none; }
+    .demo-stepper__node,
+    .demo-stepper__node::before,
+    .demo-stepper__marker,
+    .demo-welcome__card,
+    .demo-welcome__skip {
+        transition: none;
+        animation: none;
+    }
+    .demo-stepper__node:active,
+    .demo-stepper__btn:active,
+    .demo-welcome__begin:active { transform: none; }
 }
 
 /* ── Demo corner pill (2026-05-28) ────────────────────────────────────
