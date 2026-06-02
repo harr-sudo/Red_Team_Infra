@@ -7209,6 +7209,16 @@ body { padding-top: 64px; }
 }
 .spec-pill--error .spec-pill__dot { background: var(--danger); }
 .spec-pill--draft .spec-pill__dot { background: var(--text-muted); }
+/* 2026-06-02 — DEMO status variant for the synthetic showcase deployment.
+   Uses the guide accent (soft teal) so the Manage hero reads "DEMO" not the
+   misleading "LIVE". --guide-accent-text is AA-safe on the cream/dark pill
+   bg in both themes (darker teal #145361 in light, #5BB5C7 in dark). */
+.spec-pill--demo {
+    background: var(--guide-accent-soft);
+    border-color: color-mix(in srgb, var(--guide-accent) 40%, transparent);
+    color: var(--guide-accent-text);
+}
+.spec-pill--demo .spec-pill__dot { background: var(--guide-accent); }
 
 @keyframes spec-pill-pulse {
     0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 60%, transparent); }
@@ -14416,28 +14426,41 @@ textarea.cfg-input {
     color: var(--text-secondary);
     opacity: 0.5;
 }
-.cfg-identity-confirmed__edit {
-    appearance: none;
-    background: transparent;
-    border: 1px solid var(--border-subtle);
-    color: var(--text-secondary);
-    padding: 3px 6px;
-    margin-left: 4px;
-    border-radius: var(--radius-xs);
-    cursor: pointer;
+/* 2026-06-02 — Re-pick affordance on the confirmed Family/Type chip row.
+   Was an icon-only pencil (.cfg-identity-confirmed__edit) operators couldn't
+   find. Now a labelled .cfg-btn-secondary ("← Change deployment type") so the
+   re-pick path is discoverable. The base .cfg-btn-secondary handles dual-theme
+   colours (bg-elevated + text-secondary, both AA-safe). This modifier just
+   trims the padding to sit inline in the compact chip row. */
+.cfg-identity-confirmed__change {
+    margin-left: 6px;
+    /* >=24px tall click target (6px*2 padding + ~13px line-box). font-size
+       inherits the .cfg-btn-secondary base (11px) — readable in both themes. */
+    padding: 6px 11px;
+    font-size: 11px;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    transition: color var(--cfg-motion-fast) var(--cfg-motion-ease),
+    gap: 5px;
+    transition: background-color var(--cfg-motion-fast) var(--cfg-motion-ease),
                 border-color var(--cfg-motion-fast) var(--cfg-motion-ease),
-                background-color var(--cfg-motion-fast) var(--cfg-motion-ease);
+                color var(--cfg-motion-fast) var(--cfg-motion-ease),
+                transform var(--cfg-motion-fast) var(--cfg-motion-ease);
 }
-.cfg-identity-confirmed__edit:hover {
-    color: var(--text-primary);
-    border-color: var(--border);
-    background: var(--bg-card-hover);
+.cfg-identity-confirmed__change:active { transform: scale(0.97); }
+.cfg-identity-confirmed__change-arrow {
+    font-size: 12px;
+    line-height: 1;
+    transition: transform var(--cfg-motion-fast) var(--cfg-motion-ease);
 }
-.cfg-identity-confirmed__edit svg { width: 12px; height: 12px; display: block; }
+.cfg-identity-confirmed__change:hover .cfg-identity-confirmed__change-arrow {
+    transform: translateX(-2px);
+}
+@media (prefers-reduced-motion: reduce) {
+    .cfg-identity-confirmed__change,
+    .cfg-identity-confirmed__change-arrow { transition: none; }
+    .cfg-identity-confirmed__change:active { transform: none; }
+    .cfg-identity-confirmed__change:hover .cfg-identity-confirmed__change-arrow { transform: none; }
+}
 [data-cfg-identity-sub-fields][hidden] { display: none; }
 [data-cfg-identity-pickers][hidden] { display: none; }
 
@@ -14710,7 +14733,10 @@ textarea.cfg-input {
 .cfg-btn-confirm {
     appearance: none;
     background: var(--burgundy-dark);
-    color: var(--gold);
+    /* 2026-06-02 — was var(--gold): in light mode --gold resolves to dark
+       olive (#495C2D) on the dark --burgundy-dark (#091620) fill = dark-on-dark
+       and unreadable. --text-on-primary is near-white in BOTH themes. */
+    color: var(--text-on-primary);
     border: 1px solid var(--burgundy-dark);
     padding: 9px 22px;
     border-radius: var(--radius-xs);
@@ -15786,7 +15812,62 @@ textarea.cfg-input {
 .bolton-walk__article-foot {
     margin-top: 16px;
     display: flex;
-    justify-content: flex-end;
+    /* 2026-06-02 — was justify-content: flex-end (ui-quality-check violation:
+       buttons pushed to far right). Left-aligned with gap. */
+    justify-content: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+/* 2026-06-02 — Prev / Next / Finish navigation between walkthrough steps.
+   Linear curriculum needs an obvious forward-back path; the aside step list
+   only allows arbitrary jumps. Left-aligned (no space-between) per layout
+   rules — the step counter sits between the two buttons as plain text. All
+   colours come from .spec-edit-btn (dual-theme safe). */
+.bolton-walk__article-nav {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.bolton-walk__nav-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background-color var(--motion-duration-base) var(--motion-easing-standard),
+                border-color var(--motion-duration-base) var(--motion-easing-standard),
+                transform var(--motion-duration-base) var(--motion-easing-standard);
+}
+.bolton-walk__nav-btn:active:not(:disabled) { transform: scale(0.97); }
+.bolton-walk__nav-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.bolton-walk__nav-arrow {
+    font-size: 13px;
+    line-height: 1;
+    transition: transform var(--motion-duration-base) var(--motion-easing-standard);
+}
+.bolton-walk__nav-btn[data-bolton-walk-prev]:hover:not(:disabled) .bolton-walk__nav-arrow {
+    transform: translateX(-2px);
+}
+.bolton-walk__nav-btn[data-bolton-walk-next]:hover:not(:disabled) .bolton-walk__nav-arrow {
+    transform: translateX(2px);
+}
+.bolton-walk__nav-count {
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.04em;
+}
+@media (prefers-reduced-motion: reduce) {
+    .bolton-walk__nav-btn,
+    .bolton-walk__nav-arrow { transition: none; }
+    .bolton-walk__nav-btn:active:not(:disabled) { transform: none; }
+    .bolton-walk__nav-btn:hover:not(:disabled) .bolton-walk__nav-arrow { transform: none; }
 }
 /* TASTE V3 — spring overshoot ONLY on micro-feedback (the
    mark-step-complete button). 280ms cubic-bezier(0.34, 1.56, 0.64, 1)

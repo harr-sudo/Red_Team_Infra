@@ -901,7 +901,7 @@
                                             <span class="cfg-identity-confirmed__kv"><span class="cfg-identity-confirmed__k">Family</span><span class="cfg-identity-confirmed__v" id="cfg-identity-confirmed-family">External C2</span></span>
                                             <span class="cfg-identity-confirmed__sep">·</span>
                                             <span class="cfg-identity-confirmed__kv"><span class="cfg-identity-confirmed__k">type</span><span class="cfg-identity-confirmed__v" id="cfg-identity-confirmed-type">c2-adhoc</span></span>
-                                            <button class="cfg-identity-confirmed__edit" type="button" id="cfg-identity-edit-btn" data-cfg-identity-edit aria-label="Re-pick family / type"><svg><use href="#cfg-ic-edit"/></svg></button>
+                                            <button class="cfg-btn-secondary cfg-identity-confirmed__change" type="button" id="cfg-identity-edit-btn" data-cfg-identity-edit aria-label="Change deployment type — re-pick family / type"><span class="cfg-identity-confirmed__change-arrow" aria-hidden="true">&larr;</span> Change deployment type</button>
                                         </div>
                                         <div data-cfg-identity-sub-fields hidden>
                                             <div class="cfg-row">
@@ -3179,8 +3179,9 @@ ns-143.awsdns-17.org
                          Mirrors webapp/frontend/preview/page-bolton-target.html with
                          live wiring to /api/bolton/*. JS controller is APP.bolton. -->
                     <div class="subpill-pane" data-subpill-pane="bolt-ons" id="subpill-pane-bolt-ons" hidden>
-                        <!-- 2026-05-28 polish: leaf pane gets a corner pill, not a ribbon. -->
-                        <span class="demo-corner-pill" data-demo-pill="bolt-ons" title="Synthetic data — no AWS resources are provisioned." hidden>Demo</span>
+                        <!-- 2026-06-02 — Per-pane "Demo" corner pill removed. The global
+                             demo stepper is the single, consistent synthetic-data signal;
+                             the scattered per-pane pills read as random floating bubbles. -->
                         <!-- 2026-05-21 — All-mode empty state container removed
                              (see Configure pane note). Bolt-ons are
                              per-deployment only; the pill is hidden in All mode. -->
@@ -3444,8 +3445,8 @@ ns-143.awsdns-17.org
                 </div>
                 <div class="subpill-content" role="tabpanel">
                     <div class="subpill-pane" data-subpill-pane="beacons" id="subpill-pane-beacons">
-                        <!-- 2026-05-28 polish: leaf pane gets a corner pill, not a ribbon. -->
-                        <span class="demo-corner-pill" data-demo-pill="beacons" title="Synthetic beacons — no real Cobalt Strike connection." hidden>Demo</span>
+                        <!-- 2026-06-02 — Per-pane "Demo" corner pill removed; global stepper
+                             is the single synthetic-data signal during the guided demo. -->
                 <!-- 2026-05-19 — All-mode aggregate fleet container. Populated by
                      APP.beacons.renderFleet() when APP.activeDeployment.isAll(). -->
                 <div id="beacons-all-mode-empty" hidden></div>
@@ -4085,8 +4086,8 @@ ns-143.awsdns-17.org
                          beacon detail Graph tab but full-width with a
                          legend strip. -->
                     <div class="subpill-pane" data-subpill-pane="topology" id="subpill-pane-topology" hidden>
-                        <!-- 2026-05-28 polish: leaf pane gets a corner pill, not a ribbon. -->
-                        <span class="demo-corner-pill" data-demo-pill="topology" title="Synthetic topology — drag nodes to rearrange." hidden>Demo</span>
+                        <!-- 2026-06-02 — Per-pane "Demo" corner pill removed; global stepper
+                             is the single synthetic-data signal during the guided demo. -->
                         <div class="topology-pane">
                             <header class="topology-pane__header">
                                 <div>
@@ -4138,8 +4139,8 @@ ns-143.awsdns-17.org
                         </div>
                     </div>
                     <div class="subpill-pane" data-subpill-pane="terminal" id="subpill-pane-terminal" hidden>
-                        <!-- 2026-05-28 polish: leaf pane gets a corner pill, not a ribbon. -->
-                        <span class="demo-corner-pill" data-demo-pill="terminal" title="Local bash with a fake SSH login banner — no real instance connection." hidden>Demo</span>
+                        <!-- 2026-06-02 — Per-pane "Demo" corner pill removed; global stepper
+                             is the single synthetic-data signal during the guided demo. -->
                 <!-- 2026-05-19 — All-mode empty-state container for Terminal. -->
                 <div id="terminal-all-mode-empty" hidden></div>
                 <div id="terminal-scoped-content">
@@ -4188,8 +4189,8 @@ ns-143.awsdns-17.org
                 </div><!-- /#terminal-scoped-content -->
                     </div>
                     <div class="subpill-pane" data-subpill-pane="payloads" id="subpill-pane-payloads" hidden>
-                        <!-- 2026-05-28 polish: leaf pane gets a corner pill, not a ribbon. -->
-                        <span class="demo-corner-pill" data-demo-pill="payloads" title="Synthetic payloads — transfer is mocked, no S3 / SSM calls." hidden>Demo</span>
+                        <!-- 2026-06-02 — Per-pane "Demo" corner pill removed; global stepper
+                             is the single synthetic-data signal during the guided demo. -->
                 <!-- 2026-05-19 — All-mode aggregate history container for Payloads. -->
                 <div id="payloads-all-mode-empty" hidden></div>
                 <div id="payloads-scoped-content">

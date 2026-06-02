@@ -5064,18 +5064,19 @@ APP.demo = {
         });
         // The Deployments-tab subpill-content hosts the Start welcome toggle.
         const depContent = depPage ? depPage.querySelector('.subpill-content') : null;
+        // 2026-06-02 (issue #6) — the Operations-tab sub-pill nav (Beacons ·
+        // Topology · Terminal · Payloads) must stay reachable during the
+        // Operations step so the operator can explore Topology/Terminal/
+        // Payloads (all seeded with synthetic data). The global stepper is
+        // still the primary cross-tab nav; this is the WITHIN-Operations nav.
+        const opsSubnav = opsPage ? opsPage.querySelector('.subpill-nav') : null;
 
         const inDemo = this.active || this.step === 'done';
 
-        // Toggle the leaf-pane "Demo" corner pills regardless of stepper
-        // (they mark synthetic data on showcase panes — Bolt-ons / Beacons /
-        // Topology / Terminal / Payloads).
-        try {
-            document.querySelectorAll('[data-demo-pill]').forEach(el => {
-                if (inDemo) el.removeAttribute('hidden');
-                else el.setAttribute('hidden', '');
-            });
-        } catch (_) {}
+        // 2026-06-02 — The scattered per-pane "Demo" corner pills were removed.
+        // The global stepper (always visible during the demo) is now the single,
+        // consistent synthetic-data signal, so there are no per-pane bubbles to
+        // toggle here anymore.
 
         if (!inDemo) {
             if (stepper) stepper.hidden = true;
@@ -5085,9 +5086,16 @@ APP.demo = {
             return;
         }
 
-        // In the demo: the GLOBAL stepper IS the nav — hide every per-tab subnav.
+        // In the demo: the GLOBAL stepper IS the primary nav — hide every
+        // per-tab subnav EXCEPT the Operations sub-pill nav while on the
+        // Operations step (issue #6), so Topology/Terminal/Payloads stay
+        // reachable. The Operations nav is restored to hidden on every other
+        // step (and fully restored when the demo ends, in the !inDemo branch).
         if (stepper) stepper.hidden = false;
-        subnavs.forEach(sn => { sn.hidden = true; });
+        const keepOpsNav = this.step === 'operations';
+        subnavs.forEach(sn => {
+            sn.hidden = !(keepOpsNav && sn === opsSubnav);
+        });
         // Default: show all pane content (the Start branch below hides the
         // Deployments content while the welcome card is up).
         contents.forEach(ct => { ct.hidden = false; });
@@ -12756,9 +12764,18 @@ async function _configureSummaryUpdateStatus(projectName) {
     const pill = document.getElementById('configure-summary-status');
     const label = document.getElementById('configure-summary-status-label');
     if (!pill || !label) return;
-    pill.classList.remove('spec-pill--live', 'spec-pill--error', 'spec-pill--draft');
+    pill.classList.remove('spec-pill--live', 'spec-pill--error', 'spec-pill--draft', 'spec-pill--demo');
     pill.classList.add('spec-pill--draft');
     label.textContent = 'DRAFT';
+    // 2026-06-02 — Demo showcase reads "DEMO" not "LIVE" (backend reports the
+    // canned demo project as deployed:true). Keeps the synthetic indicator
+    // consistent with the Manage + Deploy surfaces.
+    if (APP.manage && APP.manage._isDemoContext && APP.manage._isDemoContext()) {
+        pill.classList.remove('spec-pill--draft');
+        pill.classList.add('spec-pill--demo');
+        label.textContent = 'DEMO';
+        return;
+    }
     if (!projectName) return;
     try {
         const r = await fetch(`/api/deploy/status?project=${encodeURIComponent(projectName)}`);
@@ -16272,9 +16289,18 @@ async function _deploySummaryUpdateStatus(projectName) {
     const label = document.getElementById('deploy-summary-status-label');
     if (!pill || !label) return;
     // default to DRAFT
-    pill.classList.remove('spec-pill--live', 'spec-pill--error', 'spec-pill--draft');
+    pill.classList.remove('spec-pill--live', 'spec-pill--error', 'spec-pill--draft', 'spec-pill--demo');
     pill.classList.add('spec-pill--draft');
     label.textContent = 'DRAFT';
+    // 2026-06-02 — Demo showcase: the backend reports the canned `demo` project
+    // as deployed:true, which would paint a misleading "LIVE" pill. Render
+    // "DEMO" to match the Manage hero — never imply real AWS resources.
+    if (APP.manage && APP.manage._isDemoContext && APP.manage._isDemoContext()) {
+        pill.classList.remove('spec-pill--draft');
+        pill.classList.add('spec-pill--demo');
+        label.textContent = 'DEMO';
+        return;
+    }
     if (!projectName) return;
     try {
         const r = await fetch(`/api/deploy/status?project=${encodeURIComponent(projectName)}`);
@@ -32221,12 +32247,33 @@ APP.manage._renderRow = function (row) {
     `;
 };
 
+/**
+ * 2026-06-02 — Is the Manage view currently showing the synthetic demo
+ * project? True during the guided walkthrough (APP.demo.active / step==='done')
+ * OR whenever the active deployment is the canned `demo` project. Used to
+ * relabel the misleading "LIVE" badge as "DEMO" so the showcase doesn't read
+ * as real infrastructure.
+ */
+APP.manage._isDemoContext = function () {
+    try {
+        if (APP.demo && (APP.demo.active || APP.demo.step === 'done')) return true;
+        if (APP.activeDeployment && APP.activeDeployment.current === 'demo') return true;
+    } catch (_) {}
+    return false;
+};
+
 /** Update the .spec-pill in the eyebrow to reflect deployment state. */
 APP.manage._updateStatusPill = function (state) {
     const pill = document.getElementById('manage-status-pill');
     const label = document.getElementById('manage-status-label');
     if (!pill || !label) return;
-    pill.classList.remove('spec-pill--live', 'spec-pill--draft', 'spec-pill--error');
+    pill.classList.remove('spec-pill--live', 'spec-pill--draft', 'spec-pill--error', 'spec-pill--demo');
+    // Demo showcase: never render "LIVE" — it would imply real AWS resources.
+    if (APP.manage._isDemoContext()) {
+        pill.classList.add('spec-pill--demo');
+        label.textContent = 'DEMO';
+        return;
+    }
     if (state === 'live') {
         pill.classList.add('spec-pill--live');
         label.textContent = 'LIVE';
@@ -33021,7 +33068,13 @@ APP.manage._paintFromBundle = function (bundle) {
     if (heroName) heroName.textContent = project;
     if (heroType) heroType.textContent = deployConfig?.title || deployType || '—';
     if (heroState) {
-        heroState.textContent = hasDeployment ? 'live infrastructure' : 'no live infrastructure';
+        // 2026-06-02 — Demo showcase reads "synthetic — no AWS resources" so
+        // the operator never mistakes the canned fixture for live infra.
+        if (APP.manage._isDemoContext()) {
+            heroState.textContent = 'synthetic — no AWS resources';
+        } else {
+            heroState.textContent = hasDeployment ? 'live infrastructure' : 'no live infrastructure';
+        }
     }
 
     if (statusRes?.status?.deployed) APP.manage._updateStatusPill('live');
@@ -35687,10 +35740,19 @@ APP.bolton = APP.bolton || {
     _showWalkStep(stepId) {
         const curriculum = this.state.detailCurriculum;
         if (!curriculum) return;
-        const step = (curriculum.steps || []).find(s => s.id === stepId);
-        if (!step) return;
+        const steps = curriculum.steps || [];
+        const stepIdx = steps.findIndex(s => s.id === stepId);
+        if (stepIdx === -1) return;
+        const step = steps[stepIdx];
         const main = document.querySelector('[data-bolton-walk-main]');
         if (!main) return;
+        // 2026-06-02 — Prev/Next neighbours for the walkthrough nav. The aside
+        // step list lets you jump anywhere, but a linear curriculum needs an
+        // obvious forward/back path between articles. First step disables Prev;
+        // last step turns Next into a "Finish" affordance.
+        const prevStep = stepIdx > 0 ? steps[stepIdx - 1] : null;
+        const nextStep = stepIdx < steps.length - 1 ? steps[stepIdx + 1] : null;
+        const isLastStep = stepIdx === steps.length - 1;
         const completed = new Set(((this.state.detailProgress || {}).completed_steps) || []);
         const isDone = completed.has(step.id);
         const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
@@ -35747,6 +35809,26 @@ APP.bolton = APP.bolton || {
                         ${isDone ? '↺ Mark incomplete' : '✓ Mark step complete'}
                     </button>
                 </footer>
+                <nav class="bolton-walk__article-nav" aria-label="Walkthrough step navigation">
+                    <button type="button" class="spec-edit-btn bolton-walk__nav-btn"
+                            data-bolton-walk-prev
+                            ${prevStep ? '' : 'disabled'}
+                            ${prevStep ? `data-step-id="${escapeHtml(prevStep.id)}"` : ''}
+                            aria-label="${prevStep ? 'Previous step: ' + escapeHtml(prevStep.title) : 'No previous step'}">
+                        <span class="bolton-walk__nav-arrow" aria-hidden="true">&larr;</span> Previous
+                    </button>
+                    <span class="bolton-walk__nav-count" aria-hidden="true">Step ${stepIdx + 1} of ${steps.length}</span>
+                    ${isLastStep
+                        ? `<button type="button" class="spec-edit-btn spec-edit-btn--save bolton-walk__nav-btn"
+                                data-bolton-walk-finish
+                                aria-label="Finish walkthrough">Finish</button>`
+                        : `<button type="button" class="spec-edit-btn bolton-walk__nav-btn"
+                                data-bolton-walk-next
+                                data-step-id="${escapeHtml(nextStep.id)}"
+                                aria-label="Next step: ${escapeHtml(nextStep.title)}">
+                                Next <span class="bolton-walk__nav-arrow" aria-hidden="true">&rarr;</span>
+                            </button>`}
+                </nav>
             </article>`;
         // Wire assessment + toggle.
         if (assessment) {
@@ -35761,6 +35843,31 @@ APP.bolton = APP.bolton || {
         if (toggle) {
             toggle.addEventListener('click', () => {
                 this._toggleWalkStep(step.id, !isDone);
+            });
+        }
+        // 2026-06-02 — Prev/Next/Finish walkthrough navigation. Prev + Next
+        // carry the neighbour's step id on data-step-id; Finish marks the last
+        // step complete (if it isn't already) so the operator gets clear
+        // closure, then re-paints the same step at 100%.
+        const prevBtn = main.querySelector('[data-bolton-walk-prev]');
+        if (prevBtn && !prevBtn.disabled) {
+            prevBtn.addEventListener('click', () => {
+                const target = prevBtn.dataset.stepId;
+                if (target) this._showWalkStep(target);
+            });
+        }
+        const nextBtn = main.querySelector('[data-bolton-walk-next]');
+        if (nextBtn && !nextBtn.disabled) {
+            nextBtn.addEventListener('click', () => {
+                const target = nextBtn.dataset.stepId;
+                if (target) this._showWalkStep(target);
+            });
+        }
+        const finishBtn = main.querySelector('[data-bolton-walk-finish]');
+        if (finishBtn) {
+            finishBtn.addEventListener('click', () => {
+                if (!isDone) this._toggleWalkStep(step.id, true);
+                else this._showWalkStep(step.id);
             });
         }
     },
