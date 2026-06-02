@@ -4987,28 +4987,20 @@ APP.demo = {
     _seedComposer() {
         try {
             const cv2 = APP.configureV2;
-            if (!cv2 || !cv2._state) return;
-            const st = cv2._state;
-            if (this._composerSeeded) return;
-            this._composerSeeded = true;
-            // Representative showcase: External C2 · c2-adhoc (matches the
-            // backend demo fixture's models_deployment_type).
-            st.family = 'c2';
-            st.type = 'c2-adhoc';
-            st.identityStage = 'sub';   // collapse pickers → confirmed chip row
-            // Pre-fill the project-name input so the hero + chip row read as a
-            // real, named deployment. Mark it user-edited so the composer's
-            // updateProjectName() auto-fill (which would stamp the ugly
-            // browser-UA machine suffix) doesn't clobber the clean demo name.
-            const projInput = document.getElementById('cfg-project-name');
-            if (projInput) {
-                projInput.value = 'c2_adhoc_demo_engagement';
-                projInput.dataset.cfgUserEdited = '1';
+            if (!cv2) return;
+            // 2026-06-02 — Delegate to the composer's own seedDemo() so the
+            // confirmed sections are painted through the REAL confirm path
+            // (summary chips + check bullets + active "do this next" focus),
+            // not just added to the state.confirmed Set (which left the DOM
+            // looking half-done). seedDemo() is itself idempotent. The outer
+            // _composerSeeded flag is reset on restart()/exit(); we forward
+            // that reset into the composer's own guard so a re-run re-seeds.
+            if (!this._composerSeeded && cv2._state) {
+                cv2._state._demoSeeded = false;
             }
-            // Mark the first few sections confirmed so the composer reads as a
-            // tour of a mostly-complete config (Identity + Network + SSH).
-            if (st.confirmed && typeof st.confirmed.add === 'function') {
-                ['identity', 'network', 'ssh'].forEach(s => st.confirmed.add(s));
+            this._composerSeeded = true;
+            if (typeof cv2.seedDemo === 'function') {
+                cv2.seedDemo();
             }
         } catch (_) { /* composer not mounted yet — non-fatal */ }
     },
@@ -6680,6 +6672,25 @@ document.addEventListener('DOMContentLoaded', () => {
             APP.demo.render();
         }
     } catch (_) { /* private browsing / early boot — non-fatal */ }
+
+    // 2026-06-02 — Keyboard operability for the global demo stepper. The
+    // nodes ship role="button" + tabindex="0" + inline onclick(goTo), but
+    // without a keydown handler Enter/Space on a focused node did nothing
+    // (a11y gap for the guided walkthrough). Delegate from the stepper root
+    // so Enter/Space replays the node's existing click → goTo().
+    try {
+        const stepperRoot = document.getElementById('demo-stepper');
+        if (stepperRoot && !stepperRoot._kbWired) {
+            stepperRoot._kbWired = true;
+            stepperRoot.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+                const node = e.target.closest('.demo-stepper__node');
+                if (!node || !stepperRoot.contains(node)) return;
+                e.preventDefault();
+                node.click();
+            });
+        }
+    } catch (_) { /* non-fatal */ }
 });
 
 function refreshElasticRulesCard() {
@@ -11329,561 +11340,68 @@ const BEACON = {
     },
 
     /**
-     * 2026-05-23 — Full-page Operations → Topology renderer.
+     * 2026-06-02 — Full-page Operations → Topology renderer.
      *
-     * Differences vs the (legacy) beacon-detail Graph tab:
-     *   • Team Server is the synthetic hub — every beacon branches from it,
-     *     even when the beacon has a parent pivot (parent relay rendered
-     *     as a secondary dotted edge so the operator still sees the chain).
-     *   • Nodes are DRAGGABLE — mousedown + drag updates the position;
-     *     positions are cached in `this._topoPositions` keyed by bid so
-     *     a refresh doesn't fight the operator's layout.
-     *   • Click (no drag) opens the side info panel with metadata + a
-     *     real "Interact" CTA that opens the beacon detail drawer.
-     *   • Labels render under every node (computer + user) so it's
-     *     readable even before clicking.
+     * Per operator directive the "New vs Old" toggle was removed: the OLD
+     * `const TOPOLOGY` infrastructure graph is now the single engine. It is
+     * rendered INLINE (reduced size) inside the Topology pane via
+     * `TOPOLOGY.mountInline(...)`, and a "Full screen" button re-uses the
+     * existing `TOPOLOGY.show()` overlay mechanism for the large view.
+     *
+     * The inline mount uses a dedicated `Object.create(TOPOLOGY)` instance
+     * so its canvas / pan / zoom state never clobbers the full-screen
+     * overlay's state (and vice-versa).
      */
-    _topoPositions: {},
-    _topoSelectedBid: null,
-    _topoWired: false,
-
     renderTopologyPane() {
-        const ensure = () => {
-            this._renderTopologyCanvas();
-            this._wireTopologyInteractions();
-            this._wireTopologyButtons();
-        };
-        if (!this.cachedBeacons || !this.cachedBeacons.length) {
-            if (typeof this.refreshBeacons === 'function') {
-                this.refreshBeacons().then(ensure).catch(ensure);
-                return;
+        const pane = document.getElementById('subpill-pane-topology');
+        if (!pane) return;
+        const body = pane.querySelector('.topology-pane__body');
+        if (!body) return;
+
+        // Resolve the project whose topology we render. During the guided
+        // demo this is the literal 'demo' deployment; otherwise the active
+        // deployment. Falls back to 'demo' so the inline graph always paints.
+        const project = (window.APP && window.APP.activeDeployment
+            && window.APP.activeDeployment.current) || 'demo';
+        const proj = (project === '__all__' || project === '__draft__') ? 'demo' : project;
+
+        // Mount (or re-mount) the OLD topology graph inline. mountInline is
+        // idempotent per pane — it rebuilds the inline DOM each call so a
+        // sub-pill re-entry (or Refresh) repaints cleanly.
+        if (typeof TOPOLOGY !== 'undefined' && typeof TOPOLOGY.mountInline === 'function') {
+            try {
+                TOPOLOGY.mountInline(body, proj);
+            } catch (e) {
+                console.warn('[topology] inline mount failed:', e);
             }
         }
-        ensure();
+        this._wireTopologyButtons();
     },
 
     _wireTopologyButtons() {
-        const refreshBtn = document.getElementById('topology-refresh-btn');
-        if (refreshBtn && !refreshBtn._wired) {
-            refreshBtn._wired = true;
-            refreshBtn.addEventListener('click', () => {
-                if (typeof this.refreshBeacons === 'function') {
-                    this.refreshBeacons().then(() => this._renderTopologyCanvas());
-                } else {
-                    this._renderTopologyCanvas();
-                }
-            });
-        }
-        const resetBtn = document.getElementById('topology-reset-btn');
-        if (resetBtn && !resetBtn._wired) {
-            resetBtn._wired = true;
-            resetBtn.addEventListener('click', () => {
-                this._topoPositions = {};
-                this._renderTopologyCanvas();
-            });
-        }
-        // 2026-05-23 — View toggle (New inline vs Old full-screen).
-        // "Old" opens the legacy `const TOPOLOGY` overlay defined later
-        // in this file (around line 27586). The TOPOLOGY object lives in
-        // script scope (not on window), so we reference it directly.
+        // 2026-06-02 — The inline topology graph (TOPOLOGY.mountInline) builds
+        // and wires its own Refresh / Reset layout / Full screen controls
+        // directly against its dedicated instance, so there is nothing to wire
+        // here. We only neutralise the legacy "New vs Old" view toggle in case
+        // the markup still ships it (index.html cleanup is a companion change).
         document.querySelectorAll('[data-topology-view]').forEach((btn) => {
-            if (btn._wired) return;
-            btn._wired = true;
-            btn.addEventListener('click', () => {
-                const mode = btn.dataset.topologyView;
-                document.querySelectorAll('[data-topology-view]').forEach((b) => {
-                    b.classList.toggle('is-active', b.dataset.topologyView === mode);
-                });
-                if (mode === 'old') {
-                    try {
-                        const project = (window.APP && window.APP.activeDeployment
-                            && window.APP.activeDeployment.current) || '';
-                        if (typeof TOPOLOGY !== 'undefined' && TOPOLOGY.show) {
-                            TOPOLOGY.show(project || 'demo');
-                        }
-                    } catch (e) { console.warn('[topology] full-screen open failed:', e); }
-                    // Flip the toggle back to "new" after the overlay opens so
-                    // when the operator closes it they're back on the inline
-                    // view by default.
-                    setTimeout(() => {
-                        document.querySelectorAll('[data-topology-view]').forEach((b) => {
-                            b.classList.toggle('is-active', b.dataset.topologyView === 'new');
-                        });
-                    }, 250);
-                }
-                // "new" is the default — already rendered; nothing to do.
-            });
+            const group = btn.closest('.topology-pane__viewtoggle') || btn;
+            group.hidden = true;
+            group.style.display = 'none';
         });
-    },
-
-    /**
-     * Compute (or read cached) hub-and-spoke node positions, then paint
-     * onto the topology canvas. Pure render — no event wiring (that's
-     * one-time in _wireTopologyInteractions).
-     */
-    /**
-     * 2026-05-23 — Pull infrastructure metadata (redirector IPs, team
-     * server identity) from the active deployment's outputs so the
-     * topology can render them as real nodes between the hub and the
-     * beacons. Falls back to a sensible single-redirector default when
-     * the deployment doesn't expose any (e.g. early-Phase demos).
-     */
-    _topoInfra() {
-        const ad = window.APP && window.APP.activeDeployment;
-        const project = ad && ad.current;
-        // Find the deployment record in the global cache.
-        const list = (window._globalHeaderDeployments || []);
-        const dep = list.find(d => (d._filename || d.project_name) === project)
-                 || list[0] || {};
-        const out = dep.output && typeof dep.output === 'object' ? dep.output : {};
-        const tsIps = ((out.c2_team_server_private_ips || {}).value)
-                    || (out.c2_team_server_private_ips || []);
-        const redirIp = ((out.redirector_public_ip || {}).value)
-                      || out.redirector_public_ip || '';
-        return {
-            teamServerIp: Array.isArray(tsIps) && tsIps.length ? tsIps[0]
-                       : (typeof tsIps === 'string' ? tsIps : '10.0.10.20'),
-            redirectorIp: redirIp || '203.0.113.50',
-        };
-    },
-
-    _renderTopologyCanvas() {
-        const canvas = document.getElementById('topology-canvas');
-        const container = document.getElementById('topology-canvas-wrap');
-        if (!canvas || !container) return;
-        const rect = container.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) {
-            requestAnimationFrame(() => this._renderTopologyCanvas());
-            return;
-        }
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
-        const ctx = canvas.getContext('2d');
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        const W = rect.width, H = rect.height;
-
-        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--bg-terminal').trim() || '#0f1117';
-        ctx.fillRect(0, 0, W, H);
-
-        const beacons = this.cachedBeacons || [];
-        if (!beacons.length) {
-            ctx.fillStyle = '#7A849E';
-            ctx.font = '13px -apple-system, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('No beacons to display — connect to a deployment with active beacons.', W / 2, H / 2);
-            this._topoNodeRects = [];
-            return;
-        }
-
-        const infra = this._topoInfra();
-
-        // ── Layout — vertical 3-tier with hub LEFT, redirector MIDDLE,
-        // beacons RIGHT (or a circular tier if dragged). Hub + redirector
-        // sit on the same horizontal centreline. Beacons spread vertically
-        // on the right. HTTPS beacons route through the redirector; SMB
-        // pivots draw a peer-to-peer link to their parent beacon.
-        const hubDefault = { x: W * 0.18, y: H * 0.5 };
-        const redirDefault = { x: W * 0.42, y: H * 0.5 };
-        const hub = this._topoPositions['__hub__'] || hubDefault;
-        const redir = this._topoPositions['__redir__'] || redirDefault;
-
-        // Split beacons into "HTTPS to redirector" vs "SMB to parent beacon".
-        // SMB pivots originate from their pbid (or fall back to redirector
-        // if pbid is missing in the cache).
-        const isPivot = (b) => b.listener && /smb|tcp/i.test(b.listener);
-
-        const beaconAreaX0 = W * 0.62;
-        const beaconAreaX1 = W * 0.95;
-        const beaconAreaY0 = H * 0.10;
-        const beaconAreaY1 = H * 0.90;
-        const nodeW = 170, nodeH = 56;
-
-        // Auto-layout: stack beacons vertically, spacing evenly.
-        const ringNodes = beacons.map((b, i) => {
-            const cached = this._topoPositions[b.bid];
-            if (cached) return { bid: b.bid, x: cached.x, y: cached.y };
-            const t = beacons.length > 1 ? i / (beacons.length - 1) : 0.5;
-            const x = (beaconAreaX0 + beaconAreaX1) / 2;
-            const y = beaconAreaY0 + t * (beaconAreaY1 - beaconAreaY0);
-            return { bid: b.bid, x, y };
+        // The legacy header Refresh/Reset buttons (#topology-refresh-btn /
+        // #topology-reset-btn) are superseded by the inline graph's own
+        // controls — hide them if present so there is one obvious control set.
+        ['topology-refresh-btn', 'topology-reset-btn'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) { el.hidden = true; el.style.display = 'none'; }
         });
-        const byBid = {};
-        ringNodes.forEach(n => { byBid[n.bid] = n; });
-
-        // ── Edges ─────────────────────────────────────────────────────
-        // 1. hub ↔ redirector (HTTPS tunnel — solid green)
-        ctx.beginPath();
-        ctx.moveTo(hub.x, hub.y);
-        ctx.lineTo(redir.x, redir.y);
-        ctx.strokeStyle = '#7ECF8C';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([]);
-        ctx.stroke();
-        ctx.fillStyle = '#7ECF8C';
-        ctx.font = '10px var(--font-family-mono, monospace)';
-        ctx.textAlign = 'center';
-        ctx.fillText('HTTPS 443', (hub.x + redir.x) / 2, (hub.y + redir.y) / 2 - 6);
-
-        // 2. HTTPS beacons → redirector (solid grey, labelled "demo-https-cdn")
-        beacons.forEach((b) => {
-            const node = byBid[b.bid];
-            if (!node || isPivot(b)) return;
-            ctx.beginPath();
-            ctx.moveTo(redir.x, redir.y);
-            ctx.lineTo(node.x, node.y);
-            ctx.strokeStyle = '#7A849E';
-            ctx.lineWidth = 1.4;
-            ctx.setLineDash([]);
-            ctx.stroke();
-            const lbl = b.listener || '';
-            if (lbl) {
-                ctx.fillStyle = '#7A849E';
-                ctx.font = '10px var(--font-family-mono, monospace)';
-                ctx.textAlign = 'center';
-                ctx.fillText(lbl, (redir.x + node.x) / 2, (redir.y + node.y) / 2 - 4);
-            }
-        });
-
-        // 3. SMB pivot beacons → parent beacon (dashed blue). Falls back
-        //    to the redirector if the parent isn't in the cache.
-        beacons.forEach((b) => {
-            const node = byBid[b.bid];
-            if (!node || !isPivot(b)) return;
-            const parent = (b.pbid && byBid[b.pbid]) || redir;
-            ctx.beginPath();
-            ctx.moveTo(parent.x, parent.y);
-            ctx.lineTo(node.x, node.y);
-            ctx.strokeStyle = '#82BBE8';
-            ctx.setLineDash([6, 4]);
-            ctx.lineWidth = 1.4;
-            ctx.stroke();
-            ctx.setLineDash([]);
-            const lbl = b.pivotHint
-                ? String(b.pivotHint).replace(/^\d+,\s*/, '')
-                : (b.listener || '');
-            if (lbl) {
-                ctx.fillStyle = '#82BBE8';
-                ctx.font = '10px var(--font-family-mono, monospace)';
-                ctx.textAlign = 'center';
-                ctx.fillText(lbl, (parent.x + node.x) / 2, (parent.y + node.y) / 2 - 4);
-            }
-        });
-
-        // 4. Secondary parent-relay (dotted faint) — surfaces HTTPS beacon
-        //    relationships that aren't load-bearing for the topology layout
-        //    but are interesting for tracing the operator's pivot path.
-        ctx.save();
-        ctx.setLineDash([2, 5]);
-        ctx.strokeStyle = 'rgba(122, 132, 158, 0.4)';
-        ctx.lineWidth = 1;
-        beacons.forEach((b) => {
-            if (!b.pbid || isPivot(b)) return;
-            const parent = byBid[b.pbid];
-            const child = byBid[b.bid];
-            if (!parent || !child) return;
-            ctx.beginPath();
-            ctx.moveTo(parent.x, parent.y);
-            ctx.lineTo(child.x, child.y);
-            ctx.stroke();
-        });
-        ctx.restore();
-
-        // ── Draw the hub (team server) ────────────────────────────────
-        const hubR = 40;
-        ctx.beginPath();
-        ctx.arc(hub.x, hub.y, hubR, 0, Math.PI * 2);
-        ctx.fillStyle = '#1c2435';
-        ctx.fill();
-        ctx.strokeStyle = '#7ECF8C';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-        ctx.fillStyle = '#EEF0F6';
-        ctx.font = 'bold 11px -apple-system, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('TEAM SERVER', hub.x, hub.y - 4);
-        ctx.fillStyle = '#7ECF8C';
-        ctx.font = '9.5px var(--font-family-mono, monospace)';
-        ctx.fillText('cobalt-strike', hub.x, hub.y + 8);
-        ctx.fillStyle = '#7A849E';
-        ctx.font = '9px var(--font-family-mono, monospace)';
-        ctx.fillText(infra.teamServerIp, hub.x, hub.y + 22);
-
-        // ── Draw the redirector ───────────────────────────────────────
-        const redirW = 110, redirH = 50;
-        ctx.fillStyle = '#1c2435';
-        ctx.strokeStyle = '#82BBE8';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([]);
-        ctx.beginPath();
-        ctx.roundRect(redir.x - redirW / 2, redir.y - redirH / 2, redirW, redirH, 8);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = '#EEF0F6';
-        ctx.font = 'bold 11px -apple-system, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('REDIRECTOR', redir.x, redir.y - 4);
-        ctx.fillStyle = '#82BBE8';
-        ctx.font = '9.5px var(--font-family-mono, monospace)';
-        ctx.fillText('nginx · CDN', redir.x, redir.y + 8);
-        ctx.fillStyle = '#7A849E';
-        ctx.font = '9px var(--font-family-mono, monospace)';
-        ctx.fillText(infra.redirectorIp, redir.x, redir.y + 22);
-
-        // ── Draw the beacon nodes ─────────────────────────────────────
-        const healthColors = { alive: '#7ECF8C', stale: '#F0CA4A', dead: '#F08A84' };
-        const nodeRects = [];
-        beacons.forEach((b) => {
-            const n = byBid[b.bid];
-            if (!n) return;
-            const elapsedMs = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
-            const health = this.getElapsedClass(elapsedMs, b.sleep, b.alive);
-            const color = healthColors[health] || healthColors.alive;
-            const isSelected = b.bid === this._topoSelectedBid;
-            const x = n.x - nodeW / 2;
-            const y = n.y - nodeH / 2;
-            // Card
-            ctx.fillStyle = isSelected ? '#2a3550' : '#1c2031';
-            ctx.strokeStyle = color;
-            ctx.lineWidth = isSelected ? 2.5 : 1.5;
-            ctx.beginPath();
-            ctx.roundRect(x, y, nodeW, nodeH, 8);
-            ctx.fill();
-            ctx.stroke();
-            // Computer line + admin star
-            ctx.font = 'bold 12px -apple-system, sans-serif';
-            ctx.fillStyle = '#EEF0F6';
-            ctx.textAlign = 'center';
-            const star = b.isAdmin ? '  ★' : '';
-            ctx.fillText((b.computer || '—').substring(0, 18) + star, n.x, n.y - 8);
-            // User line
-            ctx.font = '10.5px var(--font-family-mono, monospace)';
-            ctx.fillStyle = '#B0B8CC';
-            ctx.fillText((b.user || '—').substring(0, 22), n.x, n.y + 6);
-            // IP line
-            ctx.fillStyle = '#7A849E';
-            ctx.font = '10px var(--font-family-mono, monospace)';
-            ctx.fillText(b.internal || '', n.x, n.y + 20);
-
-            // Node label BELOW the card (always visible regardless of state)
-            ctx.fillStyle = '#9aa3bd';
-            ctx.font = '9.5px var(--font-family-mono, monospace)';
-            ctx.fillText(b.bid, n.x, y + nodeH + 12);
-
-            nodeRects.push({ bid: b.bid, x, y, w: nodeW, h: nodeH, cx: n.x, cy: n.y });
-        });
-
-        // Hub + redirector click targets stored too
-        nodeRects.push({ bid: '__hub__',   x: hub.x - hubR,         y: hub.y - hubR,         w: hubR * 2,    h: hubR * 2,    cx: hub.x,   cy: hub.y,   isHub: true });
-        nodeRects.push({ bid: '__redir__', x: redir.x - redirW / 2, y: redir.y - redirH / 2, w: redirW,      h: redirH,      cx: redir.x, cy: redir.y, isRedirector: true });
-
-        this._topoNodeRects = nodeRects;
-        this._topoHubPos = hub;
-        this._topoRedirPos = redir;
-        this._topoLastRect = { W, H };
-    },
-
-    /**
-     * One-time wire of mousedown/move/up on the topology canvas for drag
-     * + click. Drag threshold ~4px so a slight wiggle still registers as
-     * a click. Click on a beacon node populates the info panel; click on
-     * empty canvas clears the selection.
-     */
-    _wireTopologyInteractions() {
-        if (this._topoWired) return;
-        const canvas = document.getElementById('topology-canvas');
-        const container = document.getElementById('topology-canvas-wrap');
-        if (!canvas || !container) return;
-        this._topoWired = true;
-
-        const local = (e) => {
-            const r = canvas.getBoundingClientRect();
-            return { x: e.clientX - r.left, y: e.clientY - r.top };
-        };
-        const hit = (px, py) => {
-            const rects = this._topoNodeRects || [];
-            for (const r of rects) {
-                if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return r;
-            }
-            return null;
-        };
-
-        let drag = null;
-        canvas.addEventListener('mousedown', (e) => {
-            const p = local(e);
-            const target = hit(p.x, p.y);
-            if (!target) { drag = null; return; }
-            drag = { bid: target.bid, startX: p.x, startY: p.y, dx: 0, dy: 0, moved: 0 };
-            container.classList.add('is-dragging');
-        });
-        window.addEventListener('mousemove', (e) => {
-            if (!drag) return;
-            const p = local(e);
-            drag.dx = p.x - drag.startX;
-            drag.dy = p.y - drag.startY;
-            drag.moved = Math.hypot(drag.dx, drag.dy);
-            // Pin the new position so the layout doesn't fight the operator.
-            const prev = this._topoPositions[drag.bid] || (
-                drag.bid === '__hub__' ? this._topoHubPos : null
-            );
-            if (prev) {
-                this._topoPositions[drag.bid] = { x: prev.x + drag.dx, y: prev.y + drag.dy };
-            } else {
-                // No previous — use cursor as new pin point.
-                this._topoPositions[drag.bid] = { x: p.x, y: p.y };
-            }
-            // Reset startX/Y so subsequent move deltas are relative.
-            drag.startX = p.x;
-            drag.startY = p.y;
-            this._renderTopologyCanvas();
-        });
-        window.addEventListener('mouseup', (e) => {
-            if (!drag) return;
-            container.classList.remove('is-dragging');
-            // Click (no significant drag) → open info panel.
-            if (drag.moved < 4) {
-                const p = local(e);
-                const target = hit(p.x, p.y);
-                if (!target) {
-                    this._topoSelectedBid = null;
-                    this._renderTopologyInfo(null);
-                } else if (target.isHub) {
-                    this._topoSelectedBid = null;
-                    this._renderTopologyInfo('__hub__');
-                } else if (target.isRedirector) {
-                    this._topoSelectedBid = null;
-                    this._renderTopologyInfo('__redir__');
-                } else {
-                    this._topoSelectedBid = target.bid;
-                    this._renderTopologyInfo(target.bid);
-                }
-                this._renderTopologyCanvas();
-            }
-            drag = null;
-        });
-
-        // Repaint on container resize.
-        try {
-            new ResizeObserver(() => {
-                if (container.offsetParent !== null) this._renderTopologyCanvas();
-            }).observe(container);
-        } catch (_) { /* no ResizeObserver, fine */ }
-    },
-
-    /**
-     * Populate the side info panel for the given beacon bid. Pass null
-     * to revert to the empty state. Pass '__hub__' for team server info.
-     */
-    _renderTopologyInfo(bid) {
-        const empty = document.getElementById('topology-info-empty');
-        const body = document.getElementById('topology-info-body');
-        if (!empty || !body) return;
-        if (!bid) {
-            empty.hidden = false;
-            body.hidden = true;
-            body.innerHTML = '';
-            return;
-        }
-        const esc = (s) => String(s == null ? '' : s)
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-
-        if (bid === '__hub__') {
-            const infra = this._topoInfra();
-            empty.hidden = true;
-            body.hidden = false;
-            body.innerHTML = `
-                <div class="topology-pane__info-head">
-                  <span class="topology-pane__info-eyebrow">HUB · TEAM SERVER</span>
-                  <div class="topology-pane__info-title">cobalt-strike teamserver</div>
-                  <div class="topology-pane__info-sub">${esc(this.cachedBeacons.length)} beacon(s) attached</div>
-                </div>
-                <div class="topology-pane__info-grid">
-                  <div class="topology-pane__info-key">Role</div><div class="topology-pane__info-val">primary C2</div>
-                  <div class="topology-pane__info-key">Private IP</div><div class="topology-pane__info-val">${esc(infra.teamServerIp)}</div>
-                  <div class="topology-pane__info-key">Listeners</div><div class="topology-pane__info-val">demo-https-cdn · smb-pivot</div>
-                  <div class="topology-pane__info-key">REST API</div><div class="topology-pane__info-val">connected · port 50050</div>
-                  <div class="topology-pane__info-key">Network</div><div class="topology-pane__info-val">private subnet · no public IP</div>
-                </div>
-            `;
-            return;
-        }
-
-        if (bid === '__redir__') {
-            const infra = this._topoInfra();
-            const httpsCount = (this.cachedBeacons || []).filter(b => !(b.listener && /smb|tcp/i.test(b.listener))).length;
-            empty.hidden = true;
-            body.hidden = false;
-            body.innerHTML = `
-                <div class="topology-pane__info-head">
-                  <span class="topology-pane__info-eyebrow">INFRA · REDIRECTOR</span>
-                  <div class="topology-pane__info-title">nginx · CDN-fronted</div>
-                  <div class="topology-pane__info-sub">${esc(httpsCount)} HTTPS beacon(s) routed</div>
-                </div>
-                <div class="topology-pane__info-grid">
-                  <div class="topology-pane__info-key">Public IP</div><div class="topology-pane__info-val">${esc(infra.redirectorIp)}</div>
-                  <div class="topology-pane__info-key">Listen</div><div class="topology-pane__info-val">443/tcp (HTTPS)</div>
-                  <div class="topology-pane__info-key">Upstream</div><div class="topology-pane__info-val">team server ${esc(infra.teamServerIp)}:443</div>
-                  <div class="topology-pane__info-key">Profile</div><div class="topology-pane__info-val">malleable C2 · demo-https-cdn</div>
-                  <div class="topology-pane__info-key">TLS</div><div class="topology-pane__info-val">Let's Encrypt (auto-renew)</div>
-                </div>
-            `;
-            return;
-        }
-
-        const b = (this.cachedBeacons || []).find(x => x.bid === bid);
-        if (!b) {
-            empty.hidden = false;
-            body.hidden = true;
-            return;
-        }
-        empty.hidden = true;
-        body.hidden = false;
-        const sleepStr = b.sleep ? `${Math.round(b.sleep / 1000)}s` : '—';
-        const parent = b.pbid ? this.cachedBeacons.find(x => x.bid === b.pbid) : null;
-        const parentLine = parent ? `${esc(parent.computer)} (${esc(parent.bid)})` : '<em>direct → team server</em>';
-        const lastSeenMs = (b.lastCheckinMs || 0) + (Date.now() - (b.fetchedAt || Date.now()));
-        const lastSeen = typeof this.formatElapsed === 'function' ? this.formatElapsed(Math.max(0, lastSeenMs)) : `${Math.round(lastSeenMs/1000)}s`;
-        body.innerHTML = `
-            <div class="topology-pane__info-head">
-              <span class="topology-pane__info-eyebrow">BEACON</span>
-              <div class="topology-pane__info-title">${esc(b.computer || '—')}${b.isAdmin ? '  ★' : ''}</div>
-              <div class="topology-pane__info-sub">${esc(b.user || '—')} · ${esc(b.os || '—')}</div>
-            </div>
-            <div class="topology-pane__info-grid">
-              <div class="topology-pane__info-key">BID</div>     <div class="topology-pane__info-val">${esc(b.bid)}</div>
-              <div class="topology-pane__info-key">Internal</div><div class="topology-pane__info-val">${esc(b.internal || '—')}</div>
-              <div class="topology-pane__info-key">PID</div>     <div class="topology-pane__info-val">${esc(b.pid || '—')}</div>
-              <div class="topology-pane__info-key">Process</div> <div class="topology-pane__info-val">${esc(b.process || '—')}</div>
-              <div class="topology-pane__info-key">Listener</div><div class="topology-pane__info-val">${esc(b.listener || '—')}</div>
-              <div class="topology-pane__info-key">Sleep</div>   <div class="topology-pane__info-val">${esc(sleepStr)}${b.jitter ? ' · jitter ' + b.jitter + '%' : ''}</div>
-              <div class="topology-pane__info-key">Last seen</div><div class="topology-pane__info-val">${esc(lastSeen)}</div>
-              <div class="topology-pane__info-key">Parent</div>  <div class="topology-pane__info-val">${parentLine}</div>
-              <div class="topology-pane__info-key">Admin</div>   <div class="topology-pane__info-val">${b.isAdmin ? '★ yes' : 'no'}</div>
-            </div>
-            <div class="topology-pane__info-actions">
-              <button class="btn btn-success beacon-action-btn" type="button" data-topo-interact="${esc(b.bid)}">Interact →</button>
-              <button class="btn btn-secondary beacon-action-btn" type="button" data-topo-deselect>Clear</button>
-            </div>
-        `;
-        // Wire action buttons (idempotent — re-fired each render but the
-        // inner buttons are new DOM nodes so we always re-attach).
-        const interactBtn = body.querySelector('[data-topo-interact]');
-        if (interactBtn) {
-            interactBtn.addEventListener('click', () => {
-                if (typeof this.selectBeacon === 'function') {
-                    this.selectBeacon(b.bid, `${b.user}@${b.computer}`);
-                }
-            });
-        }
-        const clearBtn = body.querySelector('[data-topo-deselect]');
-        if (clearBtn) {
-            clearBtn.addEventListener('click', () => {
-                this._topoSelectedBid = null;
-                this._renderTopologyInfo(null);
-                this._renderTopologyCanvas();
-            });
-        }
+        // The pane's outer .topology-pane__legend is the OLD inline (new-engine)
+        // legend; mountInline injects its own .topology-legend inside the body,
+        // so hide the redundant outer one (index.html removal is a companion change).
+        const pane = document.getElementById('subpill-pane-topology');
+        const outerLegend = pane ? pane.querySelector('.topology-pane__legend') : null;
+        if (outerLegend) { outerLegend.hidden = true; outerLegend.style.display = 'none'; }
     },
 
     // ════════════════════════════════════════════════════════════════
@@ -14533,6 +14051,9 @@ APP.configureV2 = (function () {
         // family landing stage so the operator sees a clean "pick a family"
         // surface, not the pre-filled form.
         state.identityStage = 'family';
+        // 2026-06-02 — drop the demo-seed guard so a later guided-demo run
+        // (or a fresh draft after exiting the demo) re-seeds cleanly.
+        state._demoSeeded = false;
         // 2026-05-20 — clear any in-progress draftProject so the dropdown
         // label reverts to "Draft (unnamed)" and Deploy stops finding a
         // target. The operator is explicitly throwing away their work.
@@ -15262,11 +14783,24 @@ HTTP/1.1 200 OK
         renderSummary('identity');
 
         const order = getActiveSections();
-        order.forEach((id, idx) => {
+        // 2026-06-02 — Respect any sections already in state.confirmed (e.g.
+        // seeded by the guided demo via seedDemo()). Without this, the loop
+        // would clobber confirmed sections back to active/pending so the
+        // demo's pre-filled config looked half-done. The FIRST not-yet-
+        // confirmed section becomes active; the rest pending.
+        let firstActiveDone = false;
+        order.forEach((id) => {
             const sec = $('.cfg-section[data-cfg-section="' + id + '"]');
             if (!sec) return;
-            if (idx === 0) { setSectionState(id, 'active'); setRailState(id, 'active'); }
-            else { setSectionState(id, 'pending'); setRailState(id, 'pending'); }
+            if (state.confirmed.has(id)) {
+                setSectionState(id, 'confirmed'); setRailState(id, 'confirmed');
+                renderSummary(id);
+            } else if (!firstActiveDone) {
+                firstActiveDone = true;
+                setSectionState(id, 'active'); setRailState(id, 'active');
+            } else {
+                setSectionState(id, 'pending'); setRailState(id, 'pending');
+            }
         });
         updateProgress();
         wireEvents();
@@ -15392,6 +14926,66 @@ HTTP/1.1 200 OK
         }
     }
 
+    /**
+     * 2026-06-02 — Seed the composer with a representative c2-adhoc config for
+     * the guided demo's Configure step. Runs the REAL paint helpers
+     * (renderTypeGrid / applyIdentityStage / renderSummary / setSectionState)
+     * so the surface reads as a genuinely pre-filled, mostly-confirmed config
+     * instead of the blank "pick a family" landing or a Set-only confirm state
+     * that never painted. Idempotent via the `_demoSeeded` guard so node
+     * re-clicks don't re-stamp over operator edits.
+     */
+    function seedDemo() {
+        if (state._demoSeeded) return;
+        // The cfg-sections are static markup, so we can paint synchronously even
+        // before ensureInitialized()'s async tail resolves. Kick init for the
+        // network-dependent defaults + event wiring; don't await it.
+        ensureInitialized();
+        state._demoSeeded = true;
+
+        // Identity: External C2 · c2-adhoc, collapsed to the confirmed chip row.
+        state.family = 'c2';
+        state.type = 'c2-adhoc';
+        $$('#cfg-family-row .cfg-family-btn').forEach(b => {
+            b.classList.toggle('is-active', b.dataset.cfgFamily === 'c2');
+        });
+        renderTypeGrid();
+        applyTypeAwareVisibility();
+        state.identityStage = 'sub';
+        applyIdentityStage();
+
+        // Project name — clean demo label, marked user-edited so updateProjectName()
+        // doesn't overwrite it with the auto-generated UA-suffixed machine name.
+        const projInput = $('#cfg-project-name');
+        if (projInput) {
+            projInput.value = 'c2_adhoc_demo_engagement';
+            projInput.dataset.cfgUserEdited = '1';
+        }
+        updateProjectName();
+
+        // Confirm the leading sections (Identity · Network · SSH) through the
+        // real paint path so each shows its summary chips + check bullet.
+        ['identity', 'network', 'ssh'].forEach(id => {
+            if (!getActiveSections().includes(id)) return;
+            state.confirmed.add(id);
+            renderSummary(id);
+            setSectionState(id, 'confirmed');
+            setRailState(id, 'confirmed');
+        });
+
+        // Drop the operator onto the next un-confirmed section (Domain) so the
+        // Configure step has an obvious "you are here / do this next" focus.
+        const next = findNextSection('ssh');
+        if (next) activateSection(next);
+        else {
+            // Everything in the active set is confirmed — leave the last one active.
+            const order = getActiveSections();
+            const last = order[order.length - 1];
+            if (last) activateSection(last);
+        }
+        updateProgress();
+    }
+
     // Subscribe to active-deployment changes so the pane shows/hides in sync.
     if (APP.activeDeployment && APP.activeDeployment.subscribe) {
         APP.activeDeployment.subscribe(() => applyDraftMode());
@@ -15409,6 +15003,7 @@ HTTP/1.1 200 OK
         ensureInitialized,
         applyDraftMode,
         fullReset,
+        seedDemo,
         save,
         validate,
         assembleConfig,
@@ -15692,6 +15287,25 @@ function resetDeployValidation() {
         btn.style.background = '';
         btn.style.borderColor = '';
     }
+    // 2026-06-02 (demo coherence) — During the guided demo the Deploy step
+    // must let the operator click Apply immediately: the synthetic Apply
+    // branch in startDeployment() (is_demo_draft) bypasses every real prereq,
+    // so gating Apply behind a real Validate pass (which would POST the
+    // non-existent `demo` tfvars to the backend) would strand the walkthrough.
+    // Pre-unlock the action strip and show a tour-appropriate hint.
+    const _inDemo = !!((APP.demo && (APP.demo.active || APP.demo.step === 'done'))
+        || (APP.activeDeployment && APP.activeDeployment.current === 'demo'));
+    if (_inDemo) {
+        if (hint) {
+            hint.classList.remove('deploy-action-hint--error');
+            hint.classList.add('deploy-action-hint--success');
+            hint.textContent = 'Demo config validated — click Apply to run a simulated deployment.';
+        }
+        if (typeof _setDeployActionsEnabled === 'function') _setDeployActionsEnabled(true);
+        const panel = document.getElementById('deploy-destroy-confirm');
+        if (panel) panel.hidden = true;
+        return;
+    }
     if (hint) {
         hint.classList.remove('deploy-action-hint--success', 'deploy-action-hint--error');
         hint.textContent = 'Validate the configuration to unlock Apply, Plan, and Destroy.';
@@ -15731,6 +15345,24 @@ async function validateAndUnlockDeploy() {
     const btn = document.getElementById('validate-deploy-btn');
     const hint = document.getElementById('validate-deploy-hint');
     if (!btn) return;
+
+    // 2026-06-02 (demo coherence) — short-circuit Validate during the guided
+    // demo. The `demo` project has no real configs/demo.tfvars, so a real
+    // validate POST would error; instead synthesise a success so the operator
+    // sees the same "validated → Apply unlocked" beat as a live deployment.
+    const _inDemo = !!((APP.demo && (APP.demo.active || APP.demo.step === 'done'))
+        || (APP.activeDeployment && APP.activeDeployment.current === 'demo'));
+    if (_inDemo) {
+        btn.textContent = 'Validated';
+        btn.disabled = false;
+        if (hint) {
+            hint.classList.remove('deploy-action-hint--error');
+            hint.classList.add('deploy-action-hint--success');
+            hint.textContent = 'Demo config validated — click Apply to run a simulated deployment.';
+        }
+        if (typeof _setDeployActionsEnabled === 'function') _setDeployActionsEnabled(true);
+        return;
+    }
 
     // V3 per-project gate — Validate must read configs/<project>.tfvars,
     // not the legacy global tfvars. effectiveProject() returns `current`
@@ -17825,23 +17457,31 @@ async function fetchAndUpdateDeploymentStatus() {
 
             // 2026-05-28 — Guided-tour handoff (Phase 4): the existing
             // promote+refresh+nav block above is gated on isDraft() (the
-            // DRAFT_SENTINEL flow). Demo-draft uses a literal project name
-            // ("demo-draft-<ts>") so it never enters that branch — without
-            // this the operator's dropdown stayed empty and they were
-            // stranded on Deploy after the 30s tick completed.
+            // DRAFT_SENTINEL flow). The unified guided demo uses the literal
+            // `demo` project (NOT the retired "demo-draft-<ts>"), so it never
+            // enters that branch — without this the operator was stranded on
+            // Deploy after the simulated tick completed.
+            // 2026-06-02 — match BOTH the unified `demo` project and any legacy
+            // demo-draft-* name so the synthetic Apply always completes
+            // coherently and the stepper advances to Manage.
             if (status.status === 'success' && APP.activeDeployment
                 && typeof APP.activeDeployment.isDemoDraft === 'function'
                 && APP.activeDeployment.isDemoDraft()
-                && finishedProject && /^demo-draft-/.test(finishedProject)) {
-                // 1) Refresh the dropdown so the new demo-draft project
-                //    shows up (backend now returns status="success").
+                && finishedProject
+                && (finishedProject === 'demo' || /^demo-draft-/.test(finishedProject))) {
+                // 1) Refresh the dropdown so the demo project's status updates.
                 try { _refreshGlobalDeployments(); } catch (_) { /* noop */ }
-                // 2) Toast + auto-nav to Manage after a short pause so the
-                //    operator sees "complete" in the progress overlay
-                //    before the screen transitions.
+                // 2) Toast + advance after a short pause so the operator sees
+                //    "complete" in the progress overlay before the transition.
                 if (APP && APP.toast) APP.toast('Step 2 complete — opening Manage…', 'success');
                 setTimeout(() => {
-                    if (typeof APP.navigateTo === 'function') {
+                    // If the guided walkthrough is live on the Deploy step,
+                    // advance the global stepper (which navigates to Manage and
+                    // repaints node states). Otherwise just navigate to Manage.
+                    if (APP.demo && APP.demo.active && APP.demo.step === 'deploy'
+                        && typeof APP.demo.next === 'function') {
+                        APP.demo.next();
+                    } else if (typeof APP.navigateTo === 'function') {
                         APP.navigateTo('deployments-tab', 'manage');
                     }
                 }, 1800);
@@ -28937,6 +28577,136 @@ const TOPOLOGY = {
         }
     },
 
+    // ── Mount the topology graph INLINE inside the Operations → Topology
+    //    pane (2026-06-02). Renders the SAME graph as show()/_createOverlay
+    //    but in a reduced-size, in-flow container instead of a full-screen
+    //    overlay. A "Full screen" button re-uses show() for the large view.
+    //
+    //    Uses a dedicated Object.create(TOPOLOGY) instance so the inline
+    //    canvas / pan / zoom / selection state never collides with the
+    //    full-screen overlay's state. The instance inherits every render +
+    //    interaction method; only its DOM refs (overlay/canvas/sidePanel)
+    //    and the buttons differ.
+    //
+    //    The host container is given the SHARED contract class
+    //    `beacon-topology--inline` (sized down by style.css) and the
+    //    full-screen control gets `beacon-topology__fullscreen-btn`.
+    mountInline(host, projectName) {
+        if (!host) return null;
+        // Re-use the same instance across re-mounts so observers/state persist.
+        let inst = this._inlineInstance;
+        if (!inst) {
+            inst = Object.create(this);
+            inst._inline = true;
+            this._inlineInstance = inst;
+        }
+        inst.projectName = projectName;
+        inst.selectedNode = null;
+        inst.panX = 0;
+        inst.panY = 0;
+        inst.scale = 1;
+        inst.nodes = [];
+        inst.edges = [];
+        inst.infraData = null;
+        inst.configData = null;
+        inst.beaconData = null;
+        inst.listenerData = null;
+        inst.beaconStatus = 'unknown';
+
+        host.classList.add('beacon-topology--inline');
+        host.innerHTML = `
+            <div class="beacon-topology__toolbar">
+                <button type="button" class="btn btn-sm btn-info beacon-topology__refresh-btn">Refresh</button>
+                <button type="button" class="btn btn-sm btn-secondary beacon-topology__reset-btn">Reset layout</button>
+                <button type="button" class="btn btn-sm btn-secondary beacon-topology__fullscreen-btn">Full screen</button>
+            </div>
+            <div class="topology-body beacon-topology__body">
+                <div class="topology-canvas-wrap">
+                    <canvas id="topology-canvas"></canvas>
+                    <div class="topology-legend">
+                        <span><span style="color:#82BBE8;">■</span> Domain</span>
+                        <span><span style="color:#F0CA4A;">■</span> CDN / Bastion</span>
+                        <span><span style="color:#7ECF8C;">■</span> Redirector</span>
+                        <span><span style="color:#F08A84;">■</span> Team Server</span>
+                        <span><span style="color:#B0B8CC;">■</span> Listener</span>
+                        <span>── Link</span>
+                        <span>╌╌ Pivot</span>
+                        <span style="border: 1px dashed #F08A84; padding: 0 4px; border-radius: 3px; font-size: 0.9em; color: #F08A84;">★</span> Admin/SYSTEM
+                    </div>
+                    <div id="topology-beacon-banner" class="topology-beacon-banner" style="display: none;"></div>
+                </div>
+                <div class="topology-side-panel" id="topology-side-panel">
+                    <div class="topology-side-panel-header">
+                        <h3 id="topology-side-title">Details</h3>
+                        <button type="button" class="btn-close-side" aria-label="Close details">✕</button>
+                    </div>
+                    <div class="topology-side-panel-body" id="topology-side-body"></div>
+                </div>
+            </div>
+        `;
+
+        // Scoped DOM refs — all subsequent queries inside the inherited render
+        // methods go through inst.overlay.querySelector(...) so they resolve to
+        // THIS inline subtree even if the full-screen overlay is also open.
+        inst.overlay = host;
+        inst.sidePanel = host.querySelector('#topology-side-panel');
+        inst.sidePanelBody = host.querySelector('#topology-side-body');
+        inst.canvas = host.querySelector('#topology-canvas');
+
+        const wrap = host.querySelector('.topology-canvas-wrap');
+        const sizeCanvas = () => {
+            const w = wrap.clientWidth || host.clientWidth || 600;
+            const h = wrap.clientHeight || 360;
+            const dpr = window.devicePixelRatio || 1;
+            inst.canvas.width = w * dpr;
+            inst.canvas.height = h * dpr;
+            inst.canvas.style.width = w + 'px';
+            inst.canvas.style.height = h + 'px';
+            inst.ctx = inst.canvas.getContext('2d');
+            inst.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            inst.W = w;
+            inst.H = h;
+        };
+        sizeCanvas();
+
+        // Canvas interactions — same handlers as the overlay (they read
+        // canvas.getBoundingClientRect() so they work at any size/position).
+        inst.canvas.addEventListener('wheel', e => inst._handleWheel(e), { passive: false });
+        inst.canvas.addEventListener('mousedown', e => inst._handleMouseDown(e));
+        inst.canvas.addEventListener('mousemove', e => inst._handleMouseMove(e));
+        inst.canvas.addEventListener('mouseup', e => inst._handleMouseUp(e));
+        inst.canvas.addEventListener('mouseleave', e => inst._handleMouseUp(e));
+
+        // Toolbar buttons wired directly to the inline instance.
+        const refreshBtn = host.querySelector('.beacon-topology__refresh-btn');
+        if (refreshBtn) refreshBtn.addEventListener('click', () => inst._refresh());
+        const resetBtn = host.querySelector('.beacon-topology__reset-btn');
+        if (resetBtn) resetBtn.addEventListener('click', () => inst._resetLayout());
+        const fsBtn = host.querySelector('.beacon-topology__fullscreen-btn');
+        if (fsBtn) fsBtn.addEventListener('click', () => {
+            // Re-use the existing full-screen overlay mechanism.
+            this.show(inst.projectName);
+        });
+        const sideCloseBtn = host.querySelector('.btn-close-side');
+        if (sideCloseBtn) sideCloseBtn.addEventListener('click', () => inst._closeSide());
+
+        // Keep the inline canvas fitted when its container resizes (the
+        // pane animates in, theme/layout changes, window resize, etc.).
+        if (inst._resizeObs) { try { inst._resizeObs.disconnect(); } catch (_) {} }
+        try {
+            inst._resizeObs = new ResizeObserver(() => {
+                if (wrap.offsetParent === null) return; // hidden — skip
+                sizeCanvas();
+                if (inst.nodes && inst.nodes.length) { inst._layoutNodes(); inst._render(); }
+            });
+            inst._resizeObs.observe(wrap);
+        } catch (_) { /* no ResizeObserver — static size is fine */ }
+
+        inst._drawLoading();
+        inst._fetchData(projectName);
+        return inst;
+    },
+
     // ── Create full-screen overlay DOM ──
     _createOverlay() {
         if (this.overlay) this.overlay.remove();
@@ -35305,8 +35075,8 @@ APP.bolton = APP.bolton || {
             <div class="bolton-detail" data-vuln-id="${escapeHtml(vulnId)}">
                 <div class="bolton-detail__tabs" role="tablist">
                     <button type="button" role="tab" data-bolton-detail-tab="install" class="bolton-detail__tab">Install</button>
-                    <button type="button" role="tab" data-bolton-detail-tab="walkthrough" class="bolton-detail__tab">📖 Walkthrough</button>
-                    <button type="button" role="tab" data-bolton-detail-tab="detections" class="bolton-detail__tab">🛡 Detections</button>
+                    <button type="button" role="tab" data-bolton-detail-tab="walkthrough" class="bolton-detail__tab">Walkthrough</button>
+                    <button type="button" role="tab" data-bolton-detail-tab="detections" class="bolton-detail__tab">Detections</button>
                 </div>
                 <div class="bolton-detail__panes">
                     <div class="bolton-detail__pane" data-bolton-detail-pane="install"><p class="app-overlay__loading">Loading…</p></div>
