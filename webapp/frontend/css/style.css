@@ -608,6 +608,10 @@ body > header h1 {
    and [data-theme="light"]. */
 .beacon-topology--inline {
     position: relative;
+    /* Flex column so the toolbar takes its natural height and the graph body
+       (.topology-body, flex:1) fills the rest of the constrained box. */
+    display: flex;
+    flex-direction: column;
     width: 100%;
     /* DOWN-sized from the full-screen 560-640px: a constrained inline window.
        400px reads as a preview; max-height keeps it honest on short columns. */
@@ -620,6 +624,42 @@ body > header h1 {
     cursor: grab;
 }
 .beacon-topology--inline.is-dragging { cursor: grabbing; }
+/* 2026-06-02 — Inline topology toolbar: Refresh / Reset live here (left
+   aligned); the Full-screen button floats top-right via its own absolute
+   rule. The buttons are .btn/.btn-sm/.btn-info/.btn-secondary so they carry
+   their own theme-safe colors — the toolbar only handles layout. */
+.beacon-topology__toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    padding: 10px 12px;
+    /* leave room on the right so the absolute Full-screen btn never overlaps */
+    padding-right: 120px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+/* Let the graph body fill the remaining height inside the flex column.
+   min-height:0 is required so the flex child can shrink below content size. */
+.beacon-topology--inline .topology-body,
+.beacon-topology--inline .beacon-topology__body {
+    flex: 1;
+    min-height: 0;
+}
+/* 2026-06-02 — The flex chain DOES NOT propagate height down to the canvas
+   here: the host element is `.topology-pane__body` whose base rule is
+   `display:grid`, and the inherited `.topology-body`/`.topology-canvas-wrap`
+   collapse to 0 height (verified: wrap clientHeight = 0, canvas displayed
+   0x0 while the graph drew into a 600x360 fallback buffer → invisible).
+   Pin explicit heights with a host-scoped selector so the inline canvas
+   always has a real box to render into. 340px fits under the toolbar inside
+   the 400px host without clipping. */
+.topology-pane__body.beacon-topology--inline .topology-body {
+    height: 340px;
+    min-height: 340px;
+}
+.topology-pane__body.beacon-topology--inline .topology-canvas-wrap {
+    height: 340px;
+}
 /* The engine injects an <svg>/<canvas> (or a wrapper div) as the direct
    child — stretch it to fill the constrained box so the graph fits the
    inline height instead of overflowing the old full-screen dimensions. */

@@ -28625,7 +28625,7 @@ const TOPOLOGY = {
                     <canvas id="topology-canvas"></canvas>
                     <div class="topology-legend">
                         <span><span style="color:#82BBE8;">■</span> Domain</span>
-                        <span><span style="color:#F0CA4A;">■</span> CDN / Bastion</span>
+                        <span><span style="color:#F0CA4A;">■</span> CDN / Edge</span>
                         <span><span style="color:#7ECF8C;">■</span> Redirector</span>
                         <span><span style="color:#F08A84;">■</span> Team Server</span>
                         <span><span style="color:#B0B8CC;">■</span> Listener</span>
@@ -28668,6 +28668,36 @@ const TOPOLOGY = {
             inst.H = h;
         };
         sizeCanvas();
+
+        // 2026-06-02 — Mount-while-hidden race fix. When the topology sub-pill
+        // is entered, the pane may still be animating in (or its tab just
+        // activated), so at mount time `wrap` has 0x0 dimensions and
+        // sizeCanvas() locks the canvas to the 600x360 fallback — the graph
+        // then draws into a buffer that is displayed at 0x0 (invisible).
+        // Retry sizing on animation frames until the container has real
+        // dimensions, then re-size + re-render so the graph appears once the
+        // pane is actually visible. (The ResizeObserver below covers later
+        // resizes; this covers the initial reveal.)
+        let _sizeTries = 0;
+        let _sizedOnce = false;
+        const _ensureSized = () => {
+            const sized = wrap.offsetParent !== null && wrap.clientWidth > 0 && wrap.clientHeight > 0;
+            // Once the pane is visible/sized, lock the canvas to real dims and
+            // show the loading state while _fetchData is still in flight.
+            if (sized && !_sizedOnce) { sizeCanvas(); inst._drawLoading(); _sizedOnce = true; }
+            // When the graph data has arrived AND we have real dimensions,
+            // re-size and FIT the graph to the canvas. _resetLayout() applies
+            // the fit-to-view scale/pan + renders — without it the initial
+            // _fetchData render lands before the fit settles and shows blank.
+            if (sized && inst.nodes && inst.nodes.length > 0) {
+                sizeCanvas();
+                if (typeof inst._resetLayout === 'function') inst._resetLayout();
+                else { inst._layoutNodes(); inst._render(); }
+                return;
+            }
+            if (_sizeTries++ < 300) requestAnimationFrame(_ensureSized);
+        };
+        requestAnimationFrame(_ensureSized);
 
         // Canvas interactions — same handlers as the overlay (they read
         // canvas.getBoundingClientRect() so they work at any size/position).
@@ -28724,7 +28754,7 @@ const TOPOLOGY = {
                     <canvas id="topology-canvas"></canvas>
                     <div class="topology-legend">
                         <span><span style="color:#82BBE8;">■</span> Domain</span>
-                        <span><span style="color:#F0CA4A;">■</span> CDN / Bastion</span>
+                        <span><span style="color:#F0CA4A;">■</span> CDN / Edge</span>
                         <span><span style="color:#7ECF8C;">■</span> Redirector</span>
                         <span><span style="color:#F08A84;">■</span> Team Server</span>
                         <span><span style="color:#B0B8CC;">■</span> Listener</span>
@@ -28976,9 +29006,15 @@ const TOPOLOGY = {
         const operatorId = nid();
         // D1 — Prefer the new global header element; fall back to the hidden
         // legacy mirror so existing topology behaviour is preserved.
-        const operatorName = document.getElementById('global-operator-name')?.textContent
-            || document.getElementById('operator-badge')?.textContent
-            || 'Operator';
+        // 2026-06-02 — In the demo, never surface the real operator identity
+        // (whoami) in the topology graph — use a generic label, matching the
+        // synthetic-data hygiene applied elsewhere in the demo.
+        const _isDemoTopo = this.projectName === 'demo'
+            || (typeof window !== 'undefined' && window.APP && window.APP.demo && window.APP.demo.active);
+        const operatorName = _isDemoTopo ? 'Operator'
+            : (document.getElementById('global-operator-name')?.textContent
+                || document.getElementById('operator-badge')?.textContent
+                || 'Operator');
         this.nodes.push({
             id: operatorId, type: 'operator',
             label: operatorName,
