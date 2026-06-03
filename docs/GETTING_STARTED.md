@@ -82,17 +82,19 @@ cd Red_Team_Infra
 
 ### What each prompt asks
 
-The script first checks prerequisites and verifies your AWS credentials, then prompts for:
+The script opens with an overview of what it will create — a `t3.medium` EC2 instance, a VPC (`10.100.0.0/16`), an Elastic IP, a security group, and an IAM role — along with the rough running cost (**~$30-45/mo while running**) and how long it takes (**~5-10 minutes**) — then asks a single **"Continue?"** before it does anything.
+
+After you continue, it batches its prerequisite checks (AWS CLI + credentials, Terraform, `ssh`, `rsync`, `git`, `jq`) and reports **all** missing tools at once rather than failing on the first one, then prompts for:
 
 | Prompt | What it is | Default |
 |---|---|---|
-| **SSH public key path** | The key used to create your Linux user and to rsync/SSH into the server | Auto-detected (`~/.ssh/id_ed25519.pub`, etc.) |
 | **Your operator name** | Your Linux username on the server (lowercase, starts with a letter) | Your current `whoami` |
+| **SSH public key path** | The key used to create your Linux user and to rsync/SSH into the server (an auto-generated key's comment is tagged with your operator name) | Auto-detected (`~/.ssh/id_ed25519.pub`, etc.) |
 | **Your public IP** | Added to the SSH allow-list as `/32` | Auto-detected via `api.ipify.org` |
 | **AWS region** | Region the Dashboard Server is created in | `aws configure get region`, else `eu-central-1` |
 | **Second operator SSH key** | Optional — paste a colleague's public key to onboard them now | Skipped if blank (asks for their name + IP if provided) |
 
-Press Enter to accept any auto-detected default.
+It asks for your operator name **before** the SSH key so that, if it auto-generates a key for you, the key's comment matches your operator name. Press Enter to accept any auto-detected default.
 
 ### What it provisions
 
@@ -100,9 +102,11 @@ After you confirm the Terraform plan (`yes`), the script:
 
 1. Writes your answers to `configs/dashboard.tfvars` (`enable_dashboard_server = true`, `dashboard_allowed_ips`, `operator_ssh_public_keys`).
 2. Runs `terraform apply` on `module.dashboard_server`, creating a **new EC2 "Dashboard Server"** in its own VPC (`10.100.0.0/16`), with a public EIP, a security group locked to your IP + SSH key, and an IAM instance role (so no AWS keys are ever stored on the box).
-3. Waits for the instance to pass status checks — **roughly 2-3 minutes** — then gives `user_data` a moment to finish.
-4. `rsync`s the repo to `/opt/redteam` (excluding local-only junk, secrets, and large artifacts), generates a server-side SSH keypair used to reach deployed instances, creates a Python venv, and `pip install`s dependencies.
-5. Initializes Terraform on the server (S3 backend) and registers a **systemd `dashboard` service** so the Flask web app runs persistently and restarts on boot.
+3. Waits for the instance to pass status checks, then waits for the first-boot completion marker (instead of a fixed sleep) so it only proceeds once `user_data` has actually finished.
+4. **Probes SSH reachability** before syncing code. If it can't connect, it tells you your egress IP is likely no longer in the allow-list — a VPN or iCloud Private Relay can rotate it — and to re-run with `--update-ip`.
+5. `rsync`s the repo to `/opt/redteam` (excluding local-only junk, secrets, and large artifacts), generates a server-side SSH keypair used to reach deployed instances, creates a Python venv, and `pip install`s dependencies.
+6. Initializes Terraform on the server (S3 backend) and registers a **systemd `dashboard` service** so the Flask web app runs persistently and restarts on boot.
+7. After starting the service, runs a **health check** that confirms the app actually responds on `:5000`, so "Ready!" means it's genuinely up. If the check fails it points you to the logs.
 
 When it's done it prints your connect command and IP:
 
@@ -112,7 +116,9 @@ When it's done it prints your connect command and IP:
   Open:     http://localhost:5000
 ```
 
-> **Re-running is safe.** If a Dashboard Server already exists, the script offers a **resume mode** that re-syncs code, reinstalls deps, and restarts the service without recreating the instance. Use this to push code updates too (or use `dashboard-manage.sh upgrade` from the server).
+The final output also reminds you that if you can't connect later, your egress IP may have changed — re-run the script with `--update-ip` to refresh the allow-list.
+
+> **Re-running is safe.** If a Dashboard Server already exists, the script offers a **resume mode** that re-syncs code, reinstalls deps, and restarts the service without recreating the instance. Use this to push code updates too (or use `dashboard-manage.sh upgrade` from the server). If you decline the resume prompt, the script **exits with guidance** rather than provisioning a second Dashboard Server.
 
 ---
 
@@ -283,11 +289,11 @@ Check your IAM permissions allow VPC/EC2/IAM creation, and that the region you c
 
 #### Can't open `http://localhost:5000`
 - Confirm the tunnel is still open: `ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>`.
-- On the server, check the service: `./scripts/server/dashboard-manage.sh status` and `... logs`.
-- Confirm your current public IP still matches `dashboard_allowed_ips` (it changes if your network changes) — update `configs/dashboard.tfvars` and re-apply if needed.
+- On the server, check the service: `./scripts/server/dashboard-manage.sh status` and `... logs`. The setup script's post-start health check pulls from the same logs if it ever reports the app didn't come up.
+- Confirm your current public IP still matches `dashboard_allowed_ips` (it changes if your network changes) — re-run the setup script with `--update-ip`, or update `configs/dashboard.tfvars` and re-apply.
 
 #### SSH to the Dashboard Server is refused
-Your source IP must be in the allow-list. If your IP changed, add the new one to `dashboard_allowed_ips` and `terraform apply -target=module.dashboard_server`.
+Your source IP must be in the allow-list. A VPN or iCloud Private Relay can rotate your egress IP — this is also what the setup script's SSH-reachability probe warns about. Re-run the setup script with `--update-ip` to refresh the allow-list, or add the new IP to `dashboard_allowed_ips` and `terraform apply -target=module.dashboard_server`.
 
 #### Restart / manage the service
 From the server:
