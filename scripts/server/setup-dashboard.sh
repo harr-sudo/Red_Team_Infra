@@ -206,10 +206,21 @@ echo ""
 # --- Prerequisites ---
 info "Checking prerequisites..."
 
-command -v aws >/dev/null 2>&1 || error "AWS CLI not found. Install: https://aws.amazon.com/cli/"
-command -v terraform >/dev/null 2>&1 || error "Terraform not found. Install: https://terraform.io"
-command -v ssh >/dev/null 2>&1 || error "SSH client not found."
-command -v rsync >/dev/null 2>&1 || error "rsync not found."
+# Collect ALL missing tools and report them once (rather than failing on the
+# first). jq parses the AWS identity below; curl/ssh-keygen are used by the
+# egress-detection and key-generation helpers.
+MISSING_TOOLS=()
+for tool in aws terraform ssh rsync jq ssh-keygen curl; do
+    command -v "$tool" >/dev/null 2>&1 || MISSING_TOOLS+=("$tool")
+done
+if [ "${#MISSING_TOOLS[@]}" -gt 0 ]; then
+    echo -e "${RED}[ERROR]${NC} Missing required tool(s):"
+    for tool in "${MISSING_TOOLS[@]}"; do
+        echo "  - $tool"
+    done
+    exit 1
+fi
+success "All prerequisites present"
 
 # Verify AWS credentials
 info "Verifying AWS credentials..."
@@ -371,6 +382,33 @@ if [ -n "$EXISTING_DASHBOARD_IP" ] && [ "$EXISTING_DASHBOARD_IP" != "" ]; then
         info "Using SSH key: $SSH_KEY_PATH"
         info "Using operator: $OPERATOR_NAME"
         echo ""
+
+        # Probe SSH reachability before doing any work. If we can't connect, the
+        # most likely cause is the egress IP not being in the allow-list (VPN /
+        # iCloud Private Relay rotate it). The instance IS provisioned — this is
+        # purely an access problem, so point at --update-ip.
+        SSH_OPTS=(-i "$SSH_KEY_PRIVATE" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8)
+        info "Checking SSH reachability to $DASHBOARD_IP ..."
+        SSH_OK=false
+        for _try in $(seq 1 12); do
+            if ssh "${SSH_OPTS[@]}" "$OPERATOR_NAME@$DASHBOARD_IP" true 2>/dev/null; then
+                SSH_OK=true
+                break
+            fi
+            sleep 5
+        done
+        if [ "$SSH_OK" != true ]; then
+            warn "Could not SSH to $DASHBOARD_IP after several attempts."
+            warn "Your egress IP is most likely NOT in the allow-list — VPN and"
+            warn "iCloud Private Relay rotate your public IP between sessions."
+            warn "Refresh the allow-list, then resume:"
+            warn "  ./scripts/server/setup-dashboard.sh --update-ip"
+            warn "  ./scripts/server/setup-dashboard.sh   (answer yes to resume)"
+            error "Dashboard is provisioned; this is just an access problem."
+        fi
+        success "SSH reachable"
+        echo ""
+
         info "Copying codebase to server..."
         rsync -rltz --progress --no-perms --no-owner --no-group \
             --exclude='uploads/' \
@@ -490,6 +528,27 @@ echo "Dashboard service started"
 REMOTE_SVC
 
         success "Dashboard service started"
+
+        # Verify the app is actually up before declaring success. Non-fatal —
+        # the service may still be warming up — but surface how to debug.
+        info "Verifying the dashboard is responding on :5000 ..."
+        HEALTH_OK=false
+        for _try in $(seq 1 12); do
+            if ssh "${SSH_OPTS[@]}" "$OPERATOR_NAME@$DASHBOARD_IP" \
+                "systemctl is-active --quiet dashboard && curl -sf -o /dev/null http://127.0.0.1:5000" 2>/dev/null; then
+                HEALTH_OK=true
+                break
+            fi
+            sleep 5
+        done
+        if [ "$HEALTH_OK" = true ]; then
+            success "Dashboard is up and responding on :5000"
+        else
+            warn "Dashboard did not respond on :5000 yet. Check the service logs:"
+            warn "  ssh $OPERATOR_NAME@$DASHBOARD_IP 'journalctl -u dashboard -n 50 --no-pager'"
+            warn "  (or, on the server: ./scripts/server/dashboard-manage.sh logs)"
+        fi
+
         echo ""
         echo "============================================"
         echo "  Dashboard Server Ready!"
@@ -501,11 +560,44 @@ REMOTE_SVC
         echo ""
         echo "  Configure + deploy in the browser. Full walkthrough: docs/GETTING_STARTED.md"
         echo ""
+        echo "  Can't connect later? Your egress IP may have changed (VPN / iCloud"
+        echo "  Private Relay rotate it). Refresh the allow-list with:"
+        echo "     ./scripts/server/setup-dashboard.sh --update-ip"
+        echo ""
         echo "============================================"
         exit 0
     fi
+
+    # Resume declined (anything other than "yes"): a dashboard already exists, so
+    # EXIT rather than provisioning a second one over the existing state.
+    warn "A dashboard server already exists: $EXISTING_DASHBOARD_IP"
+    warn "Nothing was changed. Your options:"
+    warn "  - Resume setup (rsync code + start service): re-run and answer 'yes'"
+    warn "  - Change the SSH allow-list (IP rotated):     ./scripts/server/setup-dashboard.sh --update-ip"
+    exit 0
 fi
 cd "$PROJECT_ROOT"
+
+# --- What this will do (fresh provision) ---
+echo ""
+echo "============================================"
+echo "  First-time provision — what happens next"
+echo "============================================"
+echo ""
+echo "  This will create the following in AWS account $AWS_ACCOUNT:"
+echo "    - A t3.medium EC2 instance (the Dashboard Server)"
+echo "    - A dedicated VPC (10.100.0.0/16) + Elastic IP"
+echo "    - A security group (SSH locked to your IP only)"
+echo "    - An IAM instance role"
+echo ""
+echo "  Cost:  ~\$30-45/month while the instance is running."
+echo "  Time:  ~5-10 minutes."
+echo ""
+echo "  You'll answer a few questions, then review the Terraform plan and"
+echo "  approve it before anything is created."
+echo ""
+read -rp "Continue? (yes/no): " PREAMBLE_CONFIRM
+[ "$PREAMBLE_CONFIRM" = "yes" ] || { warn "Aborted — nothing was created."; exit 0; }
 
 # --- Auto-detect values ---
 
@@ -526,6 +618,19 @@ echo ""
 info "Configure your dashboard server:"
 echo ""
 
+# Operator name (collected BEFORE the SSH key so a generated key can be tagged
+# with the real operator name in its comment).
+while true; do
+    read -rp "Your operator name [$DETECTED_USER]: " INPUT_USER
+    OPERATOR_NAME="${INPUT_USER:-$DETECTED_USER}"
+    # Auto-lowercase
+    OPERATOR_NAME=$(echo "$OPERATOR_NAME" | tr '[:upper:]' '[:lower:]')
+    if echo "$OPERATOR_NAME" | grep -qE '^[a-z][a-z0-9_-]{0,31}$'; then
+        break
+    fi
+    warn "Invalid name '$OPERATOR_NAME'. Must be lowercase, start with letter, 1-32 chars, only a-z 0-9 _ -. Try again."
+done
+
 # SSH key
 if [ -n "$SSH_KEY_PATH" ]; then
     success "Auto-detected SSH key: $SSH_KEY_PATH"
@@ -540,9 +645,8 @@ if [ -z "$SSH_KEY_PATH" ] || [ ! -f "$SSH_KEY_PATH" ]; then
     fi
     read -rp "No SSH key found — generate an ed25519 key now? (yes/no): " GEN_KEY
     if [ "$GEN_KEY" = "yes" ]; then
-        # OPERATOR_NAME isn't set yet at this point; use the detected user
-        # (lowercased) for the key comment.
-        generate_ssh_key "$(echo "$DETECTED_USER" | tr '[:upper:]' '[:lower:]')"
+        # OPERATOR_NAME was collected above — tag the key with it.
+        generate_ssh_key "$OPERATOR_NAME"
     else
         error "SSH public key required. Provide a path or re-run and choose to generate one."
     fi
@@ -554,18 +658,6 @@ if ! echo "$SSH_KEY_CONTENT" | grep -qE '^ssh-(ed25519|rsa|ecdsa-sha2-nistp[0-9]
     error "Invalid SSH public key format in $SSH_KEY_PATH"
 fi
 success "SSH key: $SSH_KEY_PATH"
-
-# Operator name
-while true; do
-    read -rp "Your operator name [$DETECTED_USER]: " INPUT_USER
-    OPERATOR_NAME="${INPUT_USER:-$DETECTED_USER}"
-    # Auto-lowercase
-    OPERATOR_NAME=$(echo "$OPERATOR_NAME" | tr '[:upper:]' '[:lower:]')
-    if echo "$OPERATOR_NAME" | grep -qE '^[a-z][a-z0-9_-]{0,31}$'; then
-        break
-    fi
-    warn "Invalid name '$OPERATOR_NAME'. Must be lowercase, start with letter, 1-32 chars, only a-z 0-9 _ -. Try again."
-done
 
 # Public IP — allow-list (supports multiple entries: home + VPN + office)
 if [ -n "$DETECTED_IP" ]; then
@@ -652,6 +744,26 @@ EOF
 
 success "Generated: $TFVARS_FILE"
 
+# --- Configuration summary + gate ---
+echo ""
+echo "============================================"
+echo "  Configuration summary"
+echo "============================================"
+echo ""
+echo "  Operator:     $OPERATOR_NAME"
+echo "  AWS region:   $AWS_REGION"
+echo "  SSH key:      $SSH_KEY_PATH"
+echo "  Allow-list:"
+for e in "${ALLOWED_ENTRIES[@]}"; do
+    echo "                  $e"
+done
+if [ -n "$OP2_NAME" ]; then
+    echo "  2nd operator: $OP2_NAME"
+fi
+echo ""
+read -rp "Proceed to terraform plan? (yes/no): " SUMMARY_CONFIRM
+[ "$SUMMARY_CONFIRM" = "yes" ] || { warn "Aborted — the config was written to $TFVARS_FILE but nothing was created."; exit 0; }
+
 # --- Find existing deployment tfvars (provides root variables like project_name, environment) ---
 EXISTING_TFVARS=""
 for candidate in "$CONFIGS_DIR/terraform.tfvars" "$CONFIGS_DIR"/*.tfvars; do
@@ -696,8 +808,44 @@ INSTANCE_ID=$(terraform output -raw dashboard_instance_id 2>/dev/null || echo ""
 if [ -n "$INSTANCE_ID" ]; then
     aws ec2 wait instance-status-ok --instance-ids "$INSTANCE_ID" --region "$AWS_REGION" 2>/dev/null || true
 fi
-# Extra wait for user_data to complete
-sleep 30
+
+# SSH connection options reused for every remote step below.
+SSH_KEY_PRIVATE="${SSH_KEY_PATH%.pub}"
+SSH_OPTS=(-i "$SSH_KEY_PRIVATE" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8)
+
+# Probe SSH reachability in a bounded loop. The instance is up (status-ok), but
+# SSH may not accept us if our egress IP isn't in the allow-list.
+info "Checking SSH reachability to $DASHBOARD_IP ..."
+SSH_OK=false
+for _try in $(seq 1 12); do
+    if ssh "${SSH_OPTS[@]}" "$OPERATOR_NAME@$DASHBOARD_IP" true 2>/dev/null; then
+        SSH_OK=true
+        break
+    fi
+    sleep 5
+done
+if [ "$SSH_OK" != true ]; then
+    warn "Could not SSH to $DASHBOARD_IP after several attempts."
+    warn "Your egress IP is most likely NOT in the allow-list — VPN and"
+    warn "iCloud Private Relay rotate your public IP between sessions."
+    warn "Refresh the allow-list, then resume:"
+    warn "  ./scripts/server/setup-dashboard.sh --update-ip"
+    warn "  ./scripts/server/setup-dashboard.sh   (answer yes to resume)"
+    error "The instance IS provisioned; this is just an access problem."
+fi
+success "SSH reachable"
+
+# Best-effort: wait for user_data to finish by watching for its completion
+# marker. Do NOT fail if it never appears — fall through and continue.
+info "Waiting for first-boot setup to finish (best-effort)..."
+for _try in $(seq 1 30); do
+    if ssh "${SSH_OPTS[@]}" "$OPERATOR_NAME@$DASHBOARD_IP" \
+        "grep -q 'Dashboard bootstrap completed' /var/log/dashboard-bootstrap.log 2>/dev/null"; then
+        success "First-boot setup completed"
+        break
+    fi
+    sleep 5
+done
 
 # --- Rsync codebase ---
 # Note: --no-perms/--no-owner/--no-group preserve the server's setgid ownership
@@ -706,7 +854,7 @@ sleep 30
 # dashboard.tfvars (and terraform.tfvars, if present) reach the server on first provision.
 echo ""
 info "Copying codebase to server..."
-SSH_KEY_PRIVATE="${SSH_KEY_PATH%.pub}"
+# SSH_KEY_PRIVATE was set in the wait/reachability block above.
 rsync -rltz --progress --no-perms --no-owner --no-group \
     --exclude='uploads/' \
     --exclude='uploads_client/' \
@@ -779,8 +927,20 @@ pip install -r requirements.txt
 # Initialize Terraform with S3 backend
 cd terraform
 terraform init -backend-config=/opt/redteam/backend.hcl || true
+REMOTE
 
-# Create systemd service
+# Create systemd service as a SEPARATE step. The operator's sudo is SCOPED
+# (only `systemctl * dashboard`, `terraform *`, `journalctl *`) and cannot run
+# `sudo tee`, `sudo daemon-reload`, or `sudo hostnamectl`. The `ubuntu` user
+# (reached via EC2 Instance Connect) has full sudo — model is the resume path.
+info "Creating systemd service..."
+aws ec2-instance-connect send-ssh-public-key \
+    --instance-id "$INSTANCE_ID" \
+    --instance-os-user ubuntu \
+    --ssh-public-key "file://$SSH_KEY_PATH" \
+    --region "$AWS_REGION" > /dev/null 2>&1
+
+ssh "${SSH_OPTS[@]}" "ubuntu@$DASHBOARD_IP" bash <<'REMOTE_SVC'
 sudo tee /etc/systemd/system/dashboard.service > /dev/null <<'SERVICE'
 [Unit]
 Description=Red Team Dashboard
@@ -806,12 +966,34 @@ PrivateTmp=true
 WantedBy=multi-user.target
 SERVICE
 
+sudo hostnamectl set-hostname redteam-dashboard 2>/dev/null || true
 sudo systemctl daemon-reload
 sudo systemctl enable dashboard
-sudo systemctl start dashboard
-REMOTE
+sudo systemctl restart dashboard
+echo "Dashboard service started"
+REMOTE_SVC
 
 success "Dashboard service started"
+
+# Verify the app is actually up before declaring success. Non-fatal — the
+# service may still be warming up — but surface how to debug.
+info "Verifying the dashboard is responding on :5000 ..."
+HEALTH_OK=false
+for _try in $(seq 1 12); do
+    if ssh "${SSH_OPTS[@]}" "$OPERATOR_NAME@$DASHBOARD_IP" \
+        "systemctl is-active --quiet dashboard && curl -sf -o /dev/null http://127.0.0.1:5000" 2>/dev/null; then
+        HEALTH_OK=true
+        break
+    fi
+    sleep 5
+done
+if [ "$HEALTH_OK" = true ]; then
+    success "Dashboard is up and responding on :5000"
+else
+    warn "Dashboard did not respond on :5000 yet. Check the service logs:"
+    warn "  ssh $OPERATOR_NAME@$DASHBOARD_IP 'journalctl -u dashboard -n 50 --no-pager'"
+    warn "  (or, on the server: ./scripts/server/dashboard-manage.sh logs)"
+fi
 
 # --- Done ---
 echo ""
@@ -830,6 +1012,10 @@ echo "       - Upload Cobalt Strike      (docs/COBALT_STRIKE_DEPLOYMENT.md)"
 echo "  2. Deploy and watch the streaming logs."
 echo ""
 echo "  Full walkthrough: docs/GETTING_STARTED.md"
+echo ""
+echo "  Can't connect later? Your egress IP may have changed (VPN / iCloud"
+echo "  Private Relay rotate it). Refresh the allow-list with:"
+echo "     ./scripts/server/setup-dashboard.sh --update-ip"
 echo ""
 if [ -n "$OP2_NAME" ]; then
 echo "  Second operator connects:"
