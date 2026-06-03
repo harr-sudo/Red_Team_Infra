@@ -44,7 +44,9 @@ It is a single control plane for the whole lifecycle: provision a dedicated AWS 
 
 ## Architecture
 
-![Architecture](generated-diagrams/server-mode-full-overview.png)
+![Architecture](generated-diagrams/solution-architecture.png)
+
+*The full picture: the operator's single SSH entry point, the Dashboard Server control plane and the ten AWS services it orchestrates, and the C2 / GOAD / CCRTS estates — each in its own VPC, peered back to the dashboard, with the C2 beacon-callback path in red. Click to enlarge.*
 
 The platform follows a **hub-and-spoke** model. The **Dashboard Server** — a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public Elastic IP, locked to an IP allow-list and SSH key — is both the production control plane and the *sole* SSH/RDP jump host. Every deployment (C2, GOAD, CCRTS) is created in its own VPC and **peered back to the Dashboard Server**, which then reaches every instance directly. There is no per-deployment bastion: the operator's laptop only ever tunnels to one place.
 
