@@ -84,7 +84,7 @@ cd Red_Team_Infra
 
 The script opens with an overview of what it will create — a `t3.medium` EC2 instance, a VPC (`10.100.0.0/16`), an Elastic IP, a security group, and an IAM role — along with the rough running cost (**~$30-45/mo while running**) and how long it takes (**~5-10 minutes**) — then asks a single **"Continue?"** before it does anything.
 
-After you continue, it batches its prerequisite checks (AWS CLI + credentials, Terraform, `ssh`, `rsync`, `git`, `jq`) and reports **all** missing tools at once rather than failing on the first one, then prompts for:
+After you continue, it batches its prerequisite checks (AWS CLI + credentials, Terraform, `ssh`, `ssh-keygen`, `rsync`, `jq`, `curl`) and reports **all** missing tools at once rather than failing on the first one, then prompts for:
 
 | Prompt | What it is | Default |
 |---|---|---|

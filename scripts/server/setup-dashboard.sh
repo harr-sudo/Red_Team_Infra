@@ -813,11 +813,13 @@ fi
 SSH_KEY_PRIVATE="${SSH_KEY_PATH%.pub}"
 SSH_OPTS=(-i "$SSH_KEY_PRIVATE" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8)
 
-# Probe SSH reachability in a bounded loop. The instance is up (status-ok), but
-# SSH may not accept us if our egress IP isn't in the allow-list.
+# Probe SSH reachability in a bounded loop. status-ok can fire while user_data is
+# still creating the operator user, so give first contact a generous window
+# (~2 min); it breaks early on success. A persistent failure most likely means
+# our egress IP isn't in the allow-list.
 info "Checking SSH reachability to $DASHBOARD_IP ..."
 SSH_OK=false
-for _try in $(seq 1 12); do
+for _try in $(seq 1 24); do
     if ssh "${SSH_OPTS[@]}" "$OPERATOR_NAME@$DASHBOARD_IP" true 2>/dev/null; then
         SSH_OK=true
         break
