@@ -76,6 +76,8 @@ def _summarise(d: Any) -> dict[str, Any]:
     detection = raw.get("detection") or {}
     mitre = raw.get("mitre") or {}
     technique = (mitre or {}).get("technique") if isinstance(mitre, dict) else None
+    curriculum = raw.get("curriculum")
+    curriculum_steps = ((curriculum or {}).get("steps") or []) if isinstance(curriculum, dict) else []
     return {
         "id": raw.get("id"),
         "name": raw.get("name"),
@@ -88,6 +90,9 @@ def _summarise(d: Any) -> dict[str, Any]:
         "mitre_technique": (technique or {}).get("id") if isinstance(technique, dict) else None,
         "status": raw.get("status"),
         "description": (raw.get("description") or "")[:240],
+        # Curriculum signal — drives the "Walkthrough" CTA on the row.
+        "has_curriculum": bool(curriculum),
+        "curriculum_step_count": len(curriculum_steps),
     }
 
 

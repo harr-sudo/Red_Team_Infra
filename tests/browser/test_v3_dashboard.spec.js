@@ -23,6 +23,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate } from './helpers/nav.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // WCAG helpers (sRGB → relative luminance → contrast ratio).
@@ -91,9 +92,7 @@ async function setTheme(page, theme) {
 
 async function gotoDashboard(page) {
     await page.goto('/');
-    await page.locator('button.tab-btn[data-target="dashboard"]').waitFor({ timeout: 5000 });
-    // Dashboard is the default-active tab, but click to be explicit.
-    await page.click('button.tab-btn[data-target="dashboard"]');
+    await railNavigate(page, 'dashboard');
     // Give widgets time to fire their initial fetches.
     await page.waitForTimeout(500);
 }

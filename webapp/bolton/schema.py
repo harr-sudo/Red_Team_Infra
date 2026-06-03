@@ -523,6 +523,115 @@ class CostBlock(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Sub-models — Curriculum (guided walkthrough)
+# ---------------------------------------------------------------------------
+
+
+class CurriculumAsset(BaseModel):
+    """One media asset referenced by a curriculum step (PDF / image / video).
+
+    Path is relative to the manifest file's directory (server resolves it).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = Field(..., description="Asset kind: 'pdf' | 'image' | 'video'")
+    path: str = Field(..., description="Path relative to the manifest's directory.")
+    caption: str | None = None
+
+    @field_validator("kind")
+    @classmethod
+    def _validate_kind(cls, v: str) -> str:
+        if v not in {"pdf", "image", "video"}:
+            raise ValueError(f"asset kind must be pdf|image|video (got {v!r})")
+        return v
+
+    @field_validator("path")
+    @classmethod
+    def _validate_path(cls, v: str) -> str:
+        if ".." in v or v.startswith("/"):
+            raise ValueError(
+                f"asset path must be relative and inside the manifest dir (got {v!r})"
+            )
+        return v
+
+
+class CurriculumAssessment(BaseModel):
+    """Inline assessment question — single-choice from a list of options."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(..., min_length=5)
+    options: list[str] = Field(..., min_length=2, max_length=8)
+    correct_index: int = Field(..., ge=0, description="Index into options[].")
+    explanation: str | None = None
+
+    @model_validator(mode="after")
+    def _correct_in_range(self) -> "CurriculumAssessment":
+        if self.correct_index >= len(self.options):
+            raise ValueError(
+                f"correct_index ({self.correct_index}) out of range for "
+                f"options of length {len(self.options)}"
+            )
+        return self
+
+
+class CurriculumStep(BaseModel):
+    """One step in a guided walkthrough."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., description="Step slug, e.g. '01-discover-spns'")
+    title: str = Field(..., min_length=3)
+    markdown: str = Field(
+        ...,
+        description="Inline Markdown body (NOT a path). Rendered client-side.",
+    )
+    assets: list[CurriculumAsset] = Field(default_factory=list)
+    assessment: CurriculumAssessment | None = None
+    estimated_minutes: int = Field(default=5, ge=1, le=120)
+
+    @field_validator("id")
+    @classmethod
+    def _validate_step_id(cls, v: str) -> str:
+        if not SLUG_RE.match(v):
+            raise ValueError(
+                f"step id must match {SLUG_RE.pattern} (got {v!r})"
+            )
+        return v
+
+
+class CurriculumBlock(BaseModel):
+    """Guided walkthrough wrapping the bolt-on's exploit flow.
+
+    Optional — bolt-ons without a curriculum block just don't show a
+    walkthrough tab in the detail drawer. The schema-validator and
+    catalog cross-reference checks ignore a missing block.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(..., min_length=3)
+    summary: str = Field(..., min_length=20)
+    learning_objectives: list[str] = Field(default_factory=list)
+    prerequisites: list[str] = Field(
+        default_factory=list,
+        description="Free-form prereqs (e.g. 'rockyou.txt wordlist available').",
+    )
+    estimated_total_minutes: int = Field(default=20, ge=1, le=600)
+    steps: list[CurriculumStep] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def _step_ids_unique(self) -> "CurriculumBlock":
+        seen: set[str] = set()
+        for s in self.steps:
+            if s.id in seen:
+                raise ValueError(f"duplicate step id {s.id!r} in curriculum")
+            seen.add(s.id)
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Top-level descriptor
 # ---------------------------------------------------------------------------
 
@@ -589,6 +698,11 @@ class BoltOnDescriptor(BaseModel):
 
     # Cost
     cost: CostBlock = Field(default_factory=CostBlock)
+
+    # Curriculum (guided walkthrough). Optional — when present, the
+    # dashboard exposes a "Walkthrough" tab on the bolt-on detail drawer
+    # and the bolt-on summary advertises `has_curriculum: true`.
+    curriculum: CurriculumBlock | None = None
 
     # Lifecycle
     status: DescriptorStatus = DescriptorStatus.STABLE

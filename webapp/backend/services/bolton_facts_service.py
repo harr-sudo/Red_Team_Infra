@@ -92,8 +92,13 @@ class HostFacts:
     lab: str
     os_family: str  # 'windows' | 'linux' | 'macos'
     os_version: str
-    role: str  # 'domain_controller' | 'member_server' | 'workstation' | 'standalone'
+    role: str  # 'domain_controller' | 'member_server' | 'workstation' | 'standalone' | 'linux_member'
     gathered_at: datetime
+    # 2026-05-23 — added so descriptors with `edition_in` / `required_domain_function_level`
+    # are actually enforced by the resolver (previously read from YAML but
+    # silently dropped). os_edition: 'Datacenter' | 'Standard' | 'Pro' |
+    # 'Enterprise' | 'Home' | 'Server Core' | etc.
+    os_edition: str | None = None
     domain_function_level: str | None = None
     installed_services: dict[str, str] = field(default_factory=dict)
     applied_kbs: list[str] = field(default_factory=list)

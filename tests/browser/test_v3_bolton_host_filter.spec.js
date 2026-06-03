@@ -16,6 +16,8 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { seedDeployment } from './helpers/seed-deployment.js';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -96,12 +98,11 @@ const DESCRIPTORS = {
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 async function gotoBoltons(page) {
+    // Seed a goad-mini deployment so the Bolt-ons sub-pill is visible.
+    await seedDeployment(page, { type: 'goad-mini', name: 'goad_test_alpha' });
     await page.goto('/');
-    await page.locator('.app-rail__item[data-rail-target="deployments-tab"]').click();
-    const child = page.locator('.app-rail__child[data-rail-subpill="bolt-ons"]');
-    await child.waitFor({ timeout: 5000 });
-    await child.click();
-    await page.locator('#subpill-pane-bolt-ons').waitFor({ state: 'visible', timeout: 5000 });
+    await railNavigate(page, 'deployments-tab');
+    await clickSubPill(page, 'bolt-ons');
 }
 
 /**

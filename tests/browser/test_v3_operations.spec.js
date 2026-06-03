@@ -15,6 +15,8 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { seedDeployment } from './helpers/seed-deployment.js';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 const SUBPILL_BEACONS  = '#subpill-beacons';
 const SUBPILL_TERMINAL = '#subpill-terminal';
@@ -34,7 +36,42 @@ async function setTheme(page, theme) {
 // the `hidden` attribute (2026-05-20 — deployment-type-aware visibility
 // gates rolled out; see CLAUDE.md / UX_AUDIT). Tests that exercise
 // Operations sub-pills must seed an active C2 deployment first.
-async function mockC2Deployment(page) {
+// 2026-05-22 — Refactored onto seedDeployment + nav helpers (railNavigate
+// + clickSubPill) so we exercise the real user-path through the rail,
+// not the offscreen .tab-btn compat shim.
+async function gotoOperations(page, subpill = 'beacons') {
+    // Install BEACON neutralizer BEFORE page load so BEACON.init's async
+    // connect() chain (kicked off when the beacons sub-pill activates) can't
+    // race the test injection. Without this, setStatus('disconnected') fires
+    // after we inject and resets beacon-table-section.display back to 'none'.
+    await page.addInitScript(() => {
+        const stub = () => {};
+        const tryPatch = () => {
+            if (typeof window.BEACON !== 'undefined') {
+                window.BEACON.updateConnectionStatus = stub;
+                window.BEACON.connect = () => Promise.resolve();
+                window.BEACON.checkHealth = () => Promise.resolve({ status: 'connected' });
+                window.BEACON._tryAutoConnect = () => Promise.resolve();
+                return true;
+            }
+            return false;
+        };
+        if (!tryPatch()) {
+            const id = setInterval(() => { if (tryPatch()) clearInterval(id); }, 10);
+            setTimeout(() => clearInterval(id), 3000);
+        }
+    });
+    await seedDeployment(page, {
+        type: 'c2-adhoc',
+        name: 'ops_lab',
+        // Include CS REST API marker so Operations sub-pills consider the
+        // deployment fully connected (otherwise some panes paint the
+        // not-enabled empty state).
+        extra: [],
+    });
+    // The seedDeployment helper mocks /api/deploy/active to a baseline
+    // shape; for Operations we additionally need the cs_connection_info
+    // marker so the beacon pane doesn't paint the not-enabled state.
     await page.route('**/api/deploy/active**', async (route) => {
         await route.fulfill({
             status: 200,
@@ -49,26 +86,14 @@ async function mockC2Deployment(page) {
             }),
         });
     });
-}
-
-async function gotoOperations(page, subpill = 'beacons') {
-    await mockC2Deployment(page);
     await page.goto('/');
-    // Wait for the global header dropdown to populate so deployment_type
-    // is cached and Operations top-tab can compute visible.
     await page.waitForFunction(() => {
         const lb = document.getElementById('global-deploy-listbox');
         return lb && lb.children.length > 0;
     }, null, { timeout: 5000 });
-    // Pick ops_lab so APP.activeDeployment becomes isExisting() + c2-*.
     await page.evaluate(() => APP.activeDeployment.set('ops_lab'));
-    await page.waitForTimeout(120);
-    await page.locator('button.tab-btn[data-target="operations-tab"]').waitFor({ timeout: 5000 });
-    await page.click('button.tab-btn[data-target="operations-tab"]');
-    await page.waitForTimeout(150);
-    const map = { beacons: SUBPILL_BEACONS, terminal: SUBPILL_TERMINAL, payloads: SUBPILL_PAYLOADS };
-    await page.locator(map[subpill]).click();
-    await page.waitForTimeout(250);
+    await railNavigate(page, 'operations-tab');
+    await clickSubPill(page, subpill);
 }
 
 // Inject a synthetic beacon list and trigger the V3 render. The
@@ -77,6 +102,14 @@ async function gotoOperations(page, subpill = 'beacons') {
 // render method directly so the test doesn't depend on CS REST API.
 async function injectFakeBeacons(page, beacons) {
     await page.evaluate((bs) => {
+        // Belt-and-braces: addInitScript already neutralizes these before
+        // the page loads, but re-apply here in case BEACON was redefined
+        // by any module that loaded after the polling stopped.
+        if (typeof BEACON !== 'undefined') {
+            BEACON.updateConnectionStatus = function() {};
+            BEACON.connect = function() { return Promise.resolve(); };
+            BEACON.checkHealth = function() { return Promise.resolve({ status: 'connected' }); };
+        }
         BEACON.cachedBeacons = bs.map(b => Object.assign({
             alive: true, sleep: 60000, jitter: 5, lastCheckinMs: 0,
             fetchedAt: Date.now(), os: 'Windows 10', arch: 'x64',
@@ -84,6 +117,8 @@ async function injectFakeBeacons(page, beacons) {
         // Force parent containers visible so the spec-list is in the
         // visible viewport. The production code path makes these visible
         // when BEACON.connect() succeeds; in tests we short-circuit.
+        // These containers use inline `style.display` (not the [hidden]
+        // attribute), so we toggle them the same way the app does.
         const noDep   = document.getElementById('beacon-no-deployment');
         const notEn   = document.getElementById('beacon-not-enabled');
         const main    = document.getElementById('beacon-main-content');

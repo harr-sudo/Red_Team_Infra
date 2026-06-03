@@ -15,6 +15,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 const TEST_PROJECT = 'safety_demo_lab';
 
@@ -52,10 +53,8 @@ async function mockForeignModulesState(page, projectName) {
 
 async function mountManageScopedToProject(page, projectName) {
     await page.goto('/');
-    await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
-    await page.click('button.tab-btn[data-target="deployments-tab"]');
-    await page.waitForTimeout(150);
-    await page.locator('#subpill-manage').click();
+    await railNavigate(page, 'deployments-tab');
+    await clickSubPill(page, 'manage');
     await page.waitForTimeout(200);
     // Force the active deployment to our fake project so the banner
     // probe targets it. _probeStateSummary reads APP.manage._currentProject().

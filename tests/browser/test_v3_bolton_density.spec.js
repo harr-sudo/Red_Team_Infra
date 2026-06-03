@@ -21,6 +21,8 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { seedDeployment } from './helpers/seed-deployment.js';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 const LAB_HOSTS = {
     success: true,
@@ -31,12 +33,11 @@ const LAB_HOSTS = {
 };
 
 async function gotoBoltons(page) {
+    // Seed a goad-mini deployment so the Bolt-ons sub-pill is visible.
+    await seedDeployment(page, { type: 'goad-mini', name: 'goad_test_alpha' });
     await page.goto('/');
-    await page.locator('.app-rail__item[data-rail-target="deployments-tab"]').click();
-    const child = page.locator('.app-rail__child[data-rail-subpill="bolt-ons"]');
-    await child.waitFor({ timeout: 5000 });
-    await child.click();
-    await page.locator('#subpill-pane-bolt-ons').waitFor({ state: 'visible', timeout: 5000 });
+    await railNavigate(page, 'deployments-tab');
+    await clickSubPill(page, 'bolt-ons');
 }
 
 async function installApiStubs(page) {
@@ -106,14 +107,21 @@ test.describe('v3 bolt-on — visual density trim', () => {
         expect(placeholder).toContain('Pick a target host');
     });
 
-    test('no visible <label> labels the host dropdown (aria-label remains)', async ({ page }) => {
+    test('host picker banner labels the dropdown (promoted from eyebrow corner)', async ({ page }) => {
+        // 2026-05-23 — operator directive: "this dropdown is the main entry
+        // point — needs prominence". The dropdown was moved out of the
+        // eyebrow corner into a primary picker banner (.bolton-host-picker)
+        // with a START HERE eyebrow + explanatory lead text. The old
+        // density-trim "no visible label" rule no longer applies — the
+        // label IS the affordance now.
         await installApiStubs(page);
         await gotoBoltons(page);
         // Legacy class is gone.
         await expect(page.locator('.bolton-live__host-label')).toHaveCount(0);
-        // No <label for="bolton-host-select"> survives in the markup.
-        await expect(page.locator('label[for="bolton-host-select"]')).toHaveCount(0);
-        // Accessibility name is preserved via aria-label on the <select>.
+        // The picker banner exists + houses the select.
+        await expect(page.locator('#bolton-host-picker')).toBeVisible();
+        await expect(page.locator('#bolton-host-picker #bolton-host-select')).toBeVisible();
+        // Accessibility name preserved via aria-label on the <select>.
         const ariaLabel = await page.locator('#bolton-host-select').getAttribute('aria-label');
         expect(ariaLabel).toBeTruthy();
     });
@@ -133,26 +141,35 @@ test.describe('v3 bolt-on — visual density trim', () => {
         expect(labels.join('|')).not.toContain('Available compatible');
     });
 
-    test('compat chip strip is collapsed (5 chips: All / Installed / Available / Patched / Blocked)', async ({ page }) => {
+    test('state filter dropdown has 5 options: All / Installed / Available / Patched / Blocked', async ({ page }) => {
+        // 2026-05-22 — Filter UI rebuilt from chip strip to search +
+        // 3 dropdowns + active-pill row. The filter container is only
+        // VISIBLE after a host is selected (which triggers catalog
+        // render); use toHaveCount instead of toBeVisible so the
+        // assertion fires on DOM presence — matches the original
+        // chip-strip test pattern.
         await installApiStubs(page);
         await gotoBoltons(page);
         await loadHosts(page, 'goad-light');
-        // The state group lives inside .bolton-live__filters with data-chip-group="state".
-        const stateChips = page.locator('#bolton-filters [data-chip-group="state"] .bt-chip');
-        await expect(stateChips).toHaveCount(5);
-        const labels = await stateChips.allTextContents();
-        expect(labels.map(s => s.trim())).toEqual(['All states', 'Installed', 'Available', 'Patched', 'Blocked']);
+        await expect(page.locator('#bolton-filter-state')).toHaveCount(1);
+        const optionTexts = await page.locator('#bolton-filter-state option').allTextContents();
+        expect(optionTexts.length).toBe(5);
+        // Labels include extra text for clarity (e.g. "Blocked
+        // (incompatible / conflicting)") so assert by leading substring.
+        const leading = optionTexts.map(s => s.trim().split(/\s*\(/)[0]);
+        expect(leading).toEqual(['All states', 'Installed', 'Available', 'Patched', 'Blocked']);
     });
 
-    test('filter strip is a single row with separators between groups', async ({ page }) => {
+    test('filter bar is a single row with search + 3 dropdowns (rebuilt UI)', async ({ page }) => {
+        // 2026-05-22 — Was: chip strip across 3 axes (.bolton-live__filters-row
+        // + separators). Now: .bolton-filter-bar container with search input,
+        // 3 .bolton-filter-select dropdowns, and a clear-filters affordance.
         await installApiStubs(page);
         await gotoBoltons(page);
         await loadHosts(page, 'goad-light');
-        // One .bolton-live__filters-row container — not three.
-        const rows = page.locator('#bolton-filters .bolton-live__filters-row');
-        await expect(rows).toHaveCount(1);
-        // Two vertical separators between the three chip groups.
-        const seps = page.locator('#bolton-filters .bolton-live__filters-sep');
-        await expect(seps).toHaveCount(2);
+        await expect(page.locator('#bolton-filters .bolton-filter-bar')).toHaveCount(1);
+        await expect(page.locator('#bolton-filter-search')).toHaveCount(1);
+        const selects = page.locator('#bolton-filters .bolton-filter-select__input');
+        await expect(selects).toHaveCount(3);
     });
 });

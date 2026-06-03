@@ -79,12 +79,16 @@ def update(op_id):
 
 @bp.route("/<op_id>", methods=["DELETE"])
 def remove(op_id):
+    actor = getattr(g, "operator", None) or {"id": "unknown"}
+    current_id = actor.get("id")
     try:
-        operator_service.remove(op_id)
+        # 2026-05-22 — pass the current operator id so the service refuses
+        # deletes that would orphan the request's cookie (closes the
+        # UI/backend protection gap surfaced by Agent B).
+        operator_service.remove(op_id, current_id=current_id)
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
-    actor = getattr(g, "operator", None) or {"id": "unknown"}
-    audit_service.write(actor.get("id"), "operator.remove", target=op_id)
+    audit_service.write(current_id, "operator.remove", target=op_id)
     return jsonify({"success": True})
 
 

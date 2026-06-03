@@ -15,6 +15,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 async function setTheme(page, theme) {
     await page.evaluate((t) => {
@@ -26,11 +27,8 @@ async function setTheme(page, theme) {
 
 async function navigateToCleanupSubPill(page) {
     await page.goto('/');
-    await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
-    await page.click('button.tab-btn[data-target="deployments-tab"]');
-    await page.waitForTimeout(150);
-    await page.locator('button.subpill-nav__pill[data-subpill="cleanup"]').click();
-    await page.waitForTimeout(400);
+    await railNavigate(page, 'deployments-tab');
+    await clickSubPill(page, 'cleanup');
 }
 
 // Seed-injectors used by the localStorage tests so each test starts clean

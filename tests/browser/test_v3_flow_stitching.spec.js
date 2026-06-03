@@ -174,7 +174,15 @@ async function mockNoDeploymentsAndOpenConfigure(page) {
         const editor = document.querySelector('#configure-edit-pane .configuration-editor');
         if (editor) editor.style.display = '';
         const adv = document.getElementById('configure-advanced-details');
-        if (adv) adv.style.display = '';
+        if (adv) {
+            adv.style.display = '';
+            adv.setAttribute('open', '');
+        }
+        // The CSS rule `#configure-v2-pane:not([hidden]) ~ #configure-advanced-details`
+        // applies `display: none !important` when V2 is visible — we're testing the
+        // LEGACY form here, so explicitly hide V2 to release the sibling-selector.
+        const v2 = document.getElementById('configure-v2-pane');
+        if (v2) v2.setAttribute('hidden', '');
     });
 }
 

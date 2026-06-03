@@ -189,8 +189,13 @@ test.describe('v3 + New Deployment landing — family-first staging', () => {
 
         // Click GOAD then back to C2 to exercise the handler (default
         // family is already C2 — clicking the same family is a no-op).
+        // 2026-05-22 — Back-to-back clicks were racing the type-grid
+        // re-render. Add small settle waits so the c2 click sees the
+        // grid in goad state and re-renders cleanly to c2 state.
         await page.click('#cfg-family-row .cfg-family-btn[data-cfg-family="goad"]');
+        await page.waitForTimeout(200);
         await page.click('#cfg-family-row .cfg-family-btn[data-cfg-family="c2"]');
+        await page.waitForTimeout(300);
 
         const stage = await page.evaluate(() => {
             const sec = document.querySelector('.cfg-section[data-cfg-section="identity"]');
@@ -216,12 +221,20 @@ test.describe('v3 + New Deployment landing — family-first staging', () => {
 
         const confirmed = page.locator('[data-cfg-identity-confirmed]');
         await expect(confirmed).toBeVisible();
-        await expect(page.locator('#cfg-identity-confirmed-family')).toHaveText('C2');
+        // 2026-05-23 — family label updated per operator directive
+        // ("C2" → "External C2") to surface the internet-facing distinction
+        // vs Private Lab and Combined.
+        await expect(page.locator('#cfg-identity-confirmed-family')).toHaveText('External C2');
         await expect(page.locator('#cfg-identity-confirmed-type')).toHaveText('c2-adhoc');
 
         await expect(page.locator('#cfg-project-name')).toBeVisible();
         await expect(page.locator('#cfg-env-select')).toBeVisible();
-        await expect(page.locator('#cfg-region-select')).toBeVisible();
+        // 2026-05-23 — region selector replaced with a read-only chip
+        // (all infra is pinned to eu-central-1). Underlying hidden input
+        // keeps #cfg-region-select for assembleConfig() callers.
+        await expect(page.locator('.cfg-region-locked')).toBeVisible();
+        const regionVal = await page.locator('#cfg-region-select').inputValue();
+        expect(regionVal).toBe('eu-central-1');
 
         const projVal = await page.locator('#cfg-project-name').inputValue();
         expect(projVal).toMatch(/^c2_adhoc_dev_/);

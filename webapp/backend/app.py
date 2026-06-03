@@ -153,15 +153,57 @@ app.register_blueprint(test_lab_routes.bp)  # Test lab — bolt-on validation la
 terminal.init_sock(app)
 
 # Serve frontend
+#
+# 2026-05-22 — cache-busting version stamp. Browsers (especially Chrome
+# and Safari) prefer their in-memory copy of JS/CSS on soft reloads even
+# when the server sends `Cache-Control: no-cache`. The only reliable
+# bust is a fresh URL. We compute a short hash from the JS+CSS mtimes
+# on every index render, expose it as `?v=<hash>` on each asset URL,
+# AND surface it via `/api/version/assets` so the frontend can detect
+# version drift and force a hard reload when stale.
+
+def _asset_version() -> str:
+    """Short hex of the max-mtime across app.js, style.css, index.html.
+
+    Recomputed per index render so a developer save triggers a new URL
+    immediately — the browser fetches the fresh file because the URL is
+    new, not because of a cache header that the browser may ignore.
+    """
+    import hashlib
+    parts = []
+    for rel in ('js/app.js', 'css/style.css', 'css/palette.css', 'index.html'):
+        p = frontend_path / rel
+        try:
+            parts.append(f'{rel}:{p.stat().st_mtime_ns}')
+        except OSError:
+            pass
+    if not parts:
+        return '0'
+    return hashlib.sha1('|'.join(parts).encode()).hexdigest()[:10]
+
+
 @app.route('/')
 def index():
-    """Serve main application page"""
-    return render_template('index.html')
+    """Serve main application page with a cache-bust query string on assets."""
+    return render_template('index.html', asset_version=_asset_version())
+
+
+@app.route('/api/version/assets', methods=['GET'])
+def api_asset_version():
+    """Return the current asset version hash so the frontend can poll for
+    drift and prompt a hard reload when its loaded version is stale.
+    """
+    return jsonify({'success': True, 'asset_version': _asset_version()})
+
 
 @app.route('/css/<path:filename>')
 def serve_css(filename):
     """Serve CSS files"""
-    return send_from_directory(str(frontend_path / 'css'), filename)
+    response = send_from_directory(str(frontend_path / 'css'), filename)
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/js/<path:filename>')
 def serve_js(filename):

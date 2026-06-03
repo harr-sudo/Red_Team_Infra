@@ -24,6 +24,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate } from './helpers/nav.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // WCAG helpers (sRGB → relative luminance → contrast ratio)
@@ -176,9 +177,7 @@ const SETTINGS_HEADER_SELECTORS = [
 for (const theme of ['dark', 'light']) {
     test(`Settings section headers pass contrast (${theme} theme) — D8 regression`, async ({ page }) => {
         await page.goto('/');
-        await page.locator('button.tab-btn[data-target="settings"]').waitFor({ timeout: 5000 });
-        // Navigate to Settings tab so the section is rendered visible
-        await page.click('button.tab-btn[data-target="settings"]');
+        await railNavigate(page, 'settings');
         await page.waitForTimeout(200);
         await setTheme(page, theme);
 
@@ -201,8 +200,7 @@ for (const theme of ['dark', 'light']) {
 for (const theme of ['dark', 'light']) {
     test(`Dashboard widget titles pass contrast (${theme} theme)`, async ({ page }) => {
         await page.goto('/');
-        await page.locator('button.tab-btn[data-target="dashboard"]').waitFor({ timeout: 5000 });
-        await page.click('button.tab-btn[data-target="dashboard"]');
+        await railNavigate(page, 'dashboard');
         await page.waitForTimeout(200);
         await setTheme(page, theme);
 
@@ -260,9 +258,8 @@ for (const theme of ['dark', 'light']) {
 for (const theme of ['dark', 'light']) {
     test(`Full-page contrast sweep (${theme} theme) — no AA failures`, async ({ page }) => {
         await page.goto('/');
-        await page.locator('button.tab-btn[data-target="settings"]').waitFor({ timeout: 5000 });
         // Visit Settings so its DOM is in the inspected tree.
-        await page.click('button.tab-btn[data-target="settings"]');
+        await railNavigate(page, 'settings');
         await page.waitForTimeout(300);
         await setTheme(page, theme);
 
@@ -640,7 +637,12 @@ async function closeJourney(page) {
 for (const theme of ['dark', 'light']) {
     test(`Modal/overlay contrast sweep (${theme} theme) — no AA failures in hidden states`, async ({ page }) => {
         await page.goto('/');
-        await page.locator('button.tab-btn[data-target="dashboard"]').waitFor({ timeout: 5000 });
+        // Wait for APP to load + rail to be wired so the modal triggers below
+        // (which run APP.* function calls) have a fully booted shell.
+        await page.waitForFunction(
+            () => typeof window.APP !== 'undefined' && typeof window.APP.navigateTo === 'function',
+            { timeout: 5000 },
+        );
         await setTheme(page, theme);
 
         const allFailures = [];

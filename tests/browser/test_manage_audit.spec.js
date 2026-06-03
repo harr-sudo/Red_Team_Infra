@@ -21,6 +21,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 async function setTheme(page, theme) {
     await page.evaluate((t) => {
@@ -32,10 +33,8 @@ async function setTheme(page, theme) {
 
 async function navigateToManageSubPill(page) {
     await page.goto('/');
-    await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
-    await page.click('button.tab-btn[data-target="deployments-tab"]');
-    await page.waitForTimeout(150);
-    await page.locator('#subpill-manage').click();
+    await railNavigate(page, 'deployments-tab');
+    await clickSubPill(page, 'manage');
     await page.waitForTimeout(900);
 }
 
@@ -105,6 +104,16 @@ test('Manage scopes to the active deployment (no other projects visible)', async
 });
 
 test('Manage empty-state renders when no deployment is selected', async ({ page }) => {
+    // Mock /api/deploy/resources so the background loadResources call can't
+    // race and clobber `#resource-table-body` with live AWS data AFTER
+    // _scopeProjectViews(null) has painted the empty state.
+    await page.route('**/api/deploy/resources', (route) => {
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ success: true, resources: [] }),
+        });
+    });
     await navigateToManageSubPill(page);
     await page.evaluate(() => {
         if (window.APP && window.APP.activeDeployment) {

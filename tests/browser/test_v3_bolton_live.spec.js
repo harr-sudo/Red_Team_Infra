@@ -14,6 +14,8 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { seedDeployment } from './helpers/seed-deployment.js';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 // ─── WCAG helpers ───────────────────────────────────────────────────────
 
@@ -45,13 +47,13 @@ async function setTheme(page, theme) {
 }
 
 async function gotoBoltons(page) {
+    // Seed a goad-mini deployment so the Bolt-ons sub-pill is visible.
+    // The visibility gates require deployment_type ∈ goad-*/combined-*/c2-* +
+    // (for c2-*) enable_test_lab. goad-mini always shows Bolt-ons.
+    await seedDeployment(page, { type: 'goad-mini', name: 'goad_test_alpha' });
     await page.goto('/');
-    const deploymentItem = page.locator('.app-rail__item[data-rail-target="deployments-tab"]');
-    await deploymentItem.click();
-    const boltOnsChild = page.locator('.app-rail__child[data-rail-subpill="bolt-ons"]');
-    await boltOnsChild.waitFor({ timeout: 5000 });
-    await boltOnsChild.click();
-    await page.locator('#subpill-pane-bolt-ons').waitFor({ state: 'visible', timeout: 5000 });
+    await railNavigate(page, 'deployments-tab');
+    await clickSubPill(page, 'bolt-ons');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -60,8 +62,9 @@ async function gotoBoltons(page) {
 
 test.describe('v3 bolt-on live — markup', () => {
     test('rail entry for Bolt-ons exists under Deployments', async ({ page }) => {
+        await seedDeployment(page, { type: 'goad-mini', name: 'goad_test_alpha' });
         await page.goto('/');
-        await page.locator('.app-rail__item[data-rail-target="deployments-tab"]').click();
+        await railNavigate(page, 'deployments-tab');
         const child = page.locator('.app-rail__child[data-rail-subpill="bolt-ons"]');
         await expect(child).toHaveCount(1, { timeout: 5000 });
         await expect(child).toContainText('Bolt-ons');

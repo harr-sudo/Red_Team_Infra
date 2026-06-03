@@ -27,6 +27,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate } from './helpers/nav.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // Layer-aware contrast helpers (mirrored from
@@ -109,8 +110,7 @@ async function setTheme(page, theme) {
 
 test('legacy `.callout--<tone>` markup is fully retired from live SPA', async ({ page }) => {
     await page.goto('/');
-    await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
-    await page.click('button.tab-btn[data-target="deployments-tab"]');
+    await railNavigate(page, 'deployments-tab');
     await page.waitForTimeout(300);
 
     // Enumerate every element that carries any of the legacy callout
@@ -167,8 +167,7 @@ test('legacy `.callout--<tone>` markup is fully retired from live SPA', async ({
 
 test('every `.cfg-callout` resolves to border-radius: 8px (TASTE class applied)', async ({ page }) => {
     await page.goto('/');
-    await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
-    await page.click('button.tab-btn[data-target="deployments-tab"]');
+    await railNavigate(page, 'deployments-tab');
     await page.waitForTimeout(300);
 
     // Pull every cfg-callout's computed border-radius. We expect 8px
@@ -205,8 +204,7 @@ test('every `.cfg-callout` resolves to border-radius: 8px (TASTE class applied)'
 for (const theme of ['dark', 'light']) {
     test(`warning cfg-callout passes >= 4.5:1 contrast in ${theme} theme`, async ({ page }) => {
         await page.goto('/');
-        await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
-        await page.click('button.tab-btn[data-target="deployments-tab"]');
+        await railNavigate(page, 'deployments-tab');
         await page.waitForTimeout(300);
         await setTheme(page, theme);
 

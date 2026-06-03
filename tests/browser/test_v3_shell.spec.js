@@ -222,6 +222,22 @@ test.describe('v3 shell — rail navigation', () => {
 
     test('active state moves between rail items as you click them', async ({ page }) => {
         await page.goto('/');
+        await page.waitForFunction(() => window.APP && window.APP.activeDeployment);
+        // 2026-05-22 — Operations rail item is mode-gated (hidden when
+        // activeDeployment isn't c2-* / combined-* / demo). On a fresh
+        // multi-deployment boot, no deployment is auto-selected so the
+        // rail item is hidden. Pin demo so the rail item is reachable.
+        await page.evaluate(async () => {
+            const r = await fetch('/api/deploy/active');
+            const b = await r.json();
+            if ((b.deployments || []).some(d => d._filename === 'demo')) {
+                window.APP.activeDeployment.set('demo');
+                if (typeof window.APP._setActiveDeploymentType === 'function') {
+                    window.APP._setActiveDeploymentType();
+                }
+            }
+        });
+        await page.waitForTimeout(200);
         // Dashboard is the default active item.
         await expect(
             page.locator('.app-rail__item[data-rail-target="dashboard"]')

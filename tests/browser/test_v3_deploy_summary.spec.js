@@ -14,6 +14,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 async function setTheme(page, theme) {
     await page.evaluate((t) => {
@@ -68,14 +69,17 @@ async function navigateToDeploySubPill(page) {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, entries: [] }) });
     });
     await page.goto('/');
-    await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
+    // Wait for APP to be loaded before setting active deployment.
+    await page.waitForFunction(
+        () => typeof window.APP !== 'undefined' && window.APP.activeDeployment
+            && typeof window.APP.activeDeployment.set === 'function',
+        { timeout: 5000 },
+    );
     await page.evaluate(() => {
         window.APP.activeDeployment.set(window.APP.activeDeployment.DRAFT_SENTINEL);
     });
-    await page.click('button.tab-btn[data-target="deployments-tab"]');
-    await page.waitForTimeout(150);
-    // Click the Deploy sub-pill button within the Deployments tab
-    await page.locator('#subpill-deploy').click();
+    await railNavigate(page, 'deployments-tab');
+    await clickSubPill(page, 'deploy');
     // Give loadConfigSummary() time to fire
     await page.waitForTimeout(700);
 }

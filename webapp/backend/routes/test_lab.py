@@ -342,6 +342,21 @@ def get_hosts(project: str):
             { name, role, os_family, private_ip, instance_id }, ...
         ]}
     """
+    # 2026-05-22 — demo deployment serves canned test-lab hosts so the
+    # Manage pane + Bolt-ons rail item render fully in showcase mode.
+    from webapp.backend.services import demo_data_service
+    if demo_data_service.is_demo_project(project):
+        return jsonify({
+            "success": True, "enabled": True,
+            "hosts": [
+                {"name": h["name"], "role": h["role"],
+                 "os_family": "windows" if "windows" in h["os"].lower() else "linux",
+                 "private_ip": h["ip"], "instance_id": f"i-0demo{h['name']}"}
+                for h in demo_data_service.lab_hosts()
+            ],
+            "is_demo": True,
+        })
+
     state = _read_state(project)
     if state is None:
         return jsonify({"success": False, "error": f"No deployment state for '{project}'"}), 404

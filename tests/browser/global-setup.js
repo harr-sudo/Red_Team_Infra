@@ -4,11 +4,18 @@
 // runs, so stale operators / audit lines / presence YAML from previous
 // runs don't bleed into the new run.
 //
-// This only touches the tmpdir pointed at by DASHBOARD_STATE_DIR; if
-// the operator started Flask without that env var the suite is unsafe
-// (will write to ~/.dashboard/) and we emit a loud warning so the
-// breakage is visible in CI output. We do NOT abort — some local dev
-// loops intentionally point at the live store to repro bugs.
+// 2026-05-22 — hardening: the warning-only mode (was: "print a banner
+// then continue against the live ~/.dashboard/") let pollution bleed
+// across runs and was the actual root cause of multiple "flaky" failures
+// in the bolt-on / Settings / operations clusters. Now:
+//   - If DASHBOARD_STATE_DIR isn't set AND we're outside CI: ABORT with
+//     a copy-paste-able fix banner.
+//   - If DASHBOARD_STATE_DIR isn't set AND we ARE in CI (CI=true env):
+//     auto-set to /tmp/playwright-dashboard-state-<pid> so CI jobs don't
+//     stall on operator config.
+//   - Operator can opt out of the abort with ALLOW_LIVE_DASHBOARD_STORE=1
+//     (rare — only for repro of a pollution-related bug).
+// In every "did run" path the tmpdir is wiped before the suite starts.
 
 const fs = require('fs');
 const path = require('path');
@@ -16,18 +23,45 @@ const path = require('path');
 const DEFAULT_TMP = '/tmp/playwright-dashboard-state';
 
 module.exports = async () => {
-  const envDir = process.env.DASHBOARD_STATE_DIR;
+  let envDir = process.env.DASHBOARD_STATE_DIR;
   if (!envDir) {
-    // The Flask server was likely started without DASHBOARD_STATE_DIR.
-    // Print a loud banner so the operator notices their live store is
-    // about to be mutated.
-    // eslint-disable-next-line no-console
-    console.warn(
-      '\n[playwright] DASHBOARD_STATE_DIR is NOT set. Flask may write to ' +
-        '~/.dashboard/ and webapp/state/presence/. See playwright.config.js ' +
-        'header for the recommended invocation.\n',
-    );
-    return;
+    if (process.env.CI === 'true' || process.env.CI === '1') {
+      envDir = `${DEFAULT_TMP}-${process.pid}`;
+      process.env.DASHBOARD_STATE_DIR = envDir;
+      // eslint-disable-next-line no-console
+      console.log(`[playwright] CI mode — auto-set DASHBOARD_STATE_DIR=${envDir}`);
+    } else if (process.env.ALLOW_LIVE_DASHBOARD_STORE === '1') {
+      // eslint-disable-next-line no-console
+      console.warn('[playwright] ALLOW_LIVE_DASHBOARD_STORE=1 — running against live ~/.dashboard/. Pollution likely.');
+      return;
+    } else {
+      const banner = `
+[playwright] FATAL — DASHBOARD_STATE_DIR is not set.
+
+Tests will pollute ~/.dashboard/operators.json + ~/.dashboard/audit.log
++ webapp/state/presence/ if we let them run. Stop now.
+
+Canonical invocation:
+
+    # one-time setup (any shell)
+    export DASHBOARD_STATE_DIR=/tmp/playwright-dashboard-state
+
+    # Flask
+    rm -rf "$DASHBOARD_STATE_DIR"
+    source venv/bin/activate
+    flask --app webapp.backend.app run --debug --port 5050 --host 127.0.0.1
+
+    # in another shell — same env var
+    export DASHBOARD_STATE_DIR=/tmp/playwright-dashboard-state
+    npx playwright test
+
+To opt out of this check (rare — only when repro'ing a pollution bug),
+set ALLOW_LIVE_DASHBOARD_STORE=1.
+`;
+      // eslint-disable-next-line no-console
+      console.error(banner);
+      throw new Error('DASHBOARD_STATE_DIR not set — see banner above');
+    }
   }
 
   const target = path.resolve(envDir);

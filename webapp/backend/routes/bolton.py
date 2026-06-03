@@ -92,6 +92,9 @@ _AUDIT_ACTIONS = (
     "bolton.agent.retry",
     "bolton.probe",
     "bolton.generate_rule",
+    "bolton.curriculum.step",
+    "bolton.curriculum.assessment",
+    "bolton.curriculum.reset",
 )
 
 
@@ -238,6 +241,156 @@ def get_coverage(vuln_id: str):
     return jsonify({"success": True, **coverage})
 
 
+# ─── Curriculum (guided walkthrough) ────────────────────────────────────────
+#
+# The curriculum block lives inside the descriptor (see schema.py
+# ``CurriculumBlock``); we surface it through dedicated endpoints so the
+# frontend can fetch ONLY the walkthrough payload without pulling the
+# full descriptor on every step click. Per-operator progress lives in
+# ``curriculum_progress_service`` and is keyed by the operator id from
+# the request cookie (set by app.py:_resolve_operator → g.operator).
+
+@bp.route("/vulns/<vuln_id>/curriculum", methods=["GET"])
+def get_curriculum(vuln_id: str):
+    """Return the curriculum block + the operator's current progress.
+
+    ---
+    summary: Fetch curriculum for a vulnerability + operator progress.
+    parameters:
+      - in: path
+        name: vuln_id
+        required: true
+        schema: { type: string }
+    responses:
+      200:
+        description: |
+          ``{curriculum: CurriculumBlock, progress: {completed_steps,
+          assessments, started_at, completed_at}}``
+      404: { description: "No descriptor with that id, or no curriculum on it." }
+    """
+    svc = _svc("webapp.backend.services.bolton_catalog_service")
+    vuln = svc.get(vuln_id)
+    if vuln is None:
+        return _err(f"vuln '{vuln_id}' not found", 404)
+    curriculum = vuln.get("curriculum")
+    if not curriculum:
+        return _err(f"vuln '{vuln_id}' has no curriculum", 404)
+
+    progress_svc = _svc("webapp.backend.services.curriculum_progress_service")
+    progress = progress_svc.get_progress(_operator_id(), vuln_id)
+    return jsonify({
+        "success": True,
+        "vuln_id": vuln_id,
+        "curriculum": curriculum,
+        "progress": progress,
+    })
+
+
+@bp.route("/vulns/<vuln_id>/progress", methods=["GET"])
+def get_curriculum_progress(vuln_id: str):
+    """Return the operator's progress on one vuln's curriculum."""
+    progress_svc = _svc("webapp.backend.services.curriculum_progress_service")
+    progress = progress_svc.get_progress(_operator_id(), vuln_id)
+    return jsonify({"success": True, "progress": progress})
+
+
+@bp.route("/vulns/<vuln_id>/progress/step", methods=["POST"])
+def post_curriculum_step(vuln_id: str):
+    """Mark/unmark a step. Body: ``{step_id: str, action: 'complete'|'undo'}``.
+
+    Audits as ``bolton.curriculum.step``.
+    """
+    body = request.get_json(silent=True) or {}
+    step_id = body.get("step_id")
+    action = (body.get("action") or "complete").strip().lower()
+    if not step_id:
+        return _err("step_id required", 400)
+    svc = _svc("webapp.backend.services.bolton_catalog_service")
+    vuln = svc.get(vuln_id)
+    if vuln is None:
+        return _err(f"vuln '{vuln_id}' not found", 404)
+    curriculum = vuln.get("curriculum") or {}
+    steps = curriculum.get("steps") or []
+    if not any(s.get("id") == step_id for s in steps):
+        return _err(f"step '{step_id}' not in curriculum", 400)
+
+    progress_svc = _svc("webapp.backend.services.curriculum_progress_service")
+    if action == "undo":
+        progress = progress_svc.unmark_step(_operator_id(), vuln_id, step_id)
+    else:
+        progress = progress_svc.mark_step_complete(
+            _operator_id(), vuln_id, step_id, total_steps=len(steps),
+        )
+    _audit(
+        "bolton.curriculum.step",
+        target=vuln_id,
+        details={"step_id": step_id, "action": action},
+    )
+    return jsonify({"success": True, "progress": progress})
+
+
+@bp.route("/vulns/<vuln_id>/progress/assessment", methods=["POST"])
+def post_curriculum_assessment(vuln_id: str):
+    """Submit an assessment answer. Body: ``{step_id: str, answer_index: int}``.
+
+    Returns ``{correct: bool, correct_index: int, explanation: str | null,
+    progress: {...}}`` so the frontend can render immediate feedback.
+    """
+    body = request.get_json(silent=True) or {}
+    step_id = body.get("step_id")
+    answer_index = body.get("answer_index")
+    if not step_id or answer_index is None:
+        return _err("step_id and answer_index required", 400)
+    try:
+        answer_index = int(answer_index)
+    except (TypeError, ValueError):
+        return _err("answer_index must be an integer", 400)
+
+    svc = _svc("webapp.backend.services.bolton_catalog_service")
+    vuln = svc.get(vuln_id)
+    if vuln is None:
+        return _err(f"vuln '{vuln_id}' not found", 404)
+    steps = ((vuln.get("curriculum") or {}).get("steps") or [])
+    step = next((s for s in steps if s.get("id") == step_id), None)
+    if step is None:
+        return _err(f"step '{step_id}' not in curriculum", 400)
+    assessment = step.get("assessment")
+    if not assessment:
+        return _err(f"step '{step_id}' has no assessment", 400)
+
+    correct_index = int(assessment.get("correct_index", -1))
+    progress_svc = _svc("webapp.backend.services.curriculum_progress_service")
+    progress = progress_svc.submit_assessment(
+        _operator_id(), vuln_id, step_id,
+        answer_index=answer_index, correct_index=correct_index,
+    )
+    _audit(
+        "bolton.curriculum.assessment",
+        target=vuln_id,
+        details={
+            "step_id": step_id,
+            "answer_index": answer_index,
+            "correct": progress.get("latest_correct"),
+        },
+    )
+    return jsonify({
+        "success": True,
+        "correct": progress.get("latest_correct"),
+        "correct_index": correct_index,
+        "explanation": assessment.get("explanation"),
+        "progress": progress,
+    })
+
+
+@bp.route("/vulns/<vuln_id>/progress/reset", methods=["POST"])
+def post_curriculum_reset(vuln_id: str):
+    """Reset operator's progress for one curriculum (let-me-redo)."""
+    progress_svc = _svc("webapp.backend.services.curriculum_progress_service")
+    progress = progress_svc.reset_progress(_operator_id(), vuln_id)
+    _audit("bolton.curriculum.reset", target=vuln_id)
+    return jsonify({"success": True, "progress": progress})
+
+
 # ─── Host facts + host-contextualised catalog ───────────────────────────────
 
 @bp.route("/labs/<lab>/hosts", methods=["GET"])
@@ -257,6 +410,14 @@ def list_hosts(lab: str):
           ``{hosts: [{name, role, os, ip, installed_count}], lab}``
       404: { description: "Lab not deployed or not recognized." }
     """
+    # 2026-05-22 — demo deployment serves canned host list.
+    from webapp.backend.services import demo_data_service
+    if demo_data_service.is_demo_project(lab):
+        return jsonify({
+            "success": True, "lab": lab,
+            "hosts": demo_data_service.lab_hosts(),
+            "is_demo": True,
+        })
     svc = _svc("webapp.backend.services.bolton_facts_service")
     try:
         hosts = svc.list_hosts(lab)
@@ -289,6 +450,12 @@ def get_host_facts(lab: str, host: str):
       404: { description: "Host not in lab, or facts never collected." }
       503: { description: "Host unreachable on last attempt." }
     """
+    from webapp.backend.services import demo_data_service
+    if demo_data_service.is_demo_project(lab):
+        facts = demo_data_service.host_facts(host)
+        if facts is None:
+            return _err(f"host '{host}' in demo lab not found", 404)
+        return jsonify({"success": True, **facts, "is_demo": True})
     svc = _svc("webapp.backend.services.bolton_facts_service")
     force = request.args.get("force_refresh", "").lower() in ("1", "true", "yes")
     include_raw = request.args.get("include_raw", "").lower() in ("1", "true", "yes")
@@ -381,6 +548,81 @@ def host_catalog(lab: str, host: str):
       404: { description: "Host or lab not found." }
       409: { description: "Facts never collected — call /facts/refresh first." }
     """
+    # 2026-05-23 — demo deployment: build a synthetic HostFacts from the
+    # demo host's facts_dict and run it through the REAL compatibility
+    # resolver. This way the per-row state respects supported_os /
+    # required_roles / depends_on / patched_cves just like a real
+    # deployment — without it the catalog was marking 23 Windows-only
+    # bolt-ons as Available on a linux_member host. Operator complaint:
+    # "are you sure the linux bolt on are actually compatible with linux".
+    from webapp.backend.services import demo_data_service
+    if demo_data_service.is_demo_project(lab):
+        facts_dict = demo_data_service.host_facts(host)
+        if facts_dict is None:
+            return _err(f"host '{host}' in demo lab not found", 404)
+        from datetime import datetime as _dt, timezone as _tz
+        from webapp.backend.services.bolton_facts_service import HostFacts as _HostFacts
+        from webapp.backend.services import bolton_catalog_service, bolton_compatibility
+        # Synthesise a HostFacts for the resolver. installed_boltons is
+        # dynamic so install/uninstall mutations appear instantly.
+        gathered_at = facts_dict.get("gathered_at")
+        if isinstance(gathered_at, str):
+            try:
+                gathered_at_dt = _dt.fromisoformat(gathered_at.replace("Z", "+00:00"))
+            except ValueError:
+                gathered_at_dt = _dt.now(_tz.utc)
+        else:
+            gathered_at_dt = _dt.now(_tz.utc)
+        synthetic_facts = _HostFacts(
+            host=host, lab=lab,
+            os_family=facts_dict.get("os_family", ""),
+            os_version=facts_dict.get("os_version", ""),
+            os_edition=facts_dict.get("os_edition"),
+            role=facts_dict.get("role", ""),
+            gathered_at=gathered_at_dt,
+            domain_function_level=facts_dict.get("domain_function_level"),
+            installed_services=facts_dict.get("installed_services") or {},
+            applied_kbs=facts_dict.get("applied_kbs") or [],
+            installed_boltons=list(facts_dict.get("installed_boltons") or []),
+            active_gpos=facts_dict.get("active_gpos") or [],
+            network_subnet=facts_dict.get("network_subnet"),
+            patched_cves=facts_dict.get("patched_cves") or [],
+        )
+        catalog = bolton_catalog_service._load()
+        # Build cross-host installed map so depends_on / conflicts_with
+        # resolution sees the full demo deployment, not just this host.
+        installed_map: dict[str, list[str]] = {}
+        for demo_host in demo_data_service.DEMO_HOSTS:
+            hf = demo_data_service.host_facts(demo_host)
+            if hf:
+                installed_map[demo_host] = list(hf.get("installed_boltons") or [])
+        results = bolton_compatibility.evaluate_catalog_for_host(
+            catalog, synthetic_facts, installed_map,
+        )
+        rows = []
+        counts: dict[str, int] = {}
+        for vuln_id, descriptor in catalog.items():
+            result = results.get(vuln_id)
+            if not result:
+                continue
+            row = bolton_compatibility._row_for_vuln(descriptor, result)
+            rows.append(row)
+            state_label = result.state.name
+            counts[state_label] = counts.get(state_label, 0) + 1
+        return jsonify({
+            "success": True,
+            "host_id": host,
+            "host_facts_summary": {
+                "os": f"{synthetic_facts.os_family} {synthetic_facts.os_version}".strip(),
+                "role": synthetic_facts.role,
+                "installed_count": len(synthetic_facts.installed_boltons),
+                "stale": False,
+                "collected_at": gathered_at_dt.isoformat(),
+            },
+            "counts_by_state": counts,
+            "vulns": rows,
+            "is_demo": True,
+        })
     svc = _svc("webapp.backend.services.bolton_compatibility")
     states = request.args.getlist("state") or None
     try:
@@ -419,6 +661,123 @@ def host_installed(lab: str, host: str):
                     "installed": installed})
 
 
+@bp.route("/labs/<lab>/hosts/<host>/status/<vuln_id>", methods=["GET"])
+def bolton_status(lab: str, host: str, vuln_id: str):
+    """Return the live status of one bolt-on on one host.
+
+    2026-05-23 — operator directive: "every bolt-on must have a status
+    checker — installed correctly, running as expected, has been removed
+    properly".
+
+    Resolution model — returns one of:
+      * installed_and_working   — install verify probe would exit 0
+      * installed_but_broken    — listed as installed but verify failed
+      * not_installed           — not in installed_boltons; uninstall
+                                  probe would confirm "gone"
+      * patched                 — entry exists with state="patched"
+      * removed_with_residue    — uninstall verify failed (residue left)
+      * unknown                 — facts stale / unreachable
+
+    For DEMO deployments the resolution is in-memory (cheap). For real
+    deployments the install/uninstall verify.probe shell scripts would
+    be dispatched via Ansible — that path is deferred to Phase 4 and
+    currently returns "unknown" with a hint.
+    """
+    from webapp.backend.services import demo_data_service
+    from datetime import datetime, timezone
+
+    # Resolve the descriptor first so we can echo install.estimated_time
+    # and the verify probes back to the UI for transparency.
+    catalog_svc = _svc("webapp.backend.services.bolton_catalog_service")
+    catalog = catalog_svc._load()
+    descriptor = catalog.get(vuln_id)
+    if descriptor is None:
+        return _err(f"vuln '{vuln_id}' not in catalog", 404)
+
+    def _probe_dict(block) -> Optional[dict[str, Any]]:
+        if not block:
+            return None
+        verify = getattr(block, "verify", None)
+        if not verify:
+            return None
+        return {
+            "probe": getattr(verify, "probe", None),
+            "timeout_seconds": getattr(verify, "timeout_seconds", None),
+            "expect_exit_code": getattr(verify, "expect_exit_code", None),
+        }
+
+    install_probe = _probe_dict(getattr(descriptor, "install", None))
+    uninstall_probe = _probe_dict(getattr(descriptor, "uninstall", None))
+
+    if demo_data_service.is_demo_project(lab):
+        facts_dict = demo_data_service.host_facts(host)
+        if facts_dict is None:
+            return _err(f"host '{host}' in demo lab not found", 404)
+        # Read both the installed set AND the per-bolt-on state map so we
+        # can distinguish installed_and_working vs patched.
+        state_token = demo_data_service.get_install_state(host, vuln_id)
+        installed_now = vuln_id in (facts_dict.get("installed_boltons") or [])
+        if state_token == "patched":
+            status = "patched"
+            human = (
+                f"{vuln_id} has been PATCHED on {host}. The exploit "
+                f"probe is expected to fail; the install verify probe "
+                f"would now exit non-zero."
+            )
+        elif installed_now or state_token == "installed":
+            status = "installed_and_working"
+            human = (
+                f"{vuln_id} is installed on {host}. The install verify "
+                f"probe would exit 0 → host is exploitable."
+            )
+        else:
+            status = "not_installed"
+            human = (
+                f"{vuln_id} is NOT installed on {host}. Uninstall verify "
+                f"would confirm no residue."
+            )
+        return jsonify({
+            "success": True,
+            "is_demo": True,
+            "lab": lab,
+            "host": host,
+            "vuln_id": vuln_id,
+            "status": status,
+            "human": human,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "install_probe": install_probe,
+            "uninstall_probe": uninstall_probe,
+        })
+
+    # Real-deployment path — Phase 4: dispatch the verify probe via
+    # Ansible against the host. For now return the cached install state
+    # from the facts service and surface the probe scripts so the
+    # operator can run them manually if they want immediate truth.
+    svc = _svc("webapp.backend.services.bolton_facts_service")
+    try:
+        installed = svc.get_installed(lab, host)
+    except KeyError:
+        return _err(f"host '{host}' in lab '{lab}' not found", 404)
+    installed_ids = {entry.get("vuln_id") or entry.get("id") for entry in installed}
+    status = "installed_and_working" if vuln_id in installed_ids else "not_installed"
+    return jsonify({
+        "success": True,
+        "is_demo": False,
+        "lab": lab,
+        "host": host,
+        "vuln_id": vuln_id,
+        "status": status,
+        "human": (
+            "Status derives from cached facts only. Live verify-probe "
+            "dispatch is on the Phase 4 roadmap; run the install_probe "
+            "script manually on the host for immediate truth."
+        ),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "install_probe": install_probe,
+        "uninstall_probe": uninstall_probe,
+    })
+
+
 # ─── Operations: install / uninstall / patch / patch-revert ─────────────────
 
 def _dispatch_op(lab: str, host: str, vuln_id: str, op: str,
@@ -428,12 +787,40 @@ def _dispatch_op(lab: str, host: str, vuln_id: str, op: str,
     All four endpoints share an identical contract — body shape
     (``InstallRequest``), success envelope (``JobDispatchResponse``),
     error mapping (404 unknown vuln/host, 409 compatibility refusal).
+
+    2026-05-22 — demo deployments short-circuit through
+    ``demo_data_service.dispatch_fake_op`` so the operator can exercise
+    the full install / patch / uninstall flow without provisioning real
+    infrastructure. The fake job completes instantly and is retrievable
+    via ``/jobs/<job_id>`` for the progress overlay's poll loop.
     """
     body = request.get_json(silent=True) or {}
     try:
         req = schemas.InstallRequest.model_validate(body)
     except Exception as e:
         return _err(f"invalid body: {e}", 400)
+
+    from webapp.backend.services import demo_data_service
+    if demo_data_service.is_demo_project(lab):
+        job = demo_data_service.dispatch_fake_op(
+            op=op, lab=lab, host=host, vuln_id=vuln_id, actor=_operator_id(),
+        )
+        _audit(audit_action,
+               target=f"{host}:{vuln_id}",
+               project=lab,
+               details={"vuln_id": vuln_id, "host": host, "lab": lab,
+                        "job_id": job["job_id"], "is_demo": True})
+        return jsonify({
+            "success": True,
+            "is_demo": True,
+            "job_id": job["job_id"],
+            "action": audit_action,
+            "lab": lab,
+            "host": host,
+            "vuln_id": vuln_id,
+            "estimated_time_seconds": 0,
+            "message": job["message"],
+        })
 
     svc = _svc("webapp.backend.services.bolton_install_service")
     try:
@@ -704,6 +1091,14 @@ def get_job(job_id: str):
       200: { description: "{status, steps, log_tail, agent_state?}" }
       404: { description: "Unknown job." }
     """
+    # Demo job IDs are prefixed `demo-job-` and served from in-memory state.
+    if job_id.startswith("demo-job-"):
+        from webapp.backend.services import demo_data_service
+        job = demo_data_service.get_fake_job(job_id)
+        if job is None:
+            return _err(f"demo job '{job_id}' not found", 404)
+        return jsonify({"success": True, **job})
+
     svc = _svc("webapp.backend.services.bolton_jobs_service")
     try:
         since = int(request.args.get("since", 0))

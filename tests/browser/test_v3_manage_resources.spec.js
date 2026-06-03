@@ -21,6 +21,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 async function setTheme(page, theme) {
     await page.evaluate((t) => {
@@ -32,10 +33,8 @@ async function setTheme(page, theme) {
 
 async function navigateToManageSubPill(page) {
     await page.goto('/');
-    await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
-    await page.click('button.tab-btn[data-target="deployments-tab"]');
-    await page.waitForTimeout(150);
-    await page.locator('#subpill-manage').click();
+    await railNavigate(page, 'deployments-tab');
+    await clickSubPill(page, 'manage');
     // APP.manage.render() + the resource list / timeline renders fan out async.
     await page.waitForTimeout(1100);
 }

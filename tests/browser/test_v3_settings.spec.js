@@ -98,12 +98,47 @@ async function setTheme(page, theme) {
 
 async function navigateToSettings(page) {
     await page.goto('/');
-    await page.locator('button.tab-btn[data-target="settings"]').waitFor({ timeout: 5000 });
-    await page.click('button.tab-btn[data-target="settings"]');
-    // Allow lazy loaders (domains/secrets/services) to fire — these are
-    // skeleton-then-async, and the contrast sweep needs the final DOM,
-    // not the skeleton placeholders.
-    await page.waitForTimeout(1100);
+    // 2026-05-22 — REAL user path. The previous version clicked the legacy
+    // .tab-btn[data-target="settings"] compatibility shim. We migrated to
+    // the rail item (.app-rail__item[data-rail-target="settings"]) which
+    // is the canonical operator surface. The shim is preserved for older
+    // suites but new tests should drive the rail.
+    //
+    // Wait for APP to be loaded + the rail handlers to be wired (set by
+    // APP.shell.init during DOMContentLoaded) before attempting any
+    // navigation.
+    await page.waitForFunction(
+        () => {
+            const btn = document.querySelector('.app-rail__item[data-rail-target="settings"]');
+            return btn && btn.dataset.shellWired === '1' && typeof window.APP !== 'undefined'
+                && typeof window.APP.navigateTo === 'function';
+        },
+        { timeout: 5000 },
+    );
+    const railItem = page.locator('.app-rail__item[data-rail-target="settings"]').first();
+    await railItem.click();
+    // Race-tolerant settle loop. The click handler invokes APP.navigateTo
+    // synchronously which sets .active + inline display:block. If a
+    // competing async navigateTo (e.g. an async data load wires up
+    // subscribers that re-navigate) overwrites our state, the polling
+    // loop replays the call until Settings stays visible.
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+        const ok = await page.evaluate(() => {
+            const p = document.querySelector('.tab-page[data-page="settings"]');
+            if (!p || !p.classList.contains('active')) return false;
+            const cs = window.getComputedStyle(p);
+            if (cs.display === 'none') return false;
+            const eyebrow = p.querySelector('#settings-general .settings-section__eyebrow');
+            if (!eyebrow) return false;
+            const ecs = window.getComputedStyle(eyebrow);
+            return ecs.display !== 'none' && ecs.visibility !== 'hidden';
+        });
+        if (ok) return;
+        await page.evaluate(() => window.APP.navigateTo('settings'));
+        await page.waitForTimeout(120);
+    }
+    throw new Error('navigateToSettings: Settings tab did not become visible after 8s');
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -309,8 +344,13 @@ for (const theme of ['dark', 'light']) {
             await navigateToSettings(page);
             await setTheme(page, theme);
             // Bring the section into view in case the IntersectionObserver
-            // is keying lazy loaders off visibility.
-            await page.locator(`#${id}`).scrollIntoViewIfNeeded();
+            // is keying lazy loaders off visibility. Wait for the section
+            // to be visible (not just attached) before scrolling — the
+            // Settings tab paint can race against the contrast assertions
+            // when the rail click and lazy loaders both fire asynchronously.
+            const section = page.locator(`#${id}`);
+            await section.waitFor({ state: 'visible', timeout: 5000 });
+            await section.scrollIntoViewIfNeeded();
             await page.waitForTimeout(450);
             const { found, failures } = await auditSectionContrast(page, id);
             expect(found, `#${id} not in DOM`).toBe(true);

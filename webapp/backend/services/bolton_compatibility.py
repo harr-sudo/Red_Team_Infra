@@ -155,8 +155,15 @@ def _os_matches(supported: Any, facts: HostFacts) -> bool:
 
     Supports two entry shapes:
       - bare strings like ``"windows"`` or ``"windows-2019"``
-      - objects with ``family`` (string or Enum) and ``version``/``min_version``/``max_version``
-        — either dicts or Pydantic models from ``webapp/bolton/schema.py``.
+      - objects with ``family`` (string or Enum), ``version`` / ``min_version`` /
+        ``max_version``, and optional ``edition_in: [...]`` — either dicts
+        or Pydantic models from ``webapp/bolton/schema.py``.
+
+    2026-05-23 — fixed bugs:
+      * ``edition_in`` was previously parsed but never checked.
+      * ``min_version``/``max_version`` used ``float()`` parsing so any
+        non-purely-numeric version ("2012R2", "8.1", "11 22H2") silently
+        failed the range check. Now uses a Windows-aware comparator.
     """
     if not supported:
         return True  # No constraint
@@ -164,6 +171,7 @@ def _os_matches(supported: Any, facts: HostFacts) -> bool:
         supported = [supported]
     host_family = (facts.os_family or "").lower()
     host_version = str(facts.os_version or "").lower()
+    host_edition = (facts.os_edition or "").lower() if hasattr(facts, "os_edition") else ""
     for entry in supported:
         if isinstance(entry, str):
             e = entry.lower()
@@ -178,39 +186,116 @@ def _os_matches(supported: Any, facts: HostFacts) -> bool:
             if fam and fam != host_family:
                 continue
             ver = _get(entry, "version")
+            ver_ok = True
             if ver and str(ver).lower() != host_version:
                 # Try min/max bounds
                 lo = _get(entry, "min_version")
                 hi = _get(entry, "max_version")
                 if lo is not None or hi is not None:
                     if not _version_in_range(host_version, lo, hi):
-                        continue
+                        ver_ok = False
                 else:
-                    continue
+                    ver_ok = False
             elif ver is None:
                 # No exact version — fall back to min/max if present
                 lo = _get(entry, "min_version")
                 hi = _get(entry, "max_version")
                 if lo is not None or hi is not None:
                     if not _version_in_range(host_version, lo, hi):
-                        continue
+                        ver_ok = False
+            if not ver_ok:
+                continue
+            # Edition gate — enforced 2026-05-23. Empty list means "any".
+            editions = _get(entry, "edition_in") or _get(entry, "editions") or []
+            if editions:
+                allowed = [str(e).lower() for e in editions]
+                # An unknown host edition (None / "") doesn't auto-fail —
+                # we'd otherwise break every test_lab host whose facts
+                # never set os_edition. Real production hosts populate it.
+                if host_edition and host_edition not in allowed:
+                    continue
             return True
     return False
 
 
+# Windows version ordering — covers everything from XP through Server 2025.
+# Anything not in the map falls back to numeric float parsing.
+_WINDOWS_VERSION_ORDER = {
+    "xp": 5.1, "vista": 6.0, "7": 6.1, "8": 6.2, "8.1": 6.3,
+    "10": 10.0, "11": 11.0,
+    "2003": 5.2, "2008": 6.0, "2008r2": 6.1, "2012": 6.2, "2012r2": 6.3,
+    "2016": 10.0, "2019": 10.0, "2022": 10.0, "2025": 10.0,
+}
+# Year-style server versions need a secondary ordering since Windows shares
+# the 10.0 NT kernel across 2016/2019/2022/2025. Sort by release year.
+_WINDOWS_SERVER_YEAR = {"2003": 2003, "2008": 2008, "2008r2": 2008.5,
+                       "2012": 2012, "2012r2": 2012.5,
+                       "2016": 2016, "2019": 2019, "2022": 2022, "2025": 2025}
+
+
+def _normalize_win_version(v: Any) -> str | None:
+    if v is None:
+        return None
+    s = str(v).strip().lower()
+    # Strip "server " prefix, "windows " prefix, build numbers like " 22h2".
+    for prefix in ("windows server ", "windows ", "server "):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    # Take first token before space (drops " 22h2", " 1809", etc.)
+    s = s.split()[0] if s else s
+    return s or None
+
+
 def _version_in_range(version: str, lo: Any, hi: Any) -> bool:
-    """Best-effort numeric comparison; falls back to string compare."""
-    def _num(v: Any) -> float | None:
-        if v is None:
+    """Compare ``version`` against ``[lo, hi]`` using Windows-aware ordering.
+
+    Falls back to numeric float comparison for non-Windows or unknown
+    version strings. Returns False for unparseable host versions so a
+    badly-tagged host doesn't accidentally pass an OS gate.
+    """
+    nv = _normalize_win_version(version)
+    nlo = _normalize_win_version(lo)
+    nhi = _normalize_win_version(hi)
+    if nv is None:
+        return False
+
+    # If host + bounds are all in the Windows server-year map, compare by year.
+    if nv in _WINDOWS_SERVER_YEAR and (nlo in _WINDOWS_SERVER_YEAR or nlo is None) \
+            and (nhi in _WINDOWS_SERVER_YEAR or nhi is None):
+        v = _WINDOWS_SERVER_YEAR[nv]
+        lo_n = _WINDOWS_SERVER_YEAR.get(nlo) if nlo else None
+        hi_n = _WINDOWS_SERVER_YEAR.get(nhi) if nhi else None
+        if lo_n is not None and v < lo_n:
+            return False
+        if hi_n is not None and v > hi_n:
+            return False
+        return True
+
+    # Client (10/11/8.1/7) ordering via NT-version map.
+    if nv in _WINDOWS_VERSION_ORDER and (nlo in _WINDOWS_VERSION_ORDER or nlo is None) \
+            and (nhi in _WINDOWS_VERSION_ORDER or nhi is None):
+        v = _WINDOWS_VERSION_ORDER[nv]
+        lo_n = _WINDOWS_VERSION_ORDER.get(nlo) if nlo else None
+        hi_n = _WINDOWS_VERSION_ORDER.get(nhi) if nhi else None
+        if lo_n is not None and v < lo_n:
+            return False
+        if hi_n is not None and v > hi_n:
+            return False
+        return True
+
+    # Numeric fallback (Linux versions like "22.04", "20.04").
+    def _num(s: str | None) -> float | None:
+        if s is None:
             return None
         try:
-            return float(str(v))
+            return float(s)
         except (TypeError, ValueError):
             return None
 
-    v = _num(version)
-    lo_n = _num(lo)
-    hi_n = _num(hi)
+    v = _num(nv)
+    lo_n = _num(nlo)
+    hi_n = _num(nhi)
     if v is None:
         return False
     if lo_n is not None and v < lo_n:
@@ -218,6 +303,24 @@ def _version_in_range(version: str, lo: Any, hi: Any) -> bool:
     if hi_n is not None and v > hi_n:
         return False
     return True
+
+
+def _dfl_satisfied(required: str | None, facts: HostFacts) -> bool:
+    """Check `required_domain_function_level` against the host's reported DFL.
+
+    Year-based comparison ("2008" < "2012" < "2016" < "2019"). When facts
+    don't carry a DFL we assume not-satisfied for DFL-gated descriptors
+    (better safe — a real production gather would populate it).
+    """
+    if not required:
+        return True
+    host_dfl = getattr(facts, "domain_function_level", None)
+    if not host_dfl:
+        return False
+    try:
+        return int(str(host_dfl).rstrip("R2").strip()) >= int(str(required).rstrip("R2").strip())
+    except (TypeError, ValueError):
+        return str(host_dfl).lower() == str(required).lower()
 
 
 def _normalize_dep_id(dep: Any) -> str:
@@ -284,6 +387,20 @@ def evaluate_compatibility(
             state=CompatibilityState.INCOMPATIBLE_ROLE,
             reason=(
                 f"Requires role: {roles_str}; host role: {facts.role}"
+            ),
+            suggested_action="pick_different_host",
+            blocking=True,
+        )
+
+    # ── 3b. DOMAIN FUNCTIONAL LEVEL (2026-05-23 — was YAML-only, never enforced) ─
+    required_dfl = _dotted(descriptor, "targets.required_domain_function_level")
+    if required_dfl and not _dfl_satisfied(required_dfl, facts):
+        host_dfl = getattr(facts, "domain_function_level", None) or "unknown"
+        return CompatibilityResult(
+            state=CompatibilityState.INCOMPATIBLE_OS,  # fold into OS bucket for the UI
+            reason=(
+                f"Requires forest/domain functional level ≥ {required_dfl}; "
+                f"host's domain reports {host_dfl}."
             ),
             suggested_action="pick_different_host",
             blocking=True,

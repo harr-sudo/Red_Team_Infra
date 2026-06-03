@@ -11,6 +11,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 const API_BASE = '/api';
 
@@ -118,10 +119,8 @@ async function gotoManageWithProject(page, projectName) {
     await page.evaluate((p) => {
         if (window.APP && window.APP.activeDeployment) window.APP.activeDeployment.set(p);
     }, projectName);
-    await page.locator('button.tab-btn[data-target="deployments-tab"]').waitFor({ timeout: 5000 });
-    await page.click('button.tab-btn[data-target="deployments-tab"]');
-    await page.waitForTimeout(120);
-    await page.locator('#subpill-manage').click();
+    await railNavigate(page, 'deployments-tab');
+    await clickSubPill(page, 'manage');
     await page.waitForTimeout(400);
 }
 // Back-compat alias — older test callsites still use the old name.

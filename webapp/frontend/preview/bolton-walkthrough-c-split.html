@@ -771,32 +771,49 @@
             transition: color var(--motion-duration-base) var(--motion-ease-walk);
         }
         .bw-sticky__back:hover { color: var(--guide-accent-text); }
-        /* 2026-05-29 — ✕ close button for the docked overlay */
+        /* 2026-05-29 — ✕ Close button for the docked overlay.
+           User feedback: "where tf is the close button" — was a 28×28 ghost
+           button that was easy to miss. Now: prominent pill-shaped button
+           at top-right of the sticky header with explicit "Close" text
+           alongside the ✕ glyph, guide-accent tinted so it reads as the
+           obvious exit affordance. */
         .bw-sticky__close {
             position: absolute;
-            top: 12px; right: 18px;
+            top: 10px; right: 18px;
             appearance: none;
-            background: transparent;
-            border: 1px solid var(--border-subtle);
-            color: var(--text-secondary);
-            width: 28px; height: 28px;
-            border-radius: 6px;
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 8px 14px;
+            background: color-mix(in srgb, var(--guide-accent) 18%, var(--bg-card));
+            border: 1px solid color-mix(in srgb, var(--guide-accent) 55%, transparent);
+            color: var(--guide-accent-text);
+            font-family: var(--font-family-base);
+            font-size: 12.5px; font-weight: 700;
+            letter-spacing: 0.02em;
+            border-radius: 999px;
             cursor: pointer;
-            font-size: 14px; line-height: 1;
-            display: inline-flex; align-items: center; justify-content: center;
+            line-height: 1;
+            box-shadow: 0 1px 0 color-mix(in srgb, var(--guide-accent) 35%, transparent);
             transition: background-color var(--motion-duration-base) var(--motion-ease-walk),
-                        color var(--motion-duration-base) var(--motion-ease-walk),
-                        border-color var(--motion-duration-base) var(--motion-ease-walk);
+                        border-color var(--motion-duration-base) var(--motion-ease-walk),
+                        transform 160ms var(--motion-ease-walk);
+            z-index: 10;
+        }
+        .bw-sticky__close::before {
+            content: '✕';
+            font-size: 14px;
+            line-height: 1;
+            font-weight: 700;
         }
         .bw-sticky__close:hover {
-            background: var(--bg-section);
-            color: var(--text-primary);
-            border-color: var(--border-light);
+            background: color-mix(in srgb, var(--guide-accent) 28%, var(--bg-card));
+            border-color: var(--guide-accent);
+            transform: translateY(-1px);
         }
+        .bw-sticky__close:active { transform: translateY(0); }
         .bw-sticky__head-row {
             display: flex; align-items: flex-start; justify-content: space-between;
             gap: 16px;
-            padding-right: 40px; /* clear room for the ✕ close button */
+            padding-right: 130px; /* clear room for the pill-shaped Close button */
         }
         .bw-sticky__head-text { min-width: 0; flex: 1; }
         .bw-eyebrow {

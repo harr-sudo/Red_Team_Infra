@@ -130,9 +130,29 @@ def update(op_id, *, display=None, color=None):
         return entry
 
 
-def remove(op_id):
+def remove(op_id, current_id=None):
+    """Remove an operator.
+
+    2026-05-22 — Added ``current_id`` guard to close a UX/backend mismatch:
+    the dashboard UI disables the Delete button for the currently-active
+    operator, but a direct ``DELETE /api/operators/<id>`` previously
+    succeeded against the current operator, leaving the ``dashboard_operator``
+    cookie pointing at a now-orphaned id (resolved via fallback to
+    ``default``). Callers in the route layer pass ``g.operator['id']`` as
+    ``current_id`` so the backend enforces what the UI claims.
+
+    Raises ``ValueError`` for:
+      - not_found     — no operator with that id
+      - last_operator — would empty the registry
+      - current_operator — would orphan the request's cookie
+    """
     with _LOCK:
         data = load()
+        if current_id is not None and op_id == current_id:
+            raise ValueError(
+                "cannot remove the currently-active operator — "
+                "switch to another operator first"
+            )
         before = len(data["operators"])
         data["operators"] = [o for o in data["operators"] if o["id"] != op_id]
         if len(data["operators"]) == before:

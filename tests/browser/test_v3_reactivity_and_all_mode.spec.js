@@ -17,6 +17,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { railNavigate, clickSubPill } from './helpers/nav.js';
 
 const ALL_SENTINEL = '__all__';
 
@@ -37,12 +38,11 @@ async function gotoRoot(page) {
 }
 
 async function gotoSubpill(page, parent, subpill) {
-    const railItem = page.locator(`.app-rail__item[data-rail-target="${parent}"]`);
-    await railItem.click();
-    const child = page.locator(`.app-rail__child[data-rail-subpill="${subpill}"]`);
-    await child.waitFor({ timeout: 5000 });
-    await child.click();
-    await page.locator(`#subpill-pane-${subpill}`).waitFor({ state: 'visible', timeout: 5000 });
+    // 2026-05-22 — Use the rail+sub-pill helpers so the race-tolerant
+    // fallback inside railNavigate fires if APP.init()'s navigateTo
+    // races with the click event.
+    await railNavigate(page, parent);
+    await clickSubPill(page, subpill);
 }
 
 async function setTheme(page, theme) {
