@@ -109,3 +109,14 @@ docs/cobalt-strike-api/spec.json
 # Bolt-on runtime state (job artifacts, host facts cache)
 webapp/state/
 
+# Local-only artifacts, agent/tool config, and scratch (never push)
+.claude/
+.mcp.json
+.c2lint_cache/
+*.rtf
+Research/
+goad_workspace/
+generated-diagrams/local-mode-backup/
+/c2-adhoc-architecture.png
+/domain_categorization_results.csv
+
