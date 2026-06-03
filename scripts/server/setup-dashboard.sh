@@ -4,6 +4,15 @@ set -euo pipefail
 # ============================================================================
 # Dashboard Server Setup — Interactive Bootstrap
 # Run this from your laptop to provision the centralized dashboard in AWS
+#
+# Usage:
+#   ./setup-dashboard.sh              First-time provision / resume setup
+#   ./setup-dashboard.sh --update-ip  Refresh dashboard_allowed_ips on an
+#                                     already-provisioned dashboard (re-detects
+#                                     your egress IP, lets you add entries, then
+#                                     pushes the new allow-list with a targeted
+#                                     terraform apply — no re-provisioning).
+#   ./setup-dashboard.sh --help       Show this usage.
 # ============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,6 +27,175 @@ info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
 success() { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+
+# --- Flag parsing ---
+UPDATE_IP_MODE=false
+usage() {
+    cat <<'USAGE'
+Dashboard Server Setup — provision/manage the centralized dashboard in AWS.
+
+Usage:
+  ./setup-dashboard.sh              First-time provision / resume setup
+  ./setup-dashboard.sh --update-ip  Refresh dashboard_allowed_ips on an
+                                    already-provisioned dashboard: re-detects
+                                    your egress IP, lets you add entries, then
+                                    pushes the new allow-list with a targeted
+                                    terraform apply (no re-provisioning).
+  ./setup-dashboard.sh --help       Show this usage.
+USAGE
+}
+for arg in "$@"; do
+    case "$arg" in
+        --update-ip) UPDATE_IP_MODE=true ;;
+        -h|--help)   usage; exit 0 ;;
+        *) error "Unknown argument: $arg (try --help)" ;;
+    esac
+done
+
+# ----------------------------------------------------------------------------
+# Shared helpers (used by both first-time setup and --update-ip mode)
+# ----------------------------------------------------------------------------
+
+# Detect egress IP from two independent sources and cross-check. Sets globals:
+#   DETECTED_IP        — primary detected IPv4 (may be empty if both fail)
+#   DETECTED_IP_ALT    — secondary source value (may be empty)
+# Prints a WARNING when the two disagree (rotating/load-balanced egress).
+# NOTE: every fetch is guarded with `|| echo ""` so a failed curl never trips
+# `set -e`, and --max-time keeps a dead source from hanging the script.
+detect_egress_ip() {
+    DETECTED_IP=$(curl -4 -s --max-time 5 https://api.ipify.org 2>/dev/null || echo "")
+    DETECTED_IP_ALT=$(curl -4 -s --max-time 5 https://ifconfig.me/ip 2>/dev/null || echo "")
+    # Fallback third source only if one of the first two came back empty.
+    if [ -z "$DETECTED_IP" ] || [ -z "$DETECTED_IP_ALT" ]; then
+        local third
+        third=$(curl -4 -s --max-time 5 https://icanhazip.com 2>/dev/null || echo "")
+        third=$(echo "$third" | tr -d '[:space:]')
+        [ -z "$DETECTED_IP" ] && DETECTED_IP="$third"
+        [ -z "$DETECTED_IP_ALT" ] && DETECTED_IP_ALT="$third"
+    fi
+    # Strip any stray whitespace/newlines the providers may return.
+    DETECTED_IP=$(echo "$DETECTED_IP" | tr -d '[:space:]')
+    DETECTED_IP_ALT=$(echo "$DETECTED_IP_ALT" | tr -d '[:space:]')
+
+    if [ -n "$DETECTED_IP" ] && [ -n "$DETECTED_IP_ALT" ] && [ "$DETECTED_IP" != "$DETECTED_IP_ALT" ]; then
+        warn "Egress IP differs between sources ($DETECTED_IP vs $DETECTED_IP_ALT)."
+        warn "Your egress looks load-balanced/rotating (VPN or iCloud Private Relay)."
+        warn "The detected value may NOT be stable — see the guidance below."
+    fi
+}
+
+# Print OPSEC guidance about /32 vs rotating egress. Called after detection.
+print_ip_guidance() {
+    echo ""
+    info  "About the allow-list (dashboard_allowed_ips):"
+    echo  "  - A single /32 is locked tight (good OPSEC) and is the recommended choice"
+    echo  "    when you have a STABLE egress IP."
+    echo  "  - iCloud Private Relay, mobile/cellular networks, and rotating-egress VPNs"
+    echo  "    CHANGE your public IP and WILL lock you out of the dashboard."
+    echo  "  - For stable access use a fixed egress: turn iCloud Private Relay OFF for"
+    echo  "    this network, or use a static-IP VPN."
+    echo  "  - Do NOT paste an entire relay/VPN provider range — that defeats the"
+    echo  "    purpose of the allow-list. Add only the specific IPs/CIDRs you trust."
+    echo  "  - You can add several entries (home + VPN + office), and refresh later"
+    echo  "    any time with:  ./scripts/server/setup-dashboard.sh --update-ip"
+    echo ""
+}
+
+# Validate a single allow-list entry as a bare IPv4 or IPv4/CIDR.
+# Returns 0 if valid, 1 otherwise. Does NOT exit (caller decides).
+valid_ip_or_cidr() {
+    echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}(/([0-9]|[12][0-9]|3[0-2]))?$'
+}
+
+# Normalize an entry: append /32 to a bare IP, pass CIDRs through unchanged.
+normalize_entry() {
+    case "$1" in
+        */*) echo "$1" ;;
+        *)   echo "$1/32" ;;
+    esac
+}
+
+# Interactively collect allow-list entries into the global ALLOWED_ENTRIES array.
+# Accepts a comma-separated list at the first prompt (pre-filled with the
+# detected IP) and then loops "add another". Each entry is validated and
+# normalized. Resets ALLOWED_ENTRIES on entry so it is safe to call repeatedly.
+collect_allowed_entries() {
+    ALLOWED_ENTRIES=()
+    local default_first="$1"   # pre-fill value (detected IP), may be empty
+    local raw entry norm
+
+    read -rp "Allowed IP(s)/CIDR(s) — comma-separated [${default_first}]: " raw
+    raw="${raw:-$default_first}"
+    [ -n "$raw" ] || error "No IP/CIDR provided and none detected. Enter at least one."
+
+    # Split the (possibly comma-separated) first answer.
+    local IFS=','
+    for entry in $raw; do
+        entry=$(echo "$entry" | tr -d '[:space:]')
+        [ -z "$entry" ] && continue
+        if valid_ip_or_cidr "$entry"; then
+            norm=$(normalize_entry "$entry")
+            ALLOWED_ENTRIES+=("$norm")
+            success "Added: $norm"
+        else
+            warn "Skipping invalid entry: '$entry' (expected IPv4 or IPv4/CIDR)"
+        fi
+    done
+    unset IFS
+
+    # Loop to add more individual entries.
+    while true; do
+        read -rp "Add another IP/CIDR? (blank to finish): " entry
+        entry=$(echo "$entry" | tr -d '[:space:]')
+        [ -z "$entry" ] && break
+        if valid_ip_or_cidr "$entry"; then
+            norm=$(normalize_entry "$entry")
+            ALLOWED_ENTRIES+=("$norm")
+            success "Added: $norm"
+        else
+            warn "Invalid entry: '$entry' (expected IPv4 or IPv4/CIDR). Try again."
+        fi
+    done
+
+    [ "${#ALLOWED_ENTRIES[@]}" -gt 0 ] || error "No valid IP/CIDR entries collected."
+}
+
+# Auto-detect an SSH public key into SSH_KEY_PATH (empty if none found).
+detect_ssh_key() {
+    SSH_KEY_PATH=""
+    local candidate
+    for candidate in \
+        ~/.ssh/id_ed25519.pub \
+        ~/.ssh/id_rsa.pub \
+        ~/.ssh/id_ecdsa.pub \
+        /mnt/c/Users/${USER:-}/.ssh/id_ed25519.pub \
+        /mnt/c/Users/${USER:-}/.ssh/id_rsa.pub \
+        "${USERPROFILE:-}/.ssh/id_ed25519.pub" \
+        "${USERPROFILE:-}/.ssh/id_rsa.pub"; do
+        if [ -n "$candidate" ] && [ -f "$candidate" ] 2>/dev/null; then
+            SSH_KEY_PATH="$candidate"
+            break
+        fi
+    done
+}
+
+# Generate an ed25519 keypair if none exists, then set SSH_KEY_PATH to the
+# resulting .pub. Never overwrites an existing ~/.ssh/id_ed25519 — if one is
+# already there it is reused. $1 = operator name (for the key comment).
+generate_ssh_key() {
+    local op_name="${1:-redteam-dashboard}"
+    local target="$HOME/.ssh/id_ed25519"
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh" 2>/dev/null || true
+    if [ -f "$target" ]; then
+        warn "$target already exists — reusing it (not overwriting)."
+    else
+        info "Generating ed25519 keypair at $target ..."
+        ssh-keygen -t ed25519 -f "$target" -N "" -C "redteam-dashboard-$op_name"
+        success "SSH keypair generated."
+    fi
+    SSH_KEY_PATH="$target.pub"
+}
 
 echo ""
 echo "============================================"
@@ -39,6 +217,117 @@ AWS_IDENTITY=$(aws sts get-caller-identity 2>/dev/null) || error "AWS credential
 AWS_ACCOUNT=$(echo "$AWS_IDENTITY" | jq -r '.Account')
 success "AWS account: $AWS_ACCOUNT"
 
+# ============================================================================
+# --update-ip MODE — refresh the allow-list on an already-provisioned dashboard
+# ============================================================================
+if [ "$UPDATE_IP_MODE" = true ]; then
+    echo ""
+    info "Update-IP mode: refreshing dashboard_allowed_ips (no re-provisioning)."
+
+    # Guard: only run when a dashboard already exists.
+    cd "$TERRAFORM_DIR"
+    UPD_DASHBOARD_IP=$(terraform output -raw dashboard_public_ip 2>/dev/null || echo "")
+    [ -n "$UPD_DASHBOARD_IP" ] || error "No provisioned dashboard found (terraform output dashboard_public_ip is empty). Run without --update-ip to provision first."
+    [ -f "$TFVARS_FILE" ] || error "Existing config not found: $TFVARS_FILE. Cannot update allow-list without it."
+    success "Found dashboard: $UPD_DASHBOARD_IP"
+
+    # Re-detect the current egress IP from two sources and cross-check.
+    info "Detecting current egress IP..."
+    detect_egress_ip
+    if [ -n "$DETECTED_IP" ]; then
+        success "Detected egress IP: $DETECTED_IP"
+    else
+        warn "Could not auto-detect your egress IP — you'll need to enter it manually."
+    fi
+    print_ip_guidance
+
+    # Collect the new entry list (pre-filled with the freshly detected IP).
+    collect_allowed_entries "$DETECTED_IP"
+
+    # Join entries into a single comma-separated token for awk. We pass ONE line
+    # to awk (no embedded newlines) because BSD/macOS awk rejects multi-line -v
+    # values; awk reconstructs the multi-line block itself.
+    ENTRIES_JOINED=""
+    for e in "${ALLOWED_ENTRIES[@]}"; do
+        ENTRIES_JOINED="${ENTRIES_JOINED:+$ENTRIES_JOINED,}$e"
+    done
+
+    echo ""
+    info "New allow-list:"
+    echo "  dashboard_allowed_ips = ["
+    for e in "${ALLOWED_ENTRIES[@]}"; do echo "    \"$e\","; done
+    echo "  ]"
+    echo ""
+    read -rp "Rewrite $TFVARS_FILE with this allow-list and apply? (yes/no): " UPD_CONFIRM
+    [ "$UPD_CONFIRM" = "yes" ] || { warn "Aborted — no changes made."; exit 0; }
+
+    # Rewrite ONLY the dashboard_allowed_ips array in-place, preserving
+    # operator_ssh_public_keys and every other setting in the file. awk copies
+    # everything, drops the old array lines (single- or multi-line), and emits a
+    # freshly formatted block at the array's original position. Portable across
+    # GNU and BSD awk (entries arrive as one comma-separated -v token).
+    UPD_TMP=$(mktemp)
+    awk -v entries="$ENTRIES_JOINED" '
+        BEGIN {
+            in_arr = 0; done = 0
+            n = split(entries, arr, ",")
+        }
+        function print_block(   i) {
+            print "dashboard_allowed_ips = ["
+            for (i = 1; i <= n; i++) {
+                if (arr[i] != "") print "  \"" arr[i] "\","
+            }
+            print "]"
+        }
+        # Detect start of the array (line beginning with the key).
+        (!done && $0 ~ /^[[:space:]]*dashboard_allowed_ips[[:space:]]*=[[:space:]]*\[/) {
+            print_block()
+            in_arr = 1
+            # If the opening line also closes the array on the same line, were done.
+            if ($0 ~ /\]/) { in_arr = 0; done = 1 }
+            next
+        }
+        in_arr {
+            # Inside the old multi-line array — drop lines until the closing ].
+            if ($0 ~ /\]/) { in_arr = 0; done = 1 }
+            next
+        }
+        { print }
+    ' "$TFVARS_FILE" > "$UPD_TMP"
+
+    # Safety: confirm the awk actually wrote the new block before clobbering.
+    if ! grep -q '^dashboard_allowed_ips = \[' "$UPD_TMP"; then
+        rm -f "$UPD_TMP"
+        error "Failed to rewrite allow-list in $TFVARS_FILE (key not found). File left unchanged."
+    fi
+    mv "$UPD_TMP" "$TFVARS_FILE"
+    success "Updated allow-list in $TFVARS_FILE"
+
+    # Find an existing deployment tfvars to satisfy root variables on apply.
+    UPD_EXISTING_TFVARS=""
+    for candidate in "$CONFIGS_DIR/terraform.tfvars" "$CONFIGS_DIR"/*.tfvars; do
+        if [ -f "$candidate" ] && [ "$candidate" != "$TFVARS_FILE" ]; then
+            UPD_EXISTING_TFVARS="$candidate"
+            break
+        fi
+    done
+
+    echo ""
+    info "Pushing new allow-list with a targeted terraform apply..."
+    terraform init >/dev/null
+    UPD_APPLY_CMD="terraform apply -target=module.dashboard_server -var-file=$TFVARS_FILE"
+    if [ -n "$UPD_EXISTING_TFVARS" ]; then
+        info "Using existing config: $UPD_EXISTING_TFVARS"
+        UPD_APPLY_CMD="terraform apply -target=module.dashboard_server -var-file=$UPD_EXISTING_TFVARS -var-file=$TFVARS_FILE"
+    fi
+    eval "$UPD_APPLY_CMD"
+
+    echo ""
+    success "Allow-list updated. Dashboard reachable at: $UPD_DASHBOARD_IP"
+    info "If you still can't connect, confirm your current egress matches an entry above."
+    exit 0
+fi
+
 # --- Check if dashboard already exists (resume mode) ---
 cd "$TERRAFORM_DIR"
 EXISTING_DASHBOARD_IP=$(terraform output -raw dashboard_public_ip 2>/dev/null || echo "")
@@ -50,23 +339,6 @@ if [ -n "$EXISTING_DASHBOARD_IP" ] && [ "$EXISTING_DASHBOARD_IP" != "" ]; then
         DASHBOARD_IP="$EXISTING_DASHBOARD_IP"
         INSTANCE_ID=$(terraform output -raw dashboard_instance_id 2>/dev/null || echo "")
 
-        # Still need SSH key and operator name for rsync/SSH
-        SSH_KEY_PATH=""
-        for candidate in \
-            ~/.ssh/id_ed25519.pub \
-            ~/.ssh/id_rsa.pub \
-            ~/.ssh/id_ecdsa.pub \
-            /mnt/c/Users/${USER:-}/.ssh/id_ed25519.pub \
-            /mnt/c/Users/${USER:-}/.ssh/id_rsa.pub \
-            "${USERPROFILE:-}/.ssh/id_ed25519.pub" \
-            "${USERPROFILE:-}/.ssh/id_rsa.pub"; do
-            if [ -n "$candidate" ] && [ -f "$candidate" ] 2>/dev/null; then
-                SSH_KEY_PATH="$candidate"
-                break
-            fi
-        done
-        SSH_KEY_PRIVATE="${SSH_KEY_PATH%.pub}"
-
         # Read operator name from the dashboard.tfvars (matches the Linux user on the server)
         OPERATOR_NAME=""
         if [ -f "$TFVARS_FILE" ]; then
@@ -75,6 +347,24 @@ if [ -n "$EXISTING_DASHBOARD_IP" ] && [ "$EXISTING_DASHBOARD_IP" != "" ]; then
         if [ -z "$OPERATOR_NAME" ]; then
             OPERATOR_NAME=$(whoami | tr '[:upper:]' '[:lower:]')
         fi
+
+        # Still need an SSH key for rsync/SSH. Auto-detect; if none, offer to generate.
+        detect_ssh_key
+        if [ -z "$SSH_KEY_PATH" ]; then
+            warn "No SSH key auto-detected for resume."
+            read -rp "No SSH key found — generate an ed25519 key now? (yes/no): " GEN_KEY
+            if [ "$GEN_KEY" = "yes" ]; then
+                generate_ssh_key "$OPERATOR_NAME"
+            else
+                read -rp "Path to your SSH public key: " SSH_KEY_PATH
+                [ -f "$SSH_KEY_PATH" ] || error "SSH public key not found: $SSH_KEY_PATH"
+            fi
+        fi
+        # Validate the key format (same check as the fresh path).
+        if ! grep -qE '^ssh-(ed25519|rsa|ecdsa-sha2-nistp[0-9]+) [A-Za-z0-9+/=]+' "$SSH_KEY_PATH" 2>/dev/null; then
+            error "Invalid SSH public key format in $SSH_KEY_PATH"
+        fi
+        SSH_KEY_PRIVATE="${SSH_KEY_PATH%.pub}"
 
         AWS_REGION=$(aws configure get region 2>/dev/null || echo "eu-central-1")
 
@@ -220,23 +510,10 @@ cd "$PROJECT_ROOT"
 # --- Auto-detect values ---
 
 # SSH key — check common locations across macOS, Linux, Windows (WSL/Git Bash)
-SSH_KEY_PATH=""
-for candidate in \
-    ~/.ssh/id_ed25519.pub \
-    ~/.ssh/id_rsa.pub \
-    ~/.ssh/id_ecdsa.pub \
-    /mnt/c/Users/${USER:-}/.ssh/id_ed25519.pub \
-    /mnt/c/Users/${USER:-}/.ssh/id_rsa.pub \
-    "${USERPROFILE:-}/.ssh/id_ed25519.pub" \
-    "${USERPROFILE:-}/.ssh/id_rsa.pub"; do
-    if [ -n "$candidate" ] && [ -f "$candidate" ] 2>/dev/null; then
-        SSH_KEY_PATH="$candidate"
-        break
-    fi
-done
+detect_ssh_key
 
-# Public IP
-DETECTED_IP=$(curl -4 -s --max-time 5 https://api.ipify.org 2>/dev/null || echo "")
+# Public IP — detected from two sources and cross-checked (rotating-egress aware)
+detect_egress_ip
 
 # AWS region
 DETECTED_REGION=$(aws configure get region 2>/dev/null || echo "eu-central-1")
@@ -255,7 +532,21 @@ if [ -n "$SSH_KEY_PATH" ]; then
 fi
 read -rp "SSH public key path (press Enter to use detected) [$SSH_KEY_PATH]: " INPUT_KEY
 SSH_KEY_PATH="${INPUT_KEY:-$SSH_KEY_PATH}"
-[ -f "$SSH_KEY_PATH" ] || error "SSH public key not found: $SSH_KEY_PATH"
+
+# If still no key (none detected and operator supplied none), offer to generate.
+if [ -z "$SSH_KEY_PATH" ] || [ ! -f "$SSH_KEY_PATH" ]; then
+    if [ -n "$SSH_KEY_PATH" ]; then
+        warn "SSH public key not found: $SSH_KEY_PATH"
+    fi
+    read -rp "No SSH key found — generate an ed25519 key now? (yes/no): " GEN_KEY
+    if [ "$GEN_KEY" = "yes" ]; then
+        # OPERATOR_NAME isn't set yet at this point; use the detected user
+        # (lowercased) for the key comment.
+        generate_ssh_key "$(echo "$DETECTED_USER" | tr '[:upper:]' '[:lower:]')"
+    else
+        error "SSH public key required. Provide a path or re-run and choose to generate one."
+    fi
+fi
 SSH_KEY_CONTENT=$(cat "$SSH_KEY_PATH")
 
 # Validate SSH key format
@@ -276,11 +567,14 @@ while true; do
     warn "Invalid name '$OPERATOR_NAME'. Must be lowercase, start with letter, 1-32 chars, only a-z 0-9 _ -. Try again."
 done
 
-# Public IP
-read -rp "Your public IP [$DETECTED_IP]: " INPUT_IP
-OPERATOR_IP="${INPUT_IP:-$DETECTED_IP}"
-[ -n "$OPERATOR_IP" ] || error "Could not detect public IP. Enter manually."
-success "Your IP: $OPERATOR_IP"
+# Public IP — allow-list (supports multiple entries: home + VPN + office)
+if [ -n "$DETECTED_IP" ]; then
+    success "Detected egress IP: $DETECTED_IP"
+else
+    warn "Could not auto-detect your egress IP — enter it manually below."
+fi
+print_ip_guidance
+collect_allowed_entries "$DETECTED_IP"
 
 # Region
 read -rp "AWS region [$DETECTED_REGION]: " INPUT_REGION
@@ -303,15 +597,40 @@ if [ -n "$OP2_KEY" ]; then
         warn "Invalid name. Must be lowercase, start with letter, 1-32 chars. Try again."
     done
     while true; do
-        read -rp "Second operator IP: " OP2_IP
-        if [ -n "$OP2_IP" ]; then break; fi
-        warn "IP is required. Try again."
+        read -rp "Second operator IP/CIDR: " OP2_IP
+        OP2_IP=$(echo "$OP2_IP" | tr -d '[:space:]')
+        if [ -z "$OP2_IP" ]; then
+            warn "IP is required. Try again."
+            continue
+        fi
+        if valid_ip_or_cidr "$OP2_IP"; then break; fi
+        warn "Invalid entry '$OP2_IP' (expected IPv4 or IPv4/CIDR). Try again."
     done
+    # Fold the second operator's IP into the allow-list entries.
+    ALLOWED_ENTRIES+=("$(normalize_entry "$OP2_IP")")
 fi
 
 # --- Generate tfvars ---
 echo ""
 info "Generating $TFVARS_FILE..."
+
+# Build the dashboard_allowed_ips array body from all collected entries
+# (operator's one-or-many + any second-operator IP), de-duplicated, preserving
+# order of first appearance. The trailing newline is stripped HERE (not inside
+# the heredoc) because ANSI-C $'\n' quoting is not honored inside heredoc text,
+# which would otherwise leave a stray blank line before the closing bracket.
+ALLOWED_IPS_LINES=""
+declare -a _SEEN=()
+for e in "${ALLOWED_ENTRIES[@]}"; do
+    _dup=false
+    for s in "${_SEEN[@]:-}"; do
+        [ "$s" = "$e" ] && { _dup=true; break; }
+    done
+    [ "$_dup" = true ] && continue
+    _SEEN+=("$e")
+    ALLOWED_IPS_LINES+="  \"$e\","$'\n'
+done
+ALLOWED_IPS_BLOCK="${ALLOWED_IPS_LINES%$'\n'}"
 
 mkdir -p "$CONFIGS_DIR"
 cat > "$TFVARS_FILE" <<EOF
@@ -322,8 +641,7 @@ enable_dashboard_server = true
 aws_region              = "$AWS_REGION"
 
 dashboard_allowed_ips = [
-  "$OPERATOR_IP/32",
-$([ -n "$OP2_IP" ] && echo "  \"$OP2_IP/32\",")
+$ALLOWED_IPS_BLOCK
 ]
 
 operator_ssh_public_keys = {
