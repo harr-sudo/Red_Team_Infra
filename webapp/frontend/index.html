@@ -402,6 +402,11 @@
                  action button are painted by APP.demo.render(). Sticky so it
                  stays pinned as the content column scrolls. -->
             <div class="demo-stepper" id="demo-stepper" hidden>
+                <div class="demo-stepper__head">
+                    <span class="demo-stepper__eyebrow">Demo walkthrough</span>
+                    <span class="demo-stepper__sub">synthetic — no AWS resources are provisioned</span>
+                </div>
+                <div class="demo-stepper__row">
                 <ol class="demo-stepper__nodes" role="list" aria-label="Demo walkthrough progress">
                     <li class="demo-stepper__node" data-demo-step="start"
                         role="button" tabindex="0" onclick="APP.demo && APP.demo.goTo('start')">
@@ -440,6 +445,7 @@
                     </li>
                 </ol>
                 <div class="demo-stepper__action"><!-- filled by APP.demo.render() --></div>
+                </div>
             </div>
 
             <!-- Dashboard Page — M-Dashboard launchpad (Decisions #19, #20, #21).

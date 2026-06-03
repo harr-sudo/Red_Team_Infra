@@ -5531,10 +5531,8 @@ body { padding-top: 64px; }
    ═══════════════════════════════════════════════════════════════════════ */
 .demo-stepper {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 10px;
     padding: 12px 16px;
     /* 2026-06-02 — Now mounted GLOBALLY as the first child of #tab-container
        (outside .tab-page, which carries the 30px page padding). Re-apply the
@@ -5543,12 +5541,44 @@ body { padding-top: 64px; }
     margin: 30px 30px 0 30px;
     background: var(--bg-section);
     border: 1px solid var(--border);
+    /* 2026-06-03 — Demo-mode framing accent so the bar reads as an intentional
+       "you're in the guided demo" banner connected to the page, not a random
+       floating toolbar. */
+    border-left: 3px solid var(--brand);
     border-radius: var(--radius);
     /* Sticky below the fixed top utility bar (matches .subpill-nav offset) so
        the stepper stays pinned as either tab's content column scrolls. */
     position: sticky;
     top: var(--app-topbar-h);
     z-index: 6;
+}
+/* Labelled head — gives the bar identity in the page's eyebrow language
+   (matches the "SESSION LOG" / "DEPLOYED INVENTORY" section eyebrows) so it
+   reads as an intentional demo banner rather than a disconnected row. */
+.demo-stepper__head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.demo-stepper__eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+.demo-stepper__sub {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+/* Progress row — the numbered nodes + the contextual action button. */
+.demo-stepper__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
 }
 .demo-stepper[hidden] { display: none; }
 
