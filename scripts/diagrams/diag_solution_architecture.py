@@ -34,7 +34,7 @@ Engine: the `diagrams` PyPI lib (+ graphviz). House style via _common.rt_diagram
 
     PYTHONPATH=scripts/diagrams ./venv/bin/python scripts/diagrams/diag_solution_architecture.py
 """
-from diagrams import Cluster, Edge
+from diagrams import Diagram, Cluster, Edge
 from diagrams.aws.compute import EC2
 from diagrams.aws.network import (
     VPC,
@@ -48,7 +48,23 @@ from diagrams.aws.security import IAMRole, SecretsManager, ACM
 from diagrams.aws.management import Cloudwatch, SystemsManager
 from diagrams.onprem.client import User, Users
 
-from _common import rt_diagram
+from _common import GRAPH_ATTR, NODE_ATTR, EDGE_ATTR, OUTPUT_DIR
+
+# ── Per-diagram layout override ────────────────────────────────────────────
+# This poster is content-dense (control plane + 10 AWS services + three peered
+# estates). The house default (ratio=0.52 ≈ 1.9:1) stretches the canvas WIDE,
+# which leaves a large dead zone in the centre where the hub-and-spoke VPC-
+# peering edges fan out to far-apart estate clusters. We keep the full house
+# style (white bg, LR, AWS icons, fonts) but tighten the packing for THIS
+# diagram only: smaller rank/node separation and a less extreme aspect ratio
+# (~1.5:1) so the clusters pull together into a cohesive block.
+SOLUTION_GRAPH_ATTR = {
+    **GRAPH_ATTR,
+    "nodesep": "0.18",   # tighter within-rank (vertical, in LR) gap
+    "ranksep": "0.45",   # tighter left→right step — shortens the long peering edges
+    "ratio": "0.64",     # ≈ 1.5:1 (was 0.52 ≈ 1.9:1) — landscape but far denser
+    "pad": "0.4",
+}
 
 # ── Edge styles (consistent with the house set in _common) ────────────────
 OPERATOR_EDGE = Edge(label="SSH key · IP allow-list", color="#2c7a4b", style="bold")
@@ -56,15 +72,25 @@ PEER = Edge(label="VPC peering", color="#8a96a8", style="dashed")
 PEER_PLAIN = Edge(color="#8a96a8", style="dashed")
 ORCH = Edge(label="provisions / orchestrates", color="#5a6472", style="dotted")
 WIRE = Edge(color="#5a6472")
-BEACON = Edge(label="HTTPS 443 · beacon", color="#b4564f")
-BEACON_PLAIN = Edge(color="#b4564f")
+# Beacon edges originate from the Target node. They are drawn (content
+# preserved) but marked constraint="false" so they do NOT pull the C2 estate
+# to the far-left rank — without this, the Target source node yanks the whole
+# C2 VPC away from the other estates, opening a big dead zone in the centre.
+BEACON = Edge(label="HTTPS 443 · beacon", color="#b4564f", constraint="false")
+BEACON_PLAIN = Edge(color="#b4564f", constraint="false")
 # Invisible layout edge — forces grid placement without drawing a line.
 HIDE = Edge(style="invis")
 
 
-with rt_diagram(
+with Diagram(
     "Red Team Infra — Solution Architecture (control plane · AWS services · deployment estates)",
-    "solution-architecture",
+    filename=f"{OUTPUT_DIR}/solution-architecture",
+    direction="LR",
+    show=False,
+    graph_attr=SOLUTION_GRAPH_ATTR,
+    node_attr=NODE_ATTR,
+    edge_attr=EDGE_ATTR,
+    outformat="png",
 ):
     # ── 1. Operator (left-most) ───────────────────────────────────────────
     op = User("Operator\n(laptop)")
@@ -137,6 +163,15 @@ with rt_diagram(
             goad_ad = EC2("Vulnerable AD lab\nDCs + member servers\n(sevenkingdoms / essos)")
         dash >> PEER_PLAIN >> jump
         dash >> Edge(label="RDP / WinRM", color="#8a96a8", style="dashed") >> goad_ad
+
+    # ── Layout-only tie (invisible) ───────────────────────────────────────
+    # Link the tail of the AWS-services grid to the GOAD estate. Without this,
+    # the wide services grid floats alone in the top-right while the estates
+    # hang in a vertical fan off the dashboard, leaving a large dead zone in
+    # the centre/bottom-right. This invisible edge pulls the grid and the
+    # estates into one cohesive block — collapsing that dead space — without
+    # drawing any line or changing the semantics.
+    svc_cf >> HIDE >> goad_ad
 
     # 3c. CCRTS estate — self-contained CREST exam-mirror lab (hosts in a row).
     with Cluster("CCRTS VPC  192.168.57.0/24  (self-contained)"):
