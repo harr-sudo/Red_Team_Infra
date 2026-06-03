@@ -5541,10 +5541,6 @@ body { padding-top: 64px; }
     margin: 30px 30px 0 30px;
     background: var(--bg-section);
     border: 1px solid var(--border);
-    /* 2026-06-03 — Demo-mode framing accent so the bar reads as an intentional
-       "you're in the guided demo" banner connected to the page, not a random
-       floating toolbar. */
-    border-left: 3px solid var(--brand);
     border-radius: var(--radius);
     /* Sticky below the fixed top utility bar (matches .subpill-nav offset) so
        the stepper stays pinned as either tab's content column scrolls. */
@@ -5557,9 +5553,40 @@ body { padding-top: 64px; }
    reads as an intentional demo banner rather than a disconnected row. */
 .demo-stepper__head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+}
+/* Brand cluster: the live demo dot + the eyebrow label read as one unit. */
+.demo-stepper__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+/* Demo-mode "live" indicator — reuses the stepper's own teal --guide-accent
+   (not the burgundy brand) so the cue is native to the component. A radar-ping
+   ring animates transform/opacity only (perf-safe); calm, not neon. */
+.demo-stepper__dot {
+    position: relative;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--guide-accent);
+    flex-shrink: 0;
+}
+.demo-stepper__dot::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--guide-accent);
+    opacity: 0.35;
+    animation: demo-dot-ping 2.4s ease-in-out infinite;
+}
+@keyframes demo-dot-ping {
+    0%   { transform: scale(1);   opacity: 0.35; }
+    70%  { transform: scale(2.6); opacity: 0; }
+    100% { transform: scale(2.6); opacity: 0; }
 }
 .demo-stepper__eyebrow {
     font-size: 11px;
@@ -5823,6 +5850,7 @@ body { padding-top: 64px; }
     .demo-stepper__node,
     .demo-stepper__node::before,
     .demo-stepper__marker,
+    .demo-stepper__dot::after,
     .demo-welcome__card,
     .demo-welcome__skip {
         transition: none;
