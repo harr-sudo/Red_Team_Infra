@@ -166,7 +166,7 @@ resource "aws_iam_policy" "dashboard" {
           "ec2:CreateNetworkAcl", "ec2:DeleteNetworkAcl", "ec2:CreateNetworkAclEntry", "ec2:DeleteNetworkAclEntry", "ec2:ReplaceNetworkAclAssociation",
           "ec2:CreateVpcEndpoint", "ec2:DeleteVpcEndpoints", "ec2:ModifyVpcEndpoint",
         ]
-        Resource = "*"
+        Resource  = "*"
         Condition = { StringEquals = { "aws:RequestedRegion" = [var.aws_region, "us-east-1"] } }
       },
       {
@@ -192,15 +192,15 @@ resource "aws_iam_policy" "dashboard" {
         ]
       },
       {
-        Sid    = "Route53"
-        Effect = "Allow"
-        Action = ["route53:*", "route53domains:*"]
+        Sid      = "Route53"
+        Effect   = "Allow"
+        Action   = ["route53:*", "route53domains:*"]
         Resource = "*"
       },
       {
-        Sid    = "ACM"
-        Effect = "Allow"
-        Action = ["acm:*"]
+        Sid      = "ACM"
+        Effect   = "Allow"
+        Action   = ["acm:*"]
         Resource = "*"
       },
       {
@@ -239,9 +239,9 @@ resource "aws_iam_policy" "dashboard" {
         Resource = "*"
       },
       {
-        Sid    = "Monitoring"
-        Effect = "Allow"
-        Action = ["logs:*", "cloudwatch:*", "ce:GetCostAndUsage", "ce:GetCostForecast"]
+        Sid      = "Monitoring"
+        Effect   = "Allow"
+        Action   = ["logs:*", "cloudwatch:*", "ce:GetCostAndUsage", "ce:GetCostForecast"]
         Resource = "*"
       },
       {
@@ -250,7 +250,7 @@ resource "aws_iam_policy" "dashboard" {
         Action = [
           "ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:ListCommandInvocations",
           "ssm:StartSession", "ssm:TerminateSession", "ssm:ResumeSession", "ssm:DescribeSessions",
-          "ssm:DescribeInstanceInformation",
+          "ssm:DescribeInstanceInformation", "ssm:UpdateInstanceInformation",
           "ssm:GetParameter", "ssm:GetParameters", "ssm:PutParameter", "ssm:DeleteParameter",
           "ssm:DescribeParameters", "ssm:GetParametersByPath",
           "ssm:ListDocuments", "ssm:DescribeDocument", "ssm:GetDocument",
@@ -258,15 +258,27 @@ resource "aws_iam_policy" "dashboard" {
         Resource = "*"
       },
       {
-        Sid    = "DynamoDB"
+        Sid    = "SSMAgentPhoneHome"
         Effect = "Allow"
-        Action = ["dynamodb:*"]
+        Action = [
+          "ssmmessages:CreateControlChannel", "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel", "ssmmessages:OpenDataChannel",
+          "ec2messages:AcknowledgeMessage", "ec2messages:DeleteMessage",
+          "ec2messages:FailMessage", "ec2messages:GetEndpoint",
+          "ec2messages:GetMessages", "ec2messages:SendReply",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "DynamoDB"
+        Effect   = "Allow"
+        Action   = ["dynamodb:*"]
         Resource = "arn:aws:dynamodb:${var.aws_region}:*:table/${var.project_name}-*"
       },
       {
-        Sid    = "STS"
-        Effect = "Allow"
-        Action = ["sts:GetCallerIdentity"]
+        Sid      = "STS"
+        Effect   = "Allow"
+        Action   = ["sts:GetCallerIdentity"]
         Resource = "*"
       }
     ]

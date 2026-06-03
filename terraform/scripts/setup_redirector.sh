@@ -3009,15 +3009,43 @@ PORTAL_HTML = r"""<!DOCTYPE html>
         }
         .clipboard-header span:first-child {
             color: #c9b06b;
-            font-size: 0.78em;
+            font-size: 0.85em;
             letter-spacing: 0.5px;
             text-transform: uppercase;
             font-weight: 600;
         }
+        .clipboard-header button {
+            background: none;
+            border: 1px solid rgba(255,255,255,0.3);
+            color: #b0b8c4;
+            padding: 3px 12px;
+            font-size: 0.85em;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-radius: 3px;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+        }
+        .clipboard-header button:hover {
+            background: rgba(255,255,255,0.1);
+            border-color: rgba(255,255,255,0.5);
+            color: #fff;
+        }
+        .clipboard-header button:active {
+            background: rgba(255,255,255,0.2);
+            color: #fff;
+        }
         .clipboard-status {
             color: #b0b8c4;
-            font-size: 0.75em;
+            font-size: 0.85em;
         }
+        .clipboard-expand-hint {
+            color: #6a7080;
+            font-size: 0.85em;
+            margin-left: auto;
+        }
+        .clipboard-body.open ~ .clipboard-expand-hint,
+        .clipboard-body.open + .clipboard-expand-hint { display: none; }
         .clipboard-body.open { display: block; }
         .clipboard-textarea {
             width: 100%;
@@ -3087,9 +3115,10 @@ PORTAL_HTML = r"""<!DOCTYPE html>
             <div class="clipboard-section">
                 <div class="clipboard-header" id="clipboard-toggle">
                     <span>Shared Notes</span>
-                    <button onclick="event.stopPropagation(); (typeof pullClipboard !== 'undefined') && pullClipboard();" style="background: none; border: 1px solid currentColor; color: inherit; padding: 2px 10px; font-size: 0.72em; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7;">Pull</button>
-                    <button onclick="event.stopPropagation(); (typeof pushClipboard !== 'undefined') && pushClipboard();" style="background: none; border: 1px solid currentColor; color: inherit; padding: 2px 10px; font-size: 0.72em; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7;">Push</button>
-                    <span class="clipboard-status" id="clipboard-status" style="margin-left: auto;"></span>
+                    <button onclick="event.stopPropagation(); (typeof pullClipboard !== 'undefined') && pullClipboard();">Pull</button>
+                    <button onclick="event.stopPropagation(); (typeof pushClipboard !== 'undefined') && pushClipboard();">Push</button>
+                    <span class="clipboard-status" id="clipboard-status"></span>
+                    <span class="clipboard-expand-hint" id="clipboard-expand-hint" style="margin-left: auto; display: none;">click to expand</span>
                 </div>
                 <div class="clipboard-body open" id="clipboard-body">
                     <textarea class="clipboard-textarea" id="clipboard-text" placeholder="Paste text here — shared across all sessions in real time..."></textarea>
@@ -3318,7 +3347,10 @@ PORTAL_HTML = r"""<!DOCTYPE html>
         var clipboardStatus = document.getElementById('clipboard-status');
 
         document.getElementById('clipboard-toggle').addEventListener('click', function() {
-            document.getElementById('clipboard-body').classList.toggle('open');
+            var body = document.getElementById('clipboard-body');
+            var hint = document.getElementById('clipboard-expand-hint');
+            body.classList.toggle('open');
+            if (hint) hint.style.display = body.classList.contains('open') ? 'none' : 'inline';
         });
 
         function pullClipboard() {
@@ -3919,7 +3951,7 @@ PORTAL_HTML = r"""<!DOCTYPE html>
         .clipboard-header {
             display: flex;
             align-items: center;
-            justify-content: space-between;
+            gap: 10px;
             padding: 10px 14px;
             background: #1a1a2e;
             cursor: pointer;
@@ -3927,14 +3959,40 @@ PORTAL_HTML = r"""<!DOCTYPE html>
         }
         .clipboard-header span:first-child {
             color: #4a9eff;
-            font-size: 0.78em;
+            font-size: 0.85em;
             letter-spacing: 0.5px;
             text-transform: uppercase;
             font-weight: 600;
         }
+        .clipboard-header button {
+            background: none;
+            border: 1px solid rgba(255,255,255,0.3);
+            color: #b0b8c4;
+            padding: 3px 12px;
+            font-size: 0.85em;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-radius: 3px;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+        }
+        .clipboard-header button:hover {
+            background: rgba(255,255,255,0.1);
+            border-color: rgba(255,255,255,0.5);
+            color: #fff;
+        }
+        .clipboard-header button:active {
+            background: rgba(255,255,255,0.2);
+            color: #fff;
+        }
         .clipboard-status {
             color: #b0b8c4;
-            font-size: 0.75em;
+            font-size: 0.85em;
+        }
+        .clipboard-expand-hint {
+            color: #6a7080;
+            font-size: 0.85em;
+            margin-left: auto;
         }
         .clipboard-body.open { display: block; }
         .clipboard-textarea {
@@ -4005,9 +4063,10 @@ PORTAL_HTML = r"""<!DOCTYPE html>
             <div class="clipboard-section">
                 <div class="clipboard-header" id="clipboard-toggle">
                     <span>Shared Notes</span>
-                    <button onclick="event.stopPropagation(); (typeof pullClipboard !== 'undefined') && pullClipboard();" style="background: none; border: 1px solid currentColor; color: inherit; padding: 2px 10px; font-size: 0.72em; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7;">Pull</button>
-                    <button onclick="event.stopPropagation(); (typeof pushClipboard !== 'undefined') && pushClipboard();" style="background: none; border: 1px solid currentColor; color: inherit; padding: 2px 10px; font-size: 0.72em; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7;">Push</button>
-                    <span class="clipboard-status" id="clipboard-status" style="margin-left: auto;"></span>
+                    <button onclick="event.stopPropagation(); (typeof pullClipboard !== 'undefined') && pullClipboard();">Pull</button>
+                    <button onclick="event.stopPropagation(); (typeof pushClipboard !== 'undefined') && pushClipboard();">Push</button>
+                    <span class="clipboard-status" id="clipboard-status"></span>
+                    <span class="clipboard-expand-hint" id="clipboard-expand-hint" style="margin-left: auto; display: none;">click to expand</span>
                 </div>
                 <div class="clipboard-body open" id="clipboard-body">
                     <textarea class="clipboard-textarea" id="clipboard-text" placeholder="Paste text here — shared across all sessions in real time..."></textarea>
@@ -4236,7 +4295,10 @@ PORTAL_HTML = r"""<!DOCTYPE html>
         var clipboardStatus = document.getElementById('clipboard-status');
 
         document.getElementById('clipboard-toggle').addEventListener('click', function() {
-            document.getElementById('clipboard-body').classList.toggle('open');
+            var body = document.getElementById('clipboard-body');
+            var hint = document.getElementById('clipboard-expand-hint');
+            body.classList.toggle('open');
+            if (hint) hint.style.display = body.classList.contains('open') ? 'none' : 'inline';
         });
 
         function pullClipboard() {

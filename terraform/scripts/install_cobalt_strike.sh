@@ -1702,31 +1702,78 @@ echo "LICENSE_STATUS=$LICENSE_STATUS" > /opt/cobaltstrike/bootstrap-status
 # The attack box generates a key pair during its bootstrap and uploads
 # the public key to S3. We poll for it and add it to authorized_keys
 # so the operator can SSH from the attack box to this team server.
+#
+# The attack box boots in parallel and its init script takes 15-20 minutes,
+# so the key won't exist yet. We install a systemd timer that polls every
+# 60 seconds and self-disables once the key is found.
 # =============================================================================
 if [ -n "$CS_ARCHIVE_S3_PATH" ]; then
     BUCKET_NAME=$(echo "$CS_ARCHIVE_S3_PATH" | sed 's|s3://||' | cut -d'/' -f1)
     DEPLOY_ID=$(echo "$CS_ARCHIVE_S3_PATH" | sed 's|s3://[^/]*/||' | cut -d'/' -f1)
     ATTACKBOX_PUB_KEY="s3://$BUCKET_NAME/$DEPLOY_ID/ssh-keys/attackbox_internal.pub"
 
-    echo "[SSH] Polling for attack box public key at $ATTACKBOX_PUB_KEY..."
-    for i in $(seq 1 30); do
-        if aws s3 cp "$ATTACKBOX_PUB_KEY" /tmp/attackbox.pub 2>/dev/null; then
-            echo "[SSH] Attack box public key downloaded"
-            ABKEY=$(cat /tmp/attackbox.pub | tr -d '\r\n')
-            if [ -n "$ABKEY" ] && ! grep -qF "$ABKEY" /home/ubuntu/.ssh/authorized_keys 2>/dev/null; then
-                echo "$ABKEY" >> /home/ubuntu/.ssh/authorized_keys
-                echo "[SSH] Attack box key added to authorized_keys"
-            else
-                echo "[SSH] Attack box key already present or empty"
-            fi
-            rm -f /tmp/attackbox.pub
-            break
-        fi
-        sleep 10
-    done
-    if [ $i -eq 30 ]; then
-        echo "[SSH] Warning: Attack box key not found after 5 minutes (non-fatal)"
+    echo "[SSH] Installing systemd timer to poll for attack box key at $ATTACKBOX_PUB_KEY"
+
+    # Create the polling script
+    cat > /opt/cobaltstrike/fetch-attackbox-key.sh <<'KEYEOF'
+#!/bin/bash
+S3_KEY_PATH="__S3_KEY_PATH__"
+LOG="/var/log/attackbox-key-fetch.log"
+
+echo "[$(date)] Checking for attack box key at $S3_KEY_PATH..." >> "$LOG"
+
+if aws s3 cp "$S3_KEY_PATH" /tmp/attackbox.pub 2>/dev/null; then
+    ABKEY=$(cat /tmp/attackbox.pub | tr -d '\r')
+    if [ -n "$ABKEY" ] && ! grep -qF "$ABKEY" /home/ubuntu/.ssh/authorized_keys 2>/dev/null; then
+        echo "$ABKEY" >> /home/ubuntu/.ssh/authorized_keys
+        echo "[$(date)] Attack box key added to authorized_keys" >> "$LOG"
+    else
+        echo "[$(date)] Attack box key already present" >> "$LOG"
     fi
+    rm -f /tmp/attackbox.pub
+    # Self-disable: stop the timer now that key is found
+    systemctl stop fetch-attackbox-key.timer
+    systemctl disable fetch-attackbox-key.timer
+    echo "[$(date)] Timer disabled -- key exchange complete" >> "$LOG"
+else
+    echo "[$(date)] Key not found yet, will retry..." >> "$LOG"
+fi
+KEYEOF
+    # Replace placeholder with actual S3 path
+    sed -i "s|__S3_KEY_PATH__|$ATTACKBOX_PUB_KEY|" /opt/cobaltstrike/fetch-attackbox-key.sh
+    chmod +x /opt/cobaltstrike/fetch-attackbox-key.sh
+
+    # Create systemd service
+    cat > /etc/systemd/system/fetch-attackbox-key.service <<'SVCEOF'
+[Unit]
+Description=Fetch attack box SSH public key from S3
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/cobaltstrike/fetch-attackbox-key.sh
+User=root
+SVCEOF
+
+    # Create systemd timer (every 60 seconds, start 30s after boot)
+    cat > /etc/systemd/system/fetch-attackbox-key.timer <<'TMREOF'
+[Unit]
+Description=Poll S3 for attack box SSH key every 60 seconds
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+TMREOF
+
+    systemctl daemon-reload
+    systemctl enable fetch-attackbox-key.timer
+    systemctl start fetch-attackbox-key.timer
+    echo "[SSH] Systemd timer installed and started (polls every 60s, self-disables on success)"
 fi
 
 # Upload bootstrap status to S3 (so the deployment UI can track completion)

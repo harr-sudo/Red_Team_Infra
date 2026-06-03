@@ -247,19 +247,19 @@ data "aws_iam_policy_document" "bucket_policy" {
   statement {
     sid    = "DenyAccessFromOutsideVPCs"
     effect = "Deny"
-    
+
     principals {
       type        = "*"
       identifiers = ["*"]
     }
-    
+
     actions = ["s3:*"]
-    
+
     resources = [
       aws_s3_bucket.cs_files.arn,
       "${aws_s3_bucket.cs_files.arn}/*"
     ]
-    
+
     # Deny if request is NOT from authorized VPCs
     # Build list of allowed VPCs dynamically based on what's configured
     condition {
@@ -271,7 +271,7 @@ data "aws_iam_policy_document" "bucket_policy" {
         local.legacy_vpc_id != "" ? local.legacy_vpc_id : ""
       ])
     }
-    
+
     # IMPORTANT: Don't block Terraform operations (which don't come from VPC)
     # Allow access if principal is in our account (for Terraform)
     condition {
@@ -280,50 +280,50 @@ data "aws_iam_policy_document" "bucket_policy" {
       values   = [data.aws_caller_identity.current.account_id]
     }
   }
-  
+
   # Statement 2: Deny access from other AWS accounts
   # Additional protection against cross-account access attempts
   statement {
     sid    = "DenyAccessFromOtherAccounts"
     effect = "Deny"
-    
+
     principals {
       type        = "*"
       identifiers = ["*"]
     }
-    
+
     actions = ["s3:*"]
-    
+
     resources = [
       aws_s3_bucket.cs_files.arn,
       "${aws_s3_bucket.cs_files.arn}/*"
     ]
-    
+
     condition {
       test     = "StringNotEquals"
       variable = "aws:PrincipalAccount"
       values   = [data.aws_caller_identity.current.account_id]
     }
   }
-  
+
   # Statement 3: Enforce HTTPS (encryption in transit)
   # Deny all requests that don't use encrypted transport
   statement {
     sid    = "DenyUnencryptedTransport"
     effect = "Deny"
-    
+
     principals {
       type        = "*"
       identifiers = ["*"]
     }
-    
+
     actions = ["s3:*"]
-    
+
     resources = [
       aws_s3_bucket.cs_files.arn,
       "${aws_s3_bucket.cs_files.arn}/*"
     ]
-    
+
     condition {
       test     = "Bool"
       variable = "aws:SecureTransport"
@@ -336,7 +336,7 @@ data "aws_iam_policy_document" "bucket_policy" {
 resource "aws_s3_bucket_policy" "cs_files" {
   bucket = aws_s3_bucket.cs_files.id
   policy = data.aws_iam_policy_document.bucket_policy.json
-  
+
   # Ensure public access block is created first
   depends_on = [aws_s3_bucket_public_access_block.cs_files]
 }

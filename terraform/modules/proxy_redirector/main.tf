@@ -24,16 +24,16 @@ locals {
 
   # Generate user_data from template if using redirector script
   redirector_user_data = local.use_redirector_script ? templatefile("${path.root}/scripts/setup_redirector.sh", {
-    primary_domain    = var.primary_domain
-    c2_subdomain      = var.c2_subdomain
-    c2_server_ip      = var.c2_server_ip
-    c2_server_port    = var.c2_server_port
-    enable_ssl        = var.enable_ssl ? "true" : "false"
-    ssl_provider      = local.effective_ssl_provider
-    ssl_auto_retry    = var.ssl_auto_retry ? "true" : "false"
-    admin_email       = var.admin_email
-    malleable_profile = var.malleable_profile
-    custom_c2_uris    = var.custom_c2_uris
+    primary_domain         = var.primary_domain
+    c2_subdomain           = var.c2_subdomain
+    c2_server_ip           = var.c2_server_ip
+    c2_server_port         = var.c2_server_port
+    enable_ssl             = var.enable_ssl ? "true" : "false"
+    ssl_provider           = local.effective_ssl_provider
+    ssl_auto_retry         = var.ssl_auto_retry ? "true" : "false"
+    admin_email            = var.admin_email
+    malleable_profile      = var.malleable_profile
+    custom_c2_uris         = var.custom_c2_uris
     decoy_theme            = var.decoy_theme
     enable_file_portal     = var.enable_file_portal ? "true" : "false"
     portal_username        = var.portal_username

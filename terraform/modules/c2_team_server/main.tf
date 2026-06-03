@@ -23,16 +23,16 @@ locals {
 
   # Generate user_data from template if using CS script
   cs_user_data = local.use_cs_script ? templatefile("${path.root}/scripts/install_cobalt_strike.sh", {
-    cs_archive_s3_path = var.cobalt_strike_s3_path
-    cs_password        = var.cs_teamserver_password
-    server_role        = "c2_server"
-    hostname           = var.phase != "" ? "c2-${var.phase}-ubuntu" : "c2-teamserver-ubuntu"
+    cs_archive_s3_path     = var.cobalt_strike_s3_path
+    cs_password            = var.cs_teamserver_password
+    server_role            = "c2_server"
+    hostname               = var.phase != "" ? "c2-${var.phase}-ubuntu" : "c2-teamserver-ubuntu"
     primary_domain         = var.primary_domain
     c2_subdomain           = var.c2_subdomain
-    malleable_profile        = var.malleable_profile
-    custom_profile_content   = var.custom_profile_content
-    cs_license_secret_name   = var.cs_license_secret_name
-    enable_rest_api            = var.enable_rest_api
+    malleable_profile      = var.malleable_profile
+    custom_profile_content = var.custom_profile_content
+    cs_license_secret_name = var.cs_license_secret_name
+    enable_rest_api        = var.enable_rest_api
   }) : null
 
   # Use S3 bootstrap when enabled and CS script is active
@@ -90,7 +90,8 @@ resource "aws_instance" "c2_team_server" {
     delete_on_termination = true
 
     tags = merge(var.tags, {
-      Name = var.phase != "" ? "${var.project_name}-${var.environment}-c2-${var.phase}-ubuntu-root" : "${var.project_name}-${var.environment}-c2-server-ubuntu-${count.index + 1}-root"
+      Name   = var.phase != "" ? "${var.project_name}-${var.environment}-c2-${var.phase}-ubuntu-root" : "${var.project_name}-${var.environment}-c2-server-ubuntu-${count.index + 1}-root"
+      Backup = "true"
     })
   }
 

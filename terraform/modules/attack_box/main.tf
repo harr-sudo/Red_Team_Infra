@@ -60,7 +60,7 @@ resource "random_password" "attack_box" {
 }
 
 locals {
-  admin_password = var.admin_password != "" ? var.admin_password : random_password.attack_box.result
+  admin_password   = var.admin_password != "" ? var.admin_password : random_password.attack_box.result
   use_s3_bootstrap = var.enable_s3_bootstrap
 }
 
@@ -75,20 +75,20 @@ resource "aws_s3_object" "attack_box_init_script" {
   key    = "${var.deployment_id}/scripts/attack_box_init.ps1"
 
   content = templatefile("${path.module}/scripts/attack_box_init.ps1", {
-    c2_server_ip       = var.c2_server_ip
-    c2_server_port     = var.c2_server_port
-    deployment_bucket  = var.deployment_bucket
-    deployment_id      = var.deployment_id
-    aws_region         = var.aws_region
-    hostname           = "attackbox-windows"
-    cs_client_s3_path  = var.cs_client_s3_path
-    tools_repo_url     = var.tools_repo_url
-    tools_repo_branch  = var.tools_repo_branch
-    enable_key_exchange = var.enable_key_exchange ? "true" : "false"
-    s3_key_prefix      = var.s3_key_prefix
-    primary_domain         = var.primary_domain
-    c2_subdomain           = var.c2_subdomain
-    malleable_profile      = var.malleable_profile
+    c2_server_ip             = var.c2_server_ip
+    c2_server_port           = var.c2_server_port
+    deployment_bucket        = var.deployment_bucket
+    deployment_id            = var.deployment_id
+    aws_region               = var.aws_region
+    hostname                 = "attackbox-windows"
+    cs_client_s3_path        = var.cs_client_s3_path
+    tools_repo_url           = var.tools_repo_url
+    tools_repo_branch        = var.tools_repo_branch
+    enable_key_exchange      = var.enable_key_exchange ? "true" : "false"
+    s3_key_prefix            = var.s3_key_prefix
+    primary_domain           = var.primary_domain
+    c2_subdomain             = var.c2_subdomain
+    malleable_profile        = var.malleable_profile
     github_token_secret_name = var.github_token_secret_name
     cs_license_secret_name   = var.cs_license_secret_name
   })
@@ -160,6 +160,7 @@ resource "aws_instance" "attack_box" {
     tags = merge(var.tags, {
       Name      = "${var.project_name}-${var.environment}-attackbox-root"
       Component = "AttackBox"
+      Backup    = "true"
     })
   }
 

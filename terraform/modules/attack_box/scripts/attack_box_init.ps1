@@ -7,7 +7,7 @@
 #
 # Phases:
 # 1. Remove server bloat & optimize for workstation
-# 2. Disable Windows Defender completely
+# 2. Configure Windows Defender (exclusions mode -- engine active for ThreatCheck)
 # 3. System configuration (hostname, password, RDP, SSH, tools, Windows Terminal)
 # 4. Clone red team tools repo to C:\Tools
 # 5. Clone Cobalt Strike Community Kit to C:\CommunityTools
@@ -141,58 +141,70 @@ Write-Log "Phase 1 complete"
 Write-SetupStatus -Step 1 -Name "Bloat Removal" -Status "ok"
 
 # =============================================================================
-# PHASE 2: COMPLETELY DISABLE WINDOWS DEFENDER
+# PHASE 2: CONFIGURE WINDOWS DEFENDER (exclusions-based, keeps engine running)
 # =============================================================================
+# Defender is kept RUNNING so ThreatCheck can use its scan engine to identify
+# detection signatures in payloads. Tool directories are excluded so existing
+# offensive tools (mimikatz, Rubeus, etc.) are not quarantined.
+#
+# If Defender is fully disabled (DisableAntiSpyware=1), ThreatCheck cannot
+# function because it relies on the MpSvc scanning engine being active.
 
-Write-Log "PHASE 2: Disabling Windows Defender..."
+Write-Log "PHASE 2: Configuring Windows Defender (exclusions mode -- engine stays active for ThreatCheck)..."
 
 $defenderPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
-$realtimePath = "$defenderPath\Real-Time Protection"
-$scanPath = "$defenderPath\Scan"
-$spynetPath = "$defenderPath\Spynet"
 
-@($defenderPath, $realtimePath, $scanPath, $spynetPath) | ForEach-Object {
-    if (-not (Test-Path $_)) { New-Item -Path $_ -Force -ErrorAction SilentlyContinue | Out-Null }
+# Ensure the GP key does NOT block Defender from starting
+if (Test-Path $defenderPath) {
+    Remove-ItemProperty -Path $defenderPath -Name "DisableAntiSpyware" -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path $defenderPath -Name "DisableAntiVirus" -ErrorAction SilentlyContinue
 }
 
-# Disable Defender entirely via registry
-Set-ItemProperty -Path $defenderPath -Name "DisableAntiSpyware" -Value 1 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $defenderPath -Name "DisableAntiVirus" -Value 1 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $defenderPath -Name "ServiceKeepAlive" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-
-# Disable Real-Time Protection
-Set-ItemProperty -Path $realtimePath -Name "DisableBehaviorMonitoring" -Value 1 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $realtimePath -Name "DisableIOAVProtection" -Value 1 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $realtimePath -Name "DisableOnAccessProtection" -Value 1 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $realtimePath -Name "DisableRealtimeMonitoring" -Value 1 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $realtimePath -Name "DisableScanOnRealtimeEnable" -Value 1 -Type DWord -ErrorAction SilentlyContinue
-
-# Disable scanning and cloud protection
-Set-ItemProperty -Path $scanPath -Name "DisableArchiveScanning" -Value 1 -Type DWord -ErrorAction SilentlyContinue
+# Disable cloud sample submission (OPSEC -- don't send payloads to Microsoft)
+$spynetPath = "$defenderPath\Spynet"
+if (-not (Test-Path $spynetPath)) { New-Item -Path $spynetPath -Force | Out-Null }
 Set-ItemProperty -Path $spynetPath -Name "SpynetReporting" -Value 0 -Type DWord -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $spynetPath -Name "SubmitSamplesConsent" -Value 2 -Type DWord -ErrorAction SilentlyContinue
 
-# Disable via PowerShell cmdlets
+# Disable automatic remediation (don't quarantine without operator review)
 try {
-    Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-    Set-MpPreference -DisableBehaviorMonitoring $true -ErrorAction SilentlyContinue
+    Set-MpPreference -DisableAutoExclusions $false -ErrorAction SilentlyContinue
+    Set-MpPreference -SubmitSamplesConsent 2 -ErrorAction SilentlyContinue
+    Set-MpPreference -MAPSReporting 0 -ErrorAction SilentlyContinue
     Set-MpPreference -DisableBlockAtFirstSeen $true -ErrorAction SilentlyContinue
-    Set-MpPreference -DisableIOAVProtection $true -ErrorAction SilentlyContinue
-    Set-MpPreference -DisableScriptScanning $true -ErrorAction SilentlyContinue
-    Add-MpPreference -ExclusionPath "C:\Tools" -ErrorAction SilentlyContinue
-    Add-MpPreference -ExclusionPath "C:\Payloads" -ErrorAction SilentlyContinue
-    Add-MpPreference -ExclusionPath "C:\Tools\CobaltStrike" -ErrorAction SilentlyContinue
-} catch { Write-Log "PowerShell Defender cmdlets not available yet (disabled via registry on reboot)" }
+} catch { Write-Log "Some MpPreference settings not available (will apply after reboot)" }
 
-# Stop and disable Defender services
-foreach ($service in @("WinDefend","WdNisSvc","WdNisDrv","WdBoot","WdFilter","Sense")) {
+# Add exclusions for all tool directories so existing offensive tools are NOT quarantined
+$exclusionPaths = @(
+    "C:\Tools",
+    "C:\Payloads",
+    "C:\CommunityTools",
+    "C:\Tools\CobaltStrike",
+    "C:\Users\Administrator\Desktop"
+)
+try {
+    foreach ($path in $exclusionPaths) {
+        Add-MpPreference -ExclusionPath $path -ErrorAction SilentlyContinue
+    }
+    Write-Log "Defender exclusions added: $($exclusionPaths -join ', ')"
+} catch { Write-Log "Exclusion setup deferred (Defender service may not be ready yet)" }
+
+# Ensure WinDefend service is enabled and running
+try {
+    Set-Service -Name WinDefend -StartupType Automatic -ErrorAction SilentlyContinue
+    Start-Service WinDefend -ErrorAction SilentlyContinue
+    Write-Log "WinDefend service started (engine active for ThreatCheck)"
+} catch { Write-Log "WinDefend start deferred to post-reboot" }
+
+# Disable Sense (Defender ATP/EDR telemetry) -- OPSEC, don't phone home
+foreach ($service in @("Sense")) {
     if (Get-Service -Name $service -ErrorAction SilentlyContinue) {
         try { Stop-Service -Name $service -Force -ErrorAction SilentlyContinue; Set-Service -Name $service -StartupType Disabled -ErrorAction SilentlyContinue } catch { }
     }
 }
 
-Write-Log "Phase 2 complete - Windows Defender disabled"
-Write-SetupStatus -Step 2 -Name "Defender Disable" -Status "ok"
+Write-Log "Phase 2 complete - Defender configured (exclusions active, engine running, cloud/ATP disabled)"
+Write-SetupStatus -Step 2 -Name "Defender Config" -Status "ok" -Message "Engine active for ThreatCheck, tool dirs excluded"
 
 # =============================================================================
 # PHASE 3: SYSTEM CONFIGURATION
@@ -261,7 +273,7 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 # Why not MSIX? MSIX installs to C:\Program Files\WindowsApps which has TrustedInstaller-only
 # ACLs on Windows Server 2022. Even Administrators can't run executables from that path via
 # shortcuts without taking ownership first. The portable ZIP installs to a normal Program Files
-# directory with standard permissions — just works.
+# directory with standard permissions -- just works.
 Write-Log "Installing Windows Terminal (portable) from GitHub release..."
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -1022,13 +1034,26 @@ if ($hasUpdateMethod -and $CSLicenseSecretName -and $CSLicenseSecretName -ne "")
     $csLicenseStatus = "no_update_method"
 }
 
+# After activation, update.jar creates client/cobaltstrike-client.jar -- regenerate launcher
+$csClientJarPost = Get-ChildItem $csDir -Recurse -Filter "cobaltstrike-client.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($csClientJarPost) {
+    $clientDir = $csClientJarPost.DirectoryName
+    @"
+@echo off
+cd /d "$clientDir"
+java -XX:ParallelGCThreads=4 -XX:+AggressiveHeap -XX:+UseParallelGC -jar cobaltstrike-client.jar
+pause
+"@ | Out-File "$csDir\Launch-CS-Client.bat" -Encoding ASCII
+    Write-Log "CS Client launcher updated to use client/cobaltstrike-client.jar (post-activation)"
+}
+
 Write-Log "Phase 6 complete (license: $csLicenseStatus)"
 if ($csLicenseStatus -eq "activated") {
     Write-SetupStatus -Step 6 -Name "CS Client" -Status "ok" -Message "License activated via Secrets Manager"
 } elseif ($csLicenseStatus -eq "not_configured" -or $csLicenseStatus -eq "no_update_method") {
     Write-SetupStatus -Step 6 -Name "CS Client" -Status "ok" -Message "Installed (license: $csLicenseStatus)"
 } else {
-    Write-SetupStatus -Step 6 -Name "CS Client" -Status "warning" -Message "License $csLicenseStatus — manual activation required"
+    Write-SetupStatus -Step 6 -Name "CS Client" -Status "warning" -Message "License $csLicenseStatus -- manual activation required"
 }
 
 # =============================================================================
@@ -1048,9 +1073,32 @@ try {
 
     # NOTE: wsl --set-default-version and wsl --install CANNOT run until after reboot.
     # DISM feature enable is pending until reboot. Any wsl.exe commands will fail with
-    # WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED. Ubuntu installation is handled by the
-    # post-reboot RunOnce script created at the end of this init script.
+    # WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED.
     Write-Log "WSL features enabled (reboot required before Ubuntu can be installed)"
+
+    # Stage Ubuntu rootfs so operator can finish import in one command after RDP login.
+    # Auto-install via SYSTEM/SSM fails on Windows Server 2022 (no Microsoft Store, and
+    # Add-AppxPackage rejects SYSTEM context). Operator must run wsl --import manually
+    # from their interactive RDP session.
+    Write-Log "Staging Ubuntu rootfs for manual import..."
+    try {
+        $bundle = "C:\Windows\Temp\ubuntu_bundle.zip"
+        $extractDir = "C:\Windows\Temp\wsl_bundle"
+        $appxZip = "C:\Windows\Temp\ubuntu_x64.zip"
+        $rootfsDir = "C:\Windows\Temp\ubuntu_x64"
+        if (-not (Test-Path "$rootfsDir\install.tar.gz")) {
+            (New-Object System.Net.WebClient).DownloadFile("https://wslstorestorage.blob.core.windows.net/wslblob/Ubuntu2204-221101.AppxBundle", $bundle)
+            Expand-Archive -Path $bundle -DestinationPath $extractDir -Force
+            Copy-Item "$extractDir\Ubuntu_2204.1.7.0_x64.appx" $appxZip -Force
+            Expand-Archive -Path $appxZip -DestinationPath $rootfsDir -Force
+            Remove-Item $bundle, $extractDir, $appxZip -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Log "Ubuntu rootfs staged: $rootfsDir\install.tar.gz ($((Get-Item "$rootfsDir\install.tar.gz").Length) bytes)"
+        } else {
+            Write-Log "Ubuntu rootfs already staged at $rootfsDir\install.tar.gz"
+        }
+    } catch {
+        Write-Log "WARNING: Failed to stage Ubuntu rootfs: $_"
+    }
 } catch {
     Write-Log "WSL feature enable failed: $_"
 }
@@ -1091,8 +1139,10 @@ try {
                 hidden = $false
             },
             @{
+                # WT portable mode can't resolve wsl.exe directly -- launch via powershell wrapper
                 name = "WSL Ubuntu"
-                source = "Windows.Terminal.Wsl"
+                commandline = "powershell.exe -NoProfile -Command wsl.exe -d Ubuntu"
+                icon = "ms-appx:///ProfileIcons/{9acb9455-ca41-5af7-950f-6bca1bc9722f}.png"
                 colorScheme = "One Half Dark"
                 startingDirectory = "~"
                 tabTitle = "Ubuntu"
@@ -1138,15 +1188,15 @@ try {
         } | ConvertTo-Json -Depth 5
 
         # Write settings.json to the portable WT settings subdirectory (where WT actually reads from)
+        # Create the settings subdirectory if it doesn't exist (WT only creates it on first launch)
         $wtSettingsDir = "$wtDir\settings"
-        if (Test-Path $wtSettingsDir) {
-            [System.IO.File]::WriteAllText("$wtSettingsDir\settings.json", $wtSettings)
-            Write-Log "Windows Terminal settings written to: $wtSettingsDir\settings.json"
-        } else {
-            # Fallback: write next to .portable marker (older WT versions)
-            [System.IO.File]::WriteAllText("$wtDir\settings.json", $wtSettings)
-            Write-Log "Windows Terminal settings written to: $wtDir\settings.json (no settings subdir found)"
+        if (-not (Test-Path $wtSettingsDir)) {
+            New-Item -ItemType Directory -Path $wtSettingsDir -Force | Out-Null
         }
+        [System.IO.File]::WriteAllText("$wtSettingsDir\settings.json", $wtSettings)
+        Write-Log "Windows Terminal settings written to: $wtSettingsDir\settings.json"
+        # Also write to root dir as fallback for older WT versions
+        [System.IO.File]::WriteAllText("$wtDir\settings.json", $wtSettings)
         Write-Log "Windows Terminal profiles configured (PowerShell, CMD, WSL Ubuntu, Team Server SSH)"
     } else {
         Write-Log "WARNING: Windows Terminal not found in C:\Program Files\WindowsTerminal -- skipping profile config"
@@ -1193,7 +1243,8 @@ if ($EnableKeyExchange -eq "true" -and $DeploymentBucket) {
     Write-Log "Generating SSH key for outbound connections..."
     $sshKeyPath = "C:\Users\Administrator\.ssh\attackbox_internal_key"
     if (-not (Test-Path $sshKeyPath)) {
-        & ssh-keygen -t ed25519 -f $sshKeyPath -N "" -C "attackbox-$Hostname" 2>&1 | Out-Null
+        # Windows ssh-keygen hangs with -N "" -- use stdin pipe instead
+        cmd /c "echo. | ssh-keygen -t ed25519 -f `"$sshKeyPath`" -q -C attackbox-$Hostname" 2>&1 | Out-Null
         if (Test-Path $sshKeyPath) {
             Write-Log "SSH key pair generated"
             icacls $sshKeyPath /inheritance:r /grant:r "$env:USERNAME`:F" 2>&1 | Out-Null
@@ -1213,13 +1264,14 @@ if ($EnableKeyExchange -eq "true" -and $DeploymentBucket) {
 } else {
     Write-Log "PHASE 8: C2/combined mode - generating SSH key for team server access..."
 
-    # Generate a dedicated key pair for attack box → team server SSH
+    # Generate a dedicated key pair for attack box -> team server SSH
     # Upload public key to S3 so team server can add it to authorized_keys
-    if ($DeploymentBucket -and $S3KeyPrefix) {
+    if ($DeploymentBucket) {
         $sshKeyPath = "C:\Users\Administrator\.ssh\id_ed25519"
         if (-not (Test-Path $sshKeyPath)) {
             Write-Log "Generating ed25519 key pair..."
-            & ssh-keygen -t ed25519 -f $sshKeyPath -N "" -C "attackbox-$Hostname" 2>&1 | Out-Null
+            # Windows ssh-keygen hangs with -N "" -- use stdin pipe instead
+            cmd /c "echo. | ssh-keygen -t ed25519 -f `"$sshKeyPath`" -q -C attackbox-$Hostname" 2>&1 | Out-Null
 
             if (Test-Path $sshKeyPath) {
                 Write-Log "SSH key pair generated"
@@ -1230,7 +1282,8 @@ if ($EnableKeyExchange -eq "true" -and $DeploymentBucket) {
                 # Upload public key to S3 for team server to pick up
                 for ($i=1; $i -le 10; $i++) {
                     try {
-                        Write-S3Object -BucketName $DeploymentBucket -Key "$S3KeyPrefix/attackbox_internal.pub" -File "$sshKeyPath.pub" -Region $AwsRegion
+                        $s3Key = if ($S3KeyPrefix) { "$S3KeyPrefix/attackbox_internal.pub" } else { "$DeploymentId/ssh-keys/attackbox_internal.pub" }
+                        Write-S3Object -BucketName $DeploymentBucket -Key $s3Key -File "$sshKeyPath.pub" -Region $AwsRegion
                         Write-Log "Attack box public key uploaded to S3"
                         break
                     } catch {
@@ -1266,7 +1319,7 @@ Host teamserver ts c2
     StrictHostKeyChecking accept-new
 "@
 
-    # Add identity file — use GOAD internal key or user's deployment key
+    # Add identity file -- use GOAD internal key or user's deployment key
     if ($EnableKeyExchange -eq "true") {
         $sshConfig += "`n    IdentityFile C:\Users\Administrator\.ssh\attackbox_internal_key"
     } elseif (Test-Path "C:\Users\Administrator\.ssh\id_ed25519") {
@@ -1313,7 +1366,7 @@ SOFTWARE INSTALLED:
   - AWS CLI, Windows Terminal
   - VS Build Tools 2022 + .NET Framework 4.8 Dev Pack (MSBuild for C# tools)
   - VS Code (lightweight editor for source code)
-  - WSL with Ubuntu
+  - WSL with Ubuntu (auto-installed on first RDP login via RunOnce)
 
 AUTO-COMPILED C# TOOLS:
   C# tools (Rubeus, Seatbelt, Certify, SharpUp, etc.) are auto-compiled
@@ -1331,7 +1384,10 @@ CS CLIENT:
   Connect to: $C2ServerIP`:$C2ServerPort
 
 SECURITY NOTES:
-  - Windows Defender: DISABLED
+  - Windows Defender: RUNNING (exclusions mode for ThreatCheck compatibility)
+      Excluded paths: C:\Tools, C:\Payloads, C:\CommunityTools, C:\Tools\CobaltStrike
+      Cloud submission: DISABLED (OPSEC)
+      Defender ATP (Sense): DISABLED
   - Windows Firewall: RDP + SSH allowed
   - This box has NO public IP (private subnet only)
 "@
@@ -1482,25 +1538,77 @@ try {
 Write-Log "Creating post-reboot WSL setup script..."
 
 $postRebootScript = @'
-# Post-reboot: Install Ubuntu for WSL
-# Runs once via RunOnce registry key after attack box init reboot
+# Post-reboot: Import Ubuntu rootfs into WSL
+# Runs once via HKLM RunOnce on next interactive logon (executes AS the logging-in user,
+# typically Administrator via RDP). HKLM RunOnce runs in user context, not SYSTEM,
+# which is critical because WSL --import requires a real user profile.
+#
+# We use wsl --import (not wsl --install -d Ubuntu) because Windows Server 2022 has
+# no Microsoft Store, so --install always fails with 0x8000ffff. The init script
+# pre-staged the Ubuntu rootfs at C:\Windows\Temp\ubuntu_x64\install.tar.gz.
 $logFile = "C:\Users\Administrator\Desktop\Deployment-Logs-Scripts\post-reboot-wsl.log"
 Start-Transcript -Path $logFile -Append
 Write-Output "Post-reboot WSL setup started: $(Get-Date)"
+Write-Output "Running as: $env:USERNAME"
 
 try {
-    # Set WSL1 as default (EC2 lacks nested virt for WSL2)
-    Write-Output "Setting WSL default version to 1..."
+    $rootfs = "C:\Windows\Temp\ubuntu_x64\install.tar.gz"
+    if (-not (Test-Path $rootfs)) {
+        Write-Output "ERROR: Rootfs not found at $rootfs -- staging step failed during init"
+        Stop-Transcript
+        exit 1
+    }
+
+    Write-Output "Setting WSL default version to 1 (EC2 lacks nested virt for WSL2)..."
     wsl --set-default-version 1 2>&1
 
-    # Install Ubuntu distro
-    Write-Output "Installing Ubuntu for WSL..."
-    wsl --install -d Ubuntu --no-launch 2>&1
+    Write-Output "Importing Ubuntu rootfs into WSL..."
+    New-Item -ItemType Directory -Path C:\WSL\Ubuntu -Force | Out-Null
+    wsl --import Ubuntu C:\WSL\Ubuntu $rootfs 2>&1
 
-    Write-Output "Ubuntu WSL distro installed successfully"
-    Write-Output "Windows Terminal will auto-detect the new distro via Windows.Terminal.Wsl source"
+    Write-Output "Verifying installation..."
+    $wslList = wsl --list --verbose 2>&1 | Out-String
+    Write-Output $wslList
+
+    # Clean up staged rootfs (~530 MB)
+    Remove-Item $rootfs -Force -ErrorAction SilentlyContinue
+    Remove-Item C:\Windows\Temp\ubuntu_x64 -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Output "Cleaned up staged rootfs"
+
+    Write-Output "Ubuntu WSL distro imported successfully"
+    Write-Output "Windows Terminal WSL Ubuntu profile (commandline: powershell wsl.exe -d Ubuntu) will work after WT restart"
+
+    # Update setup-status.json so the dashboard reflects the post-reboot Ubuntu install
+    $statusFile = "C:\ProgramData\setup-status.json"
+    if (Test-Path $statusFile) {
+        try {
+            $status = Get-Content $statusFile -Raw | ConvertFrom-Json
+            $wslStep = $status.steps | Where-Object { $_.step -eq 7 }
+            if ($wslStep) {
+                $wslStep.message = "Features enabled, Ubuntu imported successfully (post-reboot)"
+            }
+            $status | ConvertTo-Json -Depth 3 | Out-File $statusFile -Encoding UTF8
+            Write-Output "Updated setup-status.json with WSL post-reboot success"
+        } catch {
+            Write-Output "WARNING: Failed to update setup-status.json: $_"
+        }
+    }
 } catch {
-    Write-Output "WSL Ubuntu install failed: $_"
+    Write-Output "WSL Ubuntu import failed: $_"
+    # Mark step as warning in setup-status.json
+    $statusFile = "C:\ProgramData\setup-status.json"
+    if (Test-Path $statusFile) {
+        try {
+            $status = Get-Content $statusFile -Raw | ConvertFrom-Json
+            $wslStep = $status.steps | Where-Object { $_.step -eq 7 }
+            if ($wslStep) {
+                $wslStep.status = "warning"
+                $wslStep.message = "Ubuntu import failed post-reboot: $($_.Exception.Message)"
+            }
+            $status.warnings = ($status.steps | Where-Object { $_.status -eq "warning" }).Count
+            $status | ConvertTo-Json -Depth 3 | Out-File $statusFile -Encoding UTF8
+        } catch {}
+    }
 }
 
 Stop-Transcript

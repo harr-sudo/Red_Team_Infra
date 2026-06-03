@@ -75,8 +75,8 @@ resource "aws_cloudfront_distribution" "c2" {
     origin_id   = "redirector-primary"
 
     custom_origin_config {
-      http_port              = 80
-      https_port             = 443
+      http_port  = 80
+      https_port = 443
       # HTTP-only: CloudFront cannot do TLS hostname verification against a raw IP origin.
       # The redirector's Let's Encrypt cert matches the domain, not the IP, causing TLS mismatch → 502.
       # Edge-to-viewer traffic is still HTTPS; beacon payloads are encrypted within the C2 protocol.

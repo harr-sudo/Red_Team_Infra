@@ -64,7 +64,7 @@ resource "aws_eip" "jumpbox" {
 resource "aws_instance" "jumpbox" {
   ami           = data.aws_ami.ubuntu.id
   instance_type = var.jumpbox_instance_type
-  key_name      = length(aws_key_pair.jumpbox) > 0 ? aws_key_pair.jumpbox[0].key_name : null  # User's public key (if provided)
+  key_name      = length(aws_key_pair.jumpbox) > 0 ? aws_key_pair.jumpbox[0].key_name : null # User's public key (if provided)
 
   network_interface {
     network_interface_id = aws_network_interface.jumpbox.id
@@ -77,11 +77,11 @@ resource "aws_instance" "jumpbox" {
   # User data - generates internal key ON THE HOST (not from Terraform)
   # Internal key is uploaded to S3 for Team Server/Attack Box to download
   user_data = templatefile("${path.module}/scripts/jumpbox_init.sh", {
-    username         = var.jumpbox_username
-    attackbox_ip     = var.install_cobalt_strike ? "${var.ip_range}.50" : ""
-    teamserver_ip    = var.install_cobalt_strike ? "${var.ip_range}.40" : ""
-    install_cs       = var.install_cobalt_strike
-    ip_range         = var.ip_range
+    username      = var.jumpbox_username
+    attackbox_ip  = var.install_cobalt_strike ? "${var.ip_range}.50" : ""
+    teamserver_ip = var.install_cobalt_strike ? "${var.ip_range}.40" : ""
+    install_cs    = var.install_cobalt_strike
+    ip_range      = var.ip_range
     # SECURITY: internal_key is NO LONGER passed from Terraform
     # The jumpbox generates its own key during bootstrap
     deployment_bucket = var.deployment_bucket

@@ -312,9 +312,9 @@ locals {
 # Only created if user has provided their public key
 resource "aws_key_pair" "jumpbox" {
   count = var.user_public_key != "" ? 1 : 0
-  
+
   key_name   = "${var.project_name}-${local.lab_identifier}-jumpbox-ubuntu-key"
-  public_key = var.user_public_key  # User's own public key
+  public_key = var.user_public_key # User's own public key
 
   tags = merge(var.tags, {
     Name = "${var.project_name}-${local.lab_identifier}-jumpbox-ubuntu-key"

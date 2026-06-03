@@ -111,10 +111,10 @@ output "jumpbox_ssh_public_key" {
 output "jumpbox_connection_info" {
   description = "Connection information for jumpbox access"
   value = {
-    ip       = aws_eip.jumpbox.public_ip
-    user     = "ubuntu"
-    command  = "ssh -i ~/.ssh/your_key ubuntu@${aws_eip.jumpbox.public_ip}"
-    note     = "Use your own private key (the one matching the public key you provided)"
+    ip      = aws_eip.jumpbox.public_ip
+    user    = "ubuntu"
+    command = "ssh -i ~/.ssh/your_key ubuntu@${aws_eip.jumpbox.public_ip}"
+    note    = "Use your own private key (the one matching the public key you provided)"
   }
 }
 
@@ -122,10 +122,10 @@ output "jumpbox_connection_info" {
 output "internal_key_info" {
   description = "Information about internal SSH key management"
   value = var.install_cobalt_strike ? {
-    note           = "Internal keys are generated on jumpbox during bootstrap"
-    key_location   = "/home/ubuntu/.ssh/jumpbox_internal_key"
-    s3_public_key  = "s3://<deployment-bucket>/keys/<deployment-id>/jumpbox_internal.pub"
-    access_method  = "SSH to jumpbox first, then use 'ssh teamserver' or 'ssh attackbox'"
+    note          = "Internal keys are generated on jumpbox during bootstrap"
+    key_location  = "/home/ubuntu/.ssh/jumpbox_internal_key"
+    s3_public_key = "s3://<deployment-bucket>/keys/<deployment-id>/jumpbox_internal.pub"
+    access_method = "SSH to jumpbox first, then use 'ssh teamserver' or 'ssh attackbox'"
   } : null
 }
 

@@ -121,7 +121,7 @@ variable "user_public_key" {
   description = "User's SSH public key for jumpbox access (Ed25519 or RSA format). User generates key locally with: ssh-keygen -t ed25519 -f ~/.ssh/goad_key"
   type        = string
   default     = ""
-  
+
   validation {
     condition     = var.user_public_key == "" || can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)\\s+[A-Za-z0-9+/=]+", var.user_public_key))
     error_message = "user_public_key must be a valid SSH public key (ssh-ed25519, ssh-rsa, or ecdsa format) or empty"
@@ -170,13 +170,13 @@ variable "aws_region" {
 variable "jumpbox_instance_type" {
   description = "Instance type for jumpbox (SSH gateway + Ansible controller for GOAD provisioning)"
   type        = string
-  default     = "t2.small"  # 2GB RAM needed for Ansible GOAD provisioning
+  default     = "t2.small" # 2GB RAM needed for Ansible GOAD provisioning
 }
 
 variable "jumpbox_disk_size" {
   description = "Root disk size for jumpbox in GB"
   type        = number
-  default     = 20  # Minimal disk
+  default     = 20 # Minimal disk
 }
 
 variable "jumpbox_username" {
@@ -192,7 +192,7 @@ variable "jumpbox_username" {
 variable "teamserver_instance_type" {
   description = "Instance type for team server (CS Team Server only)"
   type        = string
-  default     = "t2.medium"  # 4GB RAM for CS
+  default     = "t2.medium" # 4GB RAM for CS
 }
 
 variable "teamserver_disk_size" {

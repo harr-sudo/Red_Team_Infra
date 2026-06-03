@@ -31,7 +31,7 @@ resource "aws_instance" "teamserver" {
 
   ami           = data.aws_ami.ubuntu.id
   instance_type = var.teamserver_instance_type
-  key_name      = length(aws_key_pair.jumpbox) > 0 ? aws_key_pair.jumpbox[0].key_name : null  # Use jumpbox key pair for initial access
+  key_name      = length(aws_key_pair.jumpbox) > 0 ? aws_key_pair.jumpbox[0].key_name : null # Use jumpbox key pair for initial access
 
   network_interface {
     network_interface_id = aws_network_interface.teamserver[0].id
@@ -48,10 +48,10 @@ resource "aws_instance" "teamserver" {
     cs_password            = var.cs_teamserver_password
     cs_license_secret_name = var.cs_license_secret_name
     # Key exchange via S3 - downloads jumpbox's public key
-    deployment_bucket  = var.deployment_bucket
-    deployment_id      = var.deployment_id
-    aws_region         = var.aws_region
-    hostname           = "teamserver-ubuntu"
+    deployment_bucket = var.deployment_bucket
+    deployment_id     = var.deployment_id
+    aws_region        = var.aws_region
+    hostname          = "teamserver-ubuntu"
   })
 
   root_block_device {
