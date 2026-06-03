@@ -1,3 +1,6 @@
+> [!CAUTION]
+> **Migration in progress** — the move to the centralised AWS Dashboard Server is still ongoing. Some areas of the codebase and documentation may not yet fully reflect the dashboard-first architecture.
+
 <div align="center">
 
 # Red Team Infra
