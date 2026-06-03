@@ -1,290 +1,209 @@
-# Red Team Infrastructure
+<div align="center">
 
-A scalable, replicable red team infrastructure deployment framework for AWS with integrated vulnerable Active Directory lab environments.
+# Red Team Infra
+
+### Deploy and operate red-team infrastructure on AWS — entirely from your browser.
+
+A full-stack, AWS-hosted platform that turns disposable, OPSEC-sound red-team infrastructure into a few clicks: modular Terraform + Ansible underneath, a Flask control plane on top, and Cobalt Strike, GOAD, and CREST exam-mirror labs wired in.
+
+<br/>
+
+![Terraform](https://img.shields.io/badge/Terraform-%E2%89%A5%201.0-7B42BC?logo=terraform&logoColor=white)
+![Ansible](https://img.shields.io/badge/Ansible-%E2%89%A5%202.9-EE0000?logo=ansible&logoColor=white)
+![Python · Flask](https://img.shields.io/badge/Python%20%C2%B7%20Flask-3.0%2B-3776AB?logo=python&logoColor=white)
+![AWS](https://img.shields.io/badge/AWS-eu--central--1-FF9900?logo=amazonaws&logoColor=white)
+![IaC](https://img.shields.io/badge/IaC-Terraform%20%2B%20Ansible-844FBA)
+![License](https://img.shields.io/badge/License-All%20Rights%20Reserved-red)
+
+</div>
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Screenshots](#screenshots)
+- [Key Features](#key-features)
+- [Tech Stack](#tech-stack)
+- [Deployment Types](#deployment-types)
+- [Getting Started](#getting-started)
+- [Documentation](#documentation)
+- [Security & Authorized Use](#security--authorized-use)
+- [License](#license)
+
+---
 
 ## Overview
 
-This project provides Infrastructure as Code (IaC) and automation scripts to deploy and manage red team infrastructure on AWS. Everything is driven from a single **AWS-hosted Dashboard Server** — the production control plane and the sole SSH jump into every deployment. The infrastructure is designed to be:
+Standing up red-team infrastructure by hand is slow, repetitive, and easy to get wrong — and getting it *wrong* on operational security (exposed C2 servers, leaked IPs, sloppy access paths) can compromise an entire engagement. **Red Team Infra** removes that friction.
 
-- **Scalable**: Easily expand to support larger operations
-- **Replicable**: Deploy identical infrastructure across environments
-- **Automated**: Minimal manual intervention required
-- **Secure**: Built with security best practices
-- **Maintainable**: Well-documented and version-controlled
-- **Training Ready**: Includes GOAD (Game Of Active Directory) labs and a CCRTS exam-mirror lab for realistic attack practice
+It is a single control plane for the whole lifecycle: provision a dedicated AWS **Dashboard Server** once, then configure, deploy, operate, and tear down command-and-control estates, redirectors, and vulnerable Active Directory labs from a browser. Everything is codified in modular Terraform and Ansible, so deployments are repeatable, reviewable, and disposable — and the operator's laptop never needs more than an SSH key and a browser tab.
+
+---
 
 ## Architecture
 
-The infrastructure is built using:
+![Architecture](generated-diagrams/server-mode-full-overview.png)
 
-- **Terraform**: Infrastructure provisioning and management
-- **Ansible**: Configuration management and software deployment
-- **AWS Services**: EC2, VPC, S3, Route 53, ACM, IAM, Secrets Manager, CloudWatch
-- **Bash/Python Scripts**: Orchestration and automation
-- **Web Application**: Flask + JavaScript management interface, hosted on the AWS Dashboard Server
-
-### Access Model
-
-The **Dashboard Server** is a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public Elastic IP, locked to your IP and SSH key. It is the **production control plane and the single SSH jump host** — every deployment branches out from it via VPC peering, so it reaches all instances directly (C2 servers, redirectors, attack box, GOAD jumpbox).
-
-- **Operator laptop** → (SSH key + IP allow-list) → **Dashboard Server** (public EIP). The UI is reached with `ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>`, then `http://localhost:5000`.
-- **Deployments branch out from the Dashboard Server.** Its VPC is peered with every deployment VPC, so the dashboard reaches each instance directly. **There is no per-deployment SSH-relay bastion** — the Dashboard Server is the sole jump. (The GOAD jumpbox is retained, but only as the AD-lab Ansible provisioning host — not an access path.)
-- **Running the dashboard on your laptop is a dev/test instance only.** Real engagements always run on the AWS Dashboard Server.
-
-### Infrastructure Components
-
-- **Dashboard Server**: AWS-hosted EC2 control plane + sole SSH jump host (own VPC, public EIP)
-- **C2 Team Servers**: Command and control servers (private subnets)
-- **Proxy/Redirector Servers**: Traffic forwarding servers (public subnets)
-- **VPC**: Isolated network with public/private subnets, peered to the Dashboard Server
-- **Security Groups**: Firewall rules for traffic control
-- **GOAD Labs** (Optional): Vulnerable Active Directory environments, with a GOAD jumpbox that provisions the AD lab via Ansible
-- **CCRTS Lab** (Optional): Self-contained CREST exam-mirror estate (Kali + Windows + AD + ELK)
-
-## Getting Started
-
-> **New to this project?** This section is the single blessed path. For the full walkthrough with prompt-by-prompt detail, see the **[Getting Started Guide](./docs/GETTING_STARTED.md)**.
-
-Production runs on the **AWS Dashboard Server** — a dedicated EC2 instance that is the control plane and SSH jump host for every deployment. You provision it once from your laptop with one script; after that, operators only need an SSH key and a browser.
-
-### Before you begin (on your laptop)
-
-- An **AWS account** with permissions to create VPCs, EC2 instances, and IAM roles
-- **AWS CLI** installed and configured (`aws configure`)
-- **Terraform** >= 1.0
-- **ssh**, **rsync**, **git**, and **jq**
-- An **SSH key pair** (e.g. `~/.ssh/id_ed25519` — the setup script auto-detects common locations)
-
-### Step 1 — Clone the repo and provision the Dashboard Server
-
-```bash
-git clone https://github.com/harr-sudo/Red_Team_Infra.git
-cd Red_Team_Infra
-./scripts/server/setup-dashboard.sh
-```
-
-`setup-dashboard.sh` is interactive. It prompts for your SSH public key, operator name, public IP, AWS region, and (optionally) a second operator, then it:
-
-1. Writes `configs/dashboard.tfvars` from your answers.
-2. Runs `terraform apply` on `module.dashboard_server` — provisioning a **new EC2 "Dashboard Server"** in its own VPC (`10.100.0.0/16`, public EIP, locked to your IP + SSH key).
-3. Waits for the instance to come up (~2-3 minutes), then `rsync`s the repo to `/opt/redteam`, creates a Python venv, installs dependencies, and registers a **systemd `dashboard` service** so the web app runs persistently on the EC2.
-
-When it finishes it prints your `ssh -L ...` connect command.
-
-### Step 2 — Tunnel in and open the dashboard
-
-```bash
-ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>
-```
-
-Then open **http://localhost:5000** in your browser.
-
-### Step 3 — Configure and deploy from the browser
-
-In the dashboard:
-
-1. **Configure a deployment** — pick a deployment type (C2, GOAD, CCRTS, or combined) and set its options.
-2. **Satisfy prerequisites** — register a domain (see [Domain Requirements](./docs/DOMAIN_REQUIREMENTS.md)) and upload your Cobalt Strike archive (see [Cobalt Strike Deployment](./docs/COBALT_STRIKE_DEPLOYMENT.md)). The dashboard validates both before letting you deploy.
-3. **Deploy** — launch and watch the streaming logs.
-
-C2/GOAD/CCRTS deployments branch out from the Dashboard Server via VPC peering, so it becomes the jump into every instance. There is no per-deployment bastion.
-
-### Adding a second operator
-
-Add their SSH public key and source IP to `configs/dashboard.tfvars` (`operator_ssh_public_keys` + `dashboard_allowed_ips`) and run `terraform apply` — or just answer the setup script's second-operator prompts. They then connect with the same `ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>` tunnel. No AWS CLI, Terraform, or local tooling required on their end.
-
-See [Centralized Dashboard Design](./docs/CENTRALIZED_DASHBOARD_DESIGN.md) for the full architecture and [Dashboard Server Jump Host Guide](./docs/BASTION_JUMPBOX.md) for the access model.
-
-### Deployment Prerequisites (configured in the browser)
-
-The dashboard enforces these before a deployment runs:
-
-1. **Domain Configuration** — a registered primary domain (2-3 backups recommended for OpSec). See [Domain Requirements](./docs/DOMAIN_REQUIREMENTS.md).
-2. **Cobalt Strike Archive** — upload your `.tar.gz` / `.zip` / `.tar` through the Deploy tab; it is reused for all future C2 deployments. See [Cobalt Strike Deployment](./docs/COBALT_STRIKE_DEPLOYMENT.md).
-3. **Tools Repository** (optional) — point at `https://github.com/harr-sudo/red-team-tools` and configure auth to auto-deploy your tooling to the jumpbox / attack box. See [Tools Repository Quick Start](./docs/TOOLS_REPOSITORY_QUICK_START.md).
-
-### Advanced / dev-only: laptop CLI
-
-For development and testing you can run the dashboard locally or deploy straight from the CLI. **This is not the production path** — real engagements run on the AWS Dashboard Server above.
-
-```bash
-./scripts/deployment/deploy.sh        # Deploy infrastructure from the laptop
-./scripts/utilities/health-check.sh   # Check status
-./scripts/deployment/destroy.sh       # Tear down
-```
-
-This flow uses local AWS credentials and a local `configs/terraform.tfvars`. See the [Getting Started Guide](./docs/GETTING_STARTED.md) for the local-dev walkthrough.
-
-## Project Structure
+The platform follows a **hub-and-spoke** model. The **Dashboard Server** — a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public Elastic IP, locked to an IP allow-list and SSH key — is both the production control plane and the *sole* SSH/RDP jump host. Every deployment (C2, GOAD, CCRTS) is created in its own VPC and **peered back to the Dashboard Server**, which then reaches every instance directly. There is no per-deployment bastion: the operator's laptop only ever tunnels to one place.
 
 ```
-Red_Team_Infra/
-├── terraform/          # Terraform configurations
-│   ├── modules/        # Infrastructure modules (VPC, C2 servers, proxies, dashboard server, GOAD, CCRTS)
-│   └── main.tf         # Main orchestration & deployment mode detection
-├── ansible/            # Ansible playbooks and roles
-├── scripts/            # Automation scripts
-│   ├── server/         # setup-dashboard.sh, dashboard-manage.sh (production control plane)
-│   └── deployment/     # deploy.sh, destroy.sh (CLI / dev path)
-├── configs/            # Configuration files (dashboard.tfvars, terraform.tfvars)
-├── tools/              # External tools
-│   └── goad/           # GOAD (Game Of Active Directory) — vulnerable AD labs
-├── webapp/             # Web application for infrastructure management (runs on the Dashboard Server)
-├── uploads/            # Uploaded files (Cobalt Strike, etc.)
-└── docs/               # Documentation
+Operator laptop  ──(SSH key + IP allow-list)──▶  Dashboard Server (AWS, public EIP)
+                                                       │  VPC peering
+                          ┌────────────────────────────┼────────────────────────────┐
+                          ▼                            ▼                            ▼
+                    C2 VPC (10.0.0.0/16)        GOAD VPC (192.168.56.0/24)    CCRTS VPC (optional)
+                  team servers · redirectors      vulnerable AD lab          Kali · Win · AD · ELK
 ```
 
-See [PLAN.md](./PLAN.md) for detailed architecture and planning information.
+---
 
-## Deployment Types
+## Screenshots
 
-The `deployment_type` variable drives all architecture decisions. There are **12** deployment types across 4 categories:
+> The UI ships a built-in **demo mode** (synthetic data, no AWS resources) — the captures below are taken in that mode so the interface is shown without exposing live infrastructure.
 
-- **C2-Only (3):** `c2-adhoc` (1 server), `c2-purple` (2 servers, redundancy), `c2-full` (3 servers, phase-based)
-- **GOAD-Only (5):** `goad-mini`, `goad-light`, `goad-sccm`, `goad-full`, `goad-nha` (standalone AD labs)
-- **CCRTS (1):** `ccrts` (self-contained CREST exam-mirror lab — no C2 integration)
-- **Combined (3):** `combined-adhoc-mini`, `combined-adhoc-light`, `combined-full-full` (C2 + GOAD via VPC peering)
+| | |
+|---|---|
+| ![Infrastructure Overview](docs/assets/screenshots/dashboard.png) | ![Beacon topology graph](docs/assets/screenshots/topology.png) |
+| **Infrastructure Overview** — live deployments, active beacons, per-project cost trend, and budget alerts at a glance. | **Beacon Topology** — interactive graph with the team server at the hub; each callback branches out, with link types and admin beacons marked. |
+| ![Guided configure & deploy](docs/assets/screenshots/deploy.png) | ![Deployment manager](docs/assets/screenshots/manage.png) |
+| **Configure & Deploy** — a guided, validated config flow with live cost estimates, plan/validate/apply, and prerequisite uploads. | **Deployment Manager** — inspect deployed inventory, run health checks, bolt on vulnerabilities, view streaming logs, and destroy. |
 
-See [Deployment Modes](./docs/DEPLOYMENT_MODES.md) for the C2 sizing details.
+---
 
 ## Key Features
 
-### Dashboard Server Jump Host (single SSH entry point)
+- **Infrastructure as Code** — modular Terraform (one module per component) + Ansible provisioning; every deployment is repeatable, reviewable, and disposable.
+- **Browser control plane** — a Flask + vanilla-JS dashboard runs on the AWS Dashboard Server (systemd); configure, deploy, operate, and destroy without touching the CLI.
+- **C2 automation** — Cobalt Strike team servers, redirectors, in-browser beacon management over the CS REST API, a quick payload generator, and optional CloudFront domain fronting.
+- **Live topology graph** — full-screen, interactive infrastructure/beacon map with subnet clustering, draggable nodes, config-driven port labels, and a detail side panel.
+- **In-browser terminal** — multi-tab SSH into any deployed instance, plus tunnel shortcuts for RDP, the CS client, and the REST API — no manual key hopping.
+- **Training labs** — GOAD (Game of Active Directory) variants and a self-contained CCRTS (CREST exam-mirror) lab with AD + an ELK stack for detection-rule iteration.
+- **Single-jump access model** — one SSH tunnel to the Dashboard Server reaches everything via VPC peering; no per-deployment bastion, no static AWS keys on operator laptops.
+- **Cost tracking & budgets** — per-project AWS cost monitoring with budget alerts surfaced directly in the dashboard.
+- **Detection-rule mapping** — MITRE-mapped Elastic SIEM rules correlated to Cobalt Strike commands, updatable in one click.
+- **Host setup checks** — SSM-based validation that bootstrap scripts ran correctly across every instance.
 
-> The AWS-hosted **Dashboard Server** is the sole SSH jump into all instances. There is no per-deployment SSH-relay bastion — it has been removed from the architecture.
+---
 
-- **Single entry point** — one SSH tunnel to the Dashboard Server reaches every instance via VPC peering
-- **In-browser Terminal** for SSH to any C2 server, redirector, attack box, or GOAD jumpbox — no manual hopping
-- **Tunnel shortcuts** for RDP (attack box / GOAD VMs), the CS client, and the REST API
-- **IAM instance role** — no AWS credentials stored on operator laptops
-- **Tools Repository** automatically deployed to the GOAD jumpbox / attack box during provisioning
+## Tech Stack
 
-See [Dashboard Server Jump Host Guide](./docs/BASTION_JUMPBOX.md) (covers the Dashboard Server jump + the GOAD provisioning jumpbox).
+| Layer | Technology |
+|---|---|
+| **Infrastructure** | Terraform (HCL) `>= 1.0`, modular |
+| **Config management** | Ansible `>= 2.9` |
+| **Control plane / UI** | Python · Flask `3.0+`, vanilla JavaScript SPA |
+| **Cloud** | AWS — EC2, VPC, S3, Route 53, ACM, IAM, Secrets Manager, CloudWatch, SSM *(region pinned `eu-central-1`)* |
+| **C2** | Cobalt Strike (REST API automation) |
+| **Training labs** | GOAD (Game of Active Directory), CREST Community AMIs (CCRTS) |
+| **Scripting** | Bash (POSIX-compatible) |
 
-### Web Application
+---
 
-- **Configuration editor** with deployment templates (save/load)
-- **Prerequisite validation** — domain, Cobalt Strike, AWS permissions checked before deploy
-- **One-click deployment** with real-time progress and streaming logs
-- **Deployment Manager** — multi-project management, stop/start instances, destroy
-- **Infrastructure Topology** — full-screen interactive graph with subnet clustering, draggable nodes, config-driven port labels, side panel with details
-- **Beacon Management** — CS REST API integration with health monitoring, task correlation, network graph, quick payload generator
-- **Terminal** — in-browser SSH to any deployed instance, multi-tab, tunnel shortcuts (RDP, CS Client, REST API)
-- **Elastic Detection Rules** — MITRE-mapped SIEM rules for CS commands with one-click update
-- **AWS Cost Tracking** — per-project cost monitoring with budget alerts
-- **Host Setup Checker** — SSM-based validation of bootstrap scripts across all instances
+## Deployment Types
 
-See [Web Application Guide](./webapp/README.md) for details.
+A single `deployment_type` variable drives every architecture decision. **12 types** across 4 categories:
 
-### Tools Repository
+| Category | Types | What you get |
+|---|---|---|
+| **C2-Only** | `c2-adhoc` · `c2-purple` · `c2-full` | 1 / 2 / 3 team servers (single, redundant, or phase-based) |
+| **GOAD-Only** | `goad-mini` · `goad-light` · `goad-sccm` · `goad-full` · `goad-nha` | Standalone vulnerable Active Directory labs |
+| **CCRTS** | `ccrts` | Self-contained CREST exam-mirror lab (Kali + Windows + AD + ELK) |
+| **Combined** | `combined-adhoc-mini` · `combined-adhoc-light` · `combined-full-full` | C2 + GOAD wired together via VPC peering |
 
-- **Private GitHub repository** for all red team tools — single source of truth
-- **Automated deployment** to the jumpbox / attack box during infrastructure setup
-- **Multi-user access** — each team member can clone to their laptop
-- **Repository URL**: `https://github.com/harr-sudo/red-team-tools`
+See **[Deployment Modes](./docs/DEPLOYMENT_MODES.md)** for C2 sizing and **[GOAD Quick Start](./docs/GOAD_QUICK_START.md)** / **[CCRTS-Lab Operator Guide](./docs/CCRTS_LAB.md)** for the labs.
 
-See [Tools Repository Quick Start](./docs/TOOLS_REPOSITORY_QUICK_START.md) for setup and [Tools Repository Access](./docs/TOOLS_REPOSITORY_ACCESS.md) for accessing tools.
+---
 
-### GOAD Labs (Game Of Active Directory)
+## Getting Started
 
-Integrated vulnerable Active Directory environments for testing your C2 infrastructure:
+Production runs on the **AWS Dashboard Server**. You provision it once from your laptop with a single interactive script; after that, operators only need an SSH key and a browser.
 
-| Lab | VMs | Forests | Domains | Description | Est. Cost |
-|-----|-----|---------|---------|-------------|-----------|
-| **goad-full** | 5 | 2 | 3 | Full lab — complete AD environment | ~$350/mo |
-| **goad-light** | 3 | 1 | 2 | Smaller lab for limited resources | ~$200/mo |
-| **goad-mini** | 1 | 1 | 1 | Minimalist — single domain | ~$75/mo |
-| **goad-sccm** | 4 | 1 | 1 | Microsoft Configuration Manager lab (sccm.lab) | ~$300/mo |
-| **goad-nha** | 5 | 1 | 2 | CTF challenge lab (ninja.hack + academy.ninja.lan) | ~$350/mo |
+```bash
+# 1 — Clone and provision the Dashboard Server (interactive)
+git clone https://github.com/harr-sudo/Red_Team_Infra.git
+cd Red_Team_Infra
+./scripts/server/setup-dashboard.sh
 
-**Key Features:**
-- Pre-configured vulnerabilities (Kerberoasting, AS-REP Roasting, DCSync, Pass-the-Hash, etc.)
-- Integrated with C2 infrastructure via VPC peering (combined deployments)
-- Built-in jumpbox that provisions the AD lab via Ansible
-- Start/Stop functionality to save costs when not in use
+# 2 — Tunnel in (the script prints this exact command on completion)
+ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>
 
-See [GOAD Quick Start](./docs/GOAD_QUICK_START.md) for deployment instructions.
+# 3 — Open the dashboard, then configure & deploy from the browser
+#     http://localhost:5000
+```
 
-### CCRTS-Lab (CREST Exam Mirror)
+`setup-dashboard.sh` writes `configs/dashboard.tfvars` from your answers, `terraform apply`s a new Dashboard Server (own VPC, public EIP, IP-locked, IAM instance role), syncs the code, and registers a systemd service so the app runs persistently.
 
-AWS-hosted rehearsal environment that mirrors the **CCRTS** (CREST Certified Red Team Specialist) exam estate. Uses the publicly available CREST Community AMIs (account `126620636130`) copied cross-region into `eu-central-1`, with an AD estate and an ELK stack for detection-rule iteration. A single, fully self-contained deployment type — no size tiers and no C2 integration.
+> **Local CLI is dev-only.** You *can* run the dashboard on your laptop or deploy straight from `./scripts/deployment/deploy.sh`, but real engagements run on the AWS Dashboard Server.
 
-| Lab | Hosts | Description | Est. Cost |
-|-----|-------|-------------|-----------|
-| **ccrts** | 5 | Kali + Windows ws + DC (`ccrts.local`) + domain-joined ws + ELK (self-contained, no C2) | ~$310/mo |
+**Full walkthrough → [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md)** (prompt-by-prompt setup, second-operator onboarding, verification, and troubleshooting).
 
-**Key Features:**
-- CREST Community AMIs (Kali + Windows) auto-discovered and copied to `eu-central-1`
-- `ccrts.local` AD estate (DC + domain-joined Win workstation)
-- Single-node ELK stack for detection-rule development
-- Fully isolated — connects through the Dashboard Server jump (no public-facing services, no C2 peering)
-- Cobalt Strike not included — exam CS is licensed only inside Pearson VUE; bring your own (runs on the Kali host directly)
-
-See [CCRTS-Lab Operator Guide](./docs/CCRTS_LAB.md) for deployment, connection, and upgrade details.
+---
 
 ## Documentation
 
-### Essential Guides (Start Here)
+<details open>
+<summary><strong>Essential guides</strong></summary>
 
-- **[Getting Started Guide](./docs/GETTING_STARTED.md)** — Complete step-by-step setup for new operators (the blessed AWS-dashboard path)
-- **[Web Application Guide](./webapp/README.md)** — The web interface for infrastructure management
-- **[Centralized Dashboard Design](./docs/CENTRALIZED_DASHBOARD_DESIGN.md)** — Full Dashboard Server architecture
-- **[Dashboard Server Jump Host Guide](./docs/BASTION_JUMPBOX.md)** — Single SSH jump into all instances (+ the GOAD provisioning jumpbox)
-- **[Access Methods](./docs/ACCESS_METHODS.md)** — How to access C2 servers and deployed instances
-- **[AWS Authentication Guide](./docs/AWS_AUTHENTICATION.md)** — How deployment connects to AWS (credentials / IAM instance role)
+- **[Getting Started Guide](./docs/GETTING_STARTED.md)** — complete step-by-step setup for new operators
+- **[Web Application Guide](./webapp/README.md)** — the browser control plane
+- **[Centralized Dashboard Design](./docs/CENTRALIZED_DASHBOARD_DESIGN.md)** — full Dashboard Server architecture
+- **[Dashboard Server Jump Host Guide](./docs/BASTION_JUMPBOX.md)** — the single-jump access model
+- **[Access Methods](./docs/ACCESS_METHODS.md)** — every way to reach deployed instances
+- **[AWS Authentication](./docs/AWS_AUTHENTICATION.md)** — how deployment authenticates to AWS
 
-### Prerequisites
+</details>
 
-- **[Domain Requirements](./docs/DOMAIN_REQUIREMENTS.md)** — REQUIRED — domain registration and DNS setup
-- **[Cobalt Strike Deployment](./docs/COBALT_STRIKE_DEPLOYMENT.md)** — REQUIRED — Cobalt Strike upload and deployment automation
-- **[Tools Repository Quick Start](./docs/TOOLS_REPOSITORY_QUICK_START.md)** — Optional — tools repo setup and multi-user access
+<details>
+<summary><strong>Prerequisites</strong></summary>
 
-### Labs
+- **[Domain Requirements](./docs/DOMAIN_REQUIREMENTS.md)** — domain registration & DNS
+- **[Cobalt Strike Deployment](./docs/COBALT_STRIKE_DEPLOYMENT.md)** — CS archive upload & automation
+- **[Tools Repository Quick Start](./docs/TOOLS_REPOSITORY_QUICK_START.md)** — optional tooling auto-deploy
 
-- **[GOAD Quick Start](./docs/GOAD_QUICK_START.md)** — Deploy vulnerable AD labs
-- **[CCRTS-Lab Operator Guide](./docs/CCRTS_LAB.md)** — CREST exam-mirror lab (CREST Community AMIs + AD + ELK)
-- **[Deployment Modes](./docs/DEPLOYMENT_MODES.md)** — C2 deployment sizing (adhoc / purple / full)
+</details>
 
-### Reference
+<details>
+<summary><strong>Labs & reference</strong></summary>
 
-- **[Quick Reference](./docs/QUICK_REFERENCE.md)** — Quick commands and checklists
-- **[Ansible SSH Key Distribution](./docs/ANSIBLE_SSH_KEYS.md)** — Automated SSH key distribution to all instances
-- **[Tools Repository Setup](./docs/TOOLS_REPOSITORY_SETUP.md)** — Create the tools repo and configure multi-user access
-- **[Tools Repository Access](./docs/TOOLS_REPOSITORY_ACCESS.md)** — Accessing tools on the jumpbox
-- **[SSL Configuration](./docs/SSL_CONFIGURATION.md)** — TLS / certificate setup for redirectors
-- [High-Level Plan](./PLAN.md) — Comprehensive project plan and architecture
+- **[GOAD Quick Start](./docs/GOAD_QUICK_START.md)** — deploy vulnerable AD labs
+- **[CCRTS-Lab Operator Guide](./docs/CCRTS_LAB.md)** — CREST exam-mirror lab (AMIs + AD + ELK)
+- **[Deployment Modes](./docs/DEPLOYMENT_MODES.md)** — C2 sizing (adhoc / purple / full)
+- **[Quick Reference](./docs/QUICK_REFERENCE.md)** — commands & checklists
+- **[Ansible SSH Key Distribution](./docs/ANSIBLE_SSH_KEYS.md)** — automated key distribution
+- **[Tools Repository Setup](./docs/TOOLS_REPOSITORY_SETUP.md)** · **[Access](./docs/TOOLS_REPOSITORY_ACCESS.md)** — tools repo & multi-user access
+- **[SSL Configuration](./docs/SSL_CONFIGURATION.md)** — TLS / certificates for redirectors
+- **[High-Level Plan](./PLAN.md)** — comprehensive project plan & architecture
 
-### Legacy / Internal (historical design notes)
+</details>
 
-These are archived design and planning documents, kept for history. They are not part of the supported onboarding path.
+<details>
+<summary><strong>Legacy / internal (historical design notes)</strong></summary>
 
-- [GOAD Integration Plan](./docs/legacy/internal/GOAD_INTEGRATION_PLAN.md) — original GOAD integration architecture
-- [Deployment Guide (legacy)](./docs/legacy/internal/deployment-guide.md) — older CLI deployment notes
-- [Scripting Guide (legacy)](./docs/legacy/internal/scripting-guide.md) — automation-script internals
-- [GitHub Setup (legacy)](./docs/legacy/internal/GITHUB_SETUP.md) — repository / collaboration setup notes
+Archived design and planning documents, kept for history — not part of the supported onboarding path.
 
-## Security
+- [GOAD Integration Plan](./docs/legacy/internal/GOAD_INTEGRATION_PLAN.md)
+- [Deployment Guide (legacy)](./docs/legacy/internal/deployment-guide.md)
+- [Scripting Guide (legacy)](./docs/legacy/internal/scripting-guide.md)
+- [GitHub Setup (legacy)](./docs/legacy/internal/GITHUB_SETUP.md)
 
-> **Important**: This infrastructure is designed for authorized red team operations only. Ensure you have proper authorization before deploying.
+</details>
 
-- Single SSH entry point — the Dashboard Server, gated by SSH key + IP allow-list
-- All secrets stored in AWS Secrets Manager
-- IAM roles with least privilege; the Dashboard Server uses an IAM instance role (no static keys on disk)
-- Network isolation via VPC; C2 servers live in private subnets and are never directly internet-facing
-- S3 confused-deputy protection (3-layer: trust policy, permission policy, bucket policy)
-- Comprehensive logging and monitoring
+---
 
-## Contributing
+## Security & Authorized Use
 
-1. Create a feature branch
-2. Make your changes
-3. Test thoroughly
-4. Submit a pull request
+> This platform automates offensive-security tooling and is intended **only for lawful, authorized red-team engagements and training**. Ensure you have explicit permission before deploying.
+
+- **Single SSH entry point** — the Dashboard Server, gated by SSH key + IP allow-list.
+- **Least-privilege IAM** — the Dashboard Server uses an IAM instance role; no static AWS keys live on operator laptops.
+- **Secrets in AWS Secrets Manager** — team-server and host credentials are never committed to source.
+- **Network isolation** — C2 servers live in private subnets and are never directly internet-facing; redirectors front all callbacks.
+- **S3 confused-deputy protection** — 3-layer defense (trust policy + permission policy + bucket policy).
+
+---
 
 ## License
 
-[Specify your license here]
-
-## Support
-
-For issues and questions, please open an issue in the repository.
+**All Rights Reserved.** This repository is published publicly for portfolio review and evaluation viewing only — no use, copying, modification, or distribution is permitted without prior written consent. See **[LICENSE](./LICENSE)** for the full terms.
