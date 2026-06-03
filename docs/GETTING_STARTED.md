@@ -1,657 +1,307 @@
 # Getting Started Guide
 
-This guide will walk you through setting up and deploying the Red Team Infrastructure from scratch. Follow these steps in order.
+This guide walks a brand-new operator from an empty laptop to a deployed engagement. It follows the **single blessed path**: provision the AWS **Dashboard Server**, then drive everything from the browser.
 
-## Deployment Modes
+The Dashboard Server is a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public Elastic IP, locked to your IP and SSH key. It is the **production control plane and the sole SSH jump host** — every C2/GOAD/CCRTS deployment branches out from it via VPC peering. You provision it once; after that, operators only need an SSH key and a browser.
 
-Production runs on the **AWS Dashboard Server**. There are two ways to run the dashboard:
-
-- **Dashboard Server (production)** — The dashboard runs on a dedicated EC2 instance in its own VPC (`10.100.0.0/16`) with a public EIP. It is the production control plane AND the SSH jump host: every deployment branches out from it via VPC peering. Operators SSH tunnel in; AWS credentials are handled by an IAM instance role. One server serves the whole team. **This is the path for real engagements.**
-- **Local Dev** — Run the dashboard from your laptop for development/testing only. You need AWS credentials, Terraform, and all prerequisites installed locally. Not the production path — use the AWS Dashboard Server for that.
-
-For production, follow [Server Mode Setup](#server-mode-setup). For local development, follow the Local Dev section below.
+> **Running the dashboard on your laptop is dev/test only.** Real engagements run on the AWS Dashboard Server. The local-dev CLI path is covered briefly at the end under [Advanced: Local Dev / CLI](#advanced-local-dev--cli).
 
 ## Table of Contents
 
-1. [Local Mode Setup](#local-mode-setup)
-   - [Prerequisites](#prerequisites)
-   - [Initial Setup](#initial-setup)
-   - [AWS Configuration](#aws-configuration)
-   - [Project Configuration](#project-configuration)
-   - [First Deployment](#first-deployment)
-   - [Verification](#verification)
-2. [Server Mode Setup](#server-mode-setup)
-3. [Troubleshooting](#troubleshooting)
+1. [Local Prerequisites](#1-local-prerequisites)
+2. [Provision the Dashboard Server](#2-provision-the-dashboard-server)
+3. [Connect to the Dashboard](#3-connect-to-the-dashboard)
+4. [Your First Deployment (via the UI)](#4-your-first-deployment-via-the-ui)
+5. [Onboard a Second Operator](#5-onboard-a-second-operator)
+6. [Verification](#6-verification)
+7. [Where to Go Next](#7-where-to-go-next)
+8. [Advanced: Local Dev / CLI](#advanced-local-dev--cli)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
-## Local Dev Setup
+## 1. Local Prerequisites
 
-> **Note:** This section covers running the dashboard from your laptop **for development/testing only**. Production runs on the AWS Dashboard Server — skip to [Server Mode Setup](#server-mode-setup) for the real-engagement path.
+You run the one-time setup script from your laptop. Install these first.
 
-## Prerequisites
+### AWS account + credentials
 
-### Required Software
+You need an AWS account with permission to create VPCs, EC2 instances, and IAM roles, plus the AWS CLI configured:
 
-Before starting, ensure you have the following installed on your local machine:
-
-#### 1. AWS CLI
 ```bash
-# Check if installed
-aws --version
+# Install the AWS CLI
+brew install awscli                 # macOS
+# Linux: curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip && unzip awscliv2.zip && sudo ./aws/install
 
-# Install (macOS)
-brew install awscli
-
-# Install (Linux)
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-unzip awscliv2.zip
-sudo ./aws/install
-
-# Install (Windows)
-# Download from: https://aws.amazon.com/cli/
+aws configure                       # enter Access Key, Secret Key, default region, output=json
+aws sts get-caller-identity         # verify — should print your account/ARN
 ```
 
-#### 2. Terraform
+### Terraform >= 1.0
+
 ```bash
-# Check if installed
+brew install terraform              # macOS (or use HashiCorp tap)
 terraform --version
-
-# Install (macOS)
-brew install terraform
-
-# Install (Linux)
-wget https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip
-unzip terraform_1.6.0_linux_amd64.zip
-sudo mv terraform /usr/local/bin/
-
-# Install (Windows)
-# Download from: https://www.terraform.io/downloads
 ```
 
-#### 3. Ansible
-```bash
-# Check if installed
-ansible --version
-
-# Install (macOS)
-brew install ansible
-
-# Install (Linux)
-sudo apt-get update
-sudo apt-get install ansible
-
-# Install (Windows)
-pip install ansible
-```
-
-#### 4. Python 3
-```bash
-# Check if installed
-python3 --version
-
-# Install (macOS)
-brew install python3
-
-# Install (Linux)
-sudo apt-get install python3 python3-pip
-```
-
-#### 5. jq (JSON processor)
-```bash
-# Check if installed
-jq --version
-
-# Install (macOS)
-brew install jq
-
-# Install (Linux)
-sudo apt-get install jq
-
-# Install (Windows)
-# Download from: https://stedolan.github.io/jq/download/
-```
-
-#### 6. Git
-```bash
-# Check if installed
-git --version
-
-# Install (macOS)
-# Usually pre-installed, or: brew install git
-
-# Install (Linux)
-sudo apt-get install git
-```
-
-### Required Accounts
-
-1. **AWS Account** with appropriate permissions
-   - Ability to create VPCs, EC2 instances, IAM roles
-   - Billing enabled
-   - Access to AWS Console
-
-2. **Domain Registrations** ⚠️ **REQUIRED PREREQUISITE**
-   - **Primary domain** for C2 infrastructure
-   - **2-3 backup domains** for redundancy and OpSec
-   - See [Domain Requirements Guide](./DOMAIN_REQUIREMENTS.md) for details
-   - **Estimated Cost**: $30-60/year for 2-3 domains
-
-3. **GitHub Account** (optional, for version control)
-   - For private repository hosting
-   - For collaboration
-
-## Initial Setup
-
-### Step 0: Register Domains (REQUIRED PREREQUISITE) ⚠️
-
-**Before proceeding with infrastructure setup, you MUST register domains:**
-
-1. **Register Primary Domain**
-   - Choose a legitimate-sounding domain name
-   - Enable privacy protection
-   - Set up auto-renewal
-   - Document registrar and credentials
-
-2. **Register Backup Domains** (2-3 minimum)
-   - Use different registrars if possible
-   - Different TLDs recommended (.com, .net, .org)
-   - Enable privacy protection on all
-
-3. **Set Up DNS Management**
-   - Create Route53 hosted zones (if using Route53)
-   - Update nameservers at registrar
-   - Verify DNS propagation
-
-**Time Required**: 1-2 hours  
-**Cost**: $30-60/year for 2-3 domains
-
-**📖 See [Domain Requirements Guide](./DOMAIN_REQUIREMENTS.md) for complete details**
-
-### Step 1: Clone or Download the Project
-
-If using Git:
-```bash
-git clone <repository-url>
-cd Red_Team_Infra
-```
-
-If downloading manually:
-```bash
-# Extract the project to your desired location
-cd Red_Team_Infra
-```
-
-### Step 2: Install Python Dependencies
+### ssh, rsync, git, jq
 
 ```bash
-# Create virtual environment (recommended)
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# macOS
+brew install rsync git jq           # ssh and git are usually preinstalled
 
-# Install dependencies
-pip install -r requirements.txt
+# Debian/Ubuntu
+sudo apt-get update && sudo apt-get install -y openssh-client rsync git jq
+
+ssh -V && rsync --version | head -1 && git --version && jq --version
 ```
 
-### Step 3: Verify Prerequisites
+### An SSH key pair
 
-Run this command to check all prerequisites:
-```bash
-# Check AWS CLI
-aws --version || echo "ERROR: AWS CLI not installed"
-
-# Check Terraform
-terraform --version || echo "ERROR: Terraform not installed"
-
-# Check Ansible
-ansible --version || echo "ERROR: Ansible not installed"
-
-# Check Python
-python3 --version || echo "ERROR: Python 3 not installed"
-
-# Check jq
-jq --version || echo "ERROR: jq not installed"
-```
-
-All commands should return version information. If any fail, install the missing tool before proceeding.
-
-## AWS Configuration
-
-### Step 1: Configure AWS Credentials
-
-You have two options:
-
-#### Option A: AWS CLI Configuration (Recommended for Development)
-```bash
-aws configure
-```
-
-You'll be prompted for:
-- **AWS Access Key ID**: Your AWS access key
-- **AWS Secret Access Key**: Your AWS secret key
-- **Default region**: e.g., `us-east-1`
-- **Default output format**: `json`
-
-#### Option B: Environment Variables
-```bash
-export AWS_ACCESS_KEY_ID="your-access-key"
-export AWS_SECRET_ACCESS_KEY="your-secret-key"
-export AWS_DEFAULT_REGION="us-east-1"
-```
-
-### Step 2: Verify AWS Access
+The setup script auto-detects `~/.ssh/id_ed25519.pub`, `~/.ssh/id_rsa.pub`, or `~/.ssh/id_ecdsa.pub` (and common Windows/WSL locations). If you don't have one:
 
 ```bash
-# Test your credentials
-aws sts get-caller-identity
+ssh-keygen -t ed25519 -C "you@machine"
 ```
 
-You should see output like:
-```json
-{
-    "UserId": "AIDA...",
-    "Account": "123456789012",
-    "Arn": "arn:aws:iam::123456789012:user/your-username"
-}
-```
+This key is used for two things: creating your Linux user on the Dashboard Server, and letting the setup script `rsync`/SSH into it.
 
-### Step 3: Create S3 Bucket for Terraform State (Optional but Recommended)
-
-```bash
-# Set your bucket name (must be globally unique)
-BUCKET_NAME="red-team-terraform-state-$(date +%s)"
-
-# Create bucket
-aws s3 mb s3://$BUCKET_NAME --region us-east-1
-
-# Enable versioning
-aws s3api put-bucket-versioning \
-    --bucket $BUCKET_NAME \
-    --versioning-configuration Status=Enabled
-
-# Enable encryption
-aws s3api put-bucket-encryption \
-    --bucket $BUCKET_NAME \
-    --server-side-encryption-configuration '{
-        "Rules": [{
-            "ApplyServerSideEncryptionByDefault": {
-                "SSEAlgorithm": "AES256"
-            }
-        }]
-    }'
-
-echo "Bucket created: $BUCKET_NAME"
-echo "Add this to your terraform.tfvars: terraform_backend_bucket = \"$BUCKET_NAME\""
-```
-
-### Step 4: Create DynamoDB Table for State Locking (Optional but Recommended)
-
-```bash
-# Create DynamoDB table for state locking
-aws dynamodb create-table \
-    --table-name terraform-state-lock \
-    --attribute-definitions AttributeName=LockID,AttributeType=S \
-    --key-schema AttributeName=LockID,KeyType=HASH \
-    --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
-    --region us-east-1
-
-echo "DynamoDB table created for state locking"
-```
-
-### Step 5: Create EC2 Key Pair
-
-```bash
-# Generate a new key pair
-KEY_NAME="red-team-keypair"
-aws ec2 create-key-pair \
-    --key-name $KEY_NAME \
-    --query 'KeyMaterial' \
-    --output text > ~/.ssh/$KEY_NAME.pem
-
-# Set proper permissions
-chmod 400 ~/.ssh/$KEY_NAME.pem
-
-echo "Key pair created: $KEY_NAME"
-echo "Private key saved to: ~/.ssh/$KEY_NAME.pem"
-```
-
-**Important**: Save the key pair name - you'll need it in the configuration file.
-
-## Project Configuration
-
-### Step 1: Copy Configuration Template
-
-```bash
-cd Red_Team_Infra
-cp configs/terraform.tfvars.example configs/terraform.tfvars
-```
-
-### Step 2: Edit Configuration File
-
-Open `configs/terraform.tfvars` in your preferred editor and update the following:
-
-**⚠️ IMPORTANT**: You must have registered your domains before configuring this section!
-
-```hcl
-# Required: AWS Configuration
-aws_region = "us-east-1"  # Change to your preferred region
-aws_profile = "default"   # Or your AWS profile name
-
-# Required: Project Configuration
-project_name = "red-team-infra"  # Your project name
-environment = "dev"              # dev, staging, or prod
-
-# Required: VPC Configuration
-vpc_cidr = "10.0.0.0/16"  # CIDR block for your VPC
-availability_zones = ["us-east-1a", "us-east-1b"]  # Adjust for your region
-
-# Required: Subnet Configuration
-public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
-private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
-
-# Required: EC2 Configuration
-instance_type = "t3.medium"  # Instance size
-key_pair_name = "red-team-keypair"  # The key pair you created
-instance_count = 2  # Number of instances
-
-# Required: Security Configuration
-allowed_cidr_blocks = ["YOUR.IP.ADDRESS.HERE/32"]  # Your public IP for SSH access
-enable_ssh_access = true
-ssh_port = 22
-
-# Optional: Terraform Backend (if you created S3 bucket)
-terraform_backend_bucket = "red-team-terraform-state-1234567890"
-terraform_backend_region = "us-east-1"
-terraform_backend_key = "terraform.tfstate"
-
-# Domain Configuration (REQUIRED - see DOMAIN_REQUIREMENTS.md)
-primary_domain_name = "your-domain.com"  # Your registered primary domain
-primary_domain_hosted_zone_id = ""  # Route53 hosted zone ID (if using Route53)
-
-# Backup Domains (REQUIRED - minimum 2-3)
-backup_domains = [
-  {
-    domain_name = "backup-domain-1.com"
-    hosted_zone_id = ""
-  },
-  {
-    domain_name = "backup-domain-2.net"
-    hosted_zone_id = ""
-  }
-]
-
-# Subdomain Configuration
-c2_subdomain = "c2"
-www_subdomain = "www"
-cdn_subdomain = "cdn"
-```
-
-### Step 3: Find Your Public IP Address
-
-```bash
-# Get your public IP
-curl ifconfig.me
-# or
-curl ipinfo.io/ip
-```
-
-Add this IP to `allowed_cidr_blocks` in the format: `"YOUR.IP.ADDRESS/32"`
-
-### Step 4: Configure Ansible Inventory (After First Deployment)
-
-The Ansible inventory will be generated automatically after the first Terraform deployment. However, you can create a template:
-
-```bash
-cp ansible/inventory/hosts.yml.example ansible/inventory/hosts.yml
-```
-
-You'll update this with actual IP addresses after the first deployment.
-
-## First Deployment
-
-### Step 1: Review the Deployment Script
-
-Before running, review what the deployment script will do:
-
-```bash
-cat scripts/deployment/deploy.sh
-```
-
-### Step 2: Run the Deployment
-
-```bash
-# Make script executable (if needed)
-chmod +x scripts/deployment/deploy.sh
-
-# Run deployment
-./scripts/deployment/deploy.sh
-```
-
-The script will:
-1. ✅ Check all prerequisites
-2. ✅ Verify AWS credentials
-3. ✅ Validate configuration files
-4. ✅ Initialize Terraform
-5. ✅ Plan infrastructure changes
-6. ⚠️ Ask for confirmation
-7. ✅ Deploy infrastructure
-8. ✅ Wait for instances to be ready
-9. ✅ Configure instances with Ansible
-
-### Step 3: Monitor the Deployment
-
-The script will output progress information. Watch for:
-- ✅ Green `[INFO]` messages for successful steps
-- ⚠️ Yellow `[WARN]` messages for warnings
-- ❌ Red `[ERROR]` messages for failures
-
-### Step 4: Save Output Information
-
-After successful deployment, the script creates `terraform-outputs.json` with connection information. Save this file securely.
-
-```bash
-# View outputs
-cat terraform-outputs.json | jq
-```
-
-## Verification
-
-### Step 1: Check Infrastructure Health
-
-```bash
-# Run health check script
-chmod +x scripts/utilities/health-check.sh
-./scripts/utilities/health-check.sh
-```
-
-### Step 2: Verify EC2 Instances
-
-```bash
-# List instances
-aws ec2 describe-instances \
-    --filters "Name=tag:Project,Values=RedTeamInfra" \
-    --query 'Reservations[*].Instances[*].[InstanceId,State.Name,PublicIpAddress,Tags[?Key==`Name`].Value|[0]]' \
-    --output table
-```
-
-### Step 3: Test SSH Connection
-
-```bash
-# Get instance IP from outputs
-INSTANCE_IP=$(jq -r '.instance_public_ips.value[0]' terraform-outputs.json)
-
-# Test SSH connection
-ssh -i ~/.ssh/red-team-keypair.pem ec2-user@$INSTANCE_IP "echo 'SSH connection successful'"
-```
-
-### Step 4: Verify Ansible Configuration
-
-```bash
-# Test Ansible connectivity
-cd ansible
-ansible all -i inventory/hosts.yml -m ping
-```
+> **No domain or Cobalt Strike archive needed yet.** Those are deployment prerequisites you'll handle in the browser at Step 4 — not for provisioning the Dashboard Server itself.
 
 ---
 
-## Server Mode Setup
+## 2. Provision the Dashboard Server
 
-Server Mode runs the dashboard on a dedicated EC2 instance (t3.medium) in its own VPC (10.100.0.0/16). The server uses an IAM instance role for AWS authentication, so no credentials are stored on disk. Operators SSH tunnel into the server to access the dashboard.
-
-### Step 1: Clone the Repository
-
-On the machine you will use to provision the server (your laptop, or any machine with AWS CLI configured):
+Clone the repo and run the interactive setup script:
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/harr-sudo/Red_Team_Infra.git
 cd Red_Team_Infra
-```
-
-### Step 2: Run the Server Setup Script
-
-```bash
 ./scripts/server/setup-dashboard.sh
 ```
 
-This script will:
-1. Provision the dashboard EC2 instance with an IAM instance role
-2. Create the dashboard VPC (10.100.0.0/16) with VPC peering to deployment VPCs
-3. Install all dependencies (Terraform, Ansible, Python, etc.) on the server
-4. Configure the Flask dashboard to start on boot
-5. Output the server's public IP and SSH connection details
+### What each prompt asks
 
-### Step 3: Upload the Cobalt Strike Archive
+The script first checks prerequisites and verifies your AWS credentials, then prompts for:
 
-SCP the Cobalt Strike archive to the server once. It will be reused for all future deployments:
+| Prompt | What it is | Default |
+|---|---|---|
+| **SSH public key path** | The key used to create your Linux user and to rsync/SSH into the server | Auto-detected (`~/.ssh/id_ed25519.pub`, etc.) |
+| **Your operator name** | Your Linux username on the server (lowercase, starts with a letter) | Your current `whoami` |
+| **Your public IP** | Added to the SSH allow-list as `/32` | Auto-detected via `api.ipify.org` |
+| **AWS region** | Region the Dashboard Server is created in | `aws configure get region`, else `eu-central-1` |
+| **Second operator SSH key** | Optional — paste a colleague's public key to onboard them now | Skipped if blank (asks for their name + IP if provided) |
 
-```bash
-scp cobaltstrike-dist.tgz ubuntu@<dashboard-eip>:~/
+Press Enter to accept any auto-detected default.
+
+### What it provisions
+
+After you confirm the Terraform plan (`yes`), the script:
+
+1. Writes your answers to `configs/dashboard.tfvars` (`enable_dashboard_server = true`, `dashboard_allowed_ips`, `operator_ssh_public_keys`).
+2. Runs `terraform apply` on `module.dashboard_server`, creating a **new EC2 "Dashboard Server"** in its own VPC (`10.100.0.0/16`), with a public EIP, a security group locked to your IP + SSH key, and an IAM instance role (so no AWS keys are ever stored on the box).
+3. Waits for the instance to pass status checks — **roughly 2-3 minutes** — then gives `user_data` a moment to finish.
+4. `rsync`s the repo to `/opt/redteam` (excluding local-only junk, secrets, and large artifacts), generates a server-side SSH keypair used to reach deployed instances, creates a Python venv, and `pip install`s dependencies.
+5. Initializes Terraform on the server (S3 backend) and registers a **systemd `dashboard` service** so the Flask web app runs persistently and restarts on boot.
+
+When it's done it prints your connect command and IP:
+
+```
+  IP:       <dashboard-eip>
+  Connect:  ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>
+  Open:     http://localhost:5000
 ```
 
-### Step 4: SSH Tunnel In and Open the Dashboard
-
-```bash
-# Create the SSH tunnel to the Dashboard Server (public EIP)
-ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
-
-# Open in your browser
-# http://localhost:5000
-```
-
-The dashboard will detect it is running in server mode and enable:
-- Direct VPC peering access to all instances
-- In-browser Terminal tab for SSH to any instance
-- IAM instance role authentication (no AWS credentials prompt)
-
-### Step 5: Onboard Additional Operators
-
-Each additional operator needs:
-
-1. **SSH access to the Dashboard Server** — Add their public key (and source IP to the allow-list) so they can reach the server.
-2. **SSH tunnel command:**
-   ```bash
-   ssh -L 5000:localhost:5000 <operator-username>@<dashboard-eip>
-   ```
-3. **Browser** — Open `http://localhost:5000` after tunneling in.
-
-That is it. Operators do not need AWS CLI, Terraform, or any other tooling installed locally. The server handles everything.
-
-### Dashboard Server (production) vs Local Dev Summary
-
-| | Local Dev | Dashboard Server (production) |
-|---|-----------|-------------|
-| **Where dashboard runs** | Operator laptop (dev/testing only) | AWS EC2 instance (own VPC, public EIP) |
-| **AWS auth** | `~/.aws/credentials` on each laptop | IAM instance role (auto-rotating) |
-| **Terraform runs on** | Operator laptop | Server |
-| **Instance access** | SSM / direct SSH to public hosts | Jump via Dashboard Server (Terminal tab / VPC peering) |
-| **CS archive** | Each operator needs it | SCP once to server |
-| **Multi-operator** | Each sets up independently | One server, SSH tunnel in |
-| **REST API** | SSH tunnel from laptop | Direct via VPC peering |
-
-> There is no per-deployment SSH-relay bastion — the AWS Dashboard Server is the sole SSH jump into all instances.
+> **Re-running is safe.** If a Dashboard Server already exists, the script offers a **resume mode** that re-syncs code, reinstalls deps, and restarts the service without recreating the instance. Use this to push code updates too (or use `dashboard-manage.sh upgrade` from the server).
 
 ---
 
-## Next Steps
+## 3. Connect to the Dashboard
 
-After successful deployment:
-
-1. **Review Infrastructure**: Check AWS Console to verify all resources
-2. **Configure C2**: Run C2 setup scripts (when implemented)
-3. **Set Up Monitoring**: Configure CloudWatch alarms
-4. **Document Changes**: Update any custom configurations
-5. **Backup Configurations**: Run backup script
+From your laptop, open the SSH tunnel printed by the setup script:
 
 ```bash
-# Backup configurations
-chmod +x scripts/utilities/backup.sh
-./scripts/utilities/backup.sh
+ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>
 ```
+
+Leave that session open, then browse to:
+
+```
+http://localhost:5000
+```
+
+The dashboard runs on the EC2 and authenticates to AWS through its IAM instance role — you will not be prompted for AWS credentials. Because the Dashboard Server is the jump host, its in-browser Terminal can SSH straight to any instance you later deploy.
+
+---
+
+## 4. Your First Deployment (via the UI)
+
+Everything below happens in the browser.
+
+### Step 1 — Pick a deployment type
+
+On the Configure page, choose one of the **12** deployment types:
+
+- **C2-Only:** `c2-adhoc`, `c2-purple`, `c2-full`
+- **GOAD-Only:** `goad-mini`, `goad-light`, `goad-sccm`, `goad-full`, `goad-nha`
+- **CCRTS:** `ccrts` (self-contained CREST exam-mirror lab — no C2 integration)
+- **Combined:** `combined-adhoc-mini`, `combined-adhoc-light`, `combined-full-full`
+
+If you're new, `c2-adhoc` is the smallest C2 footprint to start with. For lab practice without C2, `goad-mini` or `ccrts` are good first picks.
+
+### Step 2 — Satisfy the prerequisites
+
+For any C2 deployment the dashboard validates two prerequisites before it lets you deploy:
+
+1. **Domain** — register a primary domain (2-3 backups recommended for OpSec) and set it in the config. Full walkthrough: **[Domain Requirements](./DOMAIN_REQUIREMENTS.md)**.
+2. **Cobalt Strike archive** — upload your `.tar.gz` / `.zip` / `.tar` through the Deploy tab. It's stored once on the server and reused for every future C2 deployment. Full walkthrough: **[Cobalt Strike Deployment](./COBALT_STRIKE_DEPLOYMENT.md)**.
+
+Optionally point at a **tools repository** to auto-deploy your tooling to the jumpbox / attack box — see [Tools Repository Quick Start](./TOOLS_REPOSITORY_QUICK_START.md). Pure `goad-*` and `ccrts` deployments don't require the domain or Cobalt Strike prerequisites.
+
+### Step 3 — Deploy and watch the logs
+
+Click **Deploy**. The dashboard runs Terraform on the server and streams the logs live. C2/GOAD/CCRTS deployments are created in their own VPC and **peered back to the Dashboard Server**, so the dashboard immediately becomes the jump into every new instance — no per-deployment bastion is created.
+
+When it finishes, use the **Terminal** tab to SSH into any instance, or the tunnel shortcuts for RDP (attack box / GOAD VMs), the Cobalt Strike client, and the REST API. See [Access Methods](./ACCESS_METHODS.md) for every connection pattern.
+
+---
+
+## 5. Onboard a Second Operator
+
+A second operator needs only an SSH key + a browser. Add them in one of two ways.
+
+**Option A — re-run the setup script.** Run `./scripts/server/setup-dashboard.sh` again and answer the second-operator prompts (paste their public key, name, and IP). In resume mode this updates the config and re-applies.
+
+**Option B — edit the config and apply.** Add their public key and source IP to `configs/dashboard.tfvars`:
+
+```hcl
+dashboard_allowed_ips = [
+  "YOUR_PUBLIC_IP/32",
+  "SECOND_OPERATOR_IP/32",
+]
+
+operator_ssh_public_keys = {
+  "your-username" = "ssh-ed25519 AAAA... you@machine"
+  "operator2"     = "ssh-ed25519 AAAA... operator2@laptop"
+}
+```
+
+Then apply:
+
+```bash
+cd terraform
+terraform apply -var-file=../configs/dashboard.tfvars -target=module.dashboard_server
+```
+
+They then connect exactly like you do:
+
+```bash
+ssh -L 5000:localhost:5000 operator2@<dashboard-eip>
+# then open http://localhost:5000
+```
+
+No AWS CLI, Terraform, or other tooling is required on their laptop — the server handles everything.
+
+---
+
+## 6. Verification
+
+**Dashboard Server is up:**
+
+```bash
+cd terraform
+terraform output dashboard_public_ip      # should print the EIP
+```
+
+**Service is running** (SSH to the server, no tunnel needed):
+
+```bash
+ssh <operator>@<dashboard-eip>
+./scripts/server/dashboard-manage.sh status   # systemd status + disk + active sessions
+./scripts/server/dashboard-manage.sh logs     # stream the Flask logs
+```
+
+**Dashboard reachable:** the tunnel from Step 3 is open and `http://localhost:5000` loads.
+
+**A deployment is healthy:** after deploying, run the health check from the server or use the dashboard's Host Setup Checker (SSM-based bootstrap validation across all instances):
+
+```bash
+./scripts/utilities/health-check.sh
+```
+
+---
+
+## 7. Where to Go Next
+
+- **[Access Methods](./ACCESS_METHODS.md)** — every way to reach C2 servers and deployed instances through the Dashboard Server
+- **[Dashboard Server Jump Host Guide](./BASTION_JUMPBOX.md)** — the jump-host model in depth (and the GOAD provisioning jumpbox, which is *not* an access bastion)
+- **[Centralized Dashboard Design](./CENTRALIZED_DASHBOARD_DESIGN.md)** — full architecture of the control plane
+- **[GOAD Quick Start](./GOAD_QUICK_START.md)** — deploy and use the vulnerable AD labs
+- **[CCRTS-Lab Operator Guide](./CCRTS_LAB.md)** — the CREST exam-mirror lab (CREST Community AMIs + AD + ELK)
+- **[Cobalt Strike Deployment](./COBALT_STRIKE_DEPLOYMENT.md)** and **[Domain Requirements](./DOMAIN_REQUIREMENTS.md)** — the deployment prerequisites in detail
+- **[Quick Reference](./QUICK_REFERENCE.md)** — commands and checklists
+
+---
+
+## Advanced: Local Dev / CLI
+
+> This is **not** the production path. Use it only for developing the framework itself or quick local testing. Production runs on the AWS Dashboard Server above.
+
+To run the dashboard on your laptop or deploy straight from the CLI, you need the prerequisites installed locally plus a local config:
+
+```bash
+cd Red_Team_Infra
+
+# Python deps for running the dashboard locally
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# Local deployment config (separate from dashboard.tfvars)
+cp configs/terraform.tfvars.example configs/terraform.tfvars
+# Edit configs/terraform.tfvars — set deployment_type, domain, region, allowed IPs, etc.
+
+# Deploy / check / destroy from the CLI
+./scripts/deployment/deploy.sh
+./scripts/utilities/health-check.sh
+./scripts/deployment/destroy.sh
+```
+
+When running locally you manage instance access yourself (SSM or direct SSH to public hosts) rather than jumping through the Dashboard Server.
+
+---
 
 ## Troubleshooting
 
-### Common Issues
+#### "AWS credentials not configured"
+Run `aws configure` and verify with `aws sts get-caller-identity`. The setup script aborts early if this fails.
 
-#### Issue: "AWS credentials not configured"
-**Solution**: Run `aws configure` and verify with `aws sts get-caller-identity`
+#### Setup script can't find an SSH key
+Generate one with `ssh-keygen -t ed25519`, or pass the path explicitly at the prompt. The public key (`.pub`) is what's expected.
 
-#### Issue: "Terraform not initialized"
-**Solution**: Run `cd terraform && terraform init`
+#### `terraform apply` fails on the dashboard plan
+Check your IAM permissions allow VPC/EC2/IAM creation, and that the region you chose supports the instance type. Re-run the script — it resumes safely.
 
-#### Issue: "Permission denied" when running scripts
-**Solution**: Run `chmod +x scripts/**/*.sh`
+#### Can't open `http://localhost:5000`
+- Confirm the tunnel is still open: `ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>`.
+- On the server, check the service: `./scripts/server/dashboard-manage.sh status` and `... logs`.
+- Confirm your current public IP still matches `dashboard_allowed_ips` (it changes if your network changes) — update `configs/dashboard.tfvars` and re-apply if needed.
 
-#### Issue: "Key pair not found"
-**Solution**: Create key pair in AWS Console or via CLI (see AWS Configuration section)
+#### SSH to the Dashboard Server is refused
+Your source IP must be in the allow-list. If your IP changed, add the new one to `dashboard_allowed_ips` and `terraform apply -target=module.dashboard_server`.
 
-#### Issue: "Instance not accessible via SSH"
-**Solution**: 
-- Check security group allows SSH from your IP
-- Verify key pair name matches configuration
-- Check instance is in "running" state
-
-#### Issue: "Ansible connection failed"
-**Solution**:
-- Verify SSH key permissions: `chmod 400 ~/.ssh/red-team-keypair.pem`
-- Check Ansible inventory has correct IP addresses
-- Verify security groups allow SSH
-
-### Getting Help
-
-1. Check logs in `terraform/` directory
-2. Review Terraform state: `terraform show`
-3. Check AWS CloudWatch Logs
-4. Review Ansible logs: `ansible-playbook -v` for verbose output
-
-### Cleanup and Start Over
-
-If you need to start over:
+#### Restart / manage the service
+From the server:
 
 ```bash
-# Destroy infrastructure
-./scripts/deployment/destroy.sh
-
-# Remove local state (if needed)
-rm -rf terraform/.terraform terraform/terraform.tfstate*
-
-# Re-run deployment
-./scripts/deployment/deploy.sh
+./scripts/server/dashboard-manage.sh restart   # start | stop | restart | status | logs | upgrade
 ```
-
-## Additional Resources
-
-- [Architecture Guide](./architecture.md) - Detailed architecture documentation
-- [Deployment Guide](./deployment-guide.md) - Advanced deployment scenarios
-- [Scripting Guide](./scripting-guide.md) - Understanding the automation scripts
-- [Operational Procedures](./operational-procedures.md) - Day-to-day operations
 
 ## Security Reminders
 
-⚠️ **Important Security Notes**:
+> This infrastructure is for authorized red team operations only. Ensure you have proper authorization before deploying.
 
-1. **Never commit secrets**: The `.gitignore` file excludes sensitive files
-2. **Rotate credentials**: Regularly rotate AWS access keys
-3. **Limit access**: Only grant necessary permissions
-4. **Monitor usage**: Regularly review CloudTrail logs
-5. **Secure backups**: Encrypt backup files containing sensitive data
-
+1. **Never commit secrets** — `.gitignore` excludes `configs/*.tfvars`, SSH keys, and credentials.
+2. **Keep the allow-list tight** — only your (and your team's) `/32` IPs in `dashboard_allowed_ips`.
+3. **Prefer the IAM instance role** — the Dashboard Server authenticates to AWS without static keys; don't add long-lived credentials to it.
+4. **Rotate keys** — rotate operator SSH keys and any AWS keys used locally for the CLI path.
+5. **Monitor usage** — review CloudTrail and the dashboard's cost tracking regularly.

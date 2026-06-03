@@ -41,10 +41,18 @@ case "${1:-help}" in
     ;;
   upgrade)
     echo "Upgrading dashboard..."
-    echo "Note: Run rsync from the lead operator's laptop first:"
-    echo "  rsync -avz --exclude=uploads/ --exclude=local-only/ --exclude=.git/ --exclude=venv/ --exclude=logs/ . user@server:/opt/redteam/"
     echo ""
-    echo "Then run this command on the server to apply:"
+    echo "This step assumes the latest code is ALREADY on the server."
+    echo "Push it first from the lead operator's laptop, either:"
+    echo "  - re-run ./scripts/server/setup-dashboard.sh  (choose resume mode), or"
+    echo "  - rsync directly:"
+    echo "      rsync -rltz --no-perms --no-owner --no-group \\"
+    echo "        --exclude=uploads/ --exclude=local-only/ --exclude=.git/ \\"
+    echo "        --exclude=venv/ --exclude=logs/ --exclude=.terraform/ \\"
+    echo "        --exclude='terraform.tfstate*' --exclude='configs/*.tfvars' \\"
+    echo "        . <operator>@<dashboard-eip>:/opt/redteam/"
+    echo ""
+    echo "Reinstalling dependencies and restarting the service..."
     cd "$REDTEAM_DIR"
     source venv/bin/activate
     pip install -r requirements.txt

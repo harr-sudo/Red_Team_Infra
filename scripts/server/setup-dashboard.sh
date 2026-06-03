@@ -209,6 +209,8 @@ REMOTE_SVC
         echo "  Connect:  ssh -L 5000:localhost:5000 $OPERATOR_NAME@$DASHBOARD_IP"
         echo "  Open:     http://localhost:5000"
         echo ""
+        echo "  Configure + deploy in the browser. Full walkthrough: docs/GETTING_STARTED.md"
+        echo ""
         echo "============================================"
         exit 0
     fi
@@ -380,10 +382,14 @@ fi
 sleep 30
 
 # --- Rsync codebase ---
+# Note: --no-perms/--no-owner/--no-group preserve the server's setgid ownership
+# model (dashboard:redteam, mode 2775) that user_data.sh established on /opt/redteam.
+# configs/*.tfvars are intentionally NOT excluded here so the freshly generated
+# dashboard.tfvars (and terraform.tfvars, if present) reach the server on first provision.
 echo ""
 info "Copying codebase to server..."
 SSH_KEY_PRIVATE="${SSH_KEY_PATH%.pub}"
-rsync -avz --progress \
+rsync -rltz --progress --no-perms --no-owner --no-group \
     --exclude='uploads/' \
     --exclude='uploads_client/' \
     --exclude='uploads_tools/' \
@@ -394,9 +400,13 @@ rsync -avz --progress \
     --exclude='terraform.tfstate*' \
     --exclude='*.tfplan' \
     --exclude='.terraform/' \
+    --exclude='.DS_Store' \
+    --exclude='__pycache__/' \
+    --exclude='*.pyc' \
     -e "ssh -i $SSH_KEY_PRIVATE -o StrictHostKeyChecking=accept-new" \
     "$PROJECT_ROOT/" \
-    "$OPERATOR_NAME@$DASHBOARD_IP:/opt/redteam/"
+    "$OPERATOR_NAME@$DASHBOARD_IP:/opt/redteam/" || true
+# rsync exit code 23 = partial transfer (some files skipped) — acceptable
 
 success "Codebase synced"
 
@@ -461,7 +471,7 @@ After=network.target
 [Service]
 Type=simple
 User=dashboard
-Group=dashboard
+Group=redteam
 WorkingDirectory=/opt/redteam
 ExecStart=/opt/redteam/venv/bin/python3 webapp/backend/app.py
 Restart=always
@@ -495,12 +505,16 @@ echo "  IP:       $DASHBOARD_IP"
 echo "  Connect:  ssh -L 5000:localhost:5000 $OPERATOR_NAME@$DASHBOARD_IP"
 echo "  Open:     http://localhost:5000"
 echo ""
-echo "  Next steps:"
-echo "  1. SCP Cobalt Strike archive:"
-echo "     scp cobaltstrike.tar $OPERATOR_NAME@$DASHBOARD_IP:/opt/redteam/uploads/"
+echo "  Next steps (all in the browser at http://localhost:5000):"
+echo "  1. Configure a deployment, then satisfy its prerequisites:"
+echo "       - Register a domain         (docs/DOMAIN_REQUIREMENTS.md)"
+echo "       - Upload Cobalt Strike      (docs/COBALT_STRIKE_DEPLOYMENT.md)"
+echo "  2. Deploy and watch the streaming logs."
+echo ""
+echo "  Full walkthrough: docs/GETTING_STARTED.md"
 echo ""
 if [ -n "$OP2_NAME" ]; then
-echo "  2. Second operator connects:"
+echo "  Second operator connects:"
 echo "     ssh -L 5000:localhost:5000 $OP2_NAME@$DASHBOARD_IP"
 echo ""
 fi
