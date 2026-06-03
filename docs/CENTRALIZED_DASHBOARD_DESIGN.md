@@ -7,10 +7,10 @@
 
 ## Overview
 
-The dashboard supports two run targets from a single codebase — no code forks, no feature flags. The same Flask app, frontend, and Terraform modules work in both:
+The dashboard runs from a single codebase — no code forks, no feature flags — on two targets, but only **one is the production path**:
 
-- **Dashboard Server (production)** — runs on a dedicated EC2 instance in AWS (own VPC, public EIP). This is the **production control plane and SSH jump host**: every deployment branches out from it via VPC peering, and it is the single entry point into all instances. Supports multi-operator shared access.
-- **Local Dev** — runs on the operator's laptop for development/testing only. Not the production path.
+- **Dashboard Server (production — the path)** — runs on a dedicated EC2 instance in AWS (own VPC, public EIP). This is the **production control plane and sole SSH/RDP jump host**: every deployment branches out from it via VPC peering, and it is the single entry point into all instances. Supports multi-operator shared access. Operators provision it with `./scripts/server/setup-dashboard.sh`, then `ssh -L 5000:localhost:5000 <op>@<dashboard-eip>` → browser.
+- **Local Dev (dev/testing only)** — the same app run on the operator's laptop, for development/testing. **Not a production deployment option.**
 
 > There is no per-deployment SSH-relay bastion — the Dashboard Server is the sole jump into all instances.
 
@@ -347,16 +347,19 @@ Step 5: All subsequent deployments through dashboard UI
 
 ## 13. Choosing a Mode
 
-| Scenario | Recommended Mode |
-|----------|-----------------|
-| Solo operator, short engagement | Local |
+**Production is always the Dashboard Server.** Local Dev is for working on the dashboard codebase itself, not for running engagements. Use the Dashboard Server for every real scenario:
+
+| Scenario | Mode |
+|----------|------|
+| Solo operator, short engagement | Server |
 | Solo operator, wants to close laptop and keep infra running | Server |
 | Two operators, same engagement | Server |
-| Training / GOAD lab for one person | Local |
+| Training / GOAD lab | Server |
 | Long-running engagement (weeks) | Server |
-| Quick test deployment | Local |
+| Quick test deployment | Server |
+| Developing/testing the dashboard app itself | Local (dev only) |
 
-Both modes can be switched at any time. To migrate from local to server:
+If you have been running a dev instance locally and want to move to the production Server:
 1. Stand up the dashboard server (Section 10)
 2. `terraform init -migrate-state` to move state to S3
 3. SCP the CS archive to the server

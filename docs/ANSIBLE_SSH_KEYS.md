@@ -431,19 +431,19 @@ This means the server can SSH to all instances without the operator needing to d
 
 ## Summary
 
-✅ **Automated SSH key distribution** via Ansible (local mode) or SSM (server mode)
-✅ **One script** handles everything: `setup-ssh-keys.sh` (local) or `setup-dashboard.sh` (server)
+✅ **Automated SSH key distribution** via SSM (production server mode) or Ansible (local dev)
+✅ **One script** handles everything: `setup-dashboard.sh` (production server) or `setup-ssh-keys.sh` (local dev)
 ✅ **Multiple keys supported** for multiple operators
-✅ **Works from jump box** (WSL2) or any machine
+✅ **Server keypair + SSM** removes the need for manual key distribution in production
 ✅ **Easy to use** - just run the script after deployment
 
-**Workflow (Local Mode):**
+**Workflow (Server Mode — production):**
+1. Deploy infrastructure from the dashboard
+2. Server keypair is auto-distributed via SSM
+3. Use the Terminal tab for in-browser SSH to any instance
+
+**Workflow (Local Dev — dev/testing only):**
 1. Deploy infrastructure
 2. Run `setup-ssh-keys.sh`
-3. SSH to any instance easily!
-
-**Workflow (Server Mode):**
-1. Deploy infrastructure from dashboard
-2. Server keypair is auto-distributed via SSM
-3. Use Terminal tab for in-browser SSH to any instance
+3. SSH to instances through the Dashboard Server jump
 

@@ -40,16 +40,18 @@ ssh -L 5000:localhost:5000 <operator>@<dashboard-ip>
 
 ### Manual Start (on server)
 
+Normally `dashboard-manage.sh` runs the app as a systemd service. To start it by hand on the Dashboard Server:
+
 ```bash
 # Install dependencies
 pip install -r requirements.txt
 
-# Start the application
+# Start the application (binds to 127.0.0.1:5000 on the server)
 cd Red_Team_Infra
 python3 webapp/backend/app.py
 ```
 
-Then open your browser to: http://127.0.0.1:5000
+The app listens on `127.0.0.1:5000` on the server — reach it from your laptop via the SSH tunnel above (`ssh -L 5000:localhost:5000 <operator>@<dashboard-ip>`), then open `http://localhost:5000`.
 
 ## Usage
 
@@ -129,8 +131,8 @@ Then open your browser to: http://127.0.0.1:5000
 
 ## Security
 
-- **Localhost Only**: Web server binds to 127.0.0.1 only
-- **No Authentication**: Not needed for local-only access
+- **Loopback Binding**: The Flask app binds to 127.0.0.1 only — on the Dashboard Server it is never exposed publicly; operators reach it through an SSH tunnel (`ssh -L 5000:localhost:5000 ...`). A loopback guard rejects any non-localhost request.
+- **SSH Is the Auth Layer**: Access is gated by SSH key + IP allow-list on the Dashboard Server (no separate web login). The operator's laptop only ever SSHes to the Dashboard Server EIP.
 - **Input Validation**: All inputs are validated before execution
 - **Safe Command Execution**: Commands executed with proper escaping
 
@@ -184,8 +186,9 @@ webapp/
 
 ## Notes
 
-- The web application is for **local use only**
-- All operations execute on your local machine
-- Configuration files are stored in `configs/` directory
-- Terraform state is managed in `terraform/` directory
+- The web application runs on the **AWS-hosted Dashboard Server** — the production control plane and sole SSH/RDP jump host. Operators reach it via an SSH tunnel to the server's EIP, then open `http://localhost:5000`.
+- All operations (Terraform, AWS API calls, SSH to instances) execute **on the Dashboard Server**, using its IAM instance role — no AWS credentials or Terraform install needed on operator laptops.
+- Running the app on a laptop is a **dev/test instance only**, not the production path.
+- Configuration files are stored in the `configs/` directory
+- Terraform state is managed via the S3 backend + DynamoDB locking (not local `.tfstate`)
 

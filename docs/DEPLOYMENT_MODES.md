@@ -2,7 +2,7 @@
 
 This document explains the three deployment modes available for C2 team servers.
 
-> **Note**: For easier configuration, consider using `engagement_type` instead of manually setting `c2_deployment_mode`. See [Engagement Types Guide](./ENGAGEMENT_TYPES.md) for details.
+> **Note**: For easier configuration, consider using `engagement_type` instead of manually setting `c2_deployment_mode`. See [Engagement Types Guide](./legacy/internal/ENGAGEMENT_TYPES.md) for details.
 
 ## Overview
 
@@ -302,7 +302,7 @@ Instead of manually configuring deployment modes, you can use `engagement_type`:
 - **`engagement_type = "purple-team"`** → Auto-configures `redundancy` mode
 - **`engagement_type = "full-red-team"`** → Auto-configures `phases` mode
 
-See [Engagement Types Guide](./ENGAGEMENT_TYPES.md) for complete details.
+See [Engagement Types Guide](./legacy/internal/ENGAGEMENT_TYPES.md) for complete details.
 
 ## Summary
 

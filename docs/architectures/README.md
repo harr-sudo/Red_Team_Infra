@@ -4,6 +4,8 @@
 
 This directory contains detailed architecture documentation for all deployment modes supported by the Red Team Infrastructure project. Each document includes diagrams, configurations, cost breakdowns, and operational guidance.
 
+**There are 12 deployment types:** 3 C2-only (`c2-adhoc`, `c2-purple`, `c2-full`), 5 GOAD-only (`goad-mini`, `goad-light`, `goad-sccm`, `goad-full`, `goad-nha`), 3 combined C2+GOAD (`combined-adhoc-mini`, `combined-adhoc-light`, `combined-full-full`), and 1 self-contained CCRTS exam-mirror lab (`ccrts`).
+
 ## Quick Navigation
 
 ### GOAD Training Labs
@@ -33,6 +35,14 @@ This directory contains detailed architecture documentation for all deployment m
 | **C2 + GOAD Mini** | Ad-Hoc C2 + GOAD Mini | $180-220 | Training with realistic C2 | [📄 combined-mini.md](./combined-mini.md) |
 | **C2 + GOAD Light** | Purple Team C2 + GOAD Light | $350-420 | Intermediate training | [📄 combined-light.md](./combined-light.md) |
 | **Full C2 + GOAD Full** | Full Red Team C2 + GOAD Full | $500-600 | Advanced training, full simulation | [📄 combined-full.md](./combined-full.md) |
+
+### CCRTS-Lab (CREST Exam Mirror)
+
+| Deployment | Components | Cost/Month | Best For | Documentation |
+|-----------|-----------|------------|----------|---------------|
+| **CCRTS** | Kali + Windows WS + DC + AD WS + ELK (own VPC, no C2) | ~$310 | Rehearsing the CREST CCRTS exam estate | [📄 CCRTS_LAB.md](../CCRTS_LAB.md) |
+
+`ccrts` is a **single, fully self-contained** deployment type — no size tiers, no combined/C2 variants. It runs in its own isolated VPC (`192.168.57.0/24`) reached only through the Dashboard Server.
 
 ### Component Architecture
 
@@ -202,22 +212,24 @@ graph TD
 
 ### 2. Configure & Deploy
 
-1. **Via Web Application** (Recommended)
+1. **Via the Dashboard** (primary path)
+   ```bash
+   # Provision the AWS Dashboard Server once, then tunnel in:
+   ./scripts/server/setup-dashboard.sh
+   ssh -L 5000:localhost:5000 <operator>@<dashboard-eip>
+   # In the browser at http://localhost:5000:
+   #   Configuration → Select deployment type → Upload Cobalt Strike (if C2)
+   #   → Configure domain (if C2) → Deploy
    ```
-   http://localhost:5000
-   → Configuration
-   → Select deployment type
-   → Upload Cobalt Strike (if C2)
-   → Configure domain (if C2)
-   → Deploy
-   ```
+   Terraform runs on the Dashboard Server using its IAM instance role; deployments branch out from it via VPC peering.
 
-2. **Via Command Line**
+2. **Via Command Line** (advanced / dev-only)
    ```bash
    cd terraform
    terraform init
    terraform apply -var="engagement_type=adhoc" -var="goad_lab_type=GOAD-Mini"
    ```
+   The CLI path runs Terraform from your laptop and is intended for development/testing — the Dashboard Server is the production control plane.
 
 ### 3. Access & Operate
 

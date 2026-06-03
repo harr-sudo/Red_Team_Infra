@@ -240,7 +240,7 @@ Create a deploy key that the jump box uses:
        --name "/red-team/tools-repo-ssh-key" \
        --type "SecureString" \
        --value "$(cat ~/.ssh/red-team-tools-deploy)" \
-       --region us-east-1 \
+       --region eu-central-1 \
        --overwrite
    ```
 

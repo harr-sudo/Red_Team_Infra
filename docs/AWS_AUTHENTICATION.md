@@ -126,7 +126,7 @@ aws configure
 You'll be prompted for:
 - **AWS Access Key ID**: Your AWS access key
 - **AWS Secret Access Key**: Your AWS secret key
-- **Default region**: e.g., `us-east-1`
+- **Default region**: `eu-central-1` (the framework's standard region)
 - **Default output format**: `json`
 
 This creates:
@@ -143,7 +143,7 @@ aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 **Example `~/.aws/config`:**
 ```ini
 [default]
-region = us-east-1
+region = eu-central-1
 output = json
 ```
 
@@ -154,14 +154,14 @@ Set these in your shell session:
 ```bash
 export AWS_ACCESS_KEY_ID="your-access-key"
 export AWS_SECRET_ACCESS_KEY="your-secret-key"
-export AWS_DEFAULT_REGION="us-east-1"
+export AWS_DEFAULT_REGION="eu-central-1"
 ```
 
 **For permanent setup**, add to `~/.bashrc` or `~/.zshrc`:
 ```bash
 echo 'export AWS_ACCESS_KEY_ID="your-access-key"' >> ~/.bashrc
 echo 'export AWS_SECRET_ACCESS_KEY="your-secret-key"' >> ~/.bashrc
-echo 'export AWS_DEFAULT_REGION="us-east-1"' >> ~/.bashrc
+echo 'export AWS_DEFAULT_REGION="eu-central-1"' >> ~/.bashrc
 source ~/.bashrc
 ```
 

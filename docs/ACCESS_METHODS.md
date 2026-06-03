@@ -60,7 +60,9 @@ The Dashboard Server sits inside AWS with VPC peering to all deployment VPCs, so
 
 ## Part 1: Operator Access (From Home - C2 Client Access)
 
-### Option 1: SSH Tunnel via Proxy/Redirector (Recommended)
+> **Reminder:** In production, operator access goes through the **Dashboard Server** (see [Dashboard Server (Primary)](#dashboard-server-primary) above). The options below are generic background patterns — the "Recommended" tags refer only to *within this background section*, not to the framework's production path.
+
+### Option 1: SSH Tunnel via Proxy/Redirector (background option)
 
 **How it works:**
 - SSH into proxy/redirector server (public IP)
@@ -382,29 +384,20 @@ Browser → Guacamole (Public) → C2 Server (Private)
 
 ## Recommended Approaches
 
-### For Operator Access (C2 Client)
+### Production: The Dashboard Server (use this)
 
-**Best Option: SSH Tunnel via Proxy**
-- Simple, works immediately
-- No additional infrastructure
-- Encrypted connection
+For all day-to-day operations, route through the **Dashboard Server** — the AWS-hosted control plane and sole SSH/RDP jump:
 
-**Alternative: VPN**
-- If you need access to multiple servers
-- More secure
-- Better for long-term operations
+- **Operator access (C2 client):** `ssh -L 50050:<c2-private-ip>:50050 ubuntu@<dashboard-eip>`, then connect Cobalt Strike to `localhost:50050` — or use the dashboard's in-browser Terminal/Tunnel shortcuts.
+- **Management access (RDP/SSH):** tunnel through the Dashboard Server (`ssh -L 13389:<attackbox-ip>:3389 ubuntu@<dashboard-eip>`) or use the Terminal tab. There is no per-deployment bastion.
 
-### For Management Access (Remote Desktop)
+### Background options (when the Dashboard Server is not in front of a deployment)
 
-**Best Option: SSH Tunnel + RDP/VNC**
-- Simple setup
-- Works with existing infrastructure
-- Encrypted
+The generic patterns below apply for understanding the options or for a local dev instance — not the production path:
 
-**Alternative: AWS SSM**
-- If you want audit trails
-- No SSH keys needed
-- More enterprise-friendly
+- **SSH Tunnel via Proxy** — simple, no extra infra, encrypted (background only).
+- **VPN to VPC** — direct access to multiple servers; extra infra and cost.
+- **AWS SSM** — no SSH keys, audit trail via CloudTrail, enterprise-friendly.
 
 ---
 
@@ -481,21 +474,15 @@ Browser → Guacamole (Public) → C2 Server (Private)
 
 ## Summary
 
-**For Quick Access:**
-- Use **SSH tunnel via proxy/redirector**
-- Simple, works immediately
-- No additional cost
+**Production (the answer for this framework):**
+- Route everything through the **Dashboard Server** — the AWS-hosted control plane and sole SSH/RDP jump host.
+- Operator path: laptop → (SSH key + IP allow-list) → Dashboard Server → instances (via VPC peering).
+- C2 client: `ssh -L 50050:<c2-ip>:50050 ubuntu@<dashboard-eip>` (or the dashboard's Tunnel button).
+- Management/RDP: tunnel through the Dashboard Server, or use the in-browser Terminal tab.
+- There is **no per-deployment bastion**; running the dashboard on a laptop is a dev instance only.
 
-**For Production/Long-term:**
-- Deploy **VPN server**
-- More secure
-- Better for multiple operators
-- Additional cost but worth it
-
-**For Management:**
-- **SSH tunnel + RDP/VNC** for quick access
-- **AWS SSM** for enterprise features
-- **Guacamole** for web-based access
-
-Choose based on your needs, security requirements, and budget!
+**Background options** (understanding the alternatives, or a local dev instance — not production):
+- SSH tunnel via proxy/redirector — simple, no extra cost.
+- VPN to the VPC — direct multi-server access, extra infra/cost.
+- AWS SSM — no SSH keys, audit trail; Guacamole — web-based RDP gateway.
 

@@ -103,7 +103,7 @@ This page provides a visual index of all architecture diagrams generated for the
 ### Test Lab — bolt-on subnet inside the C2 VPC
 ![Test Lab](../../generated-diagrams/test-lab-architecture.png)
 **Enabled by**: `enable_test_lab = true` on a `c2-*` deployment | **Hosts**: 4 (tldc01, tlms01, tlws01, tllinux01) | **Subnet**: 10.0.20.0/24 inside the C2 VPC (no new VPC/NAT — reuses the C2 NAT GW) | **AD Domain**: testlab.local
-[📖 Test Lab Design](../internal/TESTLAB_DESIGN.md)
+[📖 Test Lab Design](../legacy/internal/TESTLAB_DESIGN.md)
 
 ---
 
@@ -111,7 +111,7 @@ This page provides a visual index of all architecture diagrams generated for the
 
 ### Windows Attack Box - Standalone Module Architecture
 ![Attack Box](../../generated-diagrams/attackbox-architecture.png)
-**Features**: Windows Server 2022 + WSL2, CS Client, Tools Repository, RDP Access | **All 12 Deployment Types**
+**Features**: Windows Server 2022 + WSL2, CS Client, Tools Repository, RDP Access | **11 C2 / GOAD / combined types** (the self-contained `ccrts` lab uses its CREST Kali host instead)
 [📖 Full Documentation](./attackbox.md)
 
 ---
@@ -126,7 +126,7 @@ This page provides a visual index of all architecture diagrams generated for the
 ### SSH Key Management Architecture
 ![SSH Keys](../../generated-diagrams/ssh-key-architecture.png)
 **Automation**: Ansible Distribution, Secure Storage, Access Control
-[📖 Full Documentation](../SSH_KEY_MANAGEMENT.md)
+[📖 Full Documentation](./ssh-key-management.md)
 
 ---
 

@@ -36,13 +36,33 @@ cp configs/terraform.tfvars.example configs/terraform.tfvars
 pip install -r requirements.txt
 ```
 
-## Local Dev Commands (laptop)
+## Primary Path: Dashboard Server
+
+The AWS-hosted Dashboard Server is the production control plane and sole SSH/RDP jump. Provision it once from your laptop, then do all deploying/managing from the dashboard UI.
 
 ```bash
-# Provision the AWS Dashboard Server (production control plane + jump)
+# 1. Provision the AWS Dashboard Server (run once, from your laptop)
 ./scripts/server/setup-dashboard.sh
-# Then SSH tunnel: ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
 
+# 2. Tunnel in and open the UI
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
+# Then open http://localhost:5000 — deploy / destroy / manage from here
+
+# Push code updates to the server later
+./scripts/server/setup-dashboard.sh   # select Resume
+```
+
+### Dashboard Server lifecycle (run ON the server)
+
+```bash
+./scripts/server/dashboard-manage.sh start|stop|restart|status|logs|upgrade
+```
+
+## Advanced: CLI Deploy (dev-only)
+
+> The CLI path runs Terraform from your laptop and is for development/testing. Production deploys run through the Dashboard Server above.
+
+```bash
 # Full deployment
 ./scripts/deployment/deploy.sh
 
@@ -51,22 +71,6 @@ pip install -r requirements.txt
 
 # Destroy infrastructure
 ./scripts/deployment/destroy.sh
-```
-
-## Dashboard Server Commands (production)
-
-```bash
-# Connect to the Dashboard Server (from operator laptop, via EIP)
-ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
-
-# Setup script (first time on the server)
-./scripts/server/setup-dashboard.sh
-
-# Server management (on the server)
-./scripts/server/dashboard-manage.sh start|stop|restart|status|logs
-
-# Push code updates to server
-./scripts/server/setup-dashboard.sh  # select Resume
 ```
 
 ## Manual Terraform Commands
@@ -132,15 +136,19 @@ aws ec2 describe-security-groups \
 
 ## SSH Commands
 
+Instances live in private subnets — reach them **through the Dashboard Server** (the sole SSH jump). There is no per-deployment bastion.
+
 ```bash
-# Get instance IP from outputs
-INSTANCE_IP=$(jq -r '.instance_public_ips.value[0]' terraform-outputs.json)
+# Open the dashboard UI (primary)
+ssh -L 5000:localhost:5000 ubuntu@<dashboard-eip>
+# Then use the in-browser Terminal tab for SSH to any instance — no manual hops.
 
-# SSH to instance
-ssh -i ~/.ssh/red-team-keypair.pem ec2-user@$INSTANCE_IP
+# Manual SSH to a private instance via the Dashboard Server (ProxyJump)
+ssh -J ubuntu@<dashboard-eip> ec2-user@<instance-private-ip>
 
-# Run command remotely
-ssh -i ~/.ssh/red-team-keypair.pem ec2-user@$INSTANCE_IP "command"
+# Tunnel CS client to the team server through the Dashboard Server
+ssh -L 50050:<c2-private-ip>:50050 ubuntu@<dashboard-eip>
+# then connect Cobalt Strike to localhost:50050
 ```
 
 ## GitHub Commands

@@ -69,6 +69,16 @@ Does NOT include: data transfer, CloudFront (if domain fronting enabled), ACM.
 | **combined-adhoc-light** | c2-adhoc infra + 3× AD VMs (t2.med Win) + Jumpbox + 2× NAT | ~$535 |
 | **combined-full-full** | c2-full infra + 5× AD VMs (t2.med Win) + Jumpbox + 2× NAT | ~$770 |
 
+### CCRTS-Lab (self-contained, single own VPC)
+
+| Deployment | Components | Monthly Est. |
+|---|---|---|
+| **ccrts** | Kali (t3.med) + Win WS (t3.lg) + DC (t3.med) + AD WS (t3.med) + ELK (t3.lg) + NAT + CREST AMI snapshot storage | ~$310 |
+
+`ccrts` is a single, fully self-contained deployment type — no size tiers and no combined/C2 variants. The ~$15-20/mo CREST AMI snapshot storage persists even when instances are stopped. See [CCRTS_LAB.md](./CCRTS_LAB.md) for the full breakdown.
+
+> **Total deployment types: 12** — 3 C2-only + 5 GOAD-only + 3 combined + 1 `ccrts`.
+
 ## Cost Drivers (ranked by impact)
 
 1. **Windows Server licenses** — $49/mo surcharge per instance (t2.medium: $30 Linux → $79 Windows)

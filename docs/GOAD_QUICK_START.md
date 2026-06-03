@@ -63,27 +63,9 @@ terraform apply
 
 ## Connecting Cobalt Strike to GOAD
 
-After deployment, you have several options to reach the GOAD network from your C2 infrastructure:
+After deployment, you have several options to reach the GOAD network from your C2 infrastructure. **The Dashboard Server is the operator jump (Method 1);** the SOCKS proxy and VPC-peering options are pivot techniques used from there.
 
-### Method 1: SOCKS Proxy via GOAD Jumpbox (Recommended)
-
-```bash
-# Create SOCKS proxy through GOAD jumpbox
-ssh -D 1080 -i ~/.ssh/goad-key.pem ubuntu@<goad-jumpbox-ip>
-
-# Configure Cobalt Strike:
-# Cobalt Strike → Listeners → Add → SOCKS Proxy
-# Host: 127.0.0.1
-# Port: 1080
-```
-
-### Method 2: VPC Peering (Direct Access)
-
-If VPC peering is configured between your C2 VPC and GOAD VPC:
-- Beacons can call back directly through the redirector
-- No proxy needed, but requires proper routing
-
-### Method 3: Through the Dashboard Server (jump host)
+### Method 1: Through the Dashboard Server (jump host — recommended)
 
 The AWS-hosted Dashboard Server is the primary jump into the GOAD network — tunnel through its EIP. (See [Server Mode Access](#server-mode-access) below for the in-browser Terminal tab, which needs no manual tunnel.)
 
@@ -96,6 +78,23 @@ ssh -D 1080 -p 1080 localhost
 ```
 
 > The Dashboard Server is the only SSH jump into the GOAD network — there is no per-deployment bastion. The GOAD jumpbox itself is reached *through* the Dashboard Server (it provisions the AD lab via Ansible; it is not an access bastion).
+
+### Method 2: SOCKS Proxy via GOAD Jumpbox (beacon pivot)
+
+For pivoting a Cobalt Strike beacon into the GOAD network, the jumpbox can host a SOCKS proxy. Reach the jumpbox **through the Dashboard Server** (Method 1), then run the SOCKS proxy over that tunnel — do not SSH the public jumpbox IP directly in production.
+
+```bash
+# Configure Cobalt Strike to use the SOCKS proxy:
+# Cobalt Strike → Listeners → Add → SOCKS Proxy
+# Host: 127.0.0.1
+# Port: 1080
+```
+
+### Method 3: VPC Peering (Direct Access)
+
+If VPC peering is configured between your C2 VPC and GOAD VPC:
+- Beacons can call back directly through the redirector
+- No proxy needed, but requires proper routing
 
 ## Accessing the GOAD Lab
 
@@ -120,10 +119,12 @@ ssh -L 13389:192.168.56.10:3389 ubuntu@<dashboard-eip>
 # Then RDP to localhost:13389
 ```
 
-### SSH to Jumpbox (Local Mode)
+### SSH to Jumpbox (legacy / fallback)
+
+> The GOAD jumpbox is the **AD-lab Ansible provisioning host**, not an access bastion. In production it is reached *through* the Dashboard Server (see Server Mode Access above). The direct-SSH commands below are a legacy/fallback path for when you are not going through the Dashboard Server.
 
 ```bash
-# Direct SSH
+# Direct SSH (fallback)
 ssh -i ~/.ssh/goad-key.pem ubuntu@<jumpbox-public-ip>
 
 # Using GOAD's built-in command (from tools/goad directory)
@@ -231,7 +232,7 @@ terraform destroy
 ### High AWS Costs
 
 1. Stop labs when not in use: `./goad.sh -t stop`
-2. Use smaller labs (GOAD-Mini, GOAD-Mini) for basic testing
+2. Use smaller labs (GOAD-Mini, GOAD-Light) for basic testing
 3. Set up AWS Budget alerts
 
 ## Architecture Overview
@@ -276,6 +277,6 @@ terraform destroy
 - [GOAD GitHub Repository](https://github.com/Orange-Cyberdefense/GOAD)
 - [GOAD Documentation](https://orange-cyberdefense.github.io/GOAD/)
 - [GOAD AWS Provider Docs](https://orange-cyberdefense.github.io/GOAD/providers/aws/)
-- [GOAD Integration Plan](./GOAD_INTEGRATION_PLAN.md) - Full architecture details
-- [Operator Access Methods](./GOAD_INTEGRATION_PLAN.md#operator-access-methods-connecting-to-your-c2-infrastructure) - How to connect from your laptop
+- [GOAD Integration Plan](./legacy/internal/GOAD_INTEGRATION_PLAN.md) - Full architecture details
+- [Operator Access Methods](./legacy/internal/GOAD_INTEGRATION_PLAN.md#operator-access-methods-connecting-to-your-c2-infrastructure) - How to connect from your laptop
 

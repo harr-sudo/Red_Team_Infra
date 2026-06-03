@@ -4,7 +4,7 @@
 
 ## Overview
 
-The **Windows Attack Box** is a standalone Terraform module (`terraform/modules/attack_box/`) providing a **Windows Server 2022 workstation** optimized for red team operations. It deploys across **all 11 deployment types** with automatic VPC-aware placement.
+The **Windows Attack Box** is a standalone Terraform module (`terraform/modules/attack_box/`) providing a **Windows Server 2022 workstation** optimized for red team operations. It deploys across the **11 C2 / GOAD / combined deployment types** with automatic VPC-aware placement. (The 12th type, the self-contained `ccrts` lab, does **not** use this shared attack box — its candidate workstation is the CREST Kali host, where CS runs directly.)
 
 **Key Design Decisions:**
 - **Standalone module** — not embedded in GOAD or C2 modules, reusable everywhere
@@ -516,7 +516,7 @@ The attack box was previously embedded in `terraform/modules/goad/attackbox.tf`.
 | `modules/goad/attackbox_scripts.tf` | S3 upload in `modules/attack_box/main.tf` |
 | `modules/goad/scripts/attackbox_init.ps1` | `modules/attack_box/scripts/attack_box_init.ps1` |
 | `modules/goad/scripts/attackbox_bootstrap.ps1` | `modules/attack_box/scripts/attack_box_bootstrap.ps1` |
-| GOAD-only deployment | ALL 11 deployment types |
+| GOAD-only deployment | The 11 C2 / GOAD / combined deployment types (not `ccrts`) |
 | GOAD VPC only | C2 VPC or GOAD VPC (auto-selected) |
 | GOAD security group only | Dedicated attack_box_sg (C2) or goad_sg (GOAD) |
 
@@ -526,5 +526,5 @@ The GOAD module outputs still reference the attack box IP (`credentials.attackbo
 
 - [C2 Ad-Hoc Architecture](./c2-adhoc.md) — Attack box in C2 VPC context
 - [GOAD Mini Architecture](./goad-mini.md) — Attack box in GOAD VPC context
-- [S3 Security Architecture](../S3_CONFUSED_DEPUTY_FIX.md) — IAM roles and S3 bucket policies
-- [SSH Key Management](../SSH_KEY_MANAGEMENT.md) — Key exchange patterns
+- [S3 Security Architecture](../legacy/internal/S3_CONFUSED_DEPUTY_FIX.md) — IAM roles and S3 bucket policies
+- [SSH Key Management](./ssh-key-management.md) — Key exchange patterns

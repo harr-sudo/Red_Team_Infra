@@ -205,5 +205,5 @@ If WSL2 is not installed on the jump box:
    - RDP/SSH to jump box
    - Or clone repository to laptop
 
-See [Tools Repository Plan](./TOOLS_REPOSITORY_PLAN.md) for detailed architecture.
+See [Tools Repository Plan](./legacy/internal/TOOLS_REPOSITORY_PLAN.md) for detailed architecture.
 
